@@ -9,3 +9,4 @@ output/playwright/
 public/uploads/logos/*
 !public/uploads/logos/.gitkeep
 data/demo-state.json
+.vercel
