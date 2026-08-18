@@ -1,0 +1,11 @@
+node_modules/
+.next/
+coverage/
+.DS_Store
+*.log
+.playwright-cli/
+output/playwright/
+*.tsbuildinfo
+public/uploads/logos/*
+!public/uploads/logos/.gitkeep
+data/demo-state.json
