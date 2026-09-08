@@ -8,7 +8,9 @@ import type {
 } from '@/lib/types';
 
 export const PLACEMENT_LABELS: Record<PlacementKey, string> = {
+  frontCenter: '正前面',
   leftChest: '左胸',
+  rightChest: '右胸',
   back: '后背',
   leftSleeve: '左袖',
   rightSleeve: '右袖',
@@ -18,14 +20,18 @@ export const PLACEMENT_DEFAULTS: Record<
   PlacementKey,
   Pick<LogoPlacement, 'widthCm' | 'offsetX' | 'offsetY' | 'rotation'>
 > = {
+  frontCenter: { widthCm: 28, offsetX: 0, offsetY: 0, rotation: 0 },
   leftChest: { widthCm: 7, offsetX: 0, offsetY: 0, rotation: 0 },
+  rightChest: { widthCm: 7, offsetX: 0, offsetY: 0, rotation: 0 },
   back: { widthCm: 28, offsetX: 0, offsetY: 0, rotation: 0 },
   leftSleeve: { widthCm: 8, offsetX: 0, offsetY: 0, rotation: 0 },
   rightSleeve: { widthCm: 8, offsetX: 0, offsetY: 0, rotation: 0 },
 };
 
 export const PLACEMENT_ANCHORS: Record<PlacementKey, { x: number; y: number }> = {
+  frontCenter: { x: 0.25, y: 0.48 },
   leftChest: { x: 0.35, y: 0.4 },
+  rightChest: { x: 0.15, y: 0.4 },
   back: { x: 0.75, y: 0.39 },
   leftSleeve: { x: 0.43, y: 0.42 },
   rightSleeve: { x: 0.1, y: 0.42 },
@@ -63,7 +69,7 @@ export function stateWithNewTasks(
 }
 
 export function placementWidthRatio(
-  placement: LogoPlacement,
+  placement: Pick<LogoPlacement, 'widthCm'>,
   product: Product,
 ) {
   return (placement.widthCm / product.garmentWidthCm) * 0.46;
@@ -71,7 +77,7 @@ export function placementWidthRatio(
 
 export function placementCenter(
   key: PlacementKey,
-  placement: LogoPlacement,
+  placement: Pick<LogoPlacement, 'offsetX' | 'offsetY'>,
 ) {
   const anchor = PLACEMENT_ANCHORS[key];
   return {

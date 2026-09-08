@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>任务预检 · 行内图案处理原型</title>
+  <style>
+    :root {
+      --paper: #f3f7f4;
+      --surface: #ffffff;
+      --ink: #14231d;
+      --muted: #66756e;
+      --line: #cbd9d1;
+      --line-strong: #91ad9d;
+      --brand: #126a49;
+      --brand-dark: #0d4d37;
+      --brand-soft: #e7f3ec;
+      --brand-pale: #f1f8f4;
+      --amber: #a55b0b;
+      --amber-soft: #fbf1e4;
+      --danger: #b64d3d;
+      --shadow: 0 14px 34px rgba(20, 55, 41, .09);
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--paper); }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(90deg, rgba(18,106,73,.025) 1px, transparent 1px) 0 0 / 32px 32px,
+        var(--paper);
+      font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+      font-size: 14px;
+    }
+    button, input, select, textarea { font: inherit; }
+    button, select { cursor: pointer; }
+    button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-visible {
+      outline: 3px solid rgba(18,106,73,.2);
+      outline-offset: 2px;
+    }
+
+    .appbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 64px;
+      padding: 0 28px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255,255,255,.94);
+      backdrop-filter: blur(12px);
+    }
+    .brand { display: flex; align-items: center; gap: 11px; }
+    .brand-mark {
+      display: grid;
+      width: 36px;
+      height: 36px;
+      place-items: center;
+      border-radius: 10px;
+      color: white;
+      background: var(--brand);
+      font: 800 17px/1 "STKaiti", serif;
+    }
+    .brand strong { display: block; font-size: 16px; letter-spacing: -.02em; }
+    .brand small { color: var(--muted); font-size: 11px; }
+    nav { display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: #edf2ef; }
+    nav a { padding: 8px 14px; border-radius: 9px; color: var(--muted); text-decoration: none; }
+    nav a.active { color: white; background: var(--brand); font-weight: 700; }
+
+    main { max-width: 1660px; margin: 0 auto; padding: 26px 28px 110px; }
+    .heading {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: end;
+      gap: 24px;
+      margin-bottom: 17px;
+    }
+    .eyebrow { margin: 0 0 5px; color: var(--brand); font-size: 11px; font-weight: 800; letter-spacing: .14em; }
+    h1 { margin: 0; font: 800 clamp(27px, 3vw, 42px)/1.05 "Arial Narrow", "PingFang SC", sans-serif; letter-spacing: -.035em; }
+    .heading p:last-child { max-width: 720px; margin: 9px 0 0; color: var(--muted); line-height: 1.65; }
+    .progress { min-width: 260px; text-align: right; }
+    .progress strong { font-size: 13px; }
+    .progress-track { height: 6px; margin-top: 9px; overflow: hidden; border-radius: 9px; background: #dfe9e3; }
+    .progress-track i { display: block; width: 22%; height: 100%; border-radius: inherit; background: var(--brand); }
+
+    .principle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 14px;
+      padding: 12px 15px;
+      border: 1px solid #bad4c5;
+      border-radius: 10px;
+      color: var(--brand-dark);
+      background: var(--brand-soft);
+    }
+    .principle b { white-space: nowrap; }
+    .principle span { color: #49665a; font-size: 12px; }
+
+    .review-table {
+      overflow: hidden;
+      border: 1px solid var(--line-strong);
+      border-radius: 15px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .table-head, .task-grid {
+      display: grid;
+      grid-template-columns: minmax(600px, 56fr) minmax(410px, 30fr) minmax(200px, 14fr);
+    }
+    .table-head {
+      color: white;
+      background: var(--brand-dark);
+      font-size: 13px;
+      font-weight: 750;
+      letter-spacing: .02em;
+    }
+    .table-head > div { padding: 14px 17px; border-right: 1px solid rgba(255,255,255,.2); }
+    .table-head > div:last-child { border-right: 0; }
+
+    .task-group { border-bottom: 9px solid #e5efe9; }
+    .task-group:last-child { border-bottom: 0; }
+    .task-title {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 58px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--line);
+      background: #eef5f1;
+    }
+    .task-id { display: flex; align-items: center; gap: 12px; }
+    .task-number { padding: 5px 9px; border: 1px solid #cfe2d7; border-radius: 999px; color: var(--brand); background: white; font: 800 11px/1.2 "Arial Narrow", sans-serif; }
+    .task-id strong { font-size: 16px; }
+    .task-id span { color: var(--muted); }
+    .pending { padding: 6px 9px; border-radius: 999px; color: var(--amber); background: var(--amber-soft); font-size: 11px; font-weight: 750; }
+
+    .evidence {
+      min-width: 0;
+      border-right: 1px solid var(--line);
+      background: #fbfdfc;
+    }
+    .evidence-section { display: grid; grid-template-columns: 132px 1fr; gap: 16px; padding: 15px 16px; border-bottom: 1px solid var(--line); }
+    .evidence-section:last-child { border-bottom: 0; }
+    .evidence-label { color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .05em; }
+    .evidence-label b { display: block; margin-top: 5px; color: var(--brand); }
+    .materials { display: flex; flex-wrap: wrap; gap: 8px; }
+    .material {
+      position: relative;
+      width: 76px;
+      height: 86px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 0;
+      background: white;
+    }
+    .material img { width: 100%; height: 100%; object-fit: contain; }
+    .material span {
+      position: absolute;
+      right: 5px;
+      bottom: 5px;
+      left: 5px;
+      padding: 3px 5px;
+      border-radius: 5px;
+      color: var(--brand-dark);
+      background: rgba(255,255,255,.9);
+      font-size: 9px;
+      text-align: center;
+    }
+    .material.selected { border: 2px solid var(--brand); box-shadow: 0 0 0 3px rgba(18,106,73,.12); }
+    .material.selected::after { content: "主要"; position: absolute; top: 5px; left: 5px; padding: 2px 5px; border-radius: 4px; color: white; background: var(--brand); font-size: 8px; font-weight: 800; }
+    .source-text { margin: 0; color: #44554d; line-height: 1.8; }
+    .understanding { display: grid; gap: 9px; }
+    .understanding-head { display: flex; align-items: center; justify-content: space-between; }
+    .understanding-head span { color: var(--muted); font-size: 11px; }
+    .understanding-row { display: grid; grid-template-columns: 25px 1fr auto; align-items: start; gap: 10px; padding: 10px 12px; border-radius: 9px; background: white; }
+    .understanding-row i { display: grid; width: 24px; height: 24px; place-items: center; border-radius: 50%; color: white; background: var(--brand); font: 800 11px/1 "Arial Narrow", sans-serif; }
+    .understanding-row p { margin: 0; line-height: 1.6; }
+    .text-button { border: 0; padding: 2px 0; color: var(--brand); background: transparent; font-size: 11px; font-weight: 750; }
+
+    .artworks { min-width: 0; }
+    .artwork-row {
+      min-height: 173px;
+      padding: 14px 15px;
+      border-bottom: 1px solid var(--line);
+      background: white;
+    }
+    .artwork-row:last-child { border-bottom: 0; }
+    .artwork-row.active { background: linear-gradient(145deg, #fff 0%, #f4faf6 100%); box-shadow: inset 4px 0 0 var(--brand); }
+    .artwork-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .artwork-top small { display: block; margin-bottom: 2px; color: var(--brand); font: 800 10px/1.3 "Arial Narrow", sans-serif; letter-spacing: .06em; }
+    .artwork-top strong { font-size: 14px; }
+    .route-control {
+      display: grid;
+      grid-template-columns: auto 132px;
+      align-items: center;
+      overflow: hidden;
+      border: 1px solid #8bb8a1;
+      border-radius: 8px;
+      background: var(--brand-pale);
+    }
+    .route-control label {
+      padding: 0 8px;
+      color: var(--brand);
+      font-size: 9px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .route-control select {
+      width: 132px;
+      border: 0;
+      border-left: 1px solid #bcd4c7;
+      border-radius: 0;
+      padding: 7px 25px 7px 9px;
+      color: var(--brand-dark);
+      background: white;
+      font-size: 11px;
+      font-weight: 800;
+    }
+    .route-control.manual { border-color: #c78d32; background: #fff5e5; }
+    .route-control.manual label { color: #9b6412; }
+
+    .recipe {
+      display: grid;
+      grid-template-columns: 74px 22px minmax(100px, 1fr) auto;
+      align-items: center;
+      gap: 9px;
+      min-height: 82px;
+      margin: 11px 0;
+      padding: 9px;
+      border: 1px solid #c8dbd0;
+      border-radius: 11px;
+      background: white;
+    }
+    .recipe-image { position: relative; height: 62px; overflow: hidden; border-radius: 8px; background: #edf2ef; }
+    .recipe-image img { width: 100%; height: 100%; object-fit: contain; }
+    .recipe-image em { position: absolute; bottom: 3px; left: 3px; padding: 2px 4px; border-radius: 3px; color: var(--brand); background: rgba(255,255,255,.9); font-size: 8px; font-style: normal; }
+    .plus { color: var(--brand); font-size: 21px; font-weight: 500; text-align: center; }
+    .exact-text { display: grid; gap: 4px; min-height: 58px; align-content: center; padding: 7px 9px; border: 1px dashed #8bb8a1; border-radius: 8px; background: var(--brand-pale); }
+    .exact-text span { color: var(--muted); font-size: 9px; }
+    .exact-text input { min-width: 0; border: 0; padding: 0; color: var(--ink); background: transparent; font-weight: 750; }
+    .recipe-meta { max-width: 130px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+    .recipe-meta b { display: block; color: var(--ink); }
+    .row-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .scope { display: inline-flex; padding: 3px; border-radius: 8px; background: #edf3ef; }
+    .scope button { border: 0; border-radius: 6px; padding: 6px 9px; color: var(--muted); background: transparent; font-size: 10px; }
+    .scope button.active { color: var(--brand); background: white; box-shadow: 0 1px 4px rgba(20,55,41,.12); font-weight: 750; }
+    .actions { display: flex; gap: 7px; }
+    .btn { border: 1px solid var(--brand); border-radius: 8px; padding: 7px 10px; color: var(--brand); background: white; font-size: 11px; font-weight: 750; }
+    .btn.primary { color: white; background: var(--brand); }
+    .btn[disabled] { cursor: wait; opacity: .55; }
+
+    .candidate {
+      display: none;
+      grid-template-columns: 116px 1fr;
+      gap: 12px;
+      align-items: center;
+      margin-top: 11px;
+      padding: 10px;
+      border: 1px solid #9fc5b0;
+      border-radius: 11px;
+      background: white;
+    }
+    .candidate.show { display: grid; }
+    .candidate-preview {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 74px;
+      border-radius: 8px;
+      background:
+        linear-gradient(45deg,#edf0ee 25%,transparent 25%) 0 0/14px 14px,
+        linear-gradient(45deg,transparent 75%,#edf0ee 75%) 0 0/14px 14px,
+        linear-gradient(45deg,transparent 75%,#edf0ee 75%) 7px -7px/14px 14px,
+        linear-gradient(45deg,#edf0ee 25%,white 25%) 7px -7px/14px 14px;
+      color: #646f69;
+      font: 700 15px/1 "STKaiti", serif;
+    }
+    .candidate-copy strong { display: block; margin-bottom: 4px; }
+    .candidate-copy p { margin: 0 0 7px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+    .candidate-copy button { border: 0; padding: 0; color: var(--brand); background: transparent; font-size: 11px; font-weight: 800; }
+
+    .garments { border-left: 0; background: #fbfdfc; }
+    .garment-row { min-height: 173px; padding: 14px; border-bottom: 1px solid var(--line); }
+    .garment-row:last-child { border-bottom: 0; }
+    .field { display: grid; gap: 5px; margin-bottom: 12px; }
+    .field label { color: var(--muted); font-size: 10px; }
+    .field select { width: 100%; border: 0; border-radius: 8px; padding: 9px 10px; color: var(--ink); background: #edf3ef; font-size: 11px; font-weight: 650; }
+    .mapping { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px; color: var(--muted); background: white; font-size: 10px; }
+
+    .second-task { display: grid; grid-template-columns: 56fr 30fr 14fr; min-height: 150px; }
+    .second-task > div { padding: 15px; border-right: 1px solid var(--line); }
+    .second-task > div:last-child { border-right: 0; }
+    .skeleton-line { height: 9px; margin: 9px 0; border-radius: 9px; background: #e8efeb; }
+    .skeleton-line.w70 { width: 70%; }
+    .skeleton-line.w45 { width: 45%; }
+
+    .dock {
+      position: fixed;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      z-index: 15;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 13px max(28px, calc((100vw - 1660px) / 2 + 28px));
+      border-top: 1px solid var(--line);
+      background: rgba(255,255,255,.94);
+      backdrop-filter: blur(12px);
+    }
+    .dock strong { font-size: 13px; }
+    .dock span { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; }
+    .dock button { border: 0; border-radius: 9px; padding: 11px 18px; color: white; background: var(--brand); font-weight: 750; }
+
+    .editor-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      display: none;
+      place-items: center;
+      padding: 28px;
+      background: rgba(16,31,25,.66);
+    }
+    .editor-overlay.open { display: grid; }
+    .editor {
+      width: min(1160px, 96vw);
+      min-height: 610px;
+      overflow: hidden;
+      border-radius: 18px;
+      background: white;
+      box-shadow: 0 30px 90px rgba(0,0,0,.28);
+    }
+    .editor-head { display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; border-bottom: 1px solid var(--line); }
+    .editor-head small { color: var(--brand); font-weight: 800; }
+    .editor-head h2 { margin: 3px 0 0; font-size: 20px; }
+    .editor-head button { border: 0; width: 34px; height: 34px; border-radius: 8px; background: #edf3ef; font-size: 20px; }
+    .editor-body { display: grid; grid-template-columns: 1fr 300px; min-height: 520px; }
+    .canvas { position: relative; display: grid; place-items: center; background: #f1f5f2; }
+    .canvas::before, .canvas::after { content: ""; position: absolute; background: rgba(221,86,116,.55); }
+    .canvas::before { top: 0; bottom: 0; left: 50%; width: 1px; }
+    .canvas::after { top: 50%; right: 0; left: 0; height: 1px; }
+    .canvas-art { position: relative; z-index: 2; padding: 28px 42px; border: 2px dashed var(--brand); color: var(--brand-dark); background: white; font: 800 32px/1 "STKaiti", serif; }
+    .property-panel { padding: 21px; border-left: 1px solid var(--line); }
+    .property-panel h3 { margin: 0 0 8px; }
+    .property-panel p { color: var(--muted); font-size: 11px; line-height: 1.6; }
+    .rule-box { margin: 18px 0; padding: 12px; border-radius: 9px; color: var(--brand-dark); background: var(--brand-soft); font-size: 11px; line-height: 1.6; }
+    .property-panel .btn { width: 100%; margin-top: 8px; padding: 10px; }
+
+    @media (max-width: 1100px) {
+      .table-head, .task-grid { grid-template-columns: minmax(520px, 62fr) minmax(380px, 38fr); }
+      .table-head > div:last-child, .garments { display: none; }
+      .heading { grid-template-columns: 1fr; }
+      .progress { text-align: left; }
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      .artwork-row.active, .candidate { transition: background .2s ease, border-color .2s ease; }
+    }
+  </style>
+</head>
+<body>
+  <header class="appbar">
+    <div class="brand"><span class="brand-mark">衣</span><span><strong>工作服效果图</strong><small>内部快速制作台</small></span></div>
+    <nav aria-label="主导航"><a href="#">商品素材库</a><a href="#">Logo 智能处理</a><a class="active" href="#">任务预检</a><a href="#">批量效果图</a></nav>
+  </header>
+
+  <main>
+    <section class="heading">
+      <div><p class="eyebrow">WPS 批量效果图</p><h1>一张表，直接把图案处理完</h1><p>素材、原文和 AI 理解留在原位。选择来源、修改文字、决定路线和处理图案都在同一行完成，不再打开前置弹窗。</p></div>
+      <div class="progress"><strong>已确认 2 / 9 个完整图案</strong><div class="progress-track"><i></i></div></div>
+    </section>
+
+    <div class="principle"><b>页面原则：表格负责判断与处理，画布只负责精修。</b><span>点击素材即设为当前图案来源；点击生成后的候选，才进入大画布。</span></div>
+
+    <section class="review-table" aria-label="WPS 完整制作图案批量审核表">
+      <div class="table-head"><div>任务证据与 AI 理解</div><div>完整制作图案 · 行内处理</div><div>衣服与位置</div></div>
+
+      <article class="task-group">
+        <div class="task-grid">
+          <header class="task-title"><div class="task-id"><span class="task-number">任务 01</span><strong>张海健csj · 第1次</strong><span>B01SD-活力黑</span></div><span class="pending">待确认 1</span></header>
+          <div class="evidence">
+            <section class="evidence-section"><div class="evidence-label">WPS 素材<b>1 张</b></div><div class="materials"><button class="material"><img src="task-review-originals/row1-1.png" alt="图1 绿底胜利手势" /><span>图1</span></button></div></section>
+            <section class="evidence-section"><div class="evidence-label">WPS 需求原文<b>完整展示</b></div><p class="source-text">货号:B01SD-活力黑　左胸:1+poppy手机数码（logo做绿色的吧）　后背: 字体: 颜色: 工艺: 尺寸:</p></section>
+            <section class="evidence-section"><div class="evidence-label">AI 对整条需求的理解<b>逐条可修改</b></div><div class="understanding"><div class="understanding-head"><strong>一行需求拆成 1 张完整图案</strong><span>修改后只影响本图案</span></div><div class="understanding-row"><i>1</i><p>提取图1中的手势主体，只去绿色背景，保留音符和内部细节；主体改绿色并添加“poppy手机数码”。</p><button class="text-button">修改</button></div></div></section>
+          </div>
+          <div class="artworks">
+            <section class="artwork-row">
+              <div class="artwork-top"><div><small>图案 1</small><strong>B01SD 活力黑 · 左胸</strong></div><div class="route-control"><label for="route01">处理路线</label><select id="route01" aria-label="任务01图案1处理路线"><option>自动判断</option><option>原图保真</option><option selected>混合处理</option><option>模型生成</option></select></div></div>
+              <div class="recipe"><div class="recipe-image"><img src="task-review-originals/row1-1.png" alt="图1" /><em>图1</em></div><span class="plus">＋</span><div class="exact-text"><span>准确文字</span><input value="poppy手机数码" aria-label="任务01准确文字" /></div><div class="recipe-meta"><b>主体图形＋文字</b>去背景，主体改绿色</div></div>
+              <div class="row-actions"><div class="scope"><button class="active">取主体</button><button>整张使用</button></div><div class="actions"><button class="btn">上传成品</button><button class="btn primary">处理图案</button></div></div>
+            </section>
+          </div>
+          <div class="garments"><section class="garment-row"><div class="field"><label>衣服款式</label><select><option>B01SD 活力黑</option></select></div><div class="field"><label>制作位置</label><select><option>左胸</option></select></div><button class="mapping">修改对应关系</button></section></div>
+        </div>
+      </article>
+
+      <article class="task-group">
+        <div class="task-grid">
+          <header class="task-title"><div class="task-id"><span class="task-number">任务 02</span><strong>王毛毛201012 · 第1次</strong><span>719SF-黑色；B01SD-月牙白-L</span></div><span class="pending">待确认 3</span></header>
+
+          <div class="evidence">
+            <section class="evidence-section">
+              <div class="evidence-label">WPS 素材<b>5 张</b></div>
+              <div class="materials" id="materials">
+                <button class="material" data-index="1"><img src="task-review-originals/row2-1.png" alt="图1 宜宾学院校徽" /><span>图1</span></button>
+                <button class="material" data-index="2"><img src="task-review-originals/row2-2.png" alt="图2 志愿者标志" /><span>图2</span></button>
+                <button class="material" data-index="3"><img src="task-review-originals/row2-3.png" alt="图3 室内参考" /><span>图3</span></button>
+                <button class="material" data-index="4"><img src="task-review-originals/row2-4.png" alt="图4 排版参考" /><span>图4</span></button>
+                <button class="material selected" data-index="5"><img src="task-review-originals/row2-5.png" alt="图5 宜宾学院字标" /><span>图5</span></button>
+              </div>
+            </section>
+            <section class="evidence-section"><div class="evidence-label">WPS 需求原文<b>完整展示</b></div><p class="source-text">货号:719SF-黑色 B01SD-月牙白-L　左胸: 冲锋衣:图一　POLO衫:研+图5+2026【参考图四】　后背: 冲锋衣:宜宾学院研究生会志愿者【做扇形】下面加图二+奉献、友爱、互助、进步</p></section>
+            <section class="evidence-section">
+              <div class="evidence-label">AI 对整条需求的理解<b>逐条可修改</b></div>
+              <div class="understanding">
+                <div class="understanding-head"><strong>一行需求拆成 3 张完整图案</strong><span>修改后只影响对应子行</span></div>
+                <div class="understanding-row"><i>1</i><p>冲锋衣左胸使用图1校徽，去背景并保持原结构。</p><button class="text-button">修改</button></div>
+                <div class="understanding-row"><i>2</i><p>冲锋衣后背：图2标志＋“宜宾学院研究生会志愿者”，下方增加奉献、友爱、互助、进步。</p><button class="text-button">修改</button></div>
+                <div class="understanding-row"><i>3</i><p id="understandingText">POLO 左胸：“研”＋图5＋“2026”，只参考图4的排版位置。</p><button class="text-button" id="editUnderstanding">修改</button></div>
+              </div>
+            </section>
+          </div>
+
+          <div class="artworks">
+            <section class="artwork-row">
+              <div class="artwork-top"><div><small>图案 1</small><strong>719SF 黑色冲锋衣 · 左胸</strong></div><div class="route-control"><label for="route1">处理路线</label><select id="route1" aria-label="图案1处理路线"><option>自动判断</option><option selected>原图保真</option><option>混合处理</option><option>模型生成</option></select></div></div>
+              <div class="recipe"><div class="recipe-image"><img src="task-review-originals/row2-1.png" alt="图1" /><em>图1</em></div><span class="plus">→</span><div class="exact-text"><span>处理动作</span><input value="去背景，保留完整校徽" aria-label="图案1处理动作" /></div><div class="recipe-meta"><b>完整原图案</b>不新增文字</div></div>
+              <div class="row-actions"><div class="scope"><button class="active">取主体</button><button>整张使用</button></div><div class="actions"><button class="btn">上传成品</button><button class="btn primary">处理图案</button></div></div>
+            </section>
+
+            <section class="artwork-row">
+              <div class="artwork-top"><div><small>图案 2</small><strong>719SF 黑色冲锋衣 · 后背</strong></div><div class="route-control"><label for="route2">处理路线</label><select id="route2" aria-label="图案2处理路线"><option>自动判断</option><option>原图保真</option><option selected>混合处理</option><option>模型生成</option></select></div></div>
+              <div class="recipe"><div class="recipe-image"><img src="task-review-originals/row2-2.png" alt="图2" /><em>图2</em></div><span class="plus">＋</span><div class="exact-text"><span>准确文字</span><input value="宜宾学院研究生会志愿者" aria-label="图案2准确文字" /></div><div class="recipe-meta"><b>标志＋文字</b>下方再加价值观</div></div>
+              <div class="row-actions"><div class="scope"><button class="active">取主体</button><button>整张使用</button></div><div class="actions"><button class="btn">上传成品</button><button class="btn primary">处理图案</button></div></div>
+            </section>
+
+            <section class="artwork-row active" id="activeArtwork">
+              <div class="artwork-top"><div><small>图案 3 · 当前编辑</small><strong>B01SD 月牙白 POLO · 左胸</strong></div><div class="route-control"><label for="route3">处理路线</label><select id="route3" aria-label="图案3处理路线"><option selected>自动判断</option><option>原图保真</option><option>混合处理</option><option>模型生成</option></select></div></div>
+              <div class="recipe"><div class="recipe-image"><img id="recipeImage" src="task-review-originals/row2-5.png" alt="当前主要素材" /><em id="recipeLabel">图5</em></div><span class="plus">＋</span><div class="exact-text"><span>准确文字 · 可直接改</span><input id="exactText" value="研　2026" aria-label="准确文字" /></div><div class="recipe-meta"><b>排版参考图4</b>参考图只供理解，不送入生图</div></div>
+              <div class="row-actions"><div class="scope" data-scope><button class="active">取主体</button><button>整张使用</button></div><div class="actions"><button class="btn">上传成品</button><button class="btn primary" id="processButton">处理图案</button></div></div>
+              <div class="candidate" id="candidate"><div class="candidate-preview"><span id="candidateText">研　▣　2026</span></div><div class="candidate-copy"><strong>完整图案候选 · 等待人工确认</strong><p>交互示意，不代表真实模型质量。点击候选才进入大画布做颜色、文字、排版与位置精修。</p><button id="openEditor">点击候选进入精修 →</button></div></div>
+            </section>
+          </div>
+
+          <div class="garments">
+            <section class="garment-row"><div class="field"><label>衣服款式</label><select><option>719SF 黑色冲锋衣</option></select></div><div class="field"><label>制作位置</label><select><option>左胸</option></select></div><button class="mapping">修改对应关系</button></section>
+            <section class="garment-row"><div class="field"><label>衣服款式</label><select><option>719SF 黑色冲锋衣</option></select></div><div class="field"><label>制作位置</label><select><option>后背</option></select></div><button class="mapping">修改对应关系</button></section>
+            <section class="garment-row"><div class="field"><label>衣服款式</label><select><option>B01SD 月牙白 POLO</option></select></div><div class="field"><label>制作位置</label><select><option>左胸</option></select></div><button class="mapping">修改对应关系</button></section>
+          </div>
+        </div>
+      </article>
+
+      <article class="task-group">
+        <div class="task-grid">
+          <header class="task-title"><div class="task-id"><span class="task-number">任务 03</span><strong>李达映700905 · 第2次</strong><span>301SRX-黑色</span></div><span class="pending">待确认 2</span></header>
+          <div class="evidence">
+            <section class="evidence-section"><div class="evidence-label">WPS 素材<b>2 张</b></div><div class="materials"><button class="material"><img src="task-review-originals/row3-1.png" alt="图1 正背面图案素材" /><span>图1</span></button><button class="material"><img src="task-review-originals/row3-2.png" alt="图2 黑色衣服排版参考" /><span>图2</span></button></div></section>
+            <section class="evidence-section"><div class="evidence-label">WPS 需求原文<b>完整展示</b></div><p class="source-text">301SRX-黑色　正面 图一　后背 图一前三排　按照图二做</p></section>
+            <section class="evidence-section"><div class="evidence-label">AI 对整条需求的理解<b>逐条可修改</b></div><div class="understanding"><div class="understanding-head"><strong>一行需求拆成 2 张完整图案</strong><span>正面位置仍需确认</span></div><div class="understanding-row"><i>1</i><p>正面使用图1指定图案，参考图2的排版效果；具体位置待确认。</p><button class="text-button">修改</button></div><div class="understanding-row"><i>2</i><p>后背取图1前三排内容，并按图2的效果排版。</p><button class="text-button">修改</button></div></div></section>
+          </div>
+          <div class="artworks">
+            <section class="artwork-row"><div class="artwork-top"><div><small>图案 1</small><strong>301SRX 黑色 · 正面待确认</strong></div><div class="route-control"><label for="route31">处理路线</label><select id="route31" aria-label="任务03图案1处理路线"><option selected>自动判断</option><option>原图保真</option><option>混合处理</option><option>模型生成</option></select></div></div><div class="recipe"><div class="recipe-image"><img src="task-review-originals/row3-1.png" alt="图1" /><em>图1</em></div><span class="plus">＋</span><div class="exact-text"><span>排版参考</span><input value="按照图2做" aria-label="任务03图案1排版要求" /></div><div class="recipe-meta"><b>自定义取图范围</b>位置待确认</div></div><div class="row-actions"><div class="scope"><button>取主体</button><button class="active">自定义范围</button></div><div class="actions"><button class="btn">上传成品</button><button class="btn primary">处理图案</button></div></div></section>
+            <section class="artwork-row"><div class="artwork-top"><div><small>图案 2</small><strong>301SRX 黑色 · 后背</strong></div><div class="route-control"><label for="route32">处理路线</label><select id="route32" aria-label="任务03图案2处理路线"><option selected>自动判断</option><option>原图保真</option><option>混合处理</option><option>模型生成</option></select></div></div><div class="recipe"><div class="recipe-image"><img src="task-review-originals/row3-1.png" alt="图1" /><em>图1</em></div><span class="plus">→</span><div class="exact-text"><span>取图范围</span><input value="前三排内容" aria-label="任务03图案2取图范围" /></div><div class="recipe-meta"><b>参考图2排版</b>不新增文字</div></div><div class="row-actions"><div class="scope"><button>取主体</button><button class="active">自定义范围</button></div><div class="actions"><button class="btn">上传成品</button><button class="btn primary">处理图案</button></div></div></section>
+          </div>
+          <div class="garments"><section class="garment-row"><div class="field"><label>衣服款式</label><select><option>301SRX 黑色</option></select></div><div class="field"><label>制作位置</label><select><option>请选择正面位置…</option></select></div><button class="mapping">修改对应关系</button></section><section class="garment-row"><div class="field"><label>衣服款式</label><select><option>301SRX 黑色</option></select></div><div class="field"><label>制作位置</label><select><option>后背</option></select></div><button class="mapping">修改对应关系</button></section></div>
+        </div>
+      </article>
+
+      <article class="task-group">
+        <div class="task-grid">
+          <header class="task-title"><div class="task-id"><span class="task-number">任务 04</span><strong>月城雪兔哥哥 · 第1次</strong><span>衣服款式待确认</span></div><span class="pending">待确认 2</span></header>
+          <div class="evidence">
+            <section class="evidence-section"><div class="evidence-label">WPS 素材<b>2 张</b></div><div class="materials"><button class="material"><img src="task-review-originals/row4-1.png" alt="图1 松果出行深色版" /><span>图1</span></button><button class="material"><img src="task-review-originals/row4-2.png" alt="图2 松果出行黄色版" /><span>图2</span></button></div></section>
+            <section class="evidence-section"><div class="evidence-label">WPS 需求原文<b>完整展示</b></div><p class="source-text">后背:图一图二各出一版</p></section>
+            <section class="evidence-section"><div class="evidence-label">AI 对整条需求的理解<b>逐条可修改</b></div><div class="understanding"><div class="understanding-head"><strong>同一位置拆成 2 个版本</strong><span>衣服款式待确认</span></div><div class="understanding-row"><i>1</i><p>后背使用图1的完整图案出一版。</p><button class="text-button">修改</button></div><div class="understanding-row"><i>2</i><p>后背使用图2的完整图案出一版。</p><button class="text-button">修改</button></div></div></section>
+          </div>
+          <div class="artworks">
+            <section class="artwork-row"><div class="artwork-top"><div><small>图案 1 · 图1版</small><strong>衣服款式待确认 · 后背</strong></div><div class="route-control"><label for="route41">处理路线</label><select id="route41" aria-label="任务04图案1处理路线"><option>自动判断</option><option selected>原图保真</option><option>混合处理</option><option>模型生成</option></select></div></div><div class="recipe"><div class="recipe-image"><img src="task-review-originals/row4-1.png" alt="图1" /><em>图1</em></div><span class="plus">→</span><div class="exact-text"><span>使用方式</span><input value="完整图案原样使用" aria-label="任务04图案1使用方式" /></div><div class="recipe-meta"><b>版本 1</b>不新增文字</div></div><div class="row-actions"><div class="scope"><button>取主体</button><button class="active">整张使用</button></div><div class="actions"><button class="btn">上传成品</button><button class="btn primary">处理图案</button></div></div></section>
+            <section class="artwork-row"><div class="artwork-top"><div><small>图案 2 · 图2版</small><strong>衣服款式待确认 · 后背</strong></div><div class="route-control"><label for="route42">处理路线</label><select id="route42" aria-label="任务04图案2处理路线"><option>自动判断</option><option selected>原图保真</option><option>混合处理</option><option>模型生成</option></select></div></div><div class="recipe"><div class="recipe-image"><img src="task-review-originals/row4-2.png" alt="图2" /><em>图2</em></div><span class="plus">→</span><div class="exact-text"><span>使用方式</span><input value="完整图案原样使用" aria-label="任务04图案2使用方式" /></div><div class="recipe-meta"><b>版本 2</b>不新增文字</div></div><div class="row-actions"><div class="scope"><button>取主体</button><button class="active">整张使用</button></div><div class="actions"><button class="btn">上传成品</button><button class="btn primary">处理图案</button></div></div></section>
+          </div>
+          <div class="garments"><section class="garment-row"><div class="field"><label>衣服款式</label><select><option>请选择实际衣服…</option></select></div><div class="field"><label>制作位置</label><select><option>后背</option></select></div><button class="mapping">修改对应关系</button></section><section class="garment-row"><div class="field"><label>衣服款式</label><select><option>请选择实际衣服…</option></select></div><div class="field"><label>制作位置</label><select><option>后背</option></select></div><button class="mapping">修改对应关系</button></section></div>
+        </div>
+      </article>
+
+      <article class="task-group">
+        <div class="task-grid">
+          <header class="task-title"><div class="task-id"><span class="task-number">任务 05</span><strong>tb930638896 · 第1次</strong><span>9600SRX-大红</span></div><span class="pending">待确认 1</span></header>
+          <div class="evidence">
+            <section class="evidence-section"><div class="evidence-label">WPS 素材<b>1 张</b></div><div class="materials"><button class="material"><img src="task-review-originals/row5-1.png" alt="图1 筑屋匠 Logo" /><span>图1</span></button></div></section>
+            <section class="evidence-section"><div class="evidence-label">WPS 需求原文<b>完整展示</b></div><p class="source-text">货号:9600SRX-大红　左胸:图一</p></section>
+            <section class="evidence-section"><div class="evidence-label">AI 对整条需求的理解<b>逐条可修改</b></div><div class="understanding"><div class="understanding-head"><strong>一行需求拆成 1 张完整图案</strong><span>修改后只影响本图案</span></div><div class="understanding-row"><i>1</i><p>左胸使用图1的“筑屋匠” Logo，去背景并保持原结构。</p><button class="text-button">修改</button></div></div></section>
+          </div>
+          <div class="artworks"><section class="artwork-row"><div class="artwork-top"><div><small>图案 1</small><strong>9600SRX 大红 · 左胸</strong></div><div class="route-control"><label for="route51">处理路线</label><select id="route51" aria-label="任务05图案1处理路线"><option>自动判断</option><option selected>原图保真</option><option>混合处理</option><option>模型生成</option></select></div></div><div class="recipe"><div class="recipe-image"><img src="task-review-originals/row5-1.png" alt="图1" /><em>图1</em></div><span class="plus">→</span><div class="exact-text"><span>处理动作</span><input value="去背景，保持原Logo" aria-label="任务05处理动作" /></div><div class="recipe-meta"><b>完整 Logo</b>不新增文字</div></div><div class="row-actions"><div class="scope"><button class="active">取主体</button><button>整张使用</button></div><div class="actions"><button class="btn">上传成品</button><button class="btn primary">处理图案</button></div></div></section></div>
+          <div class="garments"><section class="garment-row"><div class="field"><label>衣服款式</label><select><option>9600SRX 大红</option></select></div><div class="field"><label>制作位置</label><select><option>左胸</option></select></div><button class="mapping">修改对应关系</button></section></div>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <footer class="dock"><div><strong>已确认 2 / 9 张制作图案</strong><span>未处理的图案不阻塞已确认任务。</span></div><button>批量生成已确认的 2 个效果图任务</button></footer>
+
+  <div class="editor-overlay" id="editorOverlay" role="dialog" aria-modal="true" aria-labelledby="editorTitle">
+    <section class="editor"><header class="editor-head"><div><small>生成后唯一保留的弹窗</small><h2 id="editorTitle">完整图案精修</h2></div><button id="closeEditor" aria-label="关闭">×</button></header><div class="editor-body"><div class="canvas"><div class="canvas-art" id="canvasArt">研　▣　2026</div></div><aside class="property-panel"><h3>点击图形或文字再调整</h3><p>大画布需要拖动、缩放、吸附基准线和局部属性面板，因此保留覆盖式空间。</p><div class="rule-box"><b>边界清楚：</b><br />表格里完成理解、选素材、选路线和生成；这里仅修改生成后的图案，不再重复前置表单。</div><button class="btn">调整颜色与排版</button><button class="btn primary">保存并返回任务表</button></aside></div></section>
+  </div>
+
+  <script>
+    const materials = [...document.querySelectorAll('#materials .material')];
+    const recipeImage = document.querySelector('#recipeImage');
+    const recipeLabel = document.querySelector('#recipeLabel');
+    const processButton = document.querySelector('#processButton');
+    const candidate = document.querySelector('#candidate');
+    const candidateText = document.querySelector('#candidateText');
+    const exactText = document.querySelector('#exactText');
+    const editorOverlay = document.querySelector('#editorOverlay');
+    const canvasArt = document.querySelector('#canvasArt');
+
+    materials.forEach((material) => material.addEventListener('click', () => {
+      materials.forEach((item) => item.classList.remove('selected'));
+      material.classList.add('selected');
+      recipeImage.src = material.querySelector('img').src;
+      recipeLabel.textContent = `图${material.dataset.index}`;
+      candidate.classList.remove('show');
+      processButton.textContent = '处理图案';
+    }));
+
+    document.querySelectorAll('.scope button').forEach((button) => button.addEventListener('click', () => {
+      button.parentElement.querySelectorAll('button').forEach((item) => item.classList.remove('active'));
+      button.classList.add('active');
+    }));
+
+    document.querySelectorAll('.route-control select').forEach((select) => select.addEventListener('change', () => {
+      const control = select.closest('.route-control');
+      control.classList.add('manual');
+      control.querySelector('label').textContent = '人工指定';
+    }));
+
+    processButton.addEventListener('click', () => {
+      processButton.disabled = true;
+      processButton.textContent = '正在判断路线并处理…';
+      window.setTimeout(() => {
+        const text = exactText.value.trim() || '待补文字';
+        candidateText.textContent = text.replace(/\s+/g, '　▣　');
+        canvasArt.textContent = candidateText.textContent;
+        candidate.classList.add('show');
+        processButton.disabled = false;
+        processButton.textContent = '重新处理';
+      }, 850);
+    });
+
+    document.querySelector('#editUnderstanding').addEventListener('click', (event) => {
+      const current = document.querySelector('#understandingText');
+      const changed = window.prompt('修改这张完整图案的制作要求', current.textContent);
+      if (changed && changed.trim()) current.textContent = changed.trim();
+      event.currentTarget.blur();
+    });
+
+    document.querySelector('#openEditor').addEventListener('click', () => editorOverlay.classList.add('open'));
+    document.querySelector('#closeEditor').addEventListener('click', () => editorOverlay.classList.remove('open'));
+    editorOverlay.addEventListener('click', (event) => { if (event.target === editorOverlay) editorOverlay.classList.remove('open'); });
+    document.addEventListener('keydown', (event) => { if (event.key === 'Escape') editorOverlay.classList.remove('open'); });
+  </script>
+</body>
+</html>

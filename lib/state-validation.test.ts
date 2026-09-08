@@ -31,6 +31,13 @@ describe('demo state validation', () => {
     expect(() => assertDemoState(validState)).not.toThrow();
   });
 
+  it('accepts freely resized logo widths across the supported input range', () => {
+    for (const widthCm of [.5, 13.81, 100]) {
+      const state = structuredClone(validState); state.tasks[0].placements.leftChest.widthCm = widthCm;
+      expect(() => assertDemoState(state)).not.toThrow();
+    }
+  });
+
   it('fails fast when a task references an unknown product', () => {
     expect(() =>
       assertDemoState({
@@ -79,6 +86,6 @@ describe('demo state validation', () => {
           },
         ],
       }),
-    ).toThrow('widthCm 超出 1-50cm：0');
+    ).toThrow('widthCm 超出 0.5-100cm：0');
   });
 });

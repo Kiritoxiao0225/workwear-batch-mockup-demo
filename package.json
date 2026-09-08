@@ -10,20 +10,44 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check": "npm run lint && npm run typecheck && npm run test"
+    "check": "npm run lint && npm run typecheck && npm run test",
+    "catalog:manifest": "tsx scripts/catalog.ts manifest",
+    "catalog:migrate": "tsx scripts/catalog.ts migrate",
+    "catalog:import": "tsx scripts/catalog.ts import",
+    "catalog:verify": "tsx scripts/catalog.ts verify",
+    "catalog:user": "tsx scripts/catalog.ts create-user",
+    "catalog:dev": "tsx scripts/catalog-dev.ts",
+    "catalog:dev:local": "tsx scripts/catalog-local.ts",
+    "catalog:backup": "tsx scripts/catalog.ts backup",
+    "catalog:restore": "tsx scripts/catalog.ts restore",
+    "test:catalog": "tsx scripts/catalog-integration.ts",
+    "test:production-storage": "tsx scripts/production-storage-integration.ts",
+    "production:dev": "node scripts/start-production-local.mjs"
   },
   "dependencies": {
+    "@paddleocr/paddleocr-js": "^0.4.2",
+    "ali-oss": "^6.23.0",
+    "fast-xml-parser": "5.11.1",
     "jszip": "3.10.1",
+    "meitu-cli": "2.1.21",
     "next": "16.3.1",
+    "pg": "^8.23.0",
+    "postgres": "3.4.9",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "sharp": "0.35.3",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
+    "@types/ali-oss": "^6.23.3",
     "@types/node": "26.2.0",
+    "@types/pg": "^8.23.1",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.3",
+    "embedded-postgres": "^18.4.0-beta.17",
     "eslint": "9.39.5",
     "eslint-config-next": "16.3.1",
+    "tsx": "^4.23.13",
     "typescript": "5.9.3",
     "vitest": "4.1.10"
   }

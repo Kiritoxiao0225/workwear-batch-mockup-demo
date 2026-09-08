@@ -1,0 +1,165 @@
+/* Approved editor layout; scoped to this modal so the production table keeps its styling. */
+.artwork-editor-backdrop.artwork-v2-backdrop { padding: 24px; background: #10271c80; backdrop-filter: blur(5px); }
+.artwork-editor-dialog.artwork-editor-approved {
+  --ink: #24342e; --muted: #748078; --brand: #24654b; --brand-ink: #fff; --brand-soft: #e9f3ee; --line: #e1e7e3;
+  --panel: #fff; --panel-soft: #f3f6f4; --panel-muted: #fbfcfb; --danger: #aa3d33;
+  color: var(--ink); color-scheme: light; background: white; width: min(1460px, 100%); height: min(900px, calc(100dvh - 48px));
+  max-width: 100%; max-height: calc(100dvh - 48px); display: flex; flex-direction: column; overflow: hidden; border: 1px solid #ccd8d0;
+  border-radius: 15px; box-shadow: 0 30px 90px #17302740; font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif; font-size: 14px;
+}
+.artwork-editor-approved.artwork-editor-dialog [hidden] { display: none !important; }
+.artwork-editor-approved.artwork-editor-dialog button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--line); border-radius: 7px; padding: 8px 11px; color: var(--ink); background: #fff; font: inherit; font-size: 12px; line-height: 1.35; cursor: pointer; white-space: nowrap; }
+.artwork-editor-approved.artwork-editor-dialog button:hover:not(:disabled) { border-color: #9eb8aa; background: #f5f9f7; }
+.artwork-editor-approved.artwork-editor-dialog button[aria-pressed='true'] { border-color: #a2c8b4; background: var(--brand-soft); color: var(--brand); }
+.artwork-editor-approved.artwork-editor-dialog button.primary { color: white; background: var(--brand); border-color: var(--brand); font-weight: 600; }
+.artwork-editor-approved.artwork-editor-dialog button.primary:hover:not(:disabled) { background: #194e39; }
+.artwork-editor-approved.artwork-editor-dialog button:disabled { cursor: not-allowed; opacity: .42; }
+.artwork-editor-approved.artwork-editor-dialog svg { width: 17px; height: 17px; flex: none; }
+.artwork-editor-approved.artwork-editor-dialog :focus-visible { outline: 2px solid #74b79b; outline-offset: 2px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-header { display: flex; align-items: center; gap: 15px; padding: 16px 22px; flex: none; border-bottom: 1px solid var(--line); background: white; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-mark { display: grid; place-items: center; flex: none; width: 42px; height: 42px; background: var(--brand-soft); color: var(--brand); border-radius: 11px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-mark svg { width: 23px; height: 23px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-header > div { display: grid; gap: 4px; min-width: 0; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-header > div > span { font-size: 11px; font-weight: 600; color: var(--brand); letter-spacing: .06em; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-header h2 { margin: 0; color: var(--ink); font-size: 21px; line-height: 1.25; font-weight: 650; letter-spacing: -.4px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-context { border-left: 1px solid var(--line); padding-left: 22px; margin: 0 0 0 8px; color: #526b5b; font-size: 12px; line-height: 1.8; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-context span { display: block; color: var(--muted); font-size: 11px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-header > button { margin-left: auto; min-width: 32px; border: none; font-size: 25px; padding: 0; height: 32px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-tools { display: flex; align-items: center; gap: 7px; padding: 11px 20px; min-height: 58px; flex: none; border-bottom: 1px solid var(--line); background: white; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-add { min-width: 122px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-icon { width: 35px; padding: 8px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-divider { height: 23px; width: 1px; background: var(--line); margin: 0 5px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-tool-hint { font-size: 12px; color: var(--muted); margin-left: 5px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-snap { margin-left: auto; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-body { display: grid; grid-template-columns: 222px minmax(220px, 1fr) 306px; flex: 1; min-height: 0; overflow: hidden; background: #fff; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-layers { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid var(--line); background: #fbfcfb; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-panel-title { display: flex; align-items: center; justify-content: space-between; padding: 0 17px; height: 56px; flex: none; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-panel-title strong { font-size: 14px; font-weight: 600; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-panel-title small { font-size: 11px; color: var(--muted); }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-layer-scroll { padding: 0 10px; overflow: auto; flex: 1; min-height: 0; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-layer-list { display: grid; gap: 7px; max-height: none; overflow: visible; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-layer-row { display: flex; border: 1px solid transparent; border-radius: 8px; min-height: 63px; padding: 6px 4px 6px 9px; background: transparent; gap: 3px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-layer-row.active { border-color: #b6d5c4; background: #eaf3ed; box-shadow: inset 3px 0 var(--brand); }
+.artwork-editor-approved.artwork-editor-dialog .artwork-layer-row .artwork-layer-pick { padding: 0; display: flex; justify-content: flex-start; flex: 1; min-width: 0; gap: 8px; text-align: left; border: none; background: transparent; border-radius: 3px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-layer-thumb { width: 36px; height: 38px; flex: none; border-radius: 6px; color: #535172; font-size: 23px; font-weight: 500; background-color: white; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-layer-pick > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; font-weight: 600; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-layer-pick small { display: block; margin-top: 5px; color: var(--muted); font-size: 10px; font-weight: 400; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-layer-row .artwork-layer-visibility { padding: 4px; width: 24px; border: none; background: transparent; color: #557563; flex: none; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-layer-visibility svg { width: 14px; height: 14px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-add-inline { width: 100%; border: 1px dashed #bed1c4; color: var(--brand); background: transparent; margin: 12px 0 0; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-layer-footer { padding: 13px 12px; border-top: 1px solid var(--line); flex: none; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-layer-actions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-layer-actions button { padding: 7px 5px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-requirement { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-requirement summary { cursor: pointer; font-size: 11px; color: #657b6d; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-requirement p { font-size: 11px; line-height: 1.8; white-space: pre-wrap; max-height: 180px; overflow: auto; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-canvas-column { display: flex; flex-direction: column; min-height: 0; min-width: 0; position: relative; padding: 0; border: 0; background: #eef1ef; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-toolbar { height: 51px; display: flex; align-items: center; flex-direction: row; justify-content: flex-start; gap: 12px; padding: 11px 16px; margin: 0; flex: none; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-toolbar strong { color: #4a6052; font-size: 12px; font-weight: 500; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-toolbar .artwork-v2-current { color: var(--muted); font-size: 11px; font-weight: 400; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; margin-left: auto; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-toolbar > button { padding: 5px 8px; font-size: 11px; color: var(--brand); flex: none; margin-left: auto; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-canvas-viewport { display: flex; align-items: center; justify-content: center; flex: 1; min-height: 0; min-width: 0; margin: 10px 24px; overflow: auto; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-artboard { min-width: 0; max-width: none; min-height: 0; aspect-ratio: auto; overflow: hidden; flex: none; margin: auto; border: 1px solid #dde4df; border-radius: 2px; box-shadow: 0 3px 13px #19352612; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-layer { display: block; position: absolute; padding: 0; min-width: 0; min-height: 0; border: 0; border-radius: 0; color: inherit; background: transparent; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-layer:hover:not(:disabled), .artwork-editor-approved.artwork-editor-dialog .artwork-editor-layer[aria-pressed='true'] { border: 0; background: transparent; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-layer.selected { outline: 1px solid #3b9570; outline-offset: 2px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-layer canvas { width: 100%; height: 100%; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-selection-actions { flex: none; min-height: 33px; padding: 5px 10px; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 5px; margin: 0; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-selection-actions p { font-size: 11px; color: #849087; text-align: center; margin: 0; line-height: 1.6; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-selection-actions button { font-size: 11px; padding: 6px 8px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-canvas-footer { display: flex; align-items: center; justify-content: space-between; padding: 10px 15px; flex: none; gap: 10px; border-top: 1px solid #dce4de; background: #f6f8f6; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-backgrounds { display: flex; align-items: center; gap: 6px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-backgrounds span { font-size: 11px; color: var(--muted); margin-right: 3px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-backgrounds button { height: 20px; width: 20px; padding: 0; border-radius: 4px; border: 1px solid #c5d3ca; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-background-white { background: #fff; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-background-dark { background: #242b28; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-background-checker { background: repeating-conic-gradient(#fff 0 25%, #edf0ee 0 50%) 0 0 / 16px 16px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-backgrounds button[aria-pressed='true'] { outline: 2px solid #6b9a82; outline-offset: 2px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-zoom { display: flex; align-items: center; gap: 6px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-zoom button { padding: 5px 8px; min-height: 28px; min-width: 0; font-size: 11px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-zoom span { font-size: 11px; color: var(--muted); font-weight: 400; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-inspector { overflow: auto; padding: 0; border-left: 1px solid var(--line); background: white; min-width: 0; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-property-title { position: sticky; top: 0; z-index: 3; padding: 0 18px; display: flex; align-items: center; gap: 9px; height: 56px; border-bottom: 1px solid var(--line); background: white; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-property-title > span { display: grid; place-items: center; width: 26px; height: 28px; border-radius: 4px; background: #f2f5f3; color: var(--brand); font-size: 20px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-property-title strong { font-size: 14px; font-weight: 600; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-property-title small { margin-left: auto; color: var(--muted); font-size: 10px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-properties { margin: 0; border: 0; padding: 0; min-width: 0; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-property-section { display: grid; gap: 12px; padding: 17px 18px; border-bottom: 1px solid #edf0ee; min-width: 0; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-property-section h3 { font-size: 12px; font-weight: 600; color: #587060; margin: 0; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-property-section label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; color: #65776b; min-width: 0; font-weight: 400; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-property-section label > small { margin-left: auto; font-size: 10px; color: #8a948d; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-properties input:not([type='range']):not([type='color']), .artwork-editor-approved.artwork-editor-dialog .artwork-properties textarea, .artwork-editor-approved.artwork-editor-dialog .artwork-properties select { border: 1px solid #dbe3dd; background: #fbfcfb; border-radius: 6px; color: #263c2e; width: 100%; padding: 8px 10px; min-width: 0; min-height: 34px; font: inherit; font-size: 12px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-properties textarea { resize: vertical; min-height: 90px; font-size: 15px; line-height: 1.65; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-properties input[type='range'] { width: 100%; accent-color: var(--brand); }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-form-row { display: flex; gap: 10px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-form-row > label { flex: 1; min-width: 0; align-content: start; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-number { display: block; width: 100%; position: relative; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-number input { padding-right: 28px !important; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-number small { position: absolute; right: 9px; top: 10px; font-size: 10px; color: #8b9890; pointer-events: none; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-segmented { display: flex; gap: 5px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-segmented button { flex: 1; min-width: 0; padding: 7px 5px; border-radius: 6px; font-size: 12px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-segmented b, .artwork-editor-approved.artwork-editor-dialog .artwork-editor-segmented i, .artwork-editor-approved.artwork-editor-dialog .artwork-editor-segmented u { font-size: 15px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-weight select { width: auto; margin-left: auto; min-width: 96px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-swatches { display: flex; align-items: center; gap: 7px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-swatches button.artwork-v2-swatch { width: 22px; height: 22px; padding: 0; border: 2px solid white; border-radius: 50%; box-shadow: 0 0 0 1px #d4ded7; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-swatches button[aria-pressed='true'] { outline: 2px solid var(--brand); outline-offset: 2px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-swatches input { width: 25px; height: 25px; padding: 0; border: none; background: transparent; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-swatches code { font-family: inherit; font-size: 10px; color: #546459; margin-left: auto; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-help { color: #86948b; font-size: 11px; line-height: 1.8; margin: 0; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-layer-scroll > .artwork-v2-help { margin: 12px 7px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-note { background: #f3f6f4; color: #718278; padding: 10px; border-radius: 7px; font-size: 11px; line-height: 1.8; margin: 0; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-wide { width: 100%; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-layout-options { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-layout-options button { height: 62px; display: flex; flex-direction: column; gap: 7px; font-size: 11px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-layout-options span { font-size: 18px; line-height: 1; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-v2-garment-preview { flex: 1; min-height: 0; overflow: auto; padding: 12px 24px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-error { flex: none; padding: 9px 18px; font-size: 12px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-footer { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 16px; flex: none; min-height: 68px; padding: 12px 20px; background: #fff; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-footer > div:first-child { min-width: 0; gap: 5px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-footer strong { font-size: 12px; font-weight: 500; display: flex; align-items: center; gap: 6px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-footer strong i { width: 6px; height: 6px; background: #6c9e82; border-radius: 50%; display: inline-block; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-footer span { font-size: 11px; color: var(--muted); }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-footer > div:last-child { display: flex; flex: none; gap: 7px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-footer button { font-size: 12px; font-weight: 500; min-height: 37px; }
+.artwork-editor-approved.artwork-editor-dialog .artwork-editor-footer button.primary { min-width: 137px; font-weight: 600; }
+@media (max-width: 1100px) {
+  .artwork-editor-backdrop.artwork-v2-backdrop { padding: 12px; }
+  .artwork-editor-dialog.artwork-editor-approved { width: 100%; height: calc(100dvh - 24px); max-height: calc(100dvh - 24px); }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-editor-body { grid-template-columns: 174px minmax(180px, 1fr) 270px; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-v2-context, .artwork-editor-approved.artwork-editor-dialog .artwork-v2-tool-hint, .artwork-editor-approved.artwork-editor-dialog .artwork-editor-toolbar .artwork-v2-current { display: none; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-v2-property-section { padding: 15px; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-editor-canvas-viewport { margin: 8px 12px; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-editor-footer span { max-width: 320px; display: block; }
+}
+@media (max-width: 760px) {
+  .artwork-editor-approved.artwork-editor-dialog .artwork-editor-body { grid-template-columns: minmax(180px, 1fr) 258px; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-v2-layers { display: none; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-editor-footer span { display: none; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-v2-canvas-footer { padding: 9px; gap: 4px; }
+}
+@media (max-width: 560px) {
+  .artwork-editor-backdrop.artwork-v2-backdrop { padding: 0; }
+  .artwork-editor-dialog.artwork-editor-approved { height: 100dvh; max-height: 100dvh; border-radius: 0; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-editor-header { padding: 11px 13px; min-height: 66px; gap: 10px; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-editor-header h2 { font-size: 18px; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-v2-mark { width: 34px; height: 34px; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-v2-tools { padding: 8px 10px; gap: 4px; min-height: 51px; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-v2-add { min-width: 100px; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-v2-tools .artwork-v2-icon { padding: 6px; width: 30px; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-v2-divider { margin: 0 1px; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-v2-snap { font-size: 10px; padding: 7px 5px; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-editor-body { display: flex; flex-direction: column; overflow: auto; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-editor-canvas-column { flex: 0 0 350px; min-height: 350px; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-editor-toolbar { height: 40px; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-editor-inspector { flex: none; overflow: visible; border-left: 0; border-top: 1px solid var(--line); }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-v2-property-title { position: static; height: 49px; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-v2-property-section { padding: 16px 20px; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-editor-footer { padding: 8px 11px; min-height: 62px; gap: 7px; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-editor-footer > div:last-child { gap: 5px; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-editor-footer button:first-child { display: none; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-editor-footer strong { font-size: 10px; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-editor-footer button { padding: 6px 8px; min-height: 35px; font-size: 11px; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-editor-footer button.primary { min-width: 94px; }
+}
+
+.artwork-v2-spread-labels { display: flex; justify-content: space-between; margin-top: -8px; color: #6b7e73; font-size: 12px; }

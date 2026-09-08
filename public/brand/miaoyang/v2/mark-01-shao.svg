@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-labelledby="title">
+  <title id="title">秒样抽象字标：少</title>
+  <g fill="currentColor">
+    <path d="M18 24h20l-5 12H12l6-12Z"/>
+    <path d="M67 20h22l-7 14H60l7-14Z"/>
+    <path d="M47 13h18L55 51C51 69 38 81 16 89L8 74c17-6 27-14 31-27l8-34Z"/>
+    <path d="M59 53h30l-7 14H55l4-14Z" opacity=".42"/>
+  </g>
+</svg>

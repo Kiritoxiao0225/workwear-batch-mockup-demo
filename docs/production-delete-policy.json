@@ -1,0 +1,15 @@
+{
+  "Version": "1",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["oss:GetBucketVersioning"],
+      "Resource": ["acs:oss:*:*:oss-bucket-mockfits"]
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["oss:GetObject", "oss:GetObjectVersion", "oss:DeleteObject", "oss:DeleteObjectVersion"],
+      "Resource": ["acs:oss:*:*:oss-bucket-mockfits/workwear-mockup/prod/production/objects/*"]
+    }
+  ]
+}

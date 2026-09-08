@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1050" role="img" aria-labelledby="title">
+  <title id="title">秒样 Logo 第二轮方向</title>
+  <defs>
+    <filter id="blue" color-interpolation-filters="sRGB"><feFlood flood-color="#258ff0" result="color"/><feComposite in="color" in2="SourceAlpha" operator="in"/></filter>
+    <filter id="white" color-interpolation-filters="sRGB"><feFlood flood-color="#ffffff" result="color"/><feComposite in="color" in2="SourceAlpha" operator="in"/></filter>
+    <filter id="shadow" x="-20%" y="-30%" width="140%" height="170%"><feDropShadow dx="0" dy="14" stdDeviation="20" flood-color="#193c64" flood-opacity=".08"/></filter>
+  </defs>
+  <rect width="1600" height="1050" fill="#f3f6fa"/>
+  <text x="72" y="84" fill="#101b2a" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="53" font-weight="800">秒样·第二轮</text>
+  <text x="74" y="124" fill="#748195" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="19" letter-spacing="3">抽象符号 · 斜切字标 · 去功能图标化</text>
+
+  <g transform="translate(55 165)">
+    <rect width="1490" height="250" rx="30" fill="white" stroke="#258ff0" stroke-width="5" filter="url(#shadow)"/>
+    <text x="35" y="43" fill="#748195" font-family="Arial, sans-serif" font-size="17" letter-spacing="2">A / SHAO RADICAL</text>
+    <rect x="1365" y="20" width="86" height="32" rx="16" fill="#e8f3ff"/><text x="1408" y="42" text-anchor="middle" fill="#1474cf" font-family="PingFang SC, sans-serif" font-size="15">首选</text>
+    <g transform="translate(75 67) scale(1.45)" fill="#258ff0"><path d="M18 24h20l-5 12H12l6-12Z"/><path d="M67 20h22l-7 14H60l7-14Z"/><path d="M47 13h18L55 51C51 69 38 81 16 89L8 74c17-6 27-14 31-27l8-34Z"/><path d="M59 53h30l-7 14H55l4-14Z" opacity=".42"/></g>
+    <g transform="skewX(-7)"><text x="285" y="151" fill="#258ff0" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="86" font-weight="800" letter-spacing="-8">秒样</text></g>
+    <text x="275" y="193" fill="#101b2a" font-family="Arial, sans-serif" font-size="24" font-weight="800" letter-spacing="7">MIAOYANG</text>
+    <text x="770" y="132" fill="#101b2a" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="23" font-weight="700">抽象“少”字笔画</text>
+    <text x="770" y="171" fill="#748195" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="18" letter-spacing="2">选款 · 放标 · 批量出图</text>
+  </g>
+
+  <g transform="translate(55 445)">
+    <rect width="1490" height="250" rx="30" fill="white" stroke="#dce3eb" stroke-width="2"/>
+    <text x="35" y="43" fill="#748195" font-family="Arial, sans-serif" font-size="17" letter-spacing="2">B / MY WING</text>
+    <g transform="translate(75 67) scale(1.45)" fill="#258ff0"><path d="M11 80 28 18h17l9 31 18-31h18L72 80H55l9-34-19 34H30l-4-34-8 34H11Z"/><path d="M14 25h17l-4 13H8l6-13Z" opacity=".4"/></g>
+    <g transform="skewX(-7)"><text x="285" y="151" fill="#258ff0" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="86" font-weight="800" letter-spacing="-8">秒样</text></g>
+    <text x="275" y="193" fill="#101b2a" font-family="Arial, sans-serif" font-size="24" font-weight="800" letter-spacing="7">MIAOYANG</text>
+    <text x="770" y="132" fill="#101b2a" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="23" font-weight="700">MY 飞翼字母标</text>
+    <text x="770" y="171" fill="#748195" font-family="Arial, sans-serif" font-size="18" letter-spacing="3">BATCH MOCKUP STUDIO</text>
+  </g>
+
+  <g transform="translate(55 725)">
+    <rect width="1490" height="250" rx="30" fill="#258ff0"/>
+    <text x="35" y="43" fill="#cfe8ff" font-family="Arial, sans-serif" font-size="17" letter-spacing="2">C / STREAM S</text>
+    <g transform="translate(75 67) scale(1.45)" fill="white"><path d="M26 17h66l-8 17H34c-5 0-6 6-1 8l38 15c15 6 12 26-5 26H8l8-17h48c5 0 6-5 1-7L27 44c-15-6-14-27-1-27Z"/><path d="M13 24h20l-5 12H8l5-12Z" opacity=".4"/></g>
+    <g transform="skewX(-7)"><text x="285" y="151" fill="white" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="86" font-weight="800" letter-spacing="-8">秒样</text></g>
+    <text x="275" y="193" fill="white" font-family="Arial, sans-serif" font-size="24" font-weight="800" letter-spacing="7">MIAOYANG</text>
+    <text x="770" y="132" fill="white" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="23" font-weight="700">流光 S 纸带标</text>
+    <text x="770" y="171" fill="#cfe8ff" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="18" letter-spacing="3">素材进来 · 样图出去</text>
+  </g>
+</svg>

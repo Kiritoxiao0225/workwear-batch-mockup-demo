@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-labelledby="title">
+  <title id="title">秒样 Logo 方向三：批量样图</title>
+  <defs>
+    <mask id="collar-cut">
+      <rect width="100" height="100" fill="white"/>
+      <path d="M42 41c1.8 5 4.5 7.5 8 7.5s6.2-2.5 8-7.5" fill="black" stroke="black" stroke-width="6" stroke-linecap="round"/>
+    </mask>
+  </defs>
+  <rect x="16" y="18" width="52" height="62" rx="9" fill="currentColor" opacity=".28" transform="rotate(-8 42 49)"/>
+  <rect x="31" y="21" width="54" height="64" rx="10" fill="currentColor" mask="url(#collar-cut)"/>
+  <path d="M44 61h26M44 70h18" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" opacity=".42"/>
+</svg>

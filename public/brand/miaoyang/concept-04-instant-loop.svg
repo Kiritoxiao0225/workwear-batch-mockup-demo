@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-labelledby="title">
+  <title id="title">秒样 Logo 方向四：即时循环</title>
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M77 34A31 31 0 1 0 79 64" stroke-width="9"/>
+    <path d="m67 26 13 5-5 13" stroke-width="8"/>
+    <path d="M50 34v19l13 8" stroke-width="7"/>
+  </g>
+</svg>

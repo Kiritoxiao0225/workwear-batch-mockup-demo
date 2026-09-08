@@ -1,5 +1,7 @@
 export const PLACEMENT_KEYS = [
+  'frontCenter',
   'leftChest',
+  'rightChest',
   'back',
   'leftSleeve',
   'rightSleeve',
@@ -8,6 +10,7 @@ export const PLACEMENT_KEYS = [
 export type PlacementKey = (typeof PLACEMENT_KEYS)[number];
 
 export type LogoPlacement = {
+  catalogPosition?: 'upperBack' | 'backCenter';
   logoUrl: string;
   logoName: string;
   widthCm: number;
@@ -17,6 +20,8 @@ export type LogoPlacement = {
 };
 
 export type MockupTask = {
+  garment?: import('@/lib/production-garment').GarmentBinding;
+  placementDefaults?: import('@/lib/catalog-placement-suggestions').CatalogPlacementPreview;
   id: string;
   productCode: string;
   placements: Partial<Record<PlacementKey, LogoPlacement>>;

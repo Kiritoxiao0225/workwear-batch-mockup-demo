@@ -70,4 +70,10 @@ describe('mockup placement rules', () => {
     expect(center.x).toBeCloseTo(0.4);
     expect(center.y).toBeCloseTo(0.37);
   });
+
+  it('places a full front graphic on the center of the front garment view', () => {
+    const center = placementCenter('frontCenter', { ...placement, offsetX: 0, offsetY: 0 });
+
+    expect(center).toEqual({ x: 0.25, y: 0.48 });
+  });
 });

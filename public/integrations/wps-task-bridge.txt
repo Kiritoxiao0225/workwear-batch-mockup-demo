@@ -1,0 +1,188 @@
+// 在客户原表新建 JS 脚本，将本文件完整粘贴并保存。
+// 无参数运行只检查表结构；不会写入任何记录。
+// 只连接指定数据表；公式状态通过既有“领取任务”更新，不覆盖公式。
+// AirScript 1.0 对嵌套数组回调兼容不完整，读取使用普通循环。
+const TASK_SHEET_NAME = '效果图任务管理';
+const STATUS_FIELD_NAME = ''; // 有多个状态列时填写确切列名，然后保存。
+const PROTOCOL = 'mockup-wps-1';
+const CLAIM_FORMULA = '=IFS(效果图任务管理![@任务要求说明]="","🔵待完善",效果图任务管理![@异常标签]<>"","⚫已取消",效果图任务管理![@领取任务]=0,IF(效果图任务管理![@交付效果图成品]="","🔴待领取","✔已完成"),效果图任务管理![@领取任务]=1,IF(效果图任务管理![@交付效果图成品]="","🟢设计中","✔已完成"))';
+const TASK_COLUMNS = ['任务要求说明', '任务需求说明', '需求说明', '客户旺旺ID', '客户ID', '修改次数', '修改轮次', '商品款式', '款式', '任务素材图片', '素材图片', '素材图'];
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+function recordIds(range) {
+  const identifiers = range.Id;
+  const ids = Array.isArray(identifiers) ? identifiers : [identifiers];
+  for (let index = 0; index < ids.length; index++) assert(typeof ids[index] === 'string' && ids[index].length > 0, '记录 ID 格式异常：' + String(JSON.stringify(identifiers)).slice(0, 300));
+  return ids;
+}
+
+function textAt(sheet, recordId, fieldName) {
+  const value = sheet.RecordRange(recordId, '@' + fieldName).Text;
+  assert(typeof value === 'string', '记录 ' + recordId + '，字段 ' + fieldName + ' 未返回文本');
+  return value;
+}
+
+function recordsAt(sheet, fields, ids, statusField) {
+  const selectors = [];
+  for (let index = 0; index < fields.length; index++) selectors.push('@' + fields[index].name);
+  const range = sheet.RecordRange(ids, selectors);
+  const selectedIds = recordIds(range);
+  assert(JSON.stringify(selectedIds) === JSON.stringify(ids), '目标记录顺序或数量已变化，请重新同步');
+  const texts = JSON.parse(JSON.stringify(range.Text));
+  const cells = range.Value;
+  assert(Array.isArray(texts) && Array.isArray(cells) && texts.length === ids.length && cells.length === ids.length, '批量读取未返回预期行数');
+  const records = [];
+  for (let rowIndex = 0; rowIndex < ids.length; rowIndex++) {
+    const id = ids[rowIndex];
+    try {
+      assert(Array.isArray(texts[rowIndex]) && Array.isArray(cells[rowIndex]) && texts[rowIndex].length === fields.length && cells[rowIndex].length === fields.length, '批量读取未返回预期字段数：' + id);
+      const values = {};
+      const evidence = [];
+      for (let fieldIndex = 0; fieldIndex < fields.length; fieldIndex++) {
+        const field = fields[fieldIndex];
+        if (field.type === 'Attachment' || field.type === 'CellPicture') {
+          const cell = cells[rowIndex][fieldIndex];
+          const attachments = cell == null || cell === '' ? [] : cell.Value;
+          assert(Array.isArray(attachments), '附件格式异常：' + field.name);
+          values[field.name] = [];
+          const attachmentEvidence = [];
+          for (let attachmentIndex = 0; attachmentIndex < attachments.length; attachmentIndex++) {
+            const attachment = attachments[attachmentIndex];
+            const attachmentId = attachment.FileId;
+            assert((typeof attachmentId === 'string' || typeof attachmentId === 'number') && String(attachmentId).length > 0, '附件缺少 FileId：' + id);
+            assert(typeof attachment.LinkUrl === 'string' && attachment.LinkUrl.indexOf('https://') === 0, '附件缺少下载链接：' + id);
+            const fileName = attachment.FileName || String(attachmentId);
+            values[field.name].push({ id: String(attachmentId), fileName: fileName, url: attachment.LinkUrl });
+            attachmentEvidence.push([String(attachmentId), fileName]);
+          }
+          evidence.push([field.id, attachmentEvidence]);
+        } else {
+          const text = texts[rowIndex][fieldIndex];
+          assert(typeof text === 'string', '字段未返回文本：' + field.name);
+          values[field.name] = text;
+          if (!statusField || field.id !== statusField.id) evidence.push([field.id, text]);
+        }
+      }
+      records.push({ id: id, fields: JSON.stringify(values), evidence: JSON.stringify(evidence) });
+    } catch (error) { records.push({ id: id, error: String(error.message || error) }); }
+  }
+  return records;
+}
+
+function readRecord(sheet, fields, recordId, statusField) {
+  const record = recordsAt(sheet, fields, [recordId], statusField)[0];
+  assert(!record.error, record.error);
+  return record;
+}
+
+function main() {
+  const input = Context.argv || {};
+  const action = input.action || 'metadata';
+  assert(['metadata', 'read', 'update-status'].indexOf(action) >= 0, '不支持的操作：' + action);
+  const sheet = Application.Sheets(TASK_SHEET_NAME);
+  assert(sheet.Name === TASK_SHEET_NAME, '数据表名称不匹配');
+  const sheetId = Number(sheet.Id);
+  assert(Number.isSafeInteger(sheetId) && sheetId > 0, '数据表 ID 无效：' + sheet.Id);
+  if (input.sheetId !== undefined) assert(input.sheetId === sheetId, '数据表 ID 已变化，请重新同步');
+  const allFields = [];
+  const descriptors = sheet.FieldDescriptors;
+  for (let index = 1; index <= descriptors.Count; index++) {
+    const descriptor = descriptors.Item(index);
+    const field = { id: String(descriptor.Id), name: descriptor.Name, type: descriptor.Type };
+    assert(typeof field.name === 'string' && typeof field.type === 'string', '字段定义格式异常');
+    allFields.push(field);
+  }
+  const statusCandidates = [];
+  for (let index = 0; index < allFields.length; index++) {
+    const field = allFields[index];
+    if (STATUS_FIELD_NAME ? field.name === STATUS_FIELD_NAME : ['任务状态', '制作状态', '设计状态', '状态'].indexOf(field.name) >= 0) statusCandidates.push(field);
+  }
+  assert(statusCandidates.length <= 1, '发现多个状态列，请配置脚本顶部 STATUS_FIELD_NAME');
+  assert(!STATUS_FIELD_NAME || statusCandidates.length === 1, '未找到指定状态列：' + STATUS_FIELD_NAME);
+  const statusField = statusCandidates[0];
+  if (statusField && statusField.type === 'SingleSelect') {
+    const options = descriptors.Item('@' + statusField.name).Select.Items;
+    assert(Array.isArray(options), '状态单选项格式异常');
+    statusField.data = { items: [] };
+    for (let index = 0; index < options.length; index++) {
+      const option = options[index];
+      assert(typeof option.value === 'string' && option.value.length > 0, '状态选项缺少文本');
+      statusField.data.items.push({ value: option.value });
+    }
+  }
+  if (statusField && statusField.type === 'Formula' && statusField.name === '任务状态'
+      && descriptors.Item('@任务状态').Formula.Formula === CLAIM_FORMULA
+      && descriptors.Item('@领取任务').Type === 'Checkbox') {
+    statusField.data = { workflow: 'claim-checkbox-v1', items: [{ value: '🔴待领取' }, { value: '🟢设计中' }] };
+  }
+  const fields = [];
+  for (let index = 0; index < allFields.length; index++) {
+    const field = allFields[index];
+    if (TASK_COLUMNS.indexOf(field.name) >= 0 || (statusField && field.id === statusField.id)) fields.push(field);
+  }
+  const result = { protocol: PROTOCOL, sheetId: sheetId, sheetName: sheet.Name, fields_schema: fields };
+  if (action === 'metadata') {
+    const count = sheet.RecordRange.Count;
+    assert(Number.isSafeInteger(count) && count >= 0 && count <= 10000, '记录数超出范围：' + count);
+    result.recordIds = count === 0 ? [] : recordIds(sheet.RecordRange('1:' + count));
+    assert(result.recordIds.length === count, '记录数量与 ID 数量不一致，请重新运行');
+    const names = [];
+    for (let index = 0; index < fields.length; index++) names.push(fields[index].name);
+    result.recordManifest = [];
+    if (count === 0) return result;
+    let offset = '';
+    const seenOffsets = {};
+    do {
+      const page = Application.Record.GetRecords({ SheetId: sheetId, PageSize: 1000, Offset: offset, Fields: names });
+      assert(page && Array.isArray(page.records), '原表未返回记录清单');
+      for (let index = 0; index < page.records.length; index++) {
+        const record = page.records[index];
+        assert(typeof record.id === 'string' && record.fields && typeof record.fields === 'object', '原表清单记录格式异常');
+        result.recordManifest.push({ id: record.id, fields: record.fields });
+      }
+      assert(result.recordManifest.length <= 10000, '记录清单超过 10000 条');
+      offset = page.offset || '';
+      assert(typeof offset === 'string' && (!offset || !seenOffsets[offset]), '原表分页游标无效或重复');
+      if (offset) seenOffsets[offset] = true;
+    } while (offset);
+    assert(result.recordManifest.length === count, '同步期间记录数量发生变化，请重新同步');
+    return result;
+  }
+  if (action === 'read') {
+    assert(Array.isArray(input.recordIds) && input.recordIds.length > 0 && input.recordIds.length <= 50, '每次读取 1–50 个记录 ID');
+    for (let index = 0; index < input.recordIds.length; index++) assert(typeof input.recordIds[index] === 'string' && input.recordIds[index].length > 0, '无效的记录 ID');
+    result.records = recordsAt(sheet, fields, input.recordIds, statusField);
+    return result;
+  }
+  const claimWorkflow = statusField && statusField.data && statusField.data.workflow === 'claim-checkbox-v1';
+  assert(statusField && (claimWorkflow || ['SingleSelect', 'SingleLineText', 'MultiLineText', 'Text'].indexOf(statusField.type) >= 0), '没有可写的状态列，或原表公式已变化');
+  assert(input.statusFieldName === statusField.name, '状态列已变化，请重新同步');
+  assert(typeof input.recordId === 'string' && input.recordId.length > 0, '缺少记录 ID');
+  assert(typeof input.expectedStatus === 'string' && typeof input.expectedEvidence === 'string', '缺少写前校验信息');
+  assert(typeof input.status === 'string' && input.status.trim().length > 0 && input.status.length <= 80 && !/[\r\n]/.test(input.status), '状态必须为 1–80 字的单行文字');
+  const nextStatus = input.status.trim();
+  if (statusField.type === 'SingleSelect') {
+    let allowed = false;
+    for (let index = 0; index < statusField.data.items.length; index++) if (statusField.data.items[index].value === nextStatus) allowed = true;
+    assert(allowed, '不允许创建新状态选项：' + nextStatus);
+  }
+  const before = readRecord(sheet, fields, input.recordId, statusField);
+  assert(before.evidence === input.expectedEvidence, 'WPS_SOURCE_CONFLICT: 需求或素材已变化，请重新同步');
+  const currentStatus = textAt(sheet, input.recordId, statusField.name);
+  assert(currentStatus === input.expectedStatus || currentStatus === nextStatus, 'WPS_SOURCE_CONFLICT: 状态已被其他人修改');
+  if (currentStatus !== nextStatus) {
+    if (claimWorkflow) {
+      assert(['🔴待领取', '🟢设计中'].indexOf(currentStatus) >= 0 && ['🔴待领取', '🟢设计中'].indexOf(nextStatus) >= 0, '只能领取或退回未交付任务；完成状态由交付成品决定，取消状态由异常标签决定');
+      sheet.RecordRange(input.recordId, '@领取任务').Value = nextStatus === '🟢设计中' ? 1 : 0;
+    } else sheet.RecordRange(input.recordId, '@' + statusField.name).Value = nextStatus;
+  }
+  const after = readRecord(sheet, fields, input.recordId, statusField);
+  assert(textAt(sheet, input.recordId, statusField.name) === nextStatus && after.evidence === before.evidence, '写入后校验失败，请重新同步核对');
+  result.records = [after];
+  return result;
+}
+
+return main();

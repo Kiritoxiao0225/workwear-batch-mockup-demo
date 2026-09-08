@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="ThmPKFOAIbEglbPLY7PVmo">
+<head data-page-node-id="4suGXpqPvLrM4PvkjDk6g4">
+<meta charset="UTF-8" data-page-node-id="gwKnEvfl0QuGiEM7xNGAYw">
+<meta name="viewport" content="width=device-width, initial-scale=1" data-page-node-id="auyOVsbRfWcSLG9Z7gxU7y">
+<title>任务预检页优化原型 · 卡片流方案</title>
+<style>
+:root{
+  --bg:#F7F6F3; --card:#FFFFFF; --card2:#FAF9F6; --border:rgba(0,0,0,.14); --border2:rgba(0,0,0,.28);
+  --t1:#1A1A18; --t2:#5F5E5A; --t3:#888780; --green:#1D9E75; --green-d:#0F6E56;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--t1);font:400 13px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+.tr-wrap{max-width:980px;margin:0 auto;padding:20px 16px 40px}
+.tr-card,.tr-bar{background:var(--card);border:1px solid var(--border);border-radius:12px}
+.tr-chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;border-radius:999px;padding:2px 9px;white-space:nowrap;font-weight:500}
+.tr-chip i{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
+.tr-btn{border:1px solid var(--border2);background:transparent;border-radius:8px;padding:5px 12px;font:500 12px inherit;font-family:inherit;color:var(--t1);cursor:pointer}
+.tr-btn:hover{border-color:rgba(0,0,0,.45)}
+.tr-btn:disabled{opacity:.45;cursor:not-allowed}
+.tr-btn-p{background:var(--green);border-color:var(--green);color:#fff}
+.tr-mat{width:54px;height:54px;border-radius:8px;overflow:hidden;border:1px solid var(--border);cursor:pointer;flex:none;padding:0;background:var(--card2);position:relative}
+.tr-mat img{width:100%;height:100%;object-fit:cover;display:block}
+.tr-mat b{position:absolute;left:0;right:0;bottom:0;font:500 10px/1.5 inherit;color:#fff;background:rgba(0,0,0,.45);text-align:center}
+.tr-u{border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-top:10px;background:var(--card2)}
+.tr-lb{font-size:11px;color:var(--t3);font-weight:400}
+.tr-raw{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin:0}
+.tr-raw.open{display:block}
+.tr-tab{border:none;background:transparent;border-radius:999px;padding:4px 12px;font:500 12px inherit;font-family:inherit;color:var(--t2);cursor:pointer}
+.tr-tab.on{background:var(--card2);color:var(--t1);border:1px solid var(--border2)}
+select,input{border:1px solid var(--border2);border-radius:8px;padding:5px 8px;font:400 12px inherit;font-family:inherit;background:#fff;color:var(--t1)}
+h1{font-size:15px;font-weight:500;margin:0}
+strong{font-weight:500}
+</style>
+</head>
+<body data-page-node-id="2zblEKvFsAoFiSfg40oXzv">
+<div class="tr-wrap" data-page-node-id="Isehb1zbylS5AaZtKsa6kg">
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px" data-page-node-id="1YKkZVCizpxiCrfRr19q3S">
+    <div data-page-node-id="a7BwnCgWyEnkWBmrdoaJo9">
+      <div style="font-size:11px;color:var(--t3)" data-page-node-id="Sx5QAaICmkeLSs6KY1bvnE">WPS 批量效果图 · 优化原型（卡片流方案）</div>
+      <h1 data-page-node-id="bS4cneIfg7HM0UE7sM84iU">任务预检 · 逐条看图确认</h1>
+    </div>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap" data-page-node-id="uFKhWGdZ4qb6RObvcF8D5B">
+      <span class="tr-chip" style="background:#FAEEDA;color:#854F0B" data-page-node-id="q2Wb4wu2E42rsXCZAQIVJS"><i data-page-node-id="fCEd5EaftqAllF1je8eWE9"></i>本地原图测试素材 · 5 条记录</span>
+      <button class="tr-btn" type="button" data-page-node-id="WofOLxuSqVYIlERc9VCou9">打开原表 ↗</button>
+      <button class="tr-btn" type="button" data-page-node-id="9NzDKo2Pe99UeqZZHHAuqw">重新同步</button>
+    </div>
+  </div>
+
+  <div class="tr-bar" style="padding:10px 14px;margin-bottom:12px;display:flex;align-items:center;gap:14px;flex-wrap:wrap" data-page-node-id="6MAKPI1oWihlgWMaVt3816">
+    <div style="display:flex;align-items:center;gap:8px;min-width:200px;flex:1" data-page-node-id="Lui8p1tk79bWVspacjY9yw">
+      <span style="font-weight:500;font-size:12px" id="tr-prog-text" data-page-node-id="BczOeelmXrTbYmB69Xp0mQ">已确认 1 / 9</span>
+      <div style="flex:1;height:6px;border-radius:99px;background:#ECEAE4;overflow:hidden" data-page-node-id="n8iuBrsgStWcrZdo6y73vZ"><div id="tr-prog-bar" style="height:100%;width:11%;background:var(--green);border-radius:99px;transition:width .3s" data-page-node-id="Bd0w3w5VEn49FTr9j2pajn"></div></div>
+    </div>
+    <div style="display:flex;gap:4px" id="tr-tabs" data-page-node-id="5JrT9ipbNdwUpFqBWUvFzo">
+      <button class="tr-tab on" data-act="tab" data-v="all" type="button" data-page-node-id="sCZGLa1UMhoGfLdNSs6Gbu">全部 9</button>
+      <button class="tr-tab" data-act="tab" data-v="pending" type="button" data-page-node-id="5k6oKqFWG0HOw2zBpcMWSs">待处理 8</button>
+      <button class="tr-tab" data-act="tab" data-v="confirmed" type="button" data-page-node-id="IbSvcTYoADRcB2t2e1pJul">已确认 1</button>
+    </div>
+    <button class="tr-btn" type="button" data-page-node-id="7xvbKeMVCuIFf8trInihQr">重新分析全部任务</button>
+  </div>
+
+  <div id="tr-cards" data-page-node-id="k3SIkdgpRiAIxfh1Mcuw57"></div>
+
+  <div class="tr-bar" style="position:sticky;bottom:8px;padding:10px 14px;display:flex;align-items:center;gap:12px;margin-top:14px" data-page-node-id="nPQMadsbvnuGfsIMIQhWnu">
+    <div style="flex:1" data-page-node-id="qWiMMTtuMYGhrCETLhnvsa">
+      <strong style="font-size:13px" id="tr-gate-text" data-page-node-id="zG9i0guOHRShaWmDThvAjM">已确认 1 / 9 张制作图案</strong>
+      <div style="font-size:11px;color:var(--t3)" id="tr-gate-sub" data-page-node-id="WEfcZB6MgdEJLQQ1nuDBpX">另外 8 张可稍后处理，不阻塞已确认任务</div>
+    </div>
+    <button class="tr-btn tr-btn-p" id="tr-gate-btn" type="button" data-page-node-id="xmMYsmQOqXPQWdLVyihvrM">批量生成已确认的 1 个效果图任务</button>
+  </div>
+
+  <div id="tr-lightbox" style="display:none;position:fixed;inset:0;z-index:50" data-page-node-id="KsQNhRLEgK1G1HfMLqGmjV"></div>
+</div>
+<script>
+(function(){
+var P='../../public/task-review-originals/';
+var DATA=[
+{no:'01',customer:'张海健csj',revision:'第1次',style:'B01SD-活力黑',
+raw:'货号:B01SD-活力黑- 左胸:1+poppy手机数码（logo做绿色的吧） 后背: 字体: 颜色: 工艺: 尺寸:',
+summary:'左胸使用图1 Logo 图形并加文字 poppy手机数码，Logo 做绿色。',
+materials:[{l:'图1',d:'绿底胜利手势 Logo 参考图',img:P+'row1-1.png'}],
+units:[{id:'u1',g:'B01SD 活力黑',v:'左胸 · 版本1',src:0,scope:'去背景',text:'poppy手机数码',note:'',inst:'冲锋衣左胸使用图1校徽，Logo 做绿色，加文字 poppy手机数码。',product:'B01SD · 活力黑',place:'左胸',status:'ready',preview:null,issues:[]}]},
+{no:'02',customer:'王毛毛201012',revision:'第1次',style:'719SF-黑色；B01SD-月牙白-L',
+raw:'货号:719SF-黑色 B01SD-月牙白-L 左胸: 冲锋衣:图一 POLO衫:研+图5+2026【参考图四】 后背: 冲锋衣:宜宾学院研究生会志愿者【做扇形】下面加图二+奉献、友爱、互助、进步',
+summary:'一行包含两款衣服和三个生成单元，不能合并为一张图。',
+materials:[{l:'图1',d:'宜宾学院圆形校徽',img:P+'row2-1.png'},{l:'图2',d:'中国志愿服务标志',img:P+'row2-2.png'},{l:'图3',d:'室内人物场景照片',img:P+'row2-3.png'},{l:'图4',d:'室外人物场景与排版参考照片',img:P+'row2-4.png'},{l:'图5',d:'宜宾学院中英文横版标志',img:P+'row2-5.png'}],
+units:[
+{id:'u2',g:'冲锋衣',v:'左胸 · 版本1',src:0,scope:'去背景',text:'',note:'',inst:'冲锋衣左胸使用图1校徽。',product:'719SF · 黑色',place:'左胸',status:'ready',preview:null,issues:[]},
+{id:'u3',g:'冲锋衣',v:'后背 · 版本1',src:1,scope:'去背景',text:'宜宾学院研究生会志愿者 奉献、友爱、互助、进步',note:'顶部扇形文字，下方放图2',inst:'顶部扇形排“宜宾学院研究生会志愿者”，下方放图2，再加“奉献、友爱、互助、进步”。',product:'719SF · 黑色',place:'后背',status:'process',preview:null,issues:[]},
+{id:'u4',g:'POLO 衫',v:'左胸 · 版本1',src:4,scope:'去背景',text:'研 2026',note:'排版参考图4',inst:'POLO 衫左胸：“研”+图5+“2026”，排版参考图4。',product:'B01SD · 月牙白',place:'左胸',status:'process',preview:null,issues:[]}]},
+{no:'03',customer:'李达映700905',revision:'第2次',style:'301SRX-黑色',
+raw:'301SRX-黑色 正面 图一 后背 图一前三排 按照图二做',
+summary:'正面与后背两个单元；客户只写“正面”，位置需人工选择。',
+materials:[{l:'图1',d:'正背面图案与文字素材',img:P+'row3-1.png'},{l:'图2',d:'黑色衣服排版效果参考',img:P+'row3-2.png'}],
+units:[
+{id:'u5',g:'301SRX 黑色',v:'正面 · 版本1',src:0,scope:'去背景',text:'',note:'',inst:'正面使用图1。',product:'301SRX · 黑色',place:'',status:'issue',preview:null,issues:['客户只写“正面”，不自动猜测左胸，请人工选择位置']},
+{id:'u6',g:'301SRX 黑色',v:'后背 · 版本1',src:0,scope:'自定义',text:'',note:'前三排，排版参考图2',inst:'后背图1前三排，按照图2做。',product:'301SRX · 黑色',place:'后背',status:'process',preview:null,issues:[]}]},
+{no:'04',customer:'月城雪兔哥哥',revision:'第1次',style:'款式待从 WPS 实时记录确认',
+raw:'后背:图一图二各出一版',
+summary:'后背出两个版本，图1 与图2 各一版，保留为两条单元。',
+materials:[{l:'图1',d:'“松果出行 城市出行首选”黄底深色版',img:P+'row4-1.png'},{l:'图2',d:'“松果出行”黄色横版',img:P+'row4-2.png'}],
+units:[
+{id:'u7',g:'待选衣服',v:'后背 · 版本1',src:0,scope:'整图',text:'',note:'',inst:'后背使用图1整版。',product:'',place:'后背',status:'ready',preview:null,issues:[]},
+{id:'u8',g:'待选衣服',v:'后背 · 版本2',src:1,scope:'整图',text:'',note:'',inst:'后背使用图2整版。',product:'',place:'后背',status:'ready',preview:null,issues:[]}]},
+{no:'05',customer:'tb930638896',revision:'第1次',style:'9600SRX-大红',
+raw:'货号:9600SRX-大红 左胸:图一',
+summary:'左胸使用图1 Logo，单单元任务。',
+materials:[{l:'图1',d:'“筑屋匠” Logo 素材',img:P+'row5-1.png'}],
+units:[{id:'u9',g:'9600SRX 大红',v:'左胸 · 版本1',src:0,scope:'去背景',text:'',note:'',inst:'左胸使用图1。',product:'9600SRX · 大红',place:'左胸',status:'confirmed',preview:P+'row5-1.png',issues:[]}]}
+];
+var ST={confirmed:['图案已确认','#E1F5EE','#0F6E56'],ready:['图案待确认','#E6F1FB','#185FA5'],process:['图案未生成','#FAEEDA','#854F0B'],issue:['需人工确认','#FCEBEB','#A32D2D']};
+var filter='all';
+function findUnit(id){for(var i=0;i<DATA.length;i++){for(var j=0;j<DATA[i].units.length;j++){if(DATA[i].units[j].id===id)return DATA[i].units[j];}}return null;}
+function counts(){var c=0,t=0;DATA.forEach(function(r){r.units.forEach(function(u){t++;if(u.status==='confirmed')c++;});});return{c:c,t:t};}
+function chip(u){var s=ST[u.status];return '<span class="tr-chip" style="background:'+s[1]+';color:'+s[2]+'"><i></i>'+s[0]+'</span>';}
+function unitHtml(r,u,idx){
+ var m=r.materials[u.src];
+ var preview=u.preview?'<img src="'+u.preview+'" style="width:100%;height:100%;object-fit:contain" alt="完整制作图案"/>':'<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;border:1px dashed var(--border2);border-radius:8px;color:var(--t3);font-size:11px;text-align:center;padding:4px">'+(u.status==='process'?'图案未生成':'待处理')+'</div>';
+ var recipe='<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'+
+  '<span style="width:30px;height:30px;border-radius:6px;overflow:hidden;flex:none;border:1px solid var(--border)"><img src="'+m.img+'" style="width:100%;height:100%;object-fit:cover" alt="'+m.l+'"/></span>'+
+  '<span class="tr-lb">'+m.l+' · '+u.scope+'</span>'+
+  (u.text?'<span style="color:var(--t3)">＋</span><span class="tr-chip" style="background:#ECEAE4;color:var(--t2)">文字“'+u.text+'”</span>':'')+
+  (u.note?'<span class="tr-lb">参考：'+u.note+'</span>':'')+'</div>';
+ var issues=u.issues.length?'<div style="margin-top:6px">'+u.issues.map(function(x){return '<span class="tr-chip" style="background:#FCEBEB;color:#A32D2D;margin-right:6px">'+x+'</span>';}).join('')+'</div>':'';
+ var acts='';
+ if(u.status==='process')acts='<button class="tr-btn" data-act="prep" data-id="'+u.id+'" type="button">处理图案</button>';
+ if(u.status==='ready')acts='<button class="tr-btn" type="button">调整图案</button><button class="tr-btn tr-btn-p" data-act="confirm" data-id="'+u.id+'" type="button">确认图案</button>';
+ if(u.status==='issue')acts='<button class="tr-btn" type="button" disabled>确认图案</button>';
+ if(u.status==='confirmed')acts='<button class="tr-btn" type="button">查看已确认图案</button>';
+ return '<div class="tr-u">'+
+  '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+
+   '<span class="tr-lb">单元 '+(idx+1)+'</span><strong style="font-size:13px">'+u.g+' · '+u.v+'</strong>'+
+   '<span style="margin-left:auto">'+chip(u)+'</span></div>'+
+  '<div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap">'+
+   '<div style="width:76px;height:76px;flex:none">'+preview+'</div>'+
+   '<div style="flex:1;min-width:220px">'+recipe+
+    '<p style="margin:6px 0 0;font-size:12px;color:var(--t2)">'+u.inst+'</p>'+issues+'</div>'+
+   '<div style="display:flex;flex-direction:column;gap:6px;min-width:150px">'+
+    '<label class="tr-lb">衣服款式<select style="width:100%"><option>'+((u.product||'请选择实际衣服…'))+'</option></select></label>'+
+    '<label class="tr-lb">制作位置<select style="width:100%"><option>'+((u.place||'请选择位置…'))+'</option></select></label>'+
+   '</div>'+
+  '</div>'+
+  '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">'+acts+'</div></div>';
+}
+function render(){
+ var n=counts();
+ document.getElementById('tr-prog-text').textContent='已确认 '+n.c+' / '+n.t;
+ document.getElementById('tr-prog-bar').style.width=Math.round(n.c/n.t*100)+'%';
+ document.getElementById('tr-gate-text').textContent='已确认 '+n.c+' / '+n.t+' 张制作图案';
+ document.getElementById('tr-gate-sub').textContent=(n.t-n.c)>0?'另外 '+(n.t-n.c)+' 张可稍后处理，不阻塞已确认任务':'全部制作图案均已人工确认';
+ document.getElementById('tr-gate-btn').textContent='批量生成已确认的 '+n.c+' 个效果图任务';
+ document.getElementById('tr-gate-btn').disabled=n.c===0;
+ var tabs=document.querySelectorAll('#tr-tabs .tr-tab');
+ tabs[0].textContent='全部 '+n.t;tabs[1].textContent='待处理 '+(n.t-n.c);tabs[2].textContent='已确认 '+n.c;
+ tabs.forEach(function(t){t.classList.toggle('on',t.getAttribute('data-v')===filter);});
+ var html='';
+ DATA.forEach(function(r,ri){
+  var vis=r.units.map(function(u,i){return{u:u,i:i};}).filter(function(x){
+   if(filter==='confirmed')return x.u.status==='confirmed';
+   if(filter==='pending')return x.u.status!=='confirmed';
+   return true;});
+  if(!vis.length)return;
+  var cc=r.units.filter(function(u){return u.status==='confirmed';}).length;
+  html+='<div class="tr-card" style="padding:14px 16px;margin-bottom:12px">'+
+   '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+
+    '<span class="tr-chip" style="background:#ECEAE4;color:var(--t2)">任务 '+r.no+'</span>'+
+    '<strong>'+r.customer+' · '+r.revision+'</strong>'+
+    '<span class="tr-lb">'+r.style+'</span>'+
+    '<span style="margin-left:auto">'+(cc===r.units.length?'<span class="tr-chip" style="background:#E1F5EE;color:#0F6E56">全部已确认</span>':'<span class="tr-chip" style="background:#FAEEDA;color:#854F0B">待确认 '+(r.units.length-cc)+'</span>')+'</span></div>'+
+   '<div style="display:flex;gap:14px;margin-top:10px;flex-wrap:wrap">'+
+    '<div style="display:flex;gap:6px;flex:none">'+r.materials.map(function(m,mi){return '<button class="tr-mat" data-act="mat" data-r="'+ri+'" data-m="'+mi+'" type="button" title="'+m.d+'（点击查看大图）"><img src="'+m.img+'" alt="'+m.l+'"/><b>'+m.l+'</b></button>';}).join('')+'</div>'+
+    '<div style="flex:1;min-width:240px">'+
+     '<div class="tr-lb" style="display:flex;align-items:center;gap:8px">WPS 需求原文<button class="tr-btn" style="padding:1px 8px;font-size:11px" data-act="raw" data-r="'+ri+'" type="button">展开</button></div>'+
+     '<p class="tr-raw" id="tr-raw-'+ri+'" style="font-size:12px;color:var(--t2)">'+r.raw+'</p>'+
+     '<div style="margin-top:6px"><span class="tr-lb">AI 理解：</span><span style="font-size:12px;color:#185FA5">'+r.summary+'</span></div>'+
+    '</div></div>'+
+   vis.map(function(x){return unitHtml(r,x.u,x.i);}).join('')+'</div>';
+ });
+ document.getElementById('tr-cards').innerHTML=html||'<div class="tr-card" style="padding:24px;text-align:center;color:var(--t3)">当前筛选下没有任务</div>';
+}
+document.addEventListener('click',function(e){
+ var t=e.target.closest('[data-act]');if(!t)return;
+ var act=t.getAttribute('data-act');
+ if(act==='tab'){filter=t.getAttribute('data-v');render();}
+ if(act==='confirm'){var u=findUnit(t.getAttribute('data-id'));if(u){u.status='confirmed';render();}}
+ if(act==='prep'){var u2=findUnit(t.getAttribute('data-id'));if(u2){t.disabled=true;t.textContent='正在判断路线并处理…';setTimeout(function(){u2.status='ready';var r=null;DATA.forEach(function(x){if(x.units.indexOf(u2)>=0)r=x;});u2.preview=r.materials[u2.src].img;render();},900);}}
+ if(act==='raw'){var el=document.getElementById('tr-raw-'+t.getAttribute('data-r'));el.classList.toggle('open');t.textContent=el.classList.contains('open')?'收起':'展开';}
+ if(act==='mat'){var r2=DATA[+t.getAttribute('data-r')],m2=r2.materials[+t.getAttribute('data-m')];
+  var lb=document.getElementById('tr-lightbox');
+  lb.style.display='flex';lb.style.alignItems='center';lb.style.justifyContent='center';lb.style.background='rgba(0,0,0,.5)';
+  lb.innerHTML='<div style="max-width:520px;background:#fff;border-radius:12px;padding:14px;text-align:center"><img src="'+m2.img+'" style="max-width:100%;max-height:380px;border-radius:8px" alt="'+m2.l+'"/><p style="margin:10px 0 4px;font-weight:500">'+m2.l+' · '+m2.d+'</p><p style="margin:0 0 10px;font-size:11px;color:#888780">点击任意处关闭</p></div>';
+  lb.onclick=function(){lb.style.display='none';};}
+});
+render();
+})();
+</script>
+</body>
+</html>

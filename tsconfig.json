@@ -33,9 +33,22 @@
     "**/*.ts",
     "**/*.tsx",
     ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts"
+    ".next/dev/types/**/*.ts",
+    ".next-catalog-build/types/**/*.ts",
+    ".next-catalog-build/dev/types/**/*.ts",
+    ".next-catalog/types/**/*.ts",
+    ".next-catalog/dev/types/**/*.ts",
+    ".next-port3000/types/**/*.ts",
+    ".next-port3000/dev/types/**/*.ts",
+    ".next-production-cloud/types/**/*.ts",
+    ".next-production-cloud/dev/types/**/*.ts",
+    ".next-latency-verify/types/**/*.ts",
+    ".next-latency-verify/dev/types/**/*.ts",
+    ".next-workwear-3001/types/**/*.ts",
+    ".next-workwear-3001/dev/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "output"
   ]
 }

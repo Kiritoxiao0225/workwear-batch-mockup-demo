@@ -1,0 +1,79 @@
+import { z } from 'zod';
+import { allowedPositions, boxSchema, emptyStandard, requiredLandmarks, standardSchema, type Box, type PlacementStandard, type PositionKey, type StructureType } from '@/lib/catalog';
+
+// Reference types were checked against the 21 styles in normalized-garments-v1.
+// They supply editable suggestions, never confirmed image understanding.
+const referenceTypes: Record<string, { structure: StructureType; longSleeve?: boolean }> = {
+  '103JJ': { structure: 'apron' }, '2401HT': { structure: 'crewneck' }, '2402立领JSH': { structure: 'jacket', longSleeve: true },
+  '301SRX': { structure: 'polo' }, '3301SRX': { structure: 'polo', longSleeve: true }, '5166ZC': { structure: 'jacket', longSleeve: true },
+  '6片纯棉铜扣XDMY': { structure: 'cap' }, '719SF': { structure: 'jacket', longSleeve: true }, '920CYJD': { structure: 'polo' },
+  '9600SRX': { structure: 'crewneck' }, '9920CYJD': { structure: 'polo', longSleeve: true }, 'B01SD': { structure: 'polo' },
+  'BT6678JSH': { structure: 'polo' }, 'CX8099NS': { structure: 'polo', longSleeve: true }, 'CYJD-889': { structure: 'crewneck' },
+  'JCD33WY': { structure: 'jacket', longSleeve: true }, 'JSH-JSD33': { structure: 'jacket', longSleeve: true },
+  'NS-2288': { structure: 'polo', longSleeve: true }, 'Q200WY': { structure: 'crewneck', longSleeve: true },
+  'ZC-998': { structure: 'polo' }, '韩领8825JSH': { structure: 'polo', longSleeve: true },
+};
+export function catalogReferenceType(namespace: string, styleCode: string) {
+  return namespace === 'normalized-garments-v1' ? referenceTypes[styleCode] ?? { structure: 'unknown' as const } : { structure: 'unknown' as const };
+}
+export const placementPreviewSchema = z.object({
+  assetVersionId: z.uuid(),
+  faces: z.array(z.object({ viewId: z.uuid(), frame: boxSchema.nullable(), specification: standardSchema, basis: z.string() }).strict()),
+}).strict();
+export type CatalogPlacementPreview = z.infer<typeof placementPreviewSchema>;
+
+function position(key: PositionKey, x: number, y: number, width: number, height: number): PlacementStandard['positions'][number] {
+  return { key, anchor: { x: x + width / 2, y: y + height / 2 }, printableArea: { x, y, width, height }, defaultSize: { width: width * .6, height: height * .5 } };
+}
+function exclusion(id: string, label: string, x: number, y: number, width: number, height: number) {
+  return { id, label, area: { x, y, width, height } };
+}
+export function suggestedPlacement(structure: StructureType, face: 'front' | 'back', frame: Box, longSleeve = false): PlacementStandard {
+  const spec = { ...emptyStandard(), structureType: structure, garmentFrame: frame };
+  if (structure === 'unknown') return spec;
+  const landmarkPoints = structure === 'cap' ? [[.5, .08], [.12, .3], [.88, .3], [.5, .8]]
+    : structure === 'apron' ? [[.5, .08], [.28, .1], [.72, .1], [.15, .5], [.85, .5], [.5, .95]]
+      : [[.5, .1], [.26, .17], [.74, .17], [.24, longSleeve ? .4 : .45], [.76, longSleeve ? .4 : .45], [.5, .97]];
+  spec.landmarks = requiredLandmarks(structure).map((mark, i) => ({ ...mark, point: { x: landmarkPoints[i][0], y: landmarkPoints[i][1] } }));
+  if (structure === 'cap') {
+    if (face === 'front') { spec.positions = [position('capFront', .3, .24, .4, .28)]; spec.exclusions = [exclusion('brim', '帽檐避让', .06, .66, .88, .25)]; }
+    return standardSchema.parse(spec);
+  }
+  if (structure === 'apron') {
+    if (face === 'front') spec.positions = [position('apronUpper', .32, .17, .36, .25), position('frontCenter', .25, .46, .5, .36)];
+    // Pocket placement requires a manually selected area; a template cannot locate a real pocket.
+    return standardSchema.parse(spec);
+  }
+  const outerwear = ['jacket', 'shell', 'vest'].includes(structure);
+  if (face === 'back') {
+    const hooded = ['hoodie', 'shell'].includes(structure);
+    spec.exclusions = [exclusion('back-neck', '后领 / 领标避让', .38, .02, .24, .12)];
+    if (hooded) spec.exclusions.push(exclusion('hood', '帽子覆盖范围', .25, .02, .5, .32));
+    spec.positions = [position('upperBack', .28, hooded ? .36 : .22, .44, .13), position('backCenter', .3, hooded ? .54 : .45, .4, .27)];
+  } else {
+    spec.exclusions = [exclusion('neck', '领口 / 领标避让', .35, .02, .3, .18)];
+    if (structure === 'polo') spec.exclusions.push(exclusion('placket', '门襟避让', .465, .18, .07, .25));
+    if (outerwear) spec.exclusions.push(exclusion('zipper', '拉链 / 开襟避让', .475, .17, .05, .81), exclusion('pocket-left', '口袋避让', .2, .6, .17, .23), exclusion('pocket-right', '口袋避让', .63, .6, .17, .23));
+    if (structure === 'hoodie') spec.exclusions.push(exclusion('hood-neck', '帽领覆盖范围', .3, .03, .4, .22), exclusion('kangaroo', '袋鼠兜避让', .25, .62, .5, .23));
+    spec.positions = [position('leftChest', .6, .27, .15, .17), position('rightChest', .25, .27, .15, .17)];
+    if (!outerwear) spec.positions.push(position('frontCenter', .33, structure === 'hoodie' ? .39 : .47, .34, structure === 'hoodie' ? .2 : .27));
+    if (structure !== 'vest') {
+      spec.positions.push(position('leftSleeve', .83, longSleeve || outerwear ? .3 : .26, .12, longSleeve || outerwear ? .19 : .13), position('rightSleeve', .05, longSleeve || outerwear ? .3 : .26, .12, longSleeve || outerwear ? .19 : .13));
+    }
+  }
+  spec.positions = spec.positions.filter(p => allowedPositions(structure, face).includes(p.key));
+  return standardSchema.parse(spec);
+}
+
+export function positionFromImageBox(key: PositionKey, imageBox: Box, garmentFrame: Box): PlacementStandard['positions'][number] {
+  boxSchema.parse(imageBox);
+  boxSchema.parse(garmentFrame);
+  const x = (imageBox.x - garmentFrame.x) / garmentFrame.width;
+  const y = (imageBox.y - garmentFrame.y) / garmentFrame.height;
+  const width = imageBox.width / garmentFrame.width;
+  const height = imageBox.height / garmentFrame.height;
+  if (x < 0 || y < 0 || x + width > 1.000001 || y + height > 1.000001) {
+    throw new Error(`框选区域超出衣服边界：${JSON.stringify(imageBox)}，请在衣服布面内重新框选`);
+  }
+  return position(key, x, y, width, height);
+}

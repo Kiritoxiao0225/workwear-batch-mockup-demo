@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-labelledby="title">
+  <title id="title">秒样 MY 飞翼字母标</title>
+  <path d="M11 80 28 18h17l9 31 18-31h18L72 80H55l9-34-19 34H30l-4-34-8 34H11Z" fill="currentColor"/>
+  <path d="M14 25h17l-4 13H8l6-13Z" fill="currentColor" opacity=".4"/>
+</svg>

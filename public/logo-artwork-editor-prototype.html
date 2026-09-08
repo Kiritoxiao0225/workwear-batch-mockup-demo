@@ -1,0 +1,2941 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2317734d'/%3E%3Cpath d='M19 19h26v7H19zm0 13h26v7H19zm0 13h18v7H19z' fill='white'/%3E%3C/svg%3E" />
+    <title>完整图案精修 · 交互原型</title>
+    <style>
+      :root {
+        --ink-950: #10251b;
+        --ink-800: #203b2e;
+        --ink-600: #50665a;
+        --ink-400: #829188;
+        --forest-700: #145d3f;
+        --forest-600: #17734d;
+        --forest-100: #e7f3ec;
+        --mint-50: #f4f8f5;
+        --paper: #fbfcfa;
+        --white: #ffffff;
+        --line: #d8e2dc;
+        --line-strong: #b7c8bd;
+        --amber-700: #92530c;
+        --amber-100: #fff0d9;
+        --red-600: #bc3a32;
+        --red-100: #fff0ee;
+        --cyan-600: #15746f;
+        --shadow: 0 22px 70px rgba(16, 37, 27, 0.16);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        color: var(--ink-950);
+        background: #eef3ef;
+        font-family:
+          "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui,
+          sans-serif;
+      }
+
+      body {
+        margin: 0;
+        min-width: 1180px;
+        min-height: 100vh;
+        background:
+          linear-gradient(90deg, rgba(20, 93, 63, 0.025) 1px, transparent 1px)
+            0 0 / 28px 28px,
+          #f3f6f3;
+      }
+
+      button,
+      input,
+      select,
+      textarea {
+        font: inherit;
+      }
+
+      button {
+        cursor: pointer;
+      }
+
+      button:focus-visible,
+      input:focus-visible,
+      select:focus-visible,
+      textarea:focus-visible,
+      [tabindex]:focus-visible {
+        outline: 3px solid rgba(23, 115, 77, 0.26);
+        outline-offset: 2px;
+      }
+
+      .app-bar {
+        position: sticky;
+        top: 0;
+        z-index: 30;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 68px;
+        padding: 0 32px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(251, 252, 250, 0.94);
+        backdrop-filter: blur(18px);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .brand-mark {
+        display: grid;
+        width: 38px;
+        height: 38px;
+        place-items: center;
+        border-radius: 10px;
+        background: var(--forest-700);
+        color: white;
+        font-family: "STKaiti", serif;
+        font-size: 22px;
+        font-weight: 800;
+      }
+
+      .brand-title {
+        font-size: 16px;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+      }
+
+      .brand-subtitle {
+        margin-top: 2px;
+        color: var(--ink-400);
+        font-family: "SFMono-Regular", Menlo, monospace;
+        font-size: 10px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .app-nav {
+        display: flex;
+        gap: 4px;
+        padding: 4px;
+        border: 1px solid var(--line);
+        border-radius: 11px;
+        background: #edf2ee;
+      }
+
+      .app-nav span {
+        padding: 8px 14px;
+        border-radius: 8px;
+        color: var(--ink-600);
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .app-nav .active {
+        background: var(--white);
+        color: var(--forest-700);
+        box-shadow: 0 2px 8px rgba(16, 37, 27, 0.07);
+      }
+
+      .page {
+        width: min(1540px, calc(100vw - 56px));
+        margin: 0 auto;
+        padding: 32px 0 96px;
+      }
+
+      .page-heading {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 32px;
+        margin-bottom: 22px;
+      }
+
+      .eyebrow {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+        color: var(--forest-600);
+        font-family: "SFMono-Regular", Menlo, monospace;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+      }
+
+      .eyebrow::before {
+        width: 20px;
+        height: 2px;
+        background: currentColor;
+        content: "";
+      }
+
+      h1 {
+        margin: 0;
+        font-family: "STKaiti", "Songti SC", serif;
+        font-size: 36px;
+        font-weight: 800;
+        letter-spacing: -0.045em;
+      }
+
+      .lead {
+        margin: 8px 0 0;
+        color: var(--ink-600);
+        font-size: 14px;
+      }
+
+      .heading-progress {
+        min-width: 310px;
+        padding: 12px 14px;
+        border-left: 3px solid var(--forest-600);
+        background: rgba(255, 255, 255, 0.68);
+      }
+
+      .progress-line {
+        display: flex;
+        justify-content: space-between;
+        color: var(--ink-600);
+        font-size: 12px;
+      }
+
+      .progress-line strong {
+        color: var(--ink-950);
+        font-size: 13px;
+      }
+
+      .progress-track {
+        height: 5px;
+        margin-top: 9px;
+        overflow: hidden;
+        background: #dfe8e2;
+      }
+
+      .progress-track::before {
+        display: block;
+        width: 22%;
+        height: 100%;
+        background: var(--forest-600);
+        content: "";
+      }
+
+      .rule-strip {
+        display: grid;
+        grid-template-columns: 210px 1fr 230px;
+        align-items: stretch;
+        margin-bottom: 14px;
+        border: 1px solid var(--line-strong);
+        background: var(--white);
+      }
+
+      .rule-strip__title {
+        padding: 14px 16px;
+        border-right: 1px solid var(--line);
+        background: var(--ink-950);
+        color: white;
+      }
+
+      .rule-strip__title strong,
+      .rule-strip__title span {
+        display: block;
+      }
+
+      .rule-strip__title strong {
+        font-size: 13px;
+      }
+
+      .rule-strip__title span {
+        margin-top: 4px;
+        color: #a8c3b5;
+        font-family: "SFMono-Regular", Menlo, monospace;
+        font-size: 9px;
+        letter-spacing: 0.08em;
+      }
+
+      .production-rail {
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+      }
+
+      .rail-step {
+        display: flex;
+        min-width: 0;
+        align-items: center;
+        gap: 7px;
+        color: var(--ink-600);
+        font-size: 11px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      .rail-step:not(:last-child)::after {
+        width: clamp(14px, 3vw, 42px);
+        height: 1px;
+        margin: 0 7px;
+        background: var(--line-strong);
+        content: "";
+      }
+
+      .rail-dot {
+        display: grid;
+        width: 20px;
+        height: 20px;
+        flex: 0 0 20px;
+        place-items: center;
+        border: 1px solid #9ec2ae;
+        border-radius: 50%;
+        background: var(--forest-100);
+        color: var(--forest-700);
+        font-family: "SFMono-Regular", Menlo, monospace;
+        font-size: 9px;
+      }
+
+      .rule-strip__cost {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        padding: 0 16px;
+        border-left: 1px solid var(--line);
+        color: var(--ink-600);
+        font-size: 11px;
+      }
+
+      .rule-strip__cost strong {
+        margin-bottom: 2px;
+        color: var(--forest-700);
+        font-family: "SFMono-Regular", Menlo, monospace;
+        font-size: 12px;
+      }
+
+      .review-table {
+        overflow: hidden;
+        border: 1px solid #9eb4a6;
+        background: var(--white);
+        box-shadow: 0 16px 44px rgba(16, 37, 27, 0.07);
+      }
+
+      .table-head,
+      .task-group {
+        display: grid;
+        grid-template-columns: minmax(0, 56fr) minmax(370px, 29fr) minmax(210px, 15fr);
+      }
+
+      .table-head {
+        min-height: 48px;
+        background: var(--forest-700);
+        color: white;
+      }
+
+      .table-head > div {
+        display: flex;
+        align-items: center;
+        padding: 0 18px;
+        border-right: 1px solid rgba(255, 255, 255, 0.2);
+        font-size: 13px;
+        font-weight: 800;
+      }
+
+      .table-head > div:last-child {
+        border-right: none;
+      }
+
+      .task-group {
+        min-height: 510px;
+        border-top: 8px solid #dce7e0;
+      }
+
+      .task-group:first-of-type {
+        border-top-width: 0;
+      }
+
+      .task-evidence,
+      .artwork-column,
+      .mapping-column {
+        min-width: 0;
+        border-right: 1px solid var(--line-strong);
+      }
+
+      .mapping-column {
+        border-right: none;
+      }
+
+      .task-titlebar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 60px;
+        padding: 0 18px;
+        border-bottom: 1px solid var(--line);
+        background: #edf5f0;
+      }
+
+      .task-title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .task-id {
+        padding: 5px 8px;
+        border: 1px solid #b9d7c6;
+        border-radius: 999px;
+        background: white;
+        color: var(--forest-600);
+        font-family: "SFMono-Regular", Menlo, monospace;
+        font-size: 10px;
+        font-weight: 800;
+      }
+
+      .task-title strong {
+        font-size: 15px;
+      }
+
+      .task-title span:last-child {
+        color: var(--ink-600);
+        font-size: 12px;
+      }
+
+      .status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 9px;
+        border-radius: 999px;
+        color: var(--amber-700);
+        background: var(--amber-100);
+        font-size: 10px;
+        font-weight: 800;
+      }
+
+      .status-pill::before {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+        content: "";
+      }
+
+      .evidence-section {
+        display: grid;
+        grid-template-columns: 150px minmax(0, 1fr);
+        gap: 16px;
+        padding: 16px 18px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .section-kicker {
+        color: var(--ink-400);
+        font-family: "SFMono-Regular", Menlo, monospace;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .section-kicker strong {
+        display: block;
+        margin-top: 4px;
+        color: var(--forest-600);
+        font-size: 11px;
+      }
+
+      .material-card {
+        position: relative;
+        width: 84px;
+        height: 96px;
+        overflow: hidden;
+        border: 1px solid var(--line-strong);
+        background: #f6f8f6;
+      }
+
+      .material-card img {
+        width: 100%;
+        height: 76px;
+        object-fit: cover;
+        object-position: 50% 63%;
+      }
+
+      .material-card span {
+        position: absolute;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        height: 20px;
+        background: #e9f2ec;
+        color: var(--forest-700);
+        font-family: "SFMono-Regular", Menlo, monospace;
+        font-size: 9px;
+        font-weight: 800;
+        line-height: 20px;
+        text-align: center;
+      }
+
+      .raw-copy {
+        margin: 0;
+        color: #34483d;
+        font-size: 12px;
+        line-height: 1.75;
+        white-space: pre-wrap;
+      }
+
+      .ai-understanding {
+        padding: 16px 18px 18px;
+        background: #f3f8f5;
+      }
+
+      .ai-heading {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 10px;
+      }
+
+      .ai-heading strong {
+        color: var(--forest-700);
+        font-size: 12px;
+      }
+
+      .text-button {
+        border: 0;
+        background: transparent;
+        color: var(--forest-600);
+        font-size: 11px;
+        font-weight: 800;
+      }
+
+      .ai-item {
+        display: grid;
+        grid-template-columns: 28px minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: start;
+        padding: 11px 12px;
+        background: white;
+      }
+
+      .ai-index {
+        display: grid;
+        width: 26px;
+        height: 26px;
+        place-items: center;
+        border-radius: 50%;
+        background: var(--forest-600);
+        color: white;
+        font-family: "SFMono-Regular", Menlo, monospace;
+        font-size: 10px;
+        font-weight: 800;
+      }
+
+      .ai-item p {
+        margin: 0;
+        color: #2c4035;
+        font-size: 12px;
+        font-weight: 650;
+        line-height: 1.65;
+      }
+
+      .ai-item small {
+        display: block;
+        margin-top: 4px;
+        color: var(--forest-600);
+        font-family: "SFMono-Regular", Menlo, monospace;
+        font-size: 9px;
+      }
+
+      .artwork-column {
+        display: flex;
+        flex-direction: column;
+        padding: 16px;
+      }
+
+      .artwork-titlebar {
+        display: flex;
+        align-items: start;
+        justify-content: space-between;
+        margin-bottom: 12px;
+      }
+
+      .artwork-titlebar span {
+        color: var(--forest-600);
+        font-family: "SFMono-Regular", Menlo, monospace;
+        font-size: 9px;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .artwork-titlebar h2 {
+        margin: 4px 0 0;
+        font-size: 15px;
+        letter-spacing: -0.02em;
+      }
+
+      .artwork-proof {
+        position: relative;
+        display: grid;
+        min-height: 260px;
+        flex: 1;
+        place-items: center;
+        overflow: hidden;
+        border: 1px solid var(--line-strong);
+        background-color: #f8faf8;
+        background-image:
+          linear-gradient(45deg, #e7ece9 25%, transparent 25%),
+          linear-gradient(-45deg, #e7ece9 25%, transparent 25%),
+          linear-gradient(45deg, transparent 75%, #e7ece9 75%),
+          linear-gradient(-45deg, transparent 75%, #e7ece9 75%);
+        background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+        background-size: 16px 16px;
+      }
+
+      .proof-registration {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        color: var(--ink-400);
+        font-family: "SFMono-Regular", Menlo, monospace;
+        font-size: 8px;
+        letter-spacing: 0.08em;
+      }
+
+      .proof-composition {
+        display: flex;
+        width: 72%;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        color: var(--forest-600);
+      }
+
+      .proof-hand {
+        color: #1c945e;
+        font-family: "Arial Unicode MS", "Segoe UI Symbol", sans-serif;
+        font-size: 102px;
+        font-variant-emoji: text;
+        line-height: 0.92;
+      }
+
+      .proof-text {
+        color: #185b42;
+        font-family: "PingFang SC", sans-serif;
+        font-size: 19px;
+        font-weight: 800;
+        letter-spacing: 1px;
+      }
+
+      .proof-meta {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 10px;
+        color: var(--ink-600);
+        font-size: 10px;
+      }
+
+      .proof-meta strong {
+        color: var(--forest-700);
+      }
+
+      .artwork-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      .btn {
+        display: inline-flex;
+        min-height: 40px;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        border: 1px solid var(--line-strong);
+        border-radius: 7px;
+        background: white;
+        color: var(--ink-800);
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .btn:hover {
+        border-color: var(--forest-600);
+        color: var(--forest-700);
+      }
+
+      .btn.primary {
+        border-color: var(--forest-600);
+        background: var(--forest-600);
+        color: white;
+      }
+
+      .btn.primary:hover {
+        background: #105f3f;
+      }
+
+      .btn.quiet {
+        border-color: transparent;
+        background: #eef3ef;
+      }
+
+      .mapping-column {
+        padding: 18px 16px;
+        background: #fbfcfb;
+      }
+
+      .mapping-label {
+        margin: 0 0 6px;
+        color: var(--ink-400);
+        font-family: "SFMono-Regular", Menlo, monospace;
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .mapping-value {
+        width: 100%;
+        height: 40px;
+        margin-bottom: 15px;
+        padding: 0 11px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: white;
+        color: var(--ink-800);
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .mapping-note {
+        margin: 8px 0 0;
+        padding-top: 12px;
+        border-top: 1px solid var(--line);
+        color: var(--ink-400);
+        font-size: 10px;
+        line-height: 1.6;
+      }
+
+      .next-task {
+        display: grid;
+        grid-template-columns: 56fr 29fr 15fr;
+        min-height: 92px;
+        border-top: 8px solid #dce7e0;
+        background: #fbfcfb;
+      }
+
+      .next-task > div {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 18px;
+        border-right: 1px solid var(--line);
+        color: var(--ink-600);
+        font-size: 11px;
+      }
+
+      .next-task > div:last-child {
+        border-right: 0;
+      }
+
+      .thumb-stack {
+        display: flex;
+      }
+
+      .thumb-stack img {
+        width: 42px;
+        height: 42px;
+        margin-left: -8px;
+        border: 2px solid white;
+        border-radius: 50%;
+        object-fit: cover;
+      }
+
+      .thumb-stack img:first-child {
+        margin-left: 0;
+      }
+
+      .footer-bar {
+        position: fixed;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        z-index: 25;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 66px;
+        padding: 0 32px;
+        border-top: 1px solid var(--line-strong);
+        background: rgba(251, 252, 250, 0.96);
+        box-shadow: 0 -10px 28px rgba(16, 37, 27, 0.06);
+        backdrop-filter: blur(18px);
+      }
+
+      .footer-summary strong {
+        display: block;
+        font-size: 12px;
+      }
+
+      .footer-summary span {
+        color: var(--ink-400);
+        font-size: 10px;
+      }
+
+      .editor-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: rgba(12, 28, 20, 0.74);
+        backdrop-filter: blur(6px);
+      }
+
+      .editor-overlay.open {
+        display: flex;
+      }
+
+      .editor-dialog {
+        display: flex;
+        width: min(1380px, calc(100vw - 48px));
+        height: min(920px, calc(100vh - 48px));
+        min-height: 760px;
+        flex-direction: column;
+        overflow: hidden;
+        border: 1px solid #8ba797;
+        background: var(--paper);
+        box-shadow: var(--shadow);
+      }
+
+      .editor-header {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        min-height: 78px;
+        align-items: center;
+        padding: 14px 18px 14px 22px;
+        border-bottom: 1px solid var(--line);
+        background: white;
+      }
+
+      .editor-titleline {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .editor-titleline h2 {
+        margin: 0;
+        font-family: "STKaiti", "Songti SC", serif;
+        font-size: 23px;
+        letter-spacing: -0.03em;
+      }
+
+      .editor-context {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 7px;
+      }
+
+      .context-chip {
+        padding: 3px 7px;
+        border: 1px solid var(--line);
+        background: #f5f8f6;
+        color: var(--ink-600);
+        font-family: "SFMono-Regular", Menlo, monospace;
+        font-size: 9px;
+      }
+
+      .editor-header-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .icon-btn {
+        display: grid;
+        width: 38px;
+        height: 38px;
+        place-items: center;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: white;
+        color: var(--ink-600);
+        font-size: 17px;
+      }
+
+      .editor-process {
+        display: grid;
+        grid-template-columns: 210px 1fr 245px;
+        min-height: 56px;
+        border-bottom: 1px solid var(--line);
+        background: #eff6f2;
+      }
+
+      .process-statement {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 0 18px;
+        border-right: 1px solid #cadecf;
+        color: var(--forest-700);
+        font-size: 11px;
+        font-weight: 800;
+      }
+
+      .process-statement::before {
+        display: grid;
+        width: 24px;
+        height: 24px;
+        place-items: center;
+        border-radius: 50%;
+        background: var(--forest-600);
+        color: white;
+        content: "✓";
+      }
+
+      .editor-rail {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 0;
+        padding: 0 16px;
+      }
+
+      .editor-rail .rail-step {
+        font-size: 10px;
+      }
+
+      .editor-rule-note {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        padding: 0 16px;
+        border-left: 1px solid #cadecf;
+        color: var(--ink-600);
+        font-size: 10px;
+        line-height: 1.45;
+      }
+
+      .editor-rule-note strong {
+        color: var(--forest-700);
+        font-size: 11px;
+      }
+
+      .editor-body {
+        display: grid;
+        min-height: 0;
+        flex: 1;
+        grid-template-columns: minmax(620px, 1fr) 388px;
+      }
+
+      .canvas-zone {
+        display: flex;
+        min-width: 0;
+        flex-direction: column;
+        border-right: 1px solid var(--line-strong);
+        background: #dfe6e1;
+      }
+
+      .canvas-toolbar {
+        display: flex;
+        min-height: 48px;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 14px;
+        border-bottom: 1px solid var(--line-strong);
+        background: #f7f9f7;
+      }
+
+      .toolbar-group {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .toolbar-btn {
+        min-width: 32px;
+        height: 30px;
+        padding: 0 9px;
+        border: 1px solid transparent;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--ink-600);
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .toolbar-btn:hover,
+      .toolbar-btn.active {
+        border-color: var(--line);
+        background: white;
+        color: var(--forest-700);
+      }
+
+      .canvas-wrap {
+        display: grid;
+        min-height: 0;
+        flex: 1;
+        place-items: center;
+        padding: 24px;
+        overflow: auto;
+      }
+
+      .artboard-frame {
+        position: relative;
+        padding: 18px;
+        background: #cfd9d2;
+        box-shadow: 0 16px 36px rgba(16, 37, 27, 0.13);
+      }
+
+      .artboard-frame::before,
+      .artboard-frame::after {
+        position: absolute;
+        width: 18px;
+        height: 18px;
+        border-color: var(--forest-700);
+        content: "";
+        pointer-events: none;
+      }
+
+      .artboard-frame::before {
+        top: 8px;
+        left: 8px;
+        border-top: 1px solid;
+        border-left: 1px solid;
+      }
+
+      .artboard-frame::after {
+        right: 8px;
+        bottom: 8px;
+        border-right: 1px solid;
+        border-bottom: 1px solid;
+      }
+
+      .artboard {
+        position: relative;
+        width: 660px;
+        height: 520px;
+        overflow: hidden;
+        background-color: white;
+        background-image:
+          linear-gradient(45deg, #ecf0ed 25%, transparent 25%),
+          linear-gradient(-45deg, #ecf0ed 25%, transparent 25%),
+          linear-gradient(45deg, transparent 75%, #ecf0ed 75%),
+          linear-gradient(-45deg, transparent 75%, #ecf0ed 75%);
+        background-position: 0 0, 0 12px, 12px -12px, -12px 0;
+        background-size: 24px 24px;
+        touch-action: none;
+      }
+
+      .center-guide-x,
+      .center-guide-y {
+        position: absolute;
+        z-index: 0;
+        background: rgba(21, 116, 111, 0.22);
+        pointer-events: none;
+      }
+
+      .center-guide-x {
+        top: 50%;
+        right: 0;
+        left: 0;
+        height: 1px;
+      }
+
+      .center-guide-y {
+        top: 0;
+        bottom: 0;
+        left: 50%;
+        width: 1px;
+      }
+
+      .smart-guide {
+        position: absolute;
+        z-index: 7;
+        display: none;
+        background: #0b8f7a;
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.92);
+        pointer-events: none;
+      }
+
+      .smart-guide.visible {
+        display: block;
+      }
+
+      .smart-guide.vertical {
+        top: 0;
+        bottom: 0;
+        width: 1px;
+      }
+
+      .smart-guide.horizontal {
+        right: 0;
+        left: 0;
+        height: 1px;
+      }
+
+      .smart-guide-label {
+        position: absolute;
+        z-index: 8;
+        display: none;
+        max-width: 210px;
+        padding: 5px 7px;
+        border-radius: 4px;
+        background: #103f2d;
+        color: white;
+        box-shadow: 0 4px 12px rgba(16, 37, 27, 0.18);
+        font-family: "SFMono-Regular", Menlo, monospace;
+        font-size: 8px;
+        font-weight: 700;
+        line-height: 1.3;
+        white-space: nowrap;
+        pointer-events: none;
+      }
+
+      .smart-guide-label.visible {
+        display: block;
+      }
+
+      .canvas-element {
+        position: absolute;
+        z-index: 2;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: move;
+        user-select: none;
+      }
+
+      .canvas-element.selected {
+        outline: 1.5px solid var(--cyan-600);
+        outline-offset: 4px;
+      }
+
+      .canvas-element.selected::before,
+      .canvas-element.selected::after {
+        position: absolute;
+        width: 9px;
+        height: 9px;
+        border: 2px solid white;
+        border-radius: 50%;
+        background: var(--cyan-600);
+        box-shadow: 0 0 0 1px var(--cyan-600);
+        content: "";
+      }
+
+      .canvas-element.selected::before {
+        top: -10px;
+        left: -10px;
+      }
+
+      .canvas-element.selected::after {
+        right: -10px;
+        bottom: -10px;
+      }
+
+      #logoElement {
+        top: 88px;
+        left: 205px;
+        width: 250px;
+        height: 224px;
+        color: #188d5a;
+        font-family: "Arial Unicode MS", "Segoe UI Symbol", sans-serif;
+        font-size: 184px;
+        font-variant-emoji: text;
+        line-height: 1;
+        transform-origin: center;
+      }
+
+      .logo-note {
+        position: absolute;
+        top: 30px;
+        left: 32px;
+        font-family: Georgia, serif;
+        font-size: 38px;
+        font-weight: 800;
+      }
+
+      #textElement {
+        top: 330px;
+        left: 178px;
+        min-width: 304px;
+        min-height: 54px;
+        padding: 8px 12px;
+        color: #185b42;
+        font-family: "PingFang SC", sans-serif;
+        font-size: 30px;
+        font-weight: 800;
+        letter-spacing: 1px;
+        line-height: 1.2;
+        white-space: nowrap;
+      }
+
+      .canvas-hint {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 38px;
+        border-top: 1px solid var(--line-strong);
+        background: #f7f9f7;
+        color: var(--ink-400);
+        font-family: "SFMono-Regular", Menlo, monospace;
+        font-size: 9px;
+        letter-spacing: 0.02em;
+      }
+
+      .inspector {
+        min-width: 0;
+        overflow: auto;
+        background: white;
+      }
+
+      .inspector-section {
+        padding: 16px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .inspector-heading {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 10px;
+      }
+
+      .inspector-heading h3 {
+        margin: 0;
+        font-size: 12px;
+        letter-spacing: -0.01em;
+      }
+
+      .inspector-heading span {
+        color: var(--ink-400);
+        font-family: "SFMono-Regular", Menlo, monospace;
+        font-size: 9px;
+      }
+
+      .layer-list {
+        display: grid;
+        gap: 6px;
+      }
+
+      .layer-row {
+        display: grid;
+        grid-template-columns: 34px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 10px;
+        min-height: 48px;
+        padding: 6px 8px;
+        border: 1px solid var(--line);
+        background: #fbfcfb;
+      }
+
+      .layer-row.active {
+        border-color: #72a78a;
+        background: var(--forest-100);
+      }
+
+      .layer-icon {
+        display: grid;
+        width: 32px;
+        height: 32px;
+        place-items: center;
+        background: white;
+        color: var(--forest-700);
+        font-size: 17px;
+        font-weight: 900;
+      }
+
+      .layer-copy strong,
+      .layer-copy span {
+        display: block;
+      }
+
+      .layer-copy strong {
+        font-size: 11px;
+      }
+
+      .layer-copy span {
+        margin-top: 2px;
+        overflow: hidden;
+        color: var(--ink-400);
+        font-size: 9px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .layer-swatch {
+        width: 18px;
+        height: 18px;
+        border: 2px solid white;
+        border-radius: 50%;
+        background: #188d5a;
+        box-shadow: 0 0 0 1px var(--line-strong);
+      }
+
+      .inspector-tabs {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 4px;
+        padding: 4px;
+        background: #eef3ef;
+      }
+
+      .inspector-tab {
+        height: 32px;
+        border: 0;
+        border-radius: 5px;
+        background: transparent;
+        color: var(--ink-600);
+        font-size: 10px;
+        font-weight: 800;
+      }
+
+      .inspector-tab.active {
+        background: white;
+        color: var(--forest-700);
+        box-shadow: 0 1px 5px rgba(16, 37, 27, 0.09);
+      }
+
+      .property-panel {
+        display: none;
+        padding: 16px;
+      }
+
+      .property-panel.active {
+        display: block;
+      }
+
+      .field {
+        margin-bottom: 14px;
+      }
+
+      .field:last-child {
+        margin-bottom: 0;
+      }
+
+      .field-label {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 6px;
+        color: var(--ink-600);
+        font-size: 10px;
+        font-weight: 700;
+      }
+
+      .field-label output {
+        color: var(--forest-700);
+        font-family: "SFMono-Regular", Menlo, monospace;
+        font-size: 9px;
+      }
+
+      .control,
+      .select-control {
+        width: 100%;
+        height: 38px;
+        padding: 0 10px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: white;
+        color: var(--ink-800);
+        font-size: 11px;
+      }
+
+      .range-control {
+        width: 100%;
+        accent-color: var(--forest-600);
+      }
+
+      .preset-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+      }
+
+      .preset {
+        min-height: 54px;
+        padding: 8px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: white;
+        color: var(--ink-600);
+        font-size: 10px;
+        font-weight: 800;
+      }
+
+      .preset:hover,
+      .preset.active {
+        border-color: #70a78a;
+        background: var(--forest-100);
+        color: var(--forest-700);
+      }
+
+      .preset-figure {
+        display: flex;
+        height: 22px;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        margin-bottom: 4px;
+      }
+
+      .preset-figure.vertical {
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .preset-figure i {
+        display: block;
+        width: 14px;
+        height: 14px;
+        background: var(--forest-600);
+      }
+
+      .preset-figure b {
+        display: block;
+        width: 24px;
+        height: 4px;
+        background: var(--ink-600);
+      }
+
+      .segment-control {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 4px;
+      }
+
+      .segment-control button {
+        height: 34px;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        background: white;
+        color: var(--ink-600);
+        font-size: 10px;
+        font-weight: 800;
+      }
+
+      .segment-control button.active {
+        border-color: var(--forest-600);
+        background: var(--forest-100);
+        color: var(--forest-700);
+      }
+
+      .swatches {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+      }
+
+      .swatch {
+        width: 25px;
+        height: 25px;
+        border: 2px solid white;
+        border-radius: 50%;
+        box-shadow: 0 0 0 1px var(--line-strong);
+      }
+
+      .swatch.active {
+        box-shadow:
+          0 0 0 2px white,
+          0 0 0 4px var(--forest-600);
+      }
+
+      .color-input {
+        width: 32px;
+        height: 28px;
+        padding: 0;
+        overflow: hidden;
+        border: 1px solid var(--line-strong);
+        border-radius: 50%;
+        background: transparent;
+      }
+
+      .transform-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 6px;
+      }
+
+      .transform-field span {
+        display: block;
+        margin-bottom: 4px;
+        color: var(--ink-400);
+        font-family: "SFMono-Regular", Menlo, monospace;
+        font-size: 8px;
+      }
+
+      .transform-field input {
+        width: 100%;
+        height: 32px;
+        padding: 0 6px;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        color: var(--ink-800);
+        font-family: "SFMono-Regular", Menlo, monospace;
+        font-size: 9px;
+      }
+
+      .free-cost-note {
+        margin: 0 16px 16px;
+        padding: 10px 11px;
+        border-left: 3px solid var(--forest-600);
+        background: #f1f7f3;
+        color: var(--ink-600);
+        font-size: 10px;
+        line-height: 1.55;
+      }
+
+      .free-cost-note strong {
+        color: var(--forest-700);
+      }
+
+      .editor-footer {
+        display: flex;
+        min-height: 72px;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 18px;
+        border-top: 1px solid var(--line-strong);
+        background: white;
+      }
+
+      .verification {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        color: var(--ink-600);
+        font-size: 10px;
+      }
+
+      .verification-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--amber-700);
+        box-shadow: 0 0 0 4px var(--amber-100);
+      }
+
+      .verification.pass .verification-dot {
+        background: var(--forest-600);
+        box-shadow: 0 0 0 4px var(--forest-100);
+      }
+
+      .editor-footer-actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      .toast {
+        position: fixed;
+        right: 24px;
+        bottom: 88px;
+        z-index: 200;
+        min-width: 280px;
+        padding: 13px 15px;
+        border-left: 4px solid var(--forest-600);
+        background: var(--ink-950);
+        color: white;
+        box-shadow: var(--shadow);
+        opacity: 0;
+        transform: translateY(12px);
+        transition: 180ms ease;
+        pointer-events: none;
+      }
+
+      .toast.show {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      .toast strong,
+      .toast span {
+        display: block;
+      }
+
+      .toast strong {
+        font-size: 12px;
+      }
+
+      .toast span {
+        margin-top: 3px;
+        color: #b7c9bf;
+        font-size: 10px;
+      }
+
+      @media (max-height: 850px) {
+        .editor-dialog {
+          height: calc(100vh - 24px);
+          min-height: 720px;
+        }
+
+        .artboard {
+          width: 580px;
+          height: 440px;
+        }
+
+        #logoElement {
+          top: 55px;
+          left: 165px;
+        }
+
+        #textElement {
+          top: 300px;
+          left: 142px;
+        }
+      }
+
+      @media (max-width: 1180px) {
+        body {
+          min-width: 0;
+        }
+
+        .app-nav,
+        .rule-strip,
+        .next-task {
+          display: none;
+        }
+
+        .page {
+          width: calc(100vw - 28px);
+        }
+
+        .page-heading {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .heading-progress {
+          width: 100%;
+        }
+
+        .table-head {
+          display: none;
+        }
+
+        .task-group {
+          display: block;
+        }
+
+        .task-evidence,
+        .artwork-column,
+        .mapping-column {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+
+        .editor-overlay {
+          padding: 0;
+        }
+
+        .editor-dialog {
+          width: 100vw;
+          height: 100vh;
+          min-height: 0;
+        }
+
+        .editor-process {
+          grid-template-columns: 1fr;
+        }
+
+        .editor-rail,
+        .editor-rule-note {
+          display: none;
+        }
+
+        .editor-body {
+          display: block;
+          overflow: auto;
+        }
+
+        .canvas-zone {
+          min-height: 620px;
+          border-right: 0;
+        }
+
+        .inspector {
+          overflow: visible;
+        }
+      }
+
+      /* V6: the editor is a contextual modal on top of the unchanged task table. */
+      body {
+        min-width: 980px;
+        background: #eef2ef;
+      }
+
+      .app-bar {
+        height: 58px;
+        padding: 0 24px;
+      }
+
+      .page {
+        width: min(1580px, calc(100vw - 40px));
+        padding: 20px 0 42px;
+      }
+
+      .page-heading {
+        align-items: center;
+        margin-bottom: 14px;
+      }
+
+      .page-heading h1 {
+        font-family: inherit;
+        font-size: 24px;
+        letter-spacing: -0.03em;
+      }
+
+      .page-heading .lead {
+        margin-top: 4px;
+        font-size: 12px;
+      }
+
+      .page-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .sync-state {
+        color: var(--ink-600);
+        font-size: 11px;
+      }
+
+      .sync-state::before {
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        margin-right: 6px;
+        border-radius: 50%;
+        background: var(--forest-600);
+        content: "";
+      }
+
+      .task-group {
+        min-height: 448px;
+      }
+
+      .artwork-proof {
+        min-height: 232px;
+      }
+
+      .editor-overlay {
+        padding: 18px;
+        background: rgba(9, 24, 16, 0.68);
+      }
+
+      .editor-dialog {
+        width: min(1280px, calc(100vw - 36px));
+        height: min(840px, calc(100vh - 36px));
+        min-height: 700px;
+        border: 1px solid #91aa9b;
+        border-radius: 14px;
+      }
+
+      .editor-titleline h2 {
+        font-family: inherit;
+        font-size: 20px;
+      }
+
+      .editor-process {
+        display: flex;
+        min-height: 48px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        padding: 0 20px;
+        background: #edf6f1;
+      }
+
+      .editor-instruction {
+        color: var(--ink-800);
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .editor-instruction strong {
+        margin-right: 8px;
+        color: var(--forest-700);
+      }
+
+      .editor-cost {
+        color: var(--forest-700);
+        font-family: "SFMono-Regular", Menlo, monospace;
+        font-size: 9px;
+        white-space: nowrap;
+      }
+
+      .editor-body {
+        grid-template-columns: minmax(600px, 1fr) 360px;
+      }
+
+      .canvas-wrap {
+        padding: 18px;
+      }
+
+      .artboard-frame {
+        padding: 14px;
+      }
+
+      .artboard-selection-hint {
+        position: absolute;
+        z-index: 5;
+        top: 14px;
+        left: 50%;
+        padding: 6px 10px;
+        border: 1px solid rgba(20, 93, 63, 0.18);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.9);
+        color: var(--ink-600);
+        font-size: 9px;
+        transform: translateX(-50%);
+        pointer-events: none;
+      }
+
+      .inspector-context {
+        position: sticky;
+        z-index: 4;
+        top: 0;
+        display: grid;
+        grid-template-columns: 38px minmax(0, 1fr);
+        gap: 10px;
+        align-items: center;
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--line);
+        background: white;
+      }
+
+      .context-indicator {
+        display: grid;
+        width: 38px;
+        height: 38px;
+        place-items: center;
+        border-radius: 9px;
+        background: var(--forest-100);
+        color: var(--forest-700);
+        font-size: 18px;
+        font-weight: 900;
+      }
+
+      .selection-copy strong,
+      .selection-copy span {
+        display: block;
+      }
+
+      .selection-copy strong {
+        font-size: 12px;
+      }
+
+      .selection-copy span {
+        margin-top: 3px;
+        color: var(--ink-400);
+        font-size: 9px;
+        line-height: 1.45;
+      }
+
+      .property-panel {
+        padding: 16px;
+      }
+
+      .property-panel::before {
+        display: block;
+        margin-bottom: 14px;
+        color: var(--forest-700);
+        font-family: "SFMono-Regular", Menlo, monospace;
+        font-size: 9px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      #layoutPanel::before { content: "Overall layout"; }
+      #logoPanel::before { content: "Logo graphic"; }
+      #textPanel::before { content: "Exact text"; }
+
+      .transform-section[hidden] {
+        display: none;
+      }
+
+      .text-style-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+      }
+
+      .text-style-button {
+        min-height: 34px;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        background: white;
+        color: var(--ink-600);
+        font-size: 10px;
+        font-weight: 800;
+      }
+
+      .text-style-button.active {
+        border-color: var(--forest-600);
+        background: var(--forest-100);
+        color: var(--forest-700);
+      }
+
+      .arc-controls[hidden] {
+        display: none;
+      }
+
+      .arc-preset-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 5px;
+        margin-top: 8px;
+      }
+
+      .arc-preset-row button {
+        height: 30px;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        background: white;
+        color: var(--ink-600);
+        font-size: 9px;
+        font-weight: 800;
+      }
+
+      #textElement .arc-character {
+        display: inline-block;
+        min-width: 0.18em;
+        transform-origin: 50% 100%;
+        transition: transform 120ms ease;
+      }
+
+      .selection-tip {
+        margin: 0 16px 16px;
+        padding: 10px 11px;
+        border: 1px dashed #a9c6b5;
+        background: #f6faf7;
+        color: var(--ink-600);
+        font-size: 10px;
+        line-height: 1.55;
+      }
+
+      .editor-footer {
+        min-height: 68px;
+      }
+
+      .material-viewer {
+        position: fixed;
+        inset: 0;
+        z-index: 240;
+        display: none;
+        place-items: center;
+        padding: 28px;
+        background: rgba(9, 24, 16, 0.82);
+      }
+
+      .material-viewer.open {
+        display: grid;
+      }
+
+      .material-viewer figure {
+        position: relative;
+        max-width: min(860px, 90vw);
+        max-height: 88vh;
+        margin: 0;
+        padding: 16px;
+        border-radius: 12px;
+        background: white;
+        box-shadow: var(--shadow);
+      }
+
+      .material-viewer img {
+        display: block;
+        max-width: 100%;
+        max-height: calc(88vh - 68px);
+        object-fit: contain;
+      }
+
+      .material-viewer figcaption {
+        margin-top: 10px;
+        color: var(--ink-600);
+        font-size: 11px;
+      }
+
+      .material-viewer .icon-btn {
+        position: absolute;
+        z-index: 2;
+        top: 10px;
+        right: 10px;
+      }
+
+      @media (max-width: 1180px) {
+        body {
+          min-width: 0;
+        }
+
+        .editor-dialog {
+          width: 100vw;
+          height: 100vh;
+          border: 0;
+          border-radius: 0;
+        }
+
+        .editor-process {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 2px;
+          padding: 9px 14px;
+        }
+
+        .editor-body {
+          display: grid;
+          grid-template-columns: minmax(620px, 1fr) 340px;
+          overflow: auto;
+        }
+
+        .canvas-zone {
+          min-height: 620px;
+          border-right: 1px solid var(--line-strong);
+        }
+
+        .inspector {
+          overflow: auto;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="app-bar">
+      <div class="brand">
+        <div class="brand-mark">衣</div>
+        <div>
+          <div class="brand-title">工作服效果图</div>
+          <div class="brand-subtitle">Artwork proofing system</div>
+        </div>
+      </div>
+      <nav class="app-nav" aria-label="主导航">
+        <span>商品素材库</span>
+        <span>Logo 智能处理</span>
+        <span class="active">任务预检</span>
+        <span>批量效果图</span>
+      </nav>
+    </header>
+
+    <main class="page">
+      <div class="page-heading">
+        <div>
+          <div class="eyebrow">WPS task review</div>
+          <h1>任务预检</h1>
+          <p class="lead">一条 WPS 记录保持一行；原始素材、需求原文、AI 理解和完整图案在同一行核对。</p>
+        </div>
+        <div class="page-actions">
+          <span class="sync-state">已读取 5 条 WPS 记录</span>
+          <button class="btn">重新同步</button>
+        </div>
+      </div>
+
+      <section class="review-table" aria-label="WPS 任务审核表">
+        <div class="table-head">
+          <div>任务理解区 · 原始证据与 AI 理解</div>
+          <div>完整制作图案</div>
+          <div>衣服与位置</div>
+        </div>
+
+        <article class="task-group">
+          <section class="task-evidence">
+            <div class="task-titlebar">
+              <div class="task-title">
+                <span class="task-id">任务 01</span>
+                <strong>张海健csj · 第1次</strong>
+                <span>B01SD 活力黑</span>
+              </div>
+              <span class="status-pill">待调整 1</span>
+            </div>
+
+            <div class="evidence-section">
+              <div class="section-kicker">WPS 素材<strong>1 张原始图</strong></div>
+              <button class="material-card" id="materialButton" aria-label="查看图1高清大图">
+                <img src="./task-review-originals/row1-1.png" alt="图1 手势素材" />
+                <span>图1 · 原图</span>
+              </button>
+            </div>
+
+            <div class="evidence-section">
+              <div class="section-kicker">WPS 需求原文<strong>完整展示</strong></div>
+              <p class="raw-copy">货号：B01SD-活力黑　左胸：1+poppy手机数码（logo做绿色的吧）　后背：字体：颜色：工艺：尺寸：</p>
+            </div>
+
+            <div class="ai-understanding">
+              <div class="ai-heading">
+                <strong>AI 对整条需求的理解</strong>
+                <button class="text-button">修改理解</button>
+              </div>
+              <div class="ai-item">
+                <span class="ai-index">1</span>
+                <div>
+                  <p>左胸使用图1中的手势图形，只去掉绿色背景；保留音符、手势内部细节和其他前景元素。Logo 改为绿色，下方添加准确文字“poppy手机数码”。</p>
+                  <small>图1 · 只去背景 · Logo 绿色 · 图上字下 · 透明 PNG</small>
+                </div>
+                <button class="text-button">修改</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="artwork-column">
+            <div class="artwork-titlebar">
+              <div>
+                <span>完整图案 01</span>
+                <h2>B01SD 活力黑 · 左胸</h2>
+              </div>
+              <span class="status-pill" id="tableArtworkStatus">已生成 · 待调整</span>
+            </div>
+
+            <button class="artwork-proof" data-open-editor aria-label="打开完整图案调整弹窗">
+              <span class="proof-registration">透明图案 / Logo 与文字可分别调整</span>
+              <div class="proof-composition" id="tablePreview" aria-hidden="true">
+                <div class="proof-hand" id="tablePreviewLogo">✌︎</div>
+                <div class="proof-text" id="tablePreviewText">poppy手机数码</div>
+              </div>
+            </button>
+            <div class="proof-meta">
+              <span><strong>点击图案进入调整</strong></span>
+              <span>Logo / 文字 / 整体排版</span>
+            </div>
+            <button class="btn primary" data-open-editor style="width: 100%; margin-top: 12px">调整完整图案</button>
+          </section>
+
+          <aside class="mapping-column">
+            <p class="mapping-label">衣服款式</p>
+            <select class="mapping-value" aria-label="衣服款式">
+              <option>B01SD 活力黑</option>
+            </select>
+            <p class="mapping-label">制作位置</p>
+            <select class="mapping-value" aria-label="制作位置">
+              <option>左胸</option>
+              <option>右胸</option>
+              <option>后背</option>
+            </select>
+            <p class="mapping-note">衣服款式和位置仍在任务表中修改；弹窗只调整最终要印到衣服上的完整图案。</p>
+          </aside>
+        </article>
+
+        <div class="next-task" aria-label="下一条任务预览">
+          <div><span class="task-id">任务 02</span><strong>王毛毛201012 · 第1次</strong><span>719SF 黑色 / B01SD 月牙白</span></div>
+          <div><div class="thumb-stack"><img src="./task-review-originals/row2-1.png" alt="图1" /><img src="./task-review-originals/row2-2.png" alt="图2" /><img src="./task-review-originals/row2-5.png" alt="图5" /></div><span>3 个完整图案</span></div>
+          <div><span class="status-pill">继续审核</span></div>
+        </div>
+      </section>
+    </main>
+
+    <div class="editor-overlay" id="editorOverlay" role="dialog" aria-modal="true" aria-labelledby="editorTitle">
+      <section class="editor-dialog">
+        <header class="editor-header">
+          <div>
+            <div class="editor-titleline">
+              <span class="task-id">任务 01</span>
+              <h2 id="editorTitle">调整完整图案 · B01SD 活力黑 · 左胸</h2>
+              <span class="status-pill">已生成 · 可调整</span>
+            </div>
+            <div class="editor-context">
+              <span class="context-chip">图1主体</span>
+              <span class="context-chip">只去绿色背景</span>
+              <span class="context-chip">Logo 绿色</span>
+              <span class="context-chip">文字 poppy手机数码</span>
+              <span class="context-chip">图上字下</span>
+            </div>
+          </div>
+          <div class="editor-header-actions">
+            <button class="icon-btn" title="查看原始需求">⌁</button>
+            <button class="icon-btn" id="closeEditor" aria-label="关闭编辑器">×</button>
+          </div>
+        </header>
+
+        <div class="editor-process">
+          <div class="editor-instruction"><strong>直接点画布</strong>点 Logo 改图形，点文字改文字，点空白调整整体排版。</div>
+          <div class="editor-cost">普通调整不调用模型 · 不会重画 Logo</div>
+        </div>
+
+        <div class="editor-body">
+          <section class="canvas-zone">
+            <div class="canvas-toolbar">
+              <div class="toolbar-group">
+                <button class="toolbar-btn" id="undoButton" title="撤销">↶</button>
+                <button class="toolbar-btn" id="redoButton" title="重做">↷</button>
+                <span style="width: 1px; height: 18px; background: var(--line)"></span>
+                <button class="toolbar-btn active">编辑结果</button>
+                <button class="toolbar-btn" id="sourcePreviewButton">查看原图</button>
+              </div>
+              <div class="toolbar-group">
+                <button class="toolbar-btn active" id="snapToggle" type="button" aria-pressed="true" title="拖动时吸附画布中心以及另一个元素的中心和边缘">吸附：开</button>
+                <span style="width: 1px; height: 18px; background: var(--line)"></span>
+                <button class="toolbar-btn" id="zoomOut">−</button>
+                <button class="toolbar-btn" id="zoomLabel">100%</button>
+                <button class="toolbar-btn" id="zoomIn">＋</button>
+                <button class="toolbar-btn" id="fitCanvas">适应画布</button>
+              </div>
+            </div>
+
+            <div class="canvas-wrap">
+              <div class="artboard-frame" id="artboardFrame">
+                <div class="artboard" id="artboard" aria-label="完整图案编辑画布">
+                  <div class="artboard-selection-hint">点选 Logo、文字或空白区域</div>
+                  <div class="center-guide-x"></div>
+                  <div class="center-guide-y"></div>
+                  <div class="smart-guide vertical" id="smartGuideVertical"></div>
+                  <div class="smart-guide horizontal" id="smartGuideHorizontal"></div>
+                  <div class="smart-guide-label" id="smartGuideLabel"></div>
+                  <div class="canvas-element" id="logoElement" data-layer="logo" tabindex="0" aria-label="Logo 图形图层，可拖动">✌︎<span class="logo-note">♪</span></div>
+                  <div class="canvas-element" id="textElement" data-layer="text" tabindex="0" aria-label="文字图层，可拖动">poppy手机数码</div>
+                </div>
+              </div>
+            </div>
+            <div class="canvas-hint">拖拽移动 · 自动吸附画布中心与 Logo/文字边缘 · 基准线显示吸附距离 · 方向键微调</div>
+          </section>
+
+          <aside class="inspector" aria-label="图案属性面板">
+            <div class="inspector-context" aria-live="polite">
+              <div class="context-indicator" id="contextIndicator">◎</div>
+              <div class="selection-copy">
+                <strong id="contextTitle">整体图案</strong>
+                <span id="contextDescription">当前未选中单个元素，可调整 Logo 与文字的整体关系。</span>
+              </div>
+            </div>
+
+            <section class="property-panel active" id="layoutPanel">
+              <div class="field">
+                <div class="field-label"><span>排版预设</span><output>当前：图上字下</output></div>
+                <div class="preset-grid">
+                  <button class="preset active" data-layout="vertical"><span class="preset-figure vertical"><i></i><b></b></span>图上字下</button>
+                  <button class="preset" data-layout="horizontal"><span class="preset-figure"><i></i><b></b></span>图左字右</button>
+                  <button class="preset" data-layout="horizontal-reverse"><span class="preset-figure"><b></b><i></i></span>字左图右</button>
+                  <button class="preset" data-layout="free"><span class="preset-figure"><i style="transform: rotate(-8deg)"></i><b style="transform: translateY(5px)"></b></span>自由排版</button>
+                </div>
+              </div>
+              <div class="field">
+                <div class="field-label"><span>图文间距</span><output id="gapOutput">18 px</output></div>
+                <input class="range-control" id="gapRange" type="range" min="0" max="96" value="18" />
+              </div>
+              <div class="field">
+                <div class="field-label"><span>整体对齐</span></div>
+                <div class="segment-control" id="groupAlignment"><button>左对齐</button><button class="active">居中</button><button>右对齐</button></div>
+              </div>
+              <button class="btn quiet" id="centerGroup" style="width: 100%">整体居中到透明画布</button>
+            </section>
+
+            <section class="property-panel" id="logoPanel">
+              <div class="field">
+                <div class="field-label"><span>Logo 颜色</span><output id="logoColorOutput">#188D5A</output></div>
+                <div class="swatches" data-color-target="logo">
+                  <button class="swatch active" style="background: #188d5a" data-color="#188d5a" aria-label="绿色"></button>
+                  <button class="swatch" style="background: #103f2d" data-color="#103f2d" aria-label="深绿色"></button>
+                  <button class="swatch" style="background: #0b57a3" data-color="#0b57a3" aria-label="蓝色"></button>
+                  <button class="swatch" style="background: #c3292d" data-color="#c3292d" aria-label="红色"></button>
+                  <button class="swatch" style="background: #151a17" data-color="#151a17" aria-label="黑色"></button>
+                  <input class="color-input" id="logoColor" type="color" value="#188d5a" aria-label="自定义 Logo 颜色" />
+                </div>
+              </div>
+              <div class="field">
+                <div class="field-label"><span>Logo 大小</span><output id="logoScaleOutput">100%</output></div>
+                <input class="range-control" id="logoScale" type="range" min="50" max="160" value="100" />
+              </div>
+              <div class="field">
+                <div class="field-label"><span>旋转</span><output id="logoRotationOutput">0°</output></div>
+                <input class="range-control" id="logoRotation" type="range" min="-30" max="30" value="0" />
+              </div>
+              <button class="btn quiet" id="restoreLogoColor" style="width: 100%">恢复模型处理后的原色</button>
+            </section>
+
+            <section class="property-panel" id="textPanel">
+              <div class="field">
+                <div class="field-label"><span>准确文字</span><output>逐字验收</output></div>
+                <input class="control" id="exactText" value="poppy手机数码" />
+              </div>
+              <div class="field">
+                <div class="field-label"><span>字体</span><output>参考 Cata 字体能力</output></div>
+                <select class="select-control" id="fontFamily">
+                  <option value="PingFang SC">苹方 · 中黑</option>
+                  <option value="STKaiti">华文楷体 · 手写感</option>
+                  <option value="Songti SC">宋体 · 品牌感</option>
+                  <option value="Arial">Arial · 简洁无衬线</option>
+                </select>
+              </div>
+              <div class="field">
+                <div class="field-label"><span>字号</span><output id="fontSizeOutput">30 px</output></div>
+                <input class="range-control" id="fontSize" type="range" min="16" max="64" value="30" />
+              </div>
+              <div class="field">
+                <div class="field-label"><span>文字颜色</span><output id="textColorOutput">#185B42</output></div>
+                <div class="swatches" data-color-target="text">
+                  <button class="swatch active" style="background: #185b42" data-color="#185b42" aria-label="深绿色"></button>
+                  <button class="swatch" style="background: #188d5a" data-color="#188d5a" aria-label="绿色"></button>
+                  <button class="swatch" style="background: #0b57a3" data-color="#0b57a3" aria-label="蓝色"></button>
+                  <button class="swatch" style="background: #c3292d" data-color="#c3292d" aria-label="红色"></button>
+                  <button class="swatch" style="background: #151a17" data-color="#151a17" aria-label="黑色"></button>
+                  <input class="color-input" id="textColor" type="color" value="#185b42" aria-label="自定义文字颜色" />
+                </div>
+              </div>
+              <div class="field">
+                <div class="field-label"><span>字间距</span><output id="letterSpacingOutput">1 px</output></div>
+                <input class="range-control" id="letterSpacing" type="range" min="-2" max="16" value="1" />
+              </div>
+              <div class="field">
+                <div class="field-label"><span>字形</span></div>
+                <div class="text-style-row">
+                  <button class="text-style-button active" id="textWeightButton" aria-pressed="true"><strong>B</strong> 粗体</button>
+                  <button class="text-style-button" id="textItalicButton" aria-pressed="false"><em>I</em> 斜体</button>
+                  <button class="text-style-button" id="textUnderlineButton" aria-pressed="false"><u>U</u> 下划线</button>
+                </div>
+              </div>
+              <div class="field">
+                <div class="field-label"><span>对齐</span></div>
+                <div class="segment-control" id="textAlignment"><button>左</button><button class="active">中</button><button>右</button></div>
+              </div>
+              <div class="field">
+                <div class="field-label"><span>文字变形</span><output id="arcModeOutput">无</output></div>
+                <div class="segment-control" id="arcModeControl">
+                  <button class="active" data-arc-mode="none">无</button>
+                  <button data-arc-mode="up">上弧</button>
+                  <button data-arc-mode="down">下弧</button>
+                </div>
+              </div>
+              <div class="field arc-controls" id="arcControls" hidden>
+                <div class="field-label"><span>弯曲程度</span><output id="arcBendOutput">35</output></div>
+                <input class="range-control" id="arcBend" type="range" min="0" max="100" value="35" />
+                <div class="arc-preset-row">
+                  <button data-arc-bend="35">轻弧</button>
+                  <button data-arc-bend="70">招牌</button>
+                  <button data-arc-bend="100">半圆</button>
+                </div>
+              </div>
+            </section>
+
+            <section class="inspector-section transform-section" id="transformSection" hidden>
+              <div class="inspector-heading"><h3>选中元素位置</h3><span id="selectedLayerLabel">Logo 图形</span></div>
+              <div class="transform-grid">
+                <label class="transform-field"><span>X</span><input id="positionX" type="number" value="205" /></label>
+                <label class="transform-field"><span>Y</span><input id="positionY" type="number" value="88" /></label>
+                <label class="transform-field"><span>W</span><input id="positionW" type="number" value="250" disabled /></label>
+                <label class="transform-field"><span>H</span><input id="positionH" type="number" value="224" disabled /></label>
+              </div>
+            </section>
+
+            <p class="selection-tip"><strong>操作规则：</strong>拖动元素改位置；右侧只显示当前选中对象的设置。换色、字体和排版均为确定性编辑。</p>
+          </aside>
+        </div>
+
+        <footer class="editor-footer">
+          <div class="verification" id="verificationStatus"><span class="verification-dot"></span><span><strong>准确文字待核对</strong> · 当前文字“poppy手机数码”</span></div>
+          <div class="editor-footer-actions">
+            <button class="btn" id="cancelEditorButton">取消</button>
+            <button class="btn" id="restoreGeneratedButton">恢复生成结果</button>
+            <button class="btn primary" id="saveArtworkButton">保存调整并返回任务表</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
+    <div class="material-viewer" id="materialViewer" role="dialog" aria-modal="true" aria-label="图1高清大图">
+      <figure>
+        <button class="icon-btn" id="closeMaterialViewer" aria-label="关闭高清大图">×</button>
+        <img src="./task-review-originals/row1-1.png" alt="图1 手势素材高清大图" />
+        <figcaption>图1 · WPS 原始素材 · 仅用于核对素材来源</figcaption>
+      </figure>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"><strong></strong><span></span></div>
+
+    <script>
+      const overlay = document.getElementById("editorOverlay");
+      const artboard = document.getElementById("artboard");
+      const logoElement = document.getElementById("logoElement");
+      const textElement = document.getElementById("textElement");
+      const toast = document.getElementById("toast");
+      const materialViewer = document.getElementById("materialViewer");
+      const smartGuideVertical = document.getElementById("smartGuideVertical");
+      const smartGuideHorizontal = document.getElementById("smartGuideHorizontal");
+      const smartGuideLabel = document.getElementById("smartGuideLabel");
+      let selectedLayer = "layout";
+      let artboardZoom = 1;
+      let dragState = null;
+      let arcMode = "none";
+      let arcBend = 35;
+      let snapEnabled = true;
+
+      const layerElements = { logo: logoElement, text: textElement };
+      const SNAP_THRESHOLD = 8;
+
+      function hideSmartGuides() {
+        smartGuideVertical.classList.remove("visible");
+        smartGuideHorizontal.classList.remove("visible");
+        smartGuideLabel.classList.remove("visible");
+      }
+
+      function getVisualMetrics(element) {
+        const elementRect = element.getBoundingClientRect();
+        const artboardRect = artboard.getBoundingClientRect();
+        const computed = getComputedStyle(element);
+        const cssLeft = parseFloat(element.style.left || computed.left);
+        const cssTop = parseFloat(element.style.top || computed.top);
+        const visualLeft = (elementRect.left - artboardRect.left) / artboardZoom;
+        const visualTop = (elementRect.top - artboardRect.top) / artboardZoom;
+        return {
+          width: elementRect.width / artboardZoom,
+          height: elementRect.height / artboardZoom,
+          offsetX: visualLeft - cssLeft,
+          offsetY: visualTop - cssTop,
+        };
+      }
+
+      function chooseClosestSnap(candidates) {
+        return candidates
+          .filter((candidate) => candidate.distance <= SNAP_THRESHOLD)
+          .sort((a, b) => a.distance - b.distance)[0] || null;
+      }
+
+      function snapDraggedElement(rawLeft, rawTop, movingElement) {
+        if (!snapEnabled) return { left: rawLeft, top: rawTop, xSnap: null, ySnap: null };
+
+        const moving = getVisualMetrics(movingElement);
+        const otherElement = movingElement === logoElement ? textElement : logoElement;
+        const other = getVisualMetrics(otherElement);
+        const otherComputed = getComputedStyle(otherElement);
+        const otherCssLeft = parseFloat(otherElement.style.left || otherComputed.left);
+        const otherCssTop = parseFloat(otherElement.style.top || otherComputed.top);
+        const otherVisualLeft = otherCssLeft + other.offsetX;
+        const otherVisualTop = otherCssTop + other.offsetY;
+        const movingVisualLeft = rawLeft + moving.offsetX;
+        const movingVisualTop = rawTop + moving.offsetY;
+        const otherName = movingElement === logoElement ? "文字" : "Logo";
+
+        const xCandidates = [
+          {
+            position: artboard.clientWidth / 2,
+            movingAnchor: movingVisualLeft + moving.width / 2,
+            label: "画布垂直中心",
+          },
+          {
+            position: otherVisualLeft,
+            movingAnchor: movingVisualLeft,
+            label: `${otherName}左边缘`,
+          },
+          {
+            position: otherVisualLeft + other.width / 2,
+            movingAnchor: movingVisualLeft + moving.width / 2,
+            label: `${otherName}水平中心`,
+          },
+          {
+            position: otherVisualLeft + other.width,
+            movingAnchor: movingVisualLeft + moving.width,
+            label: `${otherName}右边缘`,
+          },
+        ].map((candidate) => ({
+          ...candidate,
+          distance: Math.abs(candidate.movingAnchor - candidate.position),
+          delta: candidate.position - candidate.movingAnchor,
+        }));
+
+        const yCandidates = [
+          {
+            position: artboard.clientHeight / 2,
+            movingAnchor: movingVisualTop + moving.height / 2,
+            label: "画布水平中心",
+          },
+          {
+            position: otherVisualTop,
+            movingAnchor: movingVisualTop,
+            label: `${otherName}上边缘`,
+          },
+          {
+            position: otherVisualTop + other.height / 2,
+            movingAnchor: movingVisualTop + moving.height / 2,
+            label: `${otherName}垂直中心`,
+          },
+          {
+            position: otherVisualTop + other.height,
+            movingAnchor: movingVisualTop + moving.height,
+            label: `${otherName}下边缘`,
+          },
+        ].map((candidate) => ({
+          ...candidate,
+          distance: Math.abs(candidate.movingAnchor - candidate.position),
+          delta: candidate.position - candidate.movingAnchor,
+        }));
+
+        const xSnap = chooseClosestSnap(xCandidates);
+        const ySnap = chooseClosestSnap(yCandidates);
+        return {
+          left: rawLeft + (xSnap?.delta || 0),
+          top: rawTop + (ySnap?.delta || 0),
+          xSnap,
+          ySnap,
+        };
+      }
+
+      function showSmartGuides(snapResult, movingElement) {
+        hideSmartGuides();
+        if (!snapResult.xSnap && !snapResult.ySnap) return;
+
+        if (snapResult.xSnap) {
+          smartGuideVertical.style.left = `${snapResult.xSnap.position}px`;
+          smartGuideVertical.classList.add("visible");
+        }
+        if (snapResult.ySnap) {
+          smartGuideHorizontal.style.top = `${snapResult.ySnap.position}px`;
+          smartGuideHorizontal.classList.add("visible");
+        }
+
+        const labels = [];
+        if (snapResult.xSnap) labels.push(`${snapResult.xSnap.label} · ${Math.round(snapResult.xSnap.distance)}px`);
+        if (snapResult.ySnap) labels.push(`${snapResult.ySnap.label} · ${Math.round(snapResult.ySnap.distance)}px`);
+        smartGuideLabel.textContent = labels.join(" / ");
+        const labelLeft = Math.min(artboard.clientWidth - 205, Math.max(8, (snapResult.xSnap?.position ?? movingElement.offsetLeft) + 9));
+        const labelTop = Math.min(artboard.clientHeight - 30, Math.max(8, (snapResult.ySnap?.position ?? movingElement.offsetTop) + 9));
+        smartGuideLabel.style.left = `${labelLeft}px`;
+        smartGuideLabel.style.top = `${labelTop}px`;
+        smartGuideLabel.classList.add("visible");
+      }
+
+      function renderTextLayer(value = document.getElementById("exactText").value) {
+        const characters = Array.from(value || " ");
+        textElement.replaceChildren();
+        textElement.dataset.exactText = value;
+        const amplitude = 8 + arcBend * 0.34;
+        const denominator = Math.max(1, (characters.length - 1) / 2);
+
+        characters.forEach((character, index) => {
+          const span = document.createElement("span");
+          const normalized = (index - (characters.length - 1) / 2) / denominator;
+          span.className = "arc-character";
+          span.textContent = character === " " ? "\u00a0" : character;
+          if (arcMode !== "none") {
+            const baseCurve = amplitude * (normalized * normalized - 1);
+            const y = arcMode === "up" ? baseCurve : -baseCurve;
+            const rotation = (arcMode === "up" ? 1 : -1) * normalized * arcBend * 0.34;
+            span.style.transform = `translateY(${y.toFixed(1)}px) rotate(${rotation.toFixed(1)}deg)`;
+          }
+          textElement.appendChild(span);
+        });
+
+        textElement.style.paddingTop = arcMode === "up" ? `${Math.round(amplitude + 8)}px` : "8px";
+        textElement.style.paddingBottom = arcMode === "down" ? `${Math.round(amplitude + 8)}px` : "8px";
+        textElement.style.minHeight = arcMode === "none" ? "54px" : `${Math.round(54 + amplitude)}px`;
+        document.getElementById("arcModeOutput").textContent = ({ none: "无", up: "上弧", down: "下弧" })[arcMode];
+        document.getElementById("arcBendOutput").textContent = String(arcBend);
+        document.getElementById("arcControls").hidden = arcMode === "none";
+      }
+
+      function showToast(title, detail) {
+        toast.querySelector("strong").textContent = title;
+        toast.querySelector("span").textContent = detail;
+        toast.classList.add("show");
+        window.clearTimeout(showToast.timer);
+        showToast.timer = window.setTimeout(() => toast.classList.remove("show"), 2600);
+      }
+
+      function openEditor() {
+        overlay.classList.add("open");
+        document.body.style.overflow = "hidden";
+        selectLayer("layout");
+        history.replaceState(null, "", "#editor");
+        window.requestAnimationFrame(() => document.getElementById("closeEditor").focus());
+      }
+
+      function closeEditor() {
+        hideSmartGuides();
+        overlay.classList.remove("open");
+        document.body.style.overflow = "";
+        history.replaceState(null, "", location.pathname);
+      }
+
+      function updateTransformFields() {
+        const transformSection = document.getElementById("transformSection");
+        if (selectedLayer === "layout") {
+          transformSection.hidden = true;
+          return;
+        }
+        transformSection.hidden = false;
+        const element = layerElements[selectedLayer];
+        document.getElementById("positionX").value = Math.round(parseFloat(element.style.left || getComputedStyle(element).left));
+        document.getElementById("positionY").value = Math.round(parseFloat(element.style.top || getComputedStyle(element).top));
+        document.getElementById("positionW").value = Math.round(element.offsetWidth);
+        document.getElementById("positionH").value = Math.round(element.offsetHeight);
+        document.getElementById("selectedLayerLabel").textContent = selectedLayer === "logo" ? "Logo 图形" : "准确文字";
+      }
+
+      function selectLayer(layer) {
+        selectedLayer = layer;
+        Object.entries(layerElements).forEach(([name, element]) => element.classList.toggle("selected", name === layer));
+        openPanel(layer);
+        const context = {
+          layout: ["◎", "整体图案", "未选中单个元素，可调整 Logo 与文字的整体排版。"],
+          logo: ["✦", "Logo 图形", "拖动改位置；右侧可换色、缩放和旋转。"],
+          text: ["T", "准确文字", "拖动改位置；右侧可改文字、字体、字号和颜色。"],
+        }[layer];
+        document.getElementById("contextIndicator").textContent = context[0];
+        document.getElementById("contextTitle").textContent = context[1];
+        document.getElementById("contextDescription").textContent = context[2];
+        updateTransformFields();
+      }
+
+      function openPanel(name) {
+        document.querySelectorAll(".property-panel").forEach((panel) => panel.classList.remove("active"));
+        document.getElementById(`${name}Panel`).classList.add("active");
+      }
+
+      document.querySelectorAll("[data-open-editor]").forEach((button) => button.addEventListener("click", openEditor));
+      document.getElementById("closeEditor").addEventListener("click", closeEditor);
+      overlay.addEventListener("mousedown", (event) => {
+        if (event.target === overlay) closeEditor();
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape") return;
+        if (materialViewer.classList.contains("open")) {
+          materialViewer.classList.remove("open");
+          return;
+        }
+        if (overlay.classList.contains("open")) closeEditor();
+      });
+
+      artboard.addEventListener("pointerdown", (event) => {
+        if (event.target === artboard || event.target.classList.contains("center-guide-x") || event.target.classList.contains("center-guide-y")) {
+          selectLayer("layout");
+        }
+      });
+      Object.entries(layerElements).forEach(([layer, element]) => {
+        element.addEventListener("pointerdown", (event) => {
+          event.stopPropagation();
+          hideSmartGuides();
+          selectLayer(layer);
+          element.setPointerCapture(event.pointerId);
+          const computed = getComputedStyle(element);
+          dragState = {
+            element,
+            pointerId: event.pointerId,
+            startX: event.clientX,
+            startY: event.clientY,
+            left: parseFloat(element.style.left || computed.left),
+            top: parseFloat(element.style.top || computed.top),
+          };
+        });
+        element.addEventListener("pointermove", (event) => {
+          if (!dragState || dragState.pointerId !== event.pointerId) return;
+          const rawLeft = Math.max(0, Math.min(artboard.clientWidth - dragState.element.offsetWidth, dragState.left + (event.clientX - dragState.startX) / artboardZoom));
+          const rawTop = Math.max(0, Math.min(artboard.clientHeight - dragState.element.offsetHeight, dragState.top + (event.clientY - dragState.startY) / artboardZoom));
+          const snapResult = snapDraggedElement(rawLeft, rawTop, dragState.element);
+          const nextLeft = Math.max(0, Math.min(artboard.clientWidth - dragState.element.offsetWidth, snapResult.left));
+          const nextTop = Math.max(0, Math.min(artboard.clientHeight - dragState.element.offsetHeight, snapResult.top));
+          dragState.element.style.left = `${nextLeft}px`;
+          dragState.element.style.top = `${nextTop}px`;
+          showSmartGuides(snapResult, dragState.element);
+          updateTransformFields();
+        });
+        element.addEventListener("pointerup", () => {
+          dragState = null;
+          hideSmartGuides();
+        });
+        element.addEventListener("pointercancel", () => {
+          dragState = null;
+          hideSmartGuides();
+        });
+        element.addEventListener("keydown", (event) => {
+          if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+          event.preventDefault();
+          const step = event.shiftKey ? 10 : 1;
+          const computed = getComputedStyle(element);
+          let left = parseFloat(element.style.left || computed.left);
+          let top = parseFloat(element.style.top || computed.top);
+          if (event.key === "ArrowLeft") left -= step;
+          if (event.key === "ArrowRight") left += step;
+          if (event.key === "ArrowUp") top -= step;
+          if (event.key === "ArrowDown") top += step;
+          element.style.left = `${Math.max(0, Math.min(artboard.clientWidth - element.offsetWidth, left))}px`;
+          element.style.top = `${Math.max(0, Math.min(artboard.clientHeight - element.offsetHeight, top))}px`;
+          updateTransformFields();
+        });
+      });
+
+      document.getElementById("positionX").addEventListener("change", (event) => {
+        if (selectedLayer === "layout") return;
+        layerElements[selectedLayer].style.left = `${Number(event.target.value)}px`;
+        updateTransformFields();
+      });
+      document.getElementById("positionY").addEventListener("change", (event) => {
+        if (selectedLayer === "layout") return;
+        layerElements[selectedLayer].style.top = `${Number(event.target.value)}px`;
+        updateTransformFields();
+      });
+
+      function setLogoColor(color) {
+        logoElement.style.color = color;
+        document.getElementById("logoColor").value = color;
+        document.getElementById("logoColorOutput").textContent = color.toUpperCase();
+      }
+
+      function setTextColor(color) {
+        textElement.style.color = color;
+        document.getElementById("textColor").value = color;
+        document.getElementById("textColorOutput").textContent = color.toUpperCase();
+      }
+
+      document.querySelectorAll("[data-color-target]").forEach((group) => {
+        group.querySelectorAll(".swatch").forEach((swatch) => {
+          swatch.addEventListener("click", () => {
+            group.querySelectorAll(".swatch").forEach((item) => item.classList.remove("active"));
+            swatch.classList.add("active");
+            if (group.dataset.colorTarget === "logo") setLogoColor(swatch.dataset.color);
+            else setTextColor(swatch.dataset.color);
+          });
+        });
+      });
+      document.getElementById("logoColor").addEventListener("input", (event) => setLogoColor(event.target.value));
+      document.getElementById("textColor").addEventListener("input", (event) => setTextColor(event.target.value));
+      document.getElementById("restoreLogoColor").addEventListener("click", () => setLogoColor("#151a17"));
+
+      document.getElementById("logoScale").addEventListener("input", (event) => {
+        const scale = Number(event.target.value) / 100;
+        const rotation = Number(document.getElementById("logoRotation").value);
+        logoElement.style.transform = `scale(${scale}) rotate(${rotation}deg)`;
+        document.getElementById("logoScaleOutput").textContent = `${event.target.value}%`;
+      });
+      document.getElementById("logoRotation").addEventListener("input", (event) => {
+        const rotation = Number(event.target.value);
+        const scale = Number(document.getElementById("logoScale").value) / 100;
+        logoElement.style.transform = `scale(${scale}) rotate(${rotation}deg)`;
+        document.getElementById("logoRotationOutput").textContent = `${rotation}°`;
+      });
+
+      document.getElementById("exactText").addEventListener("input", (event) => {
+        renderTextLayer(event.target.value);
+        document.getElementById("verificationStatus").classList.remove("pass");
+        document.querySelector("#verificationStatus strong").textContent = "准确文字待核对";
+        document.querySelector("#verificationStatus span:last-child").lastChild.textContent = ` · 当前文字“${event.target.value || "未输入"}”`;
+        updateTransformFields();
+      });
+      document.getElementById("fontFamily").addEventListener("change", (event) => {
+        textElement.style.fontFamily = `"${event.target.value}", sans-serif`;
+      });
+      document.getElementById("fontSize").addEventListener("input", (event) => {
+        textElement.style.fontSize = `${event.target.value}px`;
+        document.getElementById("fontSizeOutput").textContent = `${event.target.value} px`;
+        updateTransformFields();
+      });
+      document.getElementById("letterSpacing").addEventListener("input", (event) => {
+        textElement.style.letterSpacing = `${event.target.value}px`;
+        document.getElementById("letterSpacingOutput").textContent = `${event.target.value} px`;
+      });
+
+      document.getElementById("textWeightButton").addEventListener("click", () => {
+        const button = document.getElementById("textWeightButton");
+        const active = !button.classList.contains("active");
+        textElement.style.fontWeight = active ? "800" : "500";
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-pressed", String(active));
+      });
+      document.getElementById("textItalicButton").addEventListener("click", () => {
+        const button = document.getElementById("textItalicButton");
+        const active = !button.classList.contains("active");
+        textElement.style.fontStyle = active ? "italic" : "normal";
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-pressed", String(active));
+      });
+      document.getElementById("textUnderlineButton").addEventListener("click", () => {
+        const button = document.getElementById("textUnderlineButton");
+        const active = !button.classList.contains("active");
+        textElement.style.textDecoration = active ? "underline" : "none";
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-pressed", String(active));
+      });
+
+      document.querySelectorAll("#textAlignment button").forEach((button, index) => {
+        button.addEventListener("click", () => {
+          document.querySelectorAll("#textAlignment button").forEach((item) => item.classList.remove("active"));
+          button.classList.add("active");
+          textElement.style.justifyContent = ["flex-start", "center", "flex-end"][index];
+          textElement.style.textAlign = ["left", "center", "right"][index];
+        });
+      });
+
+      document.querySelectorAll("[data-arc-mode]").forEach((button) => {
+        button.addEventListener("click", () => {
+          arcMode = button.dataset.arcMode;
+          document.querySelectorAll("[data-arc-mode]").forEach((item) => item.classList.toggle("active", item === button));
+          renderTextLayer();
+          updateTransformFields();
+        });
+      });
+      document.getElementById("arcBend").addEventListener("input", (event) => {
+        arcBend = Number(event.target.value);
+        renderTextLayer();
+        updateTransformFields();
+      });
+      document.querySelectorAll("[data-arc-bend]").forEach((button) => {
+        button.addEventListener("click", () => {
+          arcBend = Number(button.dataset.arcBend);
+          document.getElementById("arcBend").value = String(arcBend);
+          renderTextLayer();
+          updateTransformFields();
+        });
+      });
+
+      document.querySelectorAll("[data-layout]").forEach((button) => {
+        button.addEventListener("click", () => {
+          document.querySelectorAll("[data-layout]").forEach((item) => item.classList.remove("active"));
+          button.classList.add("active");
+          const layout = button.dataset.layout;
+          logoElement.style.display = "flex";
+          textElement.style.display = "flex";
+          if (layout === "vertical") {
+            logoElement.style.left = "205px";
+            logoElement.style.top = "78px";
+            textElement.style.left = `${(artboard.clientWidth - textElement.offsetWidth) / 2}px`;
+            textElement.style.top = "334px";
+          }
+          if (layout === "horizontal") {
+            logoElement.style.left = "74px";
+            logoElement.style.top = "150px";
+            textElement.style.left = "340px";
+            textElement.style.top = "232px";
+          }
+          if (layout === "horizontal-reverse") {
+            textElement.style.left = "64px";
+            textElement.style.top = "232px";
+            logoElement.style.left = "370px";
+            logoElement.style.top = "150px";
+          }
+          updateTransformFields();
+        });
+      });
+
+      document.getElementById("gapRange").addEventListener("input", (event) => {
+        document.getElementById("gapOutput").textContent = `${event.target.value} px`;
+        if (document.querySelector('[data-layout="vertical"]').classList.contains("active")) {
+          textElement.style.top = `${316 + Number(event.target.value)}px`;
+          updateTransformFields();
+        }
+      });
+
+      document.getElementById("centerGroup").addEventListener("click", () => {
+        const minX = Math.min(logoElement.offsetLeft, textElement.offsetLeft);
+        const maxX = Math.max(logoElement.offsetLeft + logoElement.offsetWidth, textElement.offsetLeft + textElement.offsetWidth);
+        const delta = artboard.clientWidth / 2 - (minX + maxX) / 2;
+        logoElement.style.left = `${logoElement.offsetLeft + delta}px`;
+        textElement.style.left = `${textElement.offsetLeft + delta}px`;
+        updateTransformFields();
+      });
+
+      document.querySelectorAll("#groupAlignment button").forEach((button, index) => {
+        button.addEventListener("click", () => {
+          document.querySelectorAll("#groupAlignment button").forEach((item) => item.classList.remove("active"));
+          button.classList.add("active");
+          const minX = Math.min(logoElement.offsetLeft, textElement.offsetLeft);
+          const maxX = Math.max(logoElement.offsetLeft + logoElement.offsetWidth, textElement.offsetLeft + textElement.offsetWidth);
+          const groupWidth = maxX - minX;
+          const targetLeft = [36, (artboard.clientWidth - groupWidth) / 2, artboard.clientWidth - groupWidth - 36][index];
+          const delta = targetLeft - minX;
+          logoElement.style.left = `${logoElement.offsetLeft + delta}px`;
+          textElement.style.left = `${textElement.offsetLeft + delta}px`;
+          updateTransformFields();
+        });
+      });
+
+      let zoomLevel = 100;
+      document.getElementById("snapToggle").addEventListener("click", (event) => {
+        snapEnabled = !snapEnabled;
+        event.currentTarget.classList.toggle("active", snapEnabled);
+        event.currentTarget.setAttribute("aria-pressed", String(snapEnabled));
+        event.currentTarget.textContent = snapEnabled ? "吸附：开" : "吸附：关";
+        hideSmartGuides();
+        showToast(snapEnabled ? "对齐吸附已开启" : "对齐吸附已关闭", snapEnabled ? "拖动时会吸附画布中心，以及 Logo 与文字的中心和边缘。" : "现在可自由拖动，不触发自动吸附。" );
+      });
+
+      function applyZoom() {
+        artboardZoom = zoomLevel / 100;
+        document.getElementById("artboardFrame").style.transform = `scale(${artboardZoom})`;
+        document.getElementById("artboardFrame").style.transformOrigin = "center";
+        document.getElementById("zoomLabel").textContent = `${zoomLevel}%`;
+      }
+      document.getElementById("zoomIn").addEventListener("click", () => { zoomLevel = Math.min(140, zoomLevel + 10); applyZoom(); });
+      document.getElementById("zoomOut").addEventListener("click", () => { zoomLevel = Math.max(60, zoomLevel - 10); applyZoom(); });
+      document.getElementById("fitCanvas").addEventListener("click", () => { zoomLevel = 90; applyZoom(); });
+
+      document.getElementById("sourcePreviewButton").addEventListener("click", () => showToast("原图预览", "原始素材只用于核对，不会覆盖当前图层调整。"));
+      document.getElementById("materialButton").addEventListener("click", () => materialViewer.classList.add("open"));
+      document.getElementById("closeMaterialViewer").addEventListener("click", () => materialViewer.classList.remove("open"));
+      materialViewer.addEventListener("mousedown", (event) => {
+        if (event.target === materialViewer) materialViewer.classList.remove("open");
+      });
+      document.getElementById("undoButton").addEventListener("click", () => showToast("撤销", "原型展示交互；正式版记录结构化图层历史。"));
+      document.getElementById("redoButton").addEventListener("click", () => showToast("重做", "原型展示交互；正式版记录结构化图层历史。"));
+
+      function restoreGeneratedArtwork() {
+        document.getElementById("exactText").value = "poppy手机数码";
+        textElement.style.cssText = "";
+        logoElement.style.cssText = "";
+        arcMode = "none";
+        arcBend = 35;
+        document.getElementById("arcBend").value = "35";
+        document.querySelectorAll("[data-arc-mode]").forEach((item) => item.classList.toggle("active", item.dataset.arcMode === "none"));
+        renderTextLayer("poppy手机数码");
+        document.getElementById("fontFamily").value = "PingFang SC";
+        document.getElementById("fontSize").value = "30";
+        document.getElementById("fontSizeOutput").textContent = "30 px";
+        document.getElementById("letterSpacing").value = "1";
+        document.getElementById("letterSpacingOutput").textContent = "1 px";
+        document.getElementById("logoScale").value = "100";
+        document.getElementById("logoScaleOutput").textContent = "100%";
+        document.getElementById("logoRotation").value = "0";
+        document.getElementById("logoRotationOutput").textContent = "0°";
+        document.getElementById("gapRange").value = "18";
+        document.getElementById("gapOutput").textContent = "18 px";
+        setLogoColor("#188d5a");
+        setTextColor("#185b42");
+        document.querySelectorAll("[data-layout]").forEach((item) => item.classList.toggle("active", item.dataset.layout === "vertical"));
+        document.getElementById("textWeightButton").classList.add("active");
+        document.getElementById("textWeightButton").setAttribute("aria-pressed", "true");
+        document.getElementById("textItalicButton").classList.remove("active");
+        document.getElementById("textItalicButton").setAttribute("aria-pressed", "false");
+        document.getElementById("textUnderlineButton").classList.remove("active");
+        document.getElementById("textUnderlineButton").setAttribute("aria-pressed", "false");
+        document.querySelectorAll("#textAlignment button").forEach((item, index) => item.classList.toggle("active", index === 1));
+        document.querySelectorAll("#groupAlignment button").forEach((item, index) => item.classList.toggle("active", index === 1));
+        document.getElementById("verificationStatus").classList.remove("pass");
+        document.querySelector("#verificationStatus strong").textContent = "准确文字待核对";
+        selectLayer("layout");
+        showToast("已恢复生成结果", "Logo、文字和整体排版已回到模型生成后的初始状态。" );
+      }
+
+      document.getElementById("cancelEditorButton").addEventListener("click", closeEditor);
+      document.getElementById("restoreGeneratedButton").addEventListener("click", restoreGeneratedArtwork);
+      document.getElementById("saveArtworkButton").addEventListener("click", () => {
+        const expected = document.getElementById("exactText").value.trim();
+        const actual = (textElement.dataset.exactText || "").trim();
+        if (!expected || actual !== expected) {
+          document.getElementById("verificationStatus").classList.remove("pass");
+          showToast("暂时不能保存", "准确文字为空或画布文字不一致，请先修正。" );
+          return;
+        }
+        document.getElementById("verificationStatus").classList.add("pass");
+        document.querySelector("#verificationStatus strong").textContent = "准确文字已核对";
+        document.getElementById("tablePreviewText").textContent = expected;
+        document.getElementById("tablePreviewText").style.color = getComputedStyle(textElement).color;
+        document.getElementById("tablePreviewText").style.fontFamily = getComputedStyle(textElement).fontFamily;
+        document.getElementById("tablePreviewLogo").style.color = getComputedStyle(logoElement).color;
+        document.getElementById("tableArtworkStatus").textContent = "已调整 · 待审核";
+        closeEditor();
+        showToast("调整已保存", "表格中的完整图案预览已更新；衣服款式和位置保持不变。" );
+      });
+
+      renderTextLayer();
+      window.requestAnimationFrame(openEditor);
+    </script>
+  </body>
+</html>

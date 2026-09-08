@@ -1,0 +1,1141 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22><rect width=%2264%22 height=%2264%22 rx=%2214%22 fill=%22%23173629%22/><text x=%2232%22 y=%2242%22 text-anchor=%22middle%22 font-size=%2234%22 fill=%22white%22>衣</text></svg>" />
+  <title>商品素材库 · 款式位置标准原型</title>
+  <style>
+    :root {
+      --page: #eef2ee;
+      --paper: #fbfcfa;
+      --paper-2: #f5f8f5;
+      --ink: #17231d;
+      --muted: #647168;
+      --line: #d2dcd4;
+      --line-strong: #aebcb2;
+      --forest: #173629;
+      --pine: #1d6846;
+      --pine-dark: #155137;
+      --mint: #e2efe7;
+      --amber: #a86d18;
+      --amber-bg: #fbf1dc;
+      --red: #a6443c;
+      --red-bg: #f9e9e7;
+      --blue: #2c6f8b;
+      --blue-bg: #e7f1f5;
+      --shadow: 0 22px 70px rgba(20, 43, 32, .18);
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      --sans: "Avenir Next", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html { min-width: 1180px; background: var(--page); }
+    body { margin: 0; color: var(--ink); background: var(--page); font-family: var(--sans); font-size: 13px; }
+    button, input, select { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid rgba(29, 104, 70, .22); outline-offset: 2px; }
+    .hidden { display: none !important; }
+
+    .topbar {
+      position: sticky;
+      z-index: 20;
+      top: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 62px;
+      padding: 0 28px;
+      border-bottom: 1px solid #29453a;
+      color: #f6faf7;
+      background: var(--forest);
+    }
+    .brand { display: flex; align-items: center; gap: 11px; }
+    .brand-mark { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid rgba(255,255,255,.45); border-radius: 9px; font-weight: 800; }
+    .brand strong { display: block; letter-spacing: .04em; }
+    .brand small { display: block; margin-top: 2px; color: #b9c9c0; font: 9px var(--mono); letter-spacing: .14em; }
+    .nav { display: flex; align-items: center; gap: 3px; padding: 4px; border-radius: 10px; background: rgba(255,255,255,.08); }
+    .nav button { border: 0; border-radius: 7px; padding: 8px 13px; color: #bfd0c6; background: transparent; cursor: pointer; }
+    .nav button.active { color: var(--forest); background: #f7faf8; font-weight: 700; }
+    .prototype-flag { margin-left: 14px; padding-left: 14px; border-left: 1px solid rgba(255,255,255,.2); color: #abc0b4; font: 10px var(--mono); }
+
+    main { width: min(1680px, calc(100% - 40px)); margin: 0 auto; padding: 24px 0 94px; }
+    .page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 17px; }
+    .eyebrow { color: var(--pine); font: 700 10px var(--mono); letter-spacing: .16em; text-transform: uppercase; }
+    h1 { margin: 6px 0 5px; font-size: 30px; line-height: 1.12; letter-spacing: -.035em; }
+    .page-heading p { margin: 0; color: var(--muted); }
+    .heading-actions { display: flex; align-items: center; gap: 9px; }
+
+    .button { min-height: 36px; border: 1px solid var(--line-strong); border-radius: 7px; padding: 8px 12px; background: var(--paper); cursor: pointer; font-weight: 650; }
+    .button:hover { border-color: var(--pine); }
+    .button.primary { border-color: var(--pine); color: white; background: var(--pine); }
+    .button.primary:hover { background: var(--pine-dark); }
+    .button.quiet { border-color: transparent; color: var(--muted); background: transparent; }
+    .button.warning { border-color: #d8aa67; color: #744707; background: #fff9ed; }
+    .button.small { min-height: 30px; padding: 5px 9px; font-size: 11px; }
+
+    .auto-switch { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+    .auto-switch span { display: grid; gap: 1px; }
+    .auto-switch b { font-size: 11px; }
+    .auto-switch small { color: var(--muted); font-size: 9px; }
+    .switch { position: relative; width: 34px; height: 20px; border: 0; border-radius: 999px; background: var(--pine); cursor: pointer; }
+    .switch::after { position: absolute; top: 3px; left: 17px; width: 14px; height: 14px; border-radius: 50%; background: white; content: ""; transition: left .18s ease; }
+    .switch.off { background: #9aa69f; }
+    .switch.off::after { left: 3px; }
+
+    .status-board { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)) minmax(330px, 1.45fr); border: 1px solid var(--line); background: var(--paper); }
+    .metric { min-height: 79px; padding: 14px 17px; border-right: 1px solid var(--line); cursor: pointer; }
+    .metric:hover { background: var(--paper-2); }
+    .metric span, .training-progress span { display: block; color: var(--muted); font-size: 10px; }
+    .metric strong { display: inline-block; margin-top: 7px; font: 700 23px var(--mono); }
+    .metric small { margin-left: 5px; color: var(--muted); }
+    .training-progress { padding: 13px 17px; }
+    .training-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .training-head b { font: 700 12px var(--mono); }
+    .meter { height: 7px; margin: 10px 0 7px; overflow: hidden; border-radius: 99px; background: #e1e8e3; }
+    .meter i { display: block; width: 87.6%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--pine), #63a77f); }
+    .training-foot { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 10px; }
+    .training-foot button { border: 0; padding: 0; color: var(--pine); background: transparent; cursor: pointer; font-weight: 700; }
+
+    .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 14px 0 10px; }
+    .toolbar-left, .toolbar-right, .filters { display: flex; align-items: center; gap: 8px; }
+    .search { position: relative; width: 280px; }
+    .search::before { position: absolute; top: 9px; left: 11px; color: var(--muted); content: "⌕"; font-size: 16px; }
+    .search input { width: 100%; height: 36px; border: 1px solid var(--line); border-radius: 7px; padding: 0 12px 0 32px; background: var(--paper); }
+    .filters { padding: 3px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+    .filter { border: 0; border-radius: 6px; padding: 7px 10px; color: var(--muted); background: transparent; cursor: pointer; font-size: 11px; }
+    .filter.active { color: #fff; background: var(--forest); }
+    .toolbar-note { color: var(--muted); font-size: 10px; }
+
+    .table-shell { overflow: visible; border: 0; background: transparent; }
+    table { display: block; width: 100%; border-collapse: collapse; table-layout: fixed; }
+    thead { color: #eff6f1; background: #263f34; }
+    th { height: 42px; padding: 0 11px; text-align: left; font-size: 10px; font-weight: 650; letter-spacing: .04em; }
+    th:first-child, td:first-child { width: 42px; text-align: center; }
+    th:nth-child(2) { width: 260px; }
+    th:nth-child(3) { width: 240px; }
+    th:nth-child(4) { width: 265px; }
+    th:nth-child(5) { width: 170px; }
+    th:nth-child(6) { width: 190px; }
+    th:last-child { width: 130px; }
+    tbody tr { border-bottom: 1px solid var(--line); }
+    tbody tr:last-child { border-bottom: 0; }
+    tbody tr:hover { background: #f8faf8; }
+    td { height: 108px; padding: 11px; vertical-align: middle; }
+    input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--pine); }
+    .product-cell { display: grid; grid-template-columns: 112px minmax(0, 1fr); align-items: center; gap: 12px; }
+    .product-thumb { position: relative; display: block; width: 112px; height: 76px; overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: #f2f4f2; cursor: zoom-in; }
+    .product-thumb img { width: 100%; height: 100%; object-fit: contain; }
+    .product-thumb::after { position: absolute; right: 5px; bottom: 5px; display: grid; width: 21px; height: 21px; place-items: center; border: 1px solid rgba(23,35,29,.14); border-radius: 5px; color: var(--forest); background: rgba(255,255,255,.9); content: "+"; }
+    .product-info strong { display: block; font-size: 14px; }
+    .product-info span { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }
+    .product-info code { display: block; margin-top: 8px; color: #78847c; font: 9px var(--mono); }
+    .asset-pair { display: flex; align-items: center; gap: 8px; }
+    .face-mini { position: relative; width: 84px; height: 70px; overflow: hidden; border: 1px solid var(--line); border-radius: 5px; background: #f2f5f2; }
+    .face-mini img { position: absolute; top: 50%; width: 200%; transform: translateY(-50%); }
+    .face-mini.front img { left: 0; }
+    .face-mini.back img { left: -100%; }
+    .face-mini small { position: absolute; right: 4px; bottom: 4px; padding: 2px 4px; border-radius: 3px; color: white; background: rgba(23,54,41,.78); font-size: 8px; }
+    .asset-meta { display: grid; gap: 5px; }
+    .asset-meta span { color: var(--muted); font-size: 10px; }
+    .asset-meta b { font-size: 10px; }
+
+    .standard-preview { display: grid; grid-template-columns: 86px minmax(0,1fr); align-items: center; gap: 11px; }
+    .blueprint-mini { position: relative; width: 86px; height: 70px; overflow: hidden; border: 1px solid #c8d8ce; border-radius: 5px; background: #edf4ef; }
+    .blueprint-mini img { position: absolute; top: 50%; left: 0; width: 200%; transform: translateY(-50%); opacity: .84; }
+    .mini-zone { position: absolute; border: 2px solid var(--pine); background: rgba(29,104,70,.12); }
+    .mini-zone.front-chest { top: 30%; left: 59%; width: 15%; height: 19%; }
+    .mini-zone.back-wide { top: 27%; left: 23%; width: 54%; height: 22%; }
+    .standard-copy strong { display: block; font-size: 12px; }
+    .standard-copy span { display: block; margin-top: 5px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+    .standard-copy code { display: block; margin-top: 6px; color: #76837b; font: 9px var(--mono); }
+
+    .pill { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 5px 8px; font-size: 10px; font-weight: 700; }
+    .pill::before { width: 6px; height: 6px; border-radius: 50%; background: currentColor; content: ""; }
+    .pill.approved { color: var(--pine); background: var(--mint); }
+    .pill.review { color: var(--amber); background: var(--amber-bg); }
+    .pill.missing, .pill.failed { color: var(--red); background: var(--red-bg); }
+    .pill.queued { color: var(--blue); background: var(--blue-bg); }
+    .cell-note { display: block; margin-top: 7px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+    .train-state { display: grid; gap: 6px; }
+    .train-state strong { font-size: 11px; }
+    .train-state span { color: var(--muted); font-size: 10px; }
+    .row-actions { display: grid; justify-items: start; gap: 6px; }
+    .text-action { border: 0; padding: 0; color: var(--pine); background: transparent; cursor: pointer; font-size: 10px; text-decoration: underline; text-underline-offset: 3px; }
+
+    /* 卡片只承担看图、识别当前状态和进入下一步；版本、训练和模型细节下沉到弹窗。 */
+    .table-shell thead { display: none; }
+    #productRows { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+    #productRows tr {
+      position: relative;
+      display: flex;
+      min-width: 0;
+      min-height: 336px;
+      overflow: hidden;
+      flex-direction: column;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--paper);
+      box-shadow: 0 1px 0 rgba(23,54,41,.03);
+      transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease;
+    }
+    #productRows tr:hover { border-color: #9fb3a6; background: var(--paper); box-shadow: 0 12px 28px rgba(23,54,41,.1); transform: translateY(-2px); }
+    #productRows td { display: block; width: auto; height: auto; padding: 0; text-align: left; }
+    #productRows td:first-child { position: absolute; z-index: 4; top: 10px; right: 10px; width: auto; }
+    #productRows td:first-child input { display: grid; width: 25px; height: 25px; margin: 0; place-items: center; border-radius: 7px; background: rgba(255,255,255,.92); box-shadow: 0 2px 8px rgba(20,40,30,.12); }
+    #productRows td:nth-child(2) { order: 1; }
+    #productRows td:nth-child(3) { order: 2; padding: 0 12px 9px; }
+    #productRows td:nth-child(4) { order: 3; padding: 10px 12px 11px; border-top: 1px solid var(--line); background: #f7faf8; }
+    #productRows td:nth-child(5), #productRows td:nth-child(6) { display: none; }
+    #productRows td:nth-child(7) { order: 4; margin-top: auto; padding: 10px 12px; border-top: 1px solid var(--line); }
+    #productRows .product-cell { display: block; }
+    #productRows .product-thumb { width: 100%; height: 154px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: #f1f4f1; }
+    #productRows .product-thumb img { object-fit: contain; transition: transform .2s ease; }
+    #productRows tr:hover .product-thumb img { transform: scale(1.025); }
+    #productRows .product-info { padding: 10px 12px 8px; }
+    #productRows .product-info strong { font-size: 15px; }
+    #productRows .product-info span { margin-top: 3px; }
+    #productRows .product-info code { display: none; }
+    #productRows .asset-pair { display: block; }
+    #productRows .face-mini { display: none; }
+    #productRows .asset-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    #productRows .asset-meta b { color: var(--pine); }
+    #productRows .asset-meta span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #productRows .standard-preview { display: block; }
+    #productRows .blueprint-mini { display: none; }
+    #productRows .standard-copy strong { display: flex; align-items: center; gap: 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #productRows .standard-copy strong::before { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--line-strong); content: ""; }
+    #productRows tr[data-status="approved"] .standard-copy strong::before { background: var(--pine); }
+    #productRows tr[data-status="review"] .standard-copy strong::before { background: #d08a20; }
+    #productRows tr[data-status="queued"] .standard-copy strong::before { background: var(--blue); }
+    #productRows tr[data-status="missing"] .standard-copy strong::before { background: var(--red); }
+    #productRows .standard-copy span { margin: 4px 0 0 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #productRows .standard-copy code { display: none; }
+    #productRows .row-actions { display: grid; grid-template-columns: 1fr; align-items: center; gap: 7px; }
+    #productRows .row-actions .button { width: 100%; }
+    #productRows .text-action { display: none; }
+    #productRows .row-actions.dual-actions { grid-template-columns: 1fr 1fr; }
+    #productRows .row-actions .text-action.calibrate { display: block; min-height: 30px; border: 1px solid var(--line-strong); border-radius: 7px; padding: 5px 9px; text-align: center; text-decoration: none; background: var(--paper); font-size: 11px; font-weight: 650; }
+    #productRows .row-actions .text-action.calibrate:hover { border-color: var(--pine); }
+
+    .selection-bar { position: fixed; z-index: 18; right: 22px; bottom: 18px; left: 22px; display: flex; align-items: center; justify-content: space-between; min-height: 57px; padding: 10px 14px 10px 18px; border: 1px solid #385346; color: white; background: rgba(23,54,41,.96); box-shadow: 0 16px 40px rgba(15,35,25,.24); backdrop-filter: blur(14px); }
+    .selection-bar strong { font-size: 12px; }
+    .selection-bar span { margin-left: 9px; color: #b9c9c0; font-size: 10px; }
+    .selection-actions { display: flex; gap: 8px; }
+    .selection-bar .button { border-color: rgba(255,255,255,.28); color: white; background: transparent; }
+    .selection-bar .button.primary { border-color: white; color: var(--forest); background: white; }
+
+    .backdrop { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(12,26,19,.58); backdrop-filter: blur(6px); }
+    .calibration-dialog { display: grid; grid-template-rows: auto minmax(0,1fr) auto; width: min(1460px, 96vw); height: min(900px, 94vh); overflow: hidden; border: 1px solid rgba(255,255,255,.35); border-radius: 10px; background: var(--paper); box-shadow: var(--shadow); }
+    .dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 68px; padding: 12px 18px; border-bottom: 1px solid var(--line); }
+    .dialog-title { display: flex; align-items: center; gap: 12px; }
+    .dialog-title .eyebrow { margin-bottom: 3px; }
+    .dialog-title h2 { margin: 0; font-size: 19px; letter-spacing: -.02em; }
+    .dialog-title .pill { margin-left: 6px; }
+    .dialog-tools { display: flex; align-items: center; gap: 8px; }
+    .icon-button { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); cursor: pointer; }
+    .dialog-body { display: grid; grid-template-columns: minmax(0, 1fr) 318px; min-height: 0; }
+    .blueprint-stage { display: grid; grid-template-rows: auto minmax(0,1fr); min-width: 0; padding: 15px; background: #e8eee9; }
+    .stage-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 10px; }
+    .stage-legend, .layer-toggle { display: flex; align-items: center; gap: 12px; }
+    .stage-legend span { color: var(--muted); font-size: 10px; }
+    .legend-dot, .legend-box, .legend-anchor, .legend-exclusion { display: inline-block; margin-right: 5px; vertical-align: -2px; }
+    .legend-dot { width: 9px; height: 9px; border: 2px solid white; border-radius: 50%; background: var(--blue); box-shadow: 0 0 0 1px var(--blue); }
+    .legend-box { width: 13px; height: 9px; border: 2px solid var(--pine); background: rgba(29,104,70,.13); }
+    .legend-anchor { position: relative; width: 13px; height: 13px; border: 2px solid #d98718; border-radius: 50%; background: #fff8e8; }
+    .legend-anchor::before, .legend-anchor::after { position: absolute; background: #d98718; content: ""; }
+    .legend-anchor::before { top: 4px; right: -4px; left: -4px; height: 1px; }
+    .legend-anchor::after { top: -4px; bottom: -4px; left: 4px; width: 1px; }
+    .legend-exclusion { width: 13px; height: 9px; border: 1px solid #b65349; background: repeating-linear-gradient(135deg, rgba(182,83,73,.2) 0 3px, rgba(182,83,73,.55) 3px 4px); }
+    .layer-toggle { gap: 3px; padding: 3px; border: 1px solid var(--line); border-radius: 7px; background: rgba(255,255,255,.7); }
+    .layer-toggle button { border: 0; border-radius: 5px; padding: 6px 9px; color: var(--muted); background: transparent; cursor: pointer; font-size: 10px; }
+    .layer-toggle button.active { color: white; background: var(--forest); }
+    .faces { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; min-height: 0; }
+    .face-panel { display: grid; grid-template-rows: auto minmax(0,1fr); min-height: 0; border: 1px solid #c9d5cc; border-radius: 8px; background: rgba(255,255,255,.7); }
+    .face-panel.active { border-color: var(--pine); box-shadow: inset 0 0 0 1px var(--pine); }
+    .face-head { display: flex; align-items: center; justify-content: space-between; min-height: 39px; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+    .face-head strong { font-size: 11px; }
+    .face-head span { color: var(--muted); font: 9px var(--mono); }
+    .face-canvas-wrap { display: grid; min-height: 0; place-items: center; padding: 10px; }
+    .face-canvas { position: relative; width: auto; height: 100%; max-width: 100%; max-height: 100%; aspect-ratio: .87; overflow: hidden; border: 1px solid #d4ddd6; background: linear-gradient(90deg, #f9faf9 49.8%, #e9eeea 50%, #f9faf9 50.2%); touch-action: none; }
+    .face-canvas > img { position: absolute; top: 50%; width: 200%; transform: translateY(-50%); pointer-events: none; user-select: none; }
+    .face-canvas.front > img { left: 0; }
+    .face-canvas.back > img { left: -100%; }
+    .seam-map { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    .seam-map path, .seam-map line { fill: none; stroke: rgba(44,111,139,.62); stroke-width: .55; stroke-dasharray: 2 1.5; vector-effect: non-scaling-stroke; }
+    .point { position: absolute; z-index: 3; width: 13px; height: 13px; border: 2px solid white; border-radius: 50%; padding: 0; background: var(--blue); box-shadow: 0 0 0 1px var(--blue), 0 2px 5px rgba(0,0,0,.18); cursor: grab; transform: translate(-50%,-50%); }
+    .point:active { cursor: grabbing; }
+    .zone { position: absolute; z-index: 2; min-width: 38px; min-height: 30px; border: 2px solid var(--pine); background: rgba(29,104,70,.12); cursor: move; }
+    .zone::before { position: absolute; top: -20px; left: -2px; padding: 2px 5px; color: white; background: var(--pine); content: attr(data-label); font-size: 8px; white-space: nowrap; }
+    .zone.ai::after { position: absolute; inset: 3px; border: 1px dashed rgba(29,104,70,.55); content: ""; }
+    .zone.selected { box-shadow: 0 0 0 3px rgba(29,104,70,.18); }
+    .resize-handle { position: absolute; right: -6px; bottom: -6px; width: 11px; height: 11px; border: 2px solid white; background: var(--pine); cursor: nwse-resize; }
+    .placement-anchor { position: absolute; z-index: 6; width: 19px; height: 19px; border: 2px solid #d98718; border-radius: 50%; padding: 0; background: rgba(255,248,232,.95); box-shadow: 0 2px 8px rgba(89,55,13,.2); cursor: grab; transform: translate(-50%,-50%); }
+    .placement-anchor::before, .placement-anchor::after { position: absolute; background: #d98718; content: ""; pointer-events: none; }
+    .placement-anchor::before { top: 7px; right: -6px; left: -6px; height: 1px; }
+    .placement-anchor::after { top: -6px; bottom: -6px; left: 7px; width: 1px; }
+    .placement-anchor.selected { box-shadow: 0 0 0 4px rgba(217,135,24,.2), 0 2px 8px rgba(89,55,13,.24); }
+    .placement-anchor:active { cursor: grabbing; }
+    .logo-preview { position: absolute; z-index: 4; display: grid; place-items: center; border: 1px dashed #304d68; border-radius: 2px; color: white; background: rgba(48,77,104,.54); font: 700 7px var(--mono); letter-spacing: .04em; transform: translate(-50%,-50%); pointer-events: none; }
+    .logo-preview.selected { border-style: solid; background: rgba(48,77,104,.72); box-shadow: 0 0 0 3px rgba(48,77,104,.12); }
+    .exclusion { position: absolute; z-index: 1; border: 1px solid rgba(182,83,73,.72); background: repeating-linear-gradient(135deg, rgba(182,83,73,.08) 0 5px, rgba(182,83,73,.26) 5px 7px); pointer-events: none; }
+    .exclusion::after { position: absolute; top: 3px; left: 3px; padding: 1px 3px; color: #8f3a32; background: rgba(255,245,243,.86); content: attr(data-label); font-size: 7px; white-space: nowrap; }
+    .front .exclusion-placket { top: 17%; left: 47.4%; width: 5.2%; height: 31%; border-radius: 3px; }
+    .front .exclusion-collar { top: 10%; left: 37%; width: 26%; height: 12%; border-radius: 50% 50% 35% 35%; }
+    .back .exclusion-neck { top: 9%; left: 40%; width: 20%; height: 9%; border-radius: 50%; }
+    .front .zone-left-chest { top: 29%; left: 57%; width: 14%; height: 18%; }
+    .front .zone-front-center { top: 40%; left: 39%; width: 22%; height: 25%; }
+    .front .zone-sleeve { top: 28%; left: 76%; width: 16%; height: 13%; transform: rotate(7deg); }
+    .back .zone-upper-back { top: 25%; left: 25%; width: 50%; height: 21%; }
+    .back .zone-back-center { top: 39%; left: 31%; width: 38%; height: 32%; }
+    .face-canvas.hide-structure .point, .face-canvas.hide-structure .seam-map { display: none; }
+    .face-canvas.hide-placement .zone, .face-canvas.hide-placement .placement-anchor, .face-canvas.hide-placement .logo-preview, .face-canvas.hide-placement .exclusion { display: none; }
+
+    .inspector { display: grid; grid-template-rows: auto auto auto minmax(0,1fr); min-height: 0; border-left: 1px solid var(--line); background: var(--paper); }
+    .inspector-section { padding: 14px; border-bottom: 1px solid var(--line); }
+    .inspector-section h3 { margin: 0 0 9px; font-size: 12px; }
+    .inspector-section p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.6; }
+    .face-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+    .face-summary button { border: 1px solid var(--line); border-radius: 6px; padding: 8px; text-align: left; background: var(--paper-2); cursor: pointer; }
+    .face-summary button.active { border-color: var(--pine); background: var(--mint); }
+    .face-summary strong, .face-summary span { display: block; }
+    .face-summary strong { font-size: 11px; }
+    .face-summary span { margin-top: 4px; color: var(--muted); font-size: 9px; }
+    .position-list { min-height: 0; overflow: auto; padding: 10px; }
+    .position-list h3 { margin: 3px 4px 8px; color: var(--muted); font-size: 10px; font-weight: 650; }
+    .position-item { display: grid; grid-template-columns: 28px minmax(0,1fr) auto; align-items: center; gap: 8px; width: 100%; margin-bottom: 5px; border: 1px solid transparent; border-radius: 6px; padding: 7px; text-align: left; background: transparent; cursor: pointer; }
+    .position-item:hover, .position-item.active { border-color: #b7cabe; background: #edf5f0; }
+    .position-symbol { display: grid; width: 25px; height: 25px; place-items: center; border: 1px solid #a9c2b2; color: var(--pine); background: white; font: 9px var(--mono); }
+    .position-item strong { display: block; font-size: 10px; }
+    .position-item span { display: block; margin-top: 2px; color: var(--muted); font-size: 8px; }
+    .position-item em { color: var(--pine); font: normal 8px var(--mono); }
+    .cluster-source { display: grid; gap: 7px; padding: 9px; border: 1px solid #bed0c4; border-radius: 7px; background: #f2f7f3; }
+    .cluster-source-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .cluster-source strong { font-size: 10px; }
+    .cluster-source code { color: var(--pine); font: 700 9px var(--mono); }
+    .cluster-source p { color: var(--muted); font-size: 9px; line-height: 1.45; }
+    .cluster-actions { display: flex; gap: 6px; }
+    .cluster-actions .button { flex: 1; padding: 6px 7px; font-size: 9px; }
+    .warning-box { margin: 10px 4px; padding: 9px; border-left: 3px solid var(--amber); color: #6d4b17; background: var(--amber-bg); font-size: 9px; line-height: 1.55; }
+    .dialog-foot { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 65px; padding: 10px 16px; border-top: 1px solid var(--line); }
+    .dialog-foot p { margin: 0; color: var(--muted); font-size: 10px; }
+    .dialog-foot p strong { display: block; margin-bottom: 3px; color: var(--ink); font-size: 11px; }
+    .dialog-actions { display: flex; gap: 8px; }
+
+    .lightbox-dialog { width: min(1180px, 92vw); max-height: 92vh; overflow: auto; border: 0; border-radius: 10px; padding: 0; background: #edf1ed; box-shadow: var(--shadow); }
+    .lightbox-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 15px; border-bottom: 1px solid var(--line); background: white; }
+    .lightbox-head strong { font-size: 13px; }
+    .lightbox-body { padding: 16px; }
+    .lightbox-body img { display: block; width: 100%; max-height: calc(92vh - 95px); object-fit: contain; }
+
+    .training-dialog { width: min(720px, 90vw); border-radius: 10px; background: white; box-shadow: var(--shadow); }
+    .training-body { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+    .training-body section { padding: 17px; }
+    .training-body section + section { border-left: 1px solid var(--line); }
+    .training-body h3 { margin: 0 0 11px; font-size: 13px; }
+    .training-body ul { margin: 0; padding-left: 17px; color: var(--muted); font-size: 11px; line-height: 1.8; }
+    .model-version { display: grid; gap: 7px; padding: 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper-2); }
+    .model-version strong { font: 700 12px var(--mono); }
+    .model-version span { color: var(--muted); font-size: 10px; }
+
+    .toast { position: fixed; z-index: 80; right: 24px; bottom: 86px; max-width: 420px; padding: 12px 15px; border: 1px solid #507461; border-radius: 8px; color: white; background: #173629; box-shadow: 0 16px 40px rgba(0,0,0,.2); opacity: 0; transform: translateY(12px); pointer-events: none; transition: .2s ease; }
+    .toast.show { opacity: 1; transform: translateY(0); }
+
+    @media (max-width: 1280px) {
+      main { width: calc(100% - 24px); }
+      .status-board { grid-template-columns: repeat(4, 1fr); }
+      .training-progress { grid-column: 1 / -1; border-top: 1px solid var(--line); }
+      .metric:nth-child(4) { border-right: 0; }
+      .dialog-body { grid-template-columns: minmax(0,1fr) 286px; }
+      td { padding: 8px; }
+      #productRows { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; } }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">衣</span>
+      <span><strong>工作服效果图</strong><small>GARMENT STANDARD DESK</small></span>
+      <span class="prototype-flag">INTERACTION PROTOTYPE</span>
+    </div>
+    <nav class="nav" aria-label="主导航">
+      <button class="active" type="button">商品素材库</button>
+      <button type="button">Logo 智能处理</button>
+      <button type="button">批量效果图</button>
+    </nav>
+  </header>
+
+  <main>
+    <section class="page-heading">
+      <div>
+        <span class="eyebrow">PRODUCT ASSET & PLACEMENT STANDARD</span>
+        <h1>商品素材库</h1>
+        <p>每个款式在这里完成一次正反面位置确认；确认后立即用于效果图，并自动沉淀为训练数据。</p>
+      </div>
+      <div class="heading-actions">
+        <div class="auto-switch">
+          <span><b>新商品自动预标注</b><small>每个款式、每个面仅运行一次</small></span>
+          <button class="switch" id="autoSwitch" type="button" aria-label="切换自动预标注"></button>
+        </div>
+        <button class="button" id="importButton" type="button">+ 导入商品素材</button>
+        <button class="button primary" id="backfillButton" type="button">处理未建立标准的商品</button>
+      </div>
+    </section>
+
+    <section class="status-board" aria-label="素材库状态概览">
+      <div class="metric" data-filter="all"><span>商品款式</span><strong>10</strong><small>款</small></div>
+      <div class="metric" data-filter="approved"><span>位置标准已确认</span><strong id="approvedMetric">4</strong><small>款</small></div>
+      <div class="metric" data-filter="review"><span>等待人工复核</span><strong id="reviewMetric">3</strong><small>款</small></div>
+      <div class="metric" data-filter="missing"><span>缺少素材 / 处理失败</span><strong>2</strong><small>款</small></div>
+      <div class="training-progress">
+        <div class="training-head"><span>已确认训练数据</span><b><span id="trainingCount" style="display:inline;color:inherit">1,052</span> / 1,200 张</b></div>
+        <div class="meter"><i id="trainingMeter"></i></div>
+        <div class="training-foot"><span>距离第一版 RTMPose 训练还差 148 张</span><button id="trainingDetails" type="button">查看训练与版本 →</button></div>
+      </div>
+    </section>
+
+    <section class="toolbar">
+      <div class="toolbar-left">
+        <label class="search"><input id="searchInput" type="search" placeholder="搜索型号、款名或颜色" /></label>
+        <div class="filters" role="group" aria-label="状态筛选">
+          <button class="filter active" data-filter="all" type="button">全部 10</button>
+          <button class="filter" data-filter="approved" type="button">已确认 4</button>
+          <button class="filter" data-filter="review" type="button">待复核 3</button>
+          <button class="filter" data-filter="queued" type="button">处理中 1</button>
+          <button class="filter" data-filter="missing" type="button">需补充 2</button>
+        </div>
+      </div>
+      <div class="toolbar-right"><span class="toolbar-note">同版型簇只复用相对位置标准 · 每款仍单独检测正反面轮廓</span><button class="button small" type="button">批量操作⌄</button></div>
+    </section>
+
+    <section class="table-shell">
+      <table>
+        <thead><tr><th><input id="selectAll" type="checkbox" aria-label="全选" /></th><th>商品 / 原图</th><th>正反面素材</th><th>款式位置标准</th><th>AI 处理</th><th>训练数据</th><th>操作</th></tr></thead>
+        <tbody id="productRows">
+          <tr data-status="approved" data-search="2208 新款 polo 茶绿">
+            <td><input class="row-check" type="checkbox" aria-label="选择2208" /></td>
+            <td><div class="product-cell"><button class="product-thumb zoom-product" data-code="2208" data-src="./products/originals/2208-tea-green-polo.png" type="button"><img src="./products/thumbs/2208-tea-green-polo.png" alt="2208茶绿色Polo" /></button><div class="product-info"><strong>2208</strong><span>新款 Polo · 茶绿色</span><code>STYLE / 2208 · 4462×2556</code></div></div></td>
+            <td><div class="asset-pair"><div class="face-mini front"><img src="./products/originals/2208-tea-green-polo.png" alt="2208正面" /><small>正</small></div><div class="face-mini back"><img src="./products/originals/2208-tea-green-polo.png" alt="2208背面" /><small>背</small></div><div class="asset-meta"><b>2 / 2 面完整</b><span>同一高清原图</span></div></div></td>
+            <td><div class="standard-preview"><div class="blueprint-mini"><img src="./products/originals/2208-tea-green-polo.png" alt="2208标准预览" /><i class="mini-zone front-chest"></i></div><div class="standard-copy"><strong>正面、背面已确认</strong><span>左前胸 · 正胸 · 袖子 · 后背</span><code>STANDARD 2208-v1</code></div></div></td>
+            <td><span class="pill approved">已完成</span><span class="cell-note">人工确认于 09-02 16:40</span></td>
+            <td><div class="train-state"><strong>已计入 · 2张</strong><span>结构点 + 安全区域</span></div></td>
+            <td><div class="row-actions"><button class="button small calibrate" data-code="2208" data-name="新款 Polo · 茶绿色" data-src="./products/originals/2208-tea-green-polo.png" data-state="approved" data-profile="polo" data-cluster="短袖 Polo A簇" data-cluster-source="本款是代表款" data-cluster-score="STANDARD" type="button">查看位置标准</button><button class="text-action" type="button">查看版本记录</button></div></td>
+          </tr>
+
+          <tr data-status="review" data-search="301srx 冰川灰 polo 灰">
+            <td><input class="row-check" type="checkbox" aria-label="选择301SRX" /></td>
+            <td><div class="product-cell"><button class="product-thumb zoom-product" data-code="301SRX" data-src="./products/originals/301srx-ice-gray.png" type="button"><img src="./products/thumbs/301srx-ice-gray.png" alt="301SRX冰川灰Polo" /></button><div class="product-info"><strong>301SRX</strong><span>冰川灰 Polo · 冰川灰</span><code>STYLE / 301SRX · 4328×2605</code></div></div></td>
+            <td><div class="asset-pair"><div class="face-mini front"><img src="./products/originals/301srx-ice-gray.png" alt="301SRX正面" /><small>正</small></div><div class="face-mini back"><img src="./products/originals/301srx-ice-gray.png" alt="301SRX背面" /><small>背</small></div><div class="asset-meta"><b>2 / 2 面完整</b><span>正背面已拆分</span></div></div></td>
+            <td><div class="standard-preview"><div class="blueprint-mini"><img src="./products/originals/301srx-ice-gray.png" alt="301SRX预标注" /><i class="mini-zone front-chest"></i></div><div class="standard-copy"><strong>AI建议待人工确认</strong><span>后背区域偏低 · 左胸已通过规则</span><code>DRAFT / vision-v3</code></div></div></td>
+            <td><span class="pill review">待人工复核</span><span class="cell-note">2条建议 · 1条位置告警</span></td>
+            <td><div class="train-state"><strong>暂未计入</strong><span>确认后自动加入2张</span></div></td>
+            <td><div class="row-actions"><button class="button primary small calibrate" data-code="301SRX" data-name="冰川灰 Polo · 冰川灰" data-src="./products/originals/301srx-ice-gray.png" data-state="review" data-profile="polo" data-cluster="短袖 Polo A簇" data-cluster-source="2208-v1" data-cluster-score="96.4%" type="button">校准位置</button><button class="text-action" type="button">查看AI原始结果</button></div></td>
+          </tr>
+
+          <tr data-status="review" data-search="2509 mshj 长袖 黑拼红">
+            <td><input class="row-check" type="checkbox" aria-label="选择2509" /></td>
+            <td><div class="product-cell"><button class="product-thumb zoom-product" data-code="2509" data-src="./products/originals/2509-black-red.png" type="button"><img src="./products/thumbs/2509-black-red.png" alt="2509长袖" /></button><div class="product-info"><strong>2509</strong><span>MSHJ 长袖 · 黑拼红</span><code>STYLE / 2509 · 3784×2419</code></div></div></td>
+            <td><div class="asset-pair"><div class="face-mini front"><img src="./products/originals/2509-black-red.png" alt="2509正面" /><small>正</small></div><div class="face-mini back"><img src="./products/originals/2509-black-red.png" alt="2509背面" /><small>背</small></div><div class="asset-meta"><b>2 / 2 面完整</b><span>长袖款</span></div></div></td>
+            <td><div class="standard-preview"><div class="blueprint-mini"><img src="./products/originals/2509-black-red.png" alt="2509预标注" /><i class="mini-zone front-chest"></i></div><div class="standard-copy"><strong>袖子区域待确认</strong><span>正背面主体已完成预标注</span><code>DRAFT / vision-v3</code></div></div></td>
+            <td><span class="pill review">待人工复核</span><span class="cell-note">袖口结构需要人工修正</span></td>
+            <td><div class="train-state"><strong>暂未计入</strong><span>确认后自动加入2张</span></div></td>
+            <td><div class="row-actions"><button class="button primary small calibrate" data-code="2509" data-name="MSHJ 长袖 · 黑拼红" data-src="./products/originals/2509-black-red.png" data-state="review" data-profile="long-polo" type="button">校准位置</button><button class="text-action" type="button">查看AI原始结果</button></div></td>
+          </tr>
+
+          <tr data-status="queued" data-search="1906dc 藏青色 外套">
+            <td><input class="row-check" type="checkbox" aria-label="选择1906DC" /></td>
+            <td><div class="product-cell"><button class="product-thumb zoom-product" data-code="1906DC" data-src="./products/originals/1906dc-navy.png" type="button"><img src="./products/thumbs/1906dc-navy.png" alt="1906DC外套" /></button><div class="product-info"><strong>1906DC</strong><span>藏青色外套 · 藏青</span><code>STYLE / 1906DC · 3727×2242</code></div></div></td>
+            <td><div class="asset-pair"><div class="face-mini front"><img src="./products/originals/1906dc-navy.png" alt="1906DC正面" /><small>正</small></div><div class="face-mini back"><img src="./products/originals/1906dc-navy.png" alt="1906DC背面" /><small>背</small></div><div class="asset-meta"><b>2 / 2 面完整</b><span>夹克版型</span></div></div></td>
+            <td><div class="standard-copy"><strong>尚未形成标准</strong><span>正在识别衣领、肩点、腋点与下摆</span><code>JOB / queue-041</code></div></td>
+            <td><span class="pill queued">AI处理中</span><span class="cell-note">当前进度 68% · 预计稍后完成</span></td>
+            <td><div class="train-state"><strong>未计入</strong><span>等待人工确认</span></div></td>
+            <td><div class="row-actions"><button class="button small" id="queueDetail" type="button">查看进度</button><button class="text-action" type="button">取消处理</button></div></td>
+          </tr>
+
+          <tr data-status="missing" data-search="011hyx 卡其 马甲">
+            <td><input class="row-check" type="checkbox" aria-label="选择011HYX" /></td>
+            <td><div class="product-cell"><button class="product-thumb zoom-product" data-code="011HYX" data-src="./products/originals/011hyx-khaki.png" type="button"><img src="./products/thumbs/011hyx-khaki.png" alt="011HYX卡其马甲" /></button><div class="product-info"><strong>011HYX</strong><span>卡其马甲 · 卡其</span><code>STYLE / 011HYX · 4143×2412</code></div></div></td>
+            <td><div class="asset-pair"><div class="face-mini front"><img src="./products/originals/011hyx-khaki.png" alt="011HYX正面" /><small>正</small></div><div class="face-mini back"><img src="./products/originals/011hyx-khaki.png" alt="011HYX背面" /><small>?</small></div><div class="asset-meta"><b>1 / 2 面可用</b><span>背面面别待确认</span></div></div></td>
+            <td><div class="standard-copy"><strong>正面可以先确认</strong><span>需要补充或确认背面素材</span><code>PARTIAL / front-only</code></div></td>
+            <td><span class="pill missing">缺少背面</span><span class="cell-note">不会阻断只使用正面的任务</span></td>
+            <td><div class="train-state"><strong>正面待确认</strong><span>背面暂不进入数据集</span></div></td>
+            <td><div class="row-actions dual-actions"><button class="button warning small" id="uploadBack" type="button">补充背面</button><button class="text-action calibrate" data-code="011HYX" data-name="卡其马甲 · 卡其" data-src="./products/originals/011hyx-khaki.png" data-state="missing" data-profile="vest" type="button">校准已有面</button></div></td>
+          </tr>
+
+          <tr data-status="approved" data-search="388 速干 polo 藏青">
+            <td><input class="row-check" type="checkbox" aria-label="选择388" /></td>
+            <td><div class="product-cell"><button class="product-thumb zoom-product" data-code="388" data-src="./products/originals/388-quick-dry-navy.png" type="button"><img src="./products/thumbs/388-quick-dry-navy.png" alt="388速干Polo" /></button><div class="product-info"><strong>388</strong><span>速干 Polo · 藏青</span><code>STYLE / 388 · 4397×2613</code></div></div></td>
+            <td><div class="asset-pair"><div class="face-mini front"><img src="./products/originals/388-quick-dry-navy.png" alt="388正面" /><small>正</small></div><div class="face-mini back"><img src="./products/originals/388-quick-dry-navy.png" alt="388背面" /><small>背</small></div><div class="asset-meta"><b>2 / 2 面完整</b><span>同款多色继承</span></div></div></td>
+            <td><div class="standard-preview"><div class="blueprint-mini"><img src="./products/originals/388-quick-dry-navy.png" alt="388位置标准" /><i class="mini-zone front-chest"></i></div><div class="standard-copy"><strong>正面、背面已确认</strong><span>已被3个颜色继承</span><code>STANDARD 388-v2</code></div></div></td>
+            <td><span class="pill approved">已完成</span><span class="cell-note">标准图未发生变化</span></td>
+            <td><div class="train-state"><strong>已计入 · 2张</strong><span>训练集 group-07</span></div></td>
+            <td><div class="row-actions"><button class="button small calibrate" data-code="388" data-name="速干 Polo · 藏青" data-src="./products/originals/388-quick-dry-navy.png" data-state="approved" data-profile="polo" data-cluster="短袖 Polo A簇" data-cluster-source="2208-v1" data-cluster-score="94.8%" type="button">查看位置标准</button><button class="text-action" type="button">查看继承关系</button></div></td>
+          </tr>
+
+          <tr data-status="approved" data-search="1101 软壳内胆 jsh 深灰">
+            <td><input class="row-check" type="checkbox" aria-label="选择1101" /></td>
+            <td><div class="product-cell"><button class="product-thumb zoom-product" data-code="1101" data-src="./products/originals/1101-softshell-liner.png" type="button"><img src="./products/thumbs/1101-softshell-liner.png" alt="1101软壳内胆" /></button><div class="product-info"><strong>1101</strong><span>软壳内胆 JSH · 深灰</span><code>STYLE / 1101 · 3961×2455</code></div></div></td>
+            <td><div class="asset-pair"><div class="face-mini front"><img src="./products/originals/1101-softshell-liner.png" alt="1101正面" /><small>正</small></div><div class="face-mini back"><img src="./products/originals/1101-softshell-liner.png" alt="1101背面" /><small>背</small></div><div class="asset-meta"><b>2 / 2 面完整</b><span>外套版型</span></div></div></td>
+            <td><div class="standard-preview"><div class="blueprint-mini"><img src="./products/originals/1101-softshell-liner.png" alt="1101位置标准" /><i class="mini-zone front-chest"></i></div><div class="standard-copy"><strong>正面、背面已确认</strong><span>左胸 · 右胸 · 后背 · 袖子</span><code>STANDARD 1101-v1</code></div></div></td>
+            <td><span class="pill approved">已完成</span><span class="cell-note">人工确认于 08-28 11:20</span></td>
+            <td><div class="train-state"><strong>已计入 · 2张</strong><span>外套结构组</span></div></td>
+            <td><div class="row-actions"><button class="button small calibrate" data-code="1101" data-name="软壳内胆 JSH · 深灰" data-src="./products/originals/1101-softshell-liner.png" data-state="approved" data-profile="jacket" type="button">查看位置标准</button><button class="text-action" type="button">查看版本记录</button></div></td>
+          </tr>
+
+          <tr data-status="approved" data-search="1866 银狐绒 cyjd 豆绿">
+            <td><input class="row-check" type="checkbox" aria-label="选择1866" /></td>
+            <td><div class="product-cell"><button class="product-thumb zoom-product" data-code="1866" data-src="./products/originals/1866-mint-fleece.png" type="button"><img src="./products/thumbs/1866-mint-fleece.png" alt="1866银狐绒" /></button><div class="product-info"><strong>1866</strong><span>银狐绒 CYJD · 豆绿</span><code>STYLE / 1866 · 3794×2518</code></div></div></td>
+            <td><div class="asset-pair"><div class="face-mini front"><img src="./products/originals/1866-mint-fleece.png" alt="1866正面" /><small>正</small></div><div class="face-mini back"><img src="./products/originals/1866-mint-fleece.png" alt="1866背面" /><small>背</small></div><div class="asset-meta"><b>2 / 2 面完整</b><span>针织上装</span></div></div></td>
+            <td><div class="standard-preview"><div class="blueprint-mini"><img src="./products/originals/1866-mint-fleece.png" alt="1866位置标准" /><i class="mini-zone front-chest"></i></div><div class="standard-copy"><strong>正面、背面已确认</strong><span>安全区已避开拉链和口袋</span><code>STANDARD 1866-v1</code></div></div></td>
+            <td><span class="pill approved">已完成</span><span class="cell-note">5个位置标准可用</span></td>
+            <td><div class="train-state"><strong>已计入 · 2张</strong><span>针织结构组</span></div></td>
+            <td><div class="row-actions"><button class="button small calibrate" data-code="1866" data-name="银狐绒 CYJD · 豆绿" data-src="./products/originals/1866-mint-fleece.png" data-state="approved" data-profile="shell" type="button">查看位置标准</button><button class="text-action" type="button">查看版本记录</button></div></td>
+          </tr>
+
+          <tr data-status="review" data-search="2402 立领 jsh 外套 墨黑">
+            <td><input class="row-check" type="checkbox" aria-label="选择2402" /></td>
+            <td><div class="product-cell"><button class="product-thumb zoom-product" data-code="2402" data-src="./products/originals/2402-black-jacket.png" type="button"><img src="./products/thumbs/2402-black-jacket.png" alt="2402立领外套" /></button><div class="product-info"><strong>2402</strong><span>立领 JSH 外套 · 墨黑</span><code>STYLE / 2402 · 4059×2518</code></div></div></td>
+            <td><div class="asset-pair"><div class="face-mini front"><img src="./products/originals/2402-black-jacket.png" alt="2402正面" /><small>正</small></div><div class="face-mini back"><img src="./products/originals/2402-black-jacket.png" alt="2402背面" /><small>背</small></div><div class="asset-meta"><b>2 / 2 面完整</b><span>立领拉链款</span></div></div></td>
+            <td><div class="standard-preview"><div class="blueprint-mini"><img src="./products/originals/2402-black-jacket.png" alt="2402预标注" /><i class="mini-zone front-chest"></i></div><div class="standard-copy"><strong>AI建议待人工确认</strong><span>立领导致领口点置信度较低</span><code>DRAFT / vision-v3</code></div></div></td>
+            <td><span class="pill review">待人工复核</span><span class="cell-note">2个结构点需要确认</span></td>
+            <td><div class="train-state"><strong>暂未计入</strong><span>确认后自动加入2张</span></div></td>
+            <td><div class="row-actions"><button class="button primary small calibrate" data-code="2402" data-name="立领 JSH 外套 · 墨黑" data-src="./products/originals/2402-black-jacket.png" data-state="review" data-profile="jacket" type="button">校准位置</button><button class="text-action" type="button">查看AI原始结果</button></div></td>
+          </tr>
+
+          <tr data-status="missing" data-search="2599dc 灰色 外套">
+            <td><input class="row-check" type="checkbox" aria-label="选择2599DC" /></td>
+            <td><div class="product-cell"><button class="product-thumb zoom-product" data-code="2599DC" data-src="./products/originals/2599dc-gray.png" type="button"><img src="./products/thumbs/2599dc-gray.png" alt="2599DC灰色外套" /></button><div class="product-info"><strong>2599DC</strong><span>灰色外套 · 灰色</span><code>STYLE / 2599DC · 4531×2523</code></div></div></td>
+            <td><div class="asset-pair"><div class="face-mini front"><img src="./products/originals/2599dc-gray.png" alt="2599DC正面" /><small>正</small></div><div class="face-mini back"><img src="./products/originals/2599dc-gray.png" alt="2599DC背面" /><small>背</small></div><div class="asset-meta"><b>2 / 2 面完整</b><span>原图低对比</span></div></div></td>
+            <td><div class="standard-copy"><strong>预标注失败</strong><span>衣服边缘与背景对比不足，可重新处理</span><code>FAILED / attempt-02</code></div></td>
+            <td><span class="pill failed">AI处理失败</span><span class="cell-note">可人工直接建立标准</span></td>
+            <td><div class="train-state"><strong>未计入</strong><span>等待有效人工标准</span></div></td>
+            <td><div class="row-actions"><button class="button warning small calibrate" data-code="2599DC" data-name="灰色外套 · 灰色" data-src="./products/originals/2599dc-gray.png" data-state="missing" data-profile="shell" type="button">人工建立标准</button><button class="text-action" type="button">重试AI预标注</button></div></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <div class="selection-bar hidden" id="selectionBar">
+    <div><strong>已选择 <b id="selectionCount">0</b> 款商品</strong><span>位置标准不会因加入批次而改变</span></div>
+    <div class="selection-actions"><button class="button" id="clearSelection" type="button">取消选择</button><button class="button primary" id="addToBatch" type="button">加入批量效果图</button></div>
+  </div>
+
+  <div class="backdrop hidden" id="calibrationBackdrop" role="dialog" aria-modal="true" aria-labelledby="dialogTitle">
+    <section class="calibration-dialog">
+      <header class="dialog-head">
+        <div class="dialog-title"><span class="brand-mark" style="color:white;background:var(--forest)">衣</span><div><div class="eyebrow">GARMENT PLACEMENT STANDARD</div><h2 id="dialogTitle"><span id="dialogCode">2208</span> · <span id="dialogName">新款 Polo · 茶绿色</span><span class="pill review" id="dialogStatus">待人工复核</span><span class="pill" id="profilePill">短袖 Polo 模板</span></h2></div></div>
+        <div class="dialog-tools"><button class="button small" id="previousProduct" type="button">← 上一个</button><button class="button small" id="nextProduct" type="button">下一个 →</button><button class="icon-button" id="closeCalibration" type="button" aria-label="关闭">×</button></div>
+      </header>
+      <div class="dialog-body">
+        <section class="blueprint-stage">
+          <div class="stage-toolbar">
+            <div class="stage-legend"><span><i class="legend-dot"></i>结构点</span><span><i class="legend-anchor"></i>落位锚点</span><span><i class="legend-box"></i>最大可印范围</span><span><i class="legend-exclusion"></i>禁止覆盖区</span></div>
+            <div class="layer-toggle"><button class="active" data-layer="all" type="button">全部</button><button data-layer="structure" type="button">只看结构</button><button data-layer="placement" type="button">只看落位</button></div>
+          </div>
+          <div class="faces">
+            <article class="face-panel active" data-face="front">
+              <div class="face-head"><strong>正面 · <span id="frontProfileLabel">短袖 Polo 结构</span> · 左右以穿着者为准</strong><span id="frontProfileStats">FRONT / 8 POINTS / 3 AREAS</span></div>
+              <div class="face-canvas-wrap"><div class="face-canvas front" id="frontCanvas">
+                <img class="dialog-product-image" src="./products/originals/2208-tea-green-polo.png" alt="商品正面" />
+                <svg class="seam-map" viewBox="0 0 100 100" preserveAspectRatio="none"><path d="M44 13 L22 20 L14 37 L25 91"/><path d="M56 13 L78 20 L86 37 L75 91"/><line x1="14" y1="37" x2="86" y2="37"/><line x1="25" y1="91" x2="75" y2="91"/></svg>
+                <button class="point" style="left:44%;top:13%" data-point="左领口" type="button"></button><button class="point" style="left:56%;top:13%" data-point="右领口" type="button"></button><button class="point" style="left:22%;top:20%" data-point="左肩" type="button"></button><button class="point" style="left:78%;top:20%" data-point="右肩" type="button"></button><button class="point" style="left:14%;top:37%" data-point="左腋" type="button"></button><button class="point" style="left:86%;top:37%" data-point="右腋" type="button"></button><button class="point" style="left:25%;top:91%" data-point="左下摆" type="button"></button><button class="point" style="left:75%;top:91%" data-point="右下摆" type="button"></button><button class="point hidden" data-point="左袖口" type="button"></button><button class="point hidden" data-point="右袖口" type="button"></button>
+                <div class="exclusion exclusion-collar" data-exclusion="neckline" data-label="领口禁区"></div><div class="exclusion exclusion-placket" data-exclusion="short-placket" data-label="短门襟禁区"></div>
+                <div class="exclusion hidden" data-exclusion="full-zipper" data-label="全长拉链禁区"></div><div class="exclusion hidden" data-exclusion="left-pocket" data-label="口袋禁区"></div><div class="exclusion hidden" data-exclusion="right-pocket" data-label="口袋禁区"></div><div class="exclusion hidden" data-exclusion="kangaroo-pocket" data-label="袋鼠兜禁区"></div><div class="exclusion hidden" data-exclusion="hood-neck" data-label="帽领禁区"></div>
+                <div class="zone ai zone-left-chest" data-zone="left-chest" data-label="左前胸最大可印范围"><i class="resize-handle"></i></div><div class="zone ai zone-front-center" data-zone="front-center" data-label="正胸最大可印范围"><i class="resize-handle"></i></div><div class="zone ai zone-sleeve" data-zone="sleeve" data-label="左袖最大可印范围"><i class="resize-handle"></i></div>
+                <div class="logo-preview selected" style="left:64%;top:38%;width:8%;height:9%" data-anchor="left-chest">标</div><button class="placement-anchor selected" style="left:64%;top:38%" data-anchor="left-chest" aria-label="左前胸锚点" type="button"></button>
+                <div class="logo-preview" style="left:50%;top:55%;width:13%;height:12%" data-anchor="front-center">LOGO</div><button class="placement-anchor" style="left:50%;top:55%" data-anchor="front-center" aria-label="正胸锚点" type="button"></button>
+                <div class="logo-preview" style="left:84%;top:34%;width:9%;height:6%" data-anchor="sleeve">TEXT</div><button class="placement-anchor" style="left:84%;top:34%" data-anchor="sleeve" aria-label="左袖锚点" type="button"></button>
+                <div class="zone ai hidden" data-zone="right-chest" data-label="右前胸最大可印范围"><i class="resize-handle"></i></div><div class="logo-preview hidden" data-anchor="right-chest">标</div><button class="placement-anchor hidden" data-anchor="right-chest" aria-label="右前胸锚点" type="button"></button>
+              </div></div>
+            </article>
+            <article class="face-panel" data-face="back">
+              <div class="face-head"><strong>背面 · <span id="backProfileLabel">短袖 Polo 结构</span></strong><span id="backProfileStats">BACK / 8 POINTS / 2 AREAS</span></div>
+              <div class="face-canvas-wrap"><div class="face-canvas back" id="backCanvas">
+                <img class="dialog-product-image" src="./products/originals/2208-tea-green-polo.png" alt="商品背面" />
+                <svg class="seam-map" viewBox="0 0 100 100" preserveAspectRatio="none"><path d="M43 12 L21 20 L13 37 L25 91"/><path d="M57 12 L79 20 L87 37 L75 91"/><line x1="13" y1="37" x2="87" y2="37"/><line x1="25" y1="91" x2="75" y2="91"/></svg>
+                <button class="point" style="left:43%;top:12%" data-point="左领口" type="button"></button><button class="point" style="left:57%;top:12%" data-point="右领口" type="button"></button><button class="point" style="left:21%;top:20%" data-point="左肩" type="button"></button><button class="point" style="left:79%;top:20%" data-point="右肩" type="button"></button><button class="point" style="left:13%;top:37%" data-point="左腋" type="button"></button><button class="point" style="left:87%;top:37%" data-point="右腋" type="button"></button><button class="point" style="left:25%;top:91%" data-point="左下摆" type="button"></button><button class="point" style="left:75%;top:91%" data-point="右下摆" type="button"></button><button class="point hidden" data-point="左袖口" type="button"></button><button class="point hidden" data-point="右袖口" type="button"></button>
+                <div class="exclusion exclusion-neck" data-exclusion="back-neck" data-label="后领禁区"></div><div class="exclusion hidden" data-exclusion="back-hood" data-label="帽子覆盖区"></div><div class="exclusion hidden" data-exclusion="back-yoke" data-label="后肩拼缝禁区"></div>
+                <div class="zone ai zone-upper-back" data-zone="upper-back" data-label="后背上方最大可印范围"><i class="resize-handle"></i></div><div class="zone ai zone-back-center" data-zone="back-center" data-label="后背居中最大可印范围"><i class="resize-handle"></i></div>
+                <div class="logo-preview" style="left:50%;top:34%;width:29%;height:8%" data-anchor="upper-back">LOGO / TEXT</div><button class="placement-anchor" style="left:50%;top:34%" data-anchor="upper-back" aria-label="后背上方锚点" type="button"></button>
+                <div class="logo-preview" style="left:50%;top:54%;width:20%;height:14%" data-anchor="back-center">LOGO</div><button class="placement-anchor" style="left:50%;top:54%" data-anchor="back-center" aria-label="后背居中锚点" type="button"></button>
+              </div></div>
+            </article>
+          </div>
+        </section>
+        <aside class="inspector">
+          <section class="inspector-section"><h3>位置标准来源</h3><div class="cluster-source"><div class="cluster-source-row"><strong id="clusterName">短袖 Polo A簇</strong><code id="clusterScore">96.4%</code></div><p id="clusterDecision">领型、肩线、腋点、门襟和衣身比例均通过；可继承 2208-v1，并按本款结构点重投影。</p><div class="cluster-actions" id="clusterActions"><button class="button primary" id="applyClusterStandard" type="button">采用簇标准</button><button class="button" id="keepIndividualCalibration" type="button">单独校准</button></div></div></section>
+          <section class="inspector-section"><h3>确认进度</h3><div class="face-summary"><button class="active" data-focus-face="front" type="button"><strong>正面</strong><span id="frontSummary">8个结构点 · 3个区域</span></button><button data-focus-face="back" type="button"><strong>背面</strong><span id="backSummary">8个结构点 · 2个区域</span></button></div></section>
+          <section class="inspector-section"><h3>当前编辑</h3><p id="currentEditCopy">左前胸 · 橙色锚点接收 Logo 视觉中心；绿色框限制最大范围，半透明图案表示默认尺寸。</p></section>
+          <div class="position-list">
+            <h3>正面位置</h3>
+            <button class="position-item active" data-target-zone="left-chest" data-target-face="front" type="button"><i class="position-symbol">锚</i><span><strong>左前胸</strong><span>锚点 64,38 · 默认宽 8%</span></span><em>范围14×18%</em></button>
+            <button class="position-item hidden" data-target-zone="right-chest" data-target-face="front" type="button"><i class="position-symbol">锚</i><span><strong>右前胸</strong><span>锚点 36,38 · 默认宽 8%</span></span><em>范围14×18%</em></button>
+            <button class="position-item" data-target-zone="front-center" data-target-face="front" type="button"><i class="position-symbol">锚</i><span><strong>正胸</strong><span>锚点 50,55 · 默认宽 13%</span></span><em>范围22×25%</em></button>
+            <button class="position-item" data-target-zone="sleeve" data-target-face="front" type="button"><i class="position-symbol">锚</i><span><strong>左袖</strong><span>锚点 84,34 · 默认宽 9%</span></span><em>范围16×13%</em></button>
+            <h3>背面位置</h3>
+            <button class="position-item" data-target-zone="upper-back" data-target-face="back" type="button"><i class="position-symbol">锚</i><span><strong>后背上方</strong><span>锚点 50,34 · 默认宽 29%</span></span><em>范围50×21%</em></button>
+            <button class="position-item" data-target-zone="back-center" data-target-face="back" type="button"><i class="position-symbol">锚</i><span><strong>后背居中</strong><span>锚点 50,54 · 默认宽 20%</span></span><em>范围38×32%</em></button>
+            <div class="warning-box" id="warningBox">自动检查：后背上方距领口安全距离偏小，请结合衣服实样确认。</div>
+          </div>
+        </aside>
+      </div>
+      <footer class="dialog-foot">
+        <p><strong>确认后立即成为这个款式的生产标准</strong>贴图前先裁掉透明空白，以 Logo 视觉中心对准锚点；超出最大可印范围时只等比缩小。</p>
+        <div class="dialog-actions"><button class="button quiet" id="resetAi" type="button">还原AI建议</button><button class="button" id="saveDraft" type="button">保存草稿</button><button class="button primary" id="confirmStandard" type="button">确认当前款式位置标准</button></div>
+      </footer>
+    </section>
+  </div>
+
+  <div class="backdrop hidden" id="lightboxBackdrop" role="dialog" aria-modal="true">
+    <section class="lightbox-dialog"><header class="lightbox-head"><strong id="lightboxTitle">商品原图</strong><button class="icon-button" id="closeLightbox" type="button">×</button></header><div class="lightbox-body"><img id="lightboxImage" alt="商品高清原图" /></div></section>
+  </div>
+
+  <div class="backdrop hidden" id="trainingBackdrop" role="dialog" aria-modal="true">
+    <section class="training-dialog"><header class="dialog-head"><div class="dialog-title"><div><div class="eyebrow">MODEL TRAINING</div><h2>训练数据与模型版本</h2></div></div><button class="icon-button" id="closeTraining" type="button">×</button></header><div class="training-body"><section><h3>当前数据</h3><ul><li>人工确认：1,052张</li><li>正面：618张 · 背面：434张</li><li>第一阶段目标：1,200张</li><li>每累计300～500张新真值创建候选训练</li><li>同款不同颜色按款式分组，避免数据泄漏</li></ul></section><section><h3>模型版本</h3><div class="model-version"><strong>PRELABEL / vision-v3</strong><span>当前负责新商品AI预标注</span><span>豆包视觉模型 · 人工确认门</span></div><div class="model-version" style="margin-top:9px"><strong>RTMPOSE / 尚未训练</strong><span>达到1,200张后生成第一版候选</span><span>通过独立测试集后才能发布</span></div></section></div><footer class="dialog-foot"><p>模型版本只影响未确认商品，不能覆盖已经确认的款式标准。</p><button class="button primary" id="closeTrainingFooter" type="button">知道了</button></footer></section>
+  </div>
+
+  <div class="toast" id="toast" role="status"></div>
+
+  <script>
+    const rows = [...document.querySelectorAll('#productRows tr')];
+    const filters = [...document.querySelectorAll('.filter')];
+    const searchInput = document.getElementById('searchInput');
+    const selectionBar = document.getElementById('selectionBar');
+    const selectionCount = document.getElementById('selectionCount');
+    const rowChecks = [...document.querySelectorAll('.row-check')];
+    const toast = document.getElementById('toast');
+    let activeFilter = 'all';
+    let activeRow = null;
+    let toastTimer;
+
+    function showToast(message) {
+      toast.textContent = message;
+      toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('show'), 2600);
+    }
+
+    function applyFilter(filter) {
+      activeFilter = filter;
+      filters.forEach(button => button.classList.toggle('active', button.dataset.filter === filter));
+      const query = searchInput.value.trim().toLowerCase();
+      rows.forEach(row => {
+        const statusMatch = filter === 'all' || row.dataset.status === filter;
+        const searchMatch = !query || row.dataset.search.includes(query);
+        row.classList.toggle('hidden', !statusMatch || !searchMatch);
+      });
+    }
+
+    filters.forEach(button => button.addEventListener('click', () => applyFilter(button.dataset.filter)));
+    document.querySelectorAll('.metric').forEach(metric => metric.addEventListener('click', () => applyFilter(metric.dataset.filter)));
+    searchInput.addEventListener('input', () => applyFilter(activeFilter));
+
+    function updateSelection() {
+      const count = rowChecks.filter(check => check.checked).length;
+      selectionCount.textContent = count;
+      selectionBar.classList.toggle('hidden', count === 0);
+      document.getElementById('selectAll').checked = count > 0 && count === rowChecks.length;
+    }
+    rowChecks.forEach(check => check.addEventListener('change', updateSelection));
+    document.getElementById('selectAll').addEventListener('change', event => { rowChecks.forEach(check => check.checked = event.target.checked); updateSelection(); });
+    document.getElementById('clearSelection').addEventListener('click', () => { rowChecks.forEach(check => check.checked = false); updateSelection(); });
+    document.getElementById('addToBatch').addEventListener('click', () => showToast(`已将 ${selectionCount.textContent} 款商品加入批量效果图；确认的位置标准会自动带入。`));
+
+    document.getElementById('autoSwitch').addEventListener('click', event => {
+      event.currentTarget.classList.toggle('off');
+      showToast(event.currentTarget.classList.contains('off') ? '已关闭新商品自动预标注' : '已开启新商品自动预标注');
+    });
+    document.getElementById('importButton').addEventListener('click', () => showToast('导入时将自动检查正反面素材，并按款式去重。'));
+    document.getElementById('backfillButton').addEventListener('click', () => showToast('已将4款未建立标准的商品加入预标注队列；单款失败不会阻断其他商品。'));
+    document.getElementById('queueDetail').addEventListener('click', () => showToast('1906DC：正在识别正面结构点，任务 queue-041，当前进度68%。'));
+    document.getElementById('uploadBack').addEventListener('click', () => showToast('请选择011HYX的背面高清图；正面标准可以先独立确认。'));
+
+    const calibrationBackdrop = document.getElementById('calibrationBackdrop');
+    const dialogImages = [...document.querySelectorAll('.dialog-product-image')];
+    /*
+      每张商品图都是“正面 + 背面”的合图，但衣服并不一定恰好位于各自半幅的中心。
+      这里保存预处理阶段从透明轮廓得到的单面衣服边界；结构模板中的坐标始终是
+      相对于衣服自身的 0–100 局部坐标，展示时再映射回当前半幅画布。
+    */
+    const garmentFaceFrames = {
+      '011HYX': { front: [0, 0, 95.94, 100], back: [4.1, 0, 95.9, 100] },
+      '1101': { front: [.05, .45, 94.9, 98.82], back: [4.04, .12, 95.81, 99.8] },
+      '1866': { front: [.05, .04, 97.05, 99.96], back: [2.32, .04, 97.68, 99.96] },
+      '1906DC': { front: [0, .58, 89.91, 98.66], back: [12.07, 0, 87.93, 100] },
+      '2208': { front: [0, .2, 92.51, 99.8], back: [7.53, .2, 92.47, 99.8] },
+      '2402': { front: [0, 0, 97.98, 100], back: [2.66, 0, 97.34, 99.8] },
+      '2509': { front: [0, 0, 95.51, 100], back: [4.49, 0, 95.51, 100] },
+      '2599DC': { front: [0, 0, 99.16, 99.96], back: [2.65, 0, 97.35, 100] },
+      '301SRX': { front: [.05, .46, 99.86, 99.5], back: [.14, 0, 99.82, 99.16] },
+      '388': { front: [.09, .04, 99.91, 99.85], back: [0, .04, 99.86, 99.81] }
+    };
+    const garmentProfiles = {
+      polo: {
+        label: '短袖 Polo',
+        exclusions: {
+          neckline: { face: 'front', left: 37, top: 10, width: 26, height: 12, radius: '50% 50% 35% 35%' },
+          'short-placket': { face: 'front', left: 47.4, top: 17, width: 5.2, height: 31, radius: '3px' },
+          'back-neck': { face: 'back', left: 40, top: 9, width: 20, height: 9, radius: '50%' }
+        },
+        positions: {
+          'left-chest': { face: 'front', zone: [57,29,14,18], anchor: [64,38], preview: [8,9,'标'] },
+          'front-center': { face: 'front', zone: [39,40,22,25], anchor: [50,55], preview: [13,12,'LOGO'] },
+          sleeve: { face: 'front', zone: [76,28,16,13,7], anchor: [84,34], preview: [9,6,'TEXT'] },
+          'upper-back': { face: 'back', zone: [25,25,50,21], anchor: [50,34], preview: [29,8,'LOGO / TEXT'] },
+          'back-center': { face: 'back', zone: [31,39,38,32], anchor: [50,54], preview: [20,14,'LOGO'] }
+        },
+        warning: 'Polo 门襟只影响正中位置；左右胸和后背仍按对应锚点校验。'
+      },
+      'long-polo': {
+        label: '长袖翻领衫',
+        exclusions: {
+          neckline: { face: 'front', left: 37, top: 9, width: 26, height: 12, radius: '50% 50% 35% 35%' },
+          'short-placket': { face: 'front', left: 47.5, top: 16, width: 5, height: 30, radius: '3px' },
+          'back-neck': { face: 'back', left: 40, top: 8, width: 20, height: 9, radius: '50%' }
+        },
+        positions: {
+          'left-chest': { face: 'front', zone: [57,28,14,18], anchor: [64,37], preview: [8,9,'标'] },
+          'front-center': { face: 'front', zone: [39,40,22,25], anchor: [50,55], preview: [13,12,'LOGO'] },
+          sleeve: { face: 'front', zone: [78,27,13,20,4], anchor: [84,36], preview: [8,8,'TEXT'] },
+          'upper-back': { face: 'back', zone: [25,24,50,22], anchor: [50,34], preview: [29,8,'LOGO / TEXT'] },
+          'back-center': { face: 'back', zone: [31,39,38,32], anchor: [50,54], preview: [20,14,'LOGO'] }
+        },
+        warning: '长袖位置需额外避开肘部弯折区，袖部只保留上臂锚点。'
+      },
+      crewneck: {
+        label: '圆领衫',
+        exclusions: {
+          neckline: { face: 'front', left: 41, top: 8, width: 18, height: 9, radius: '50%' },
+          'back-neck': { face: 'back', left: 42, top: 7, width: 16, height: 7, radius: '50%' }
+        },
+        positions: {
+          'left-chest': { face: 'front', zone: [57,25,15,18], anchor: [64.5,34], preview: [8,9,'标'] },
+          'front-center': { face: 'front', zone: [35,27,30,31], anchor: [50,42], preview: [18,13,'LOGO'] },
+          sleeve: { face: 'front', zone: [76,27,16,14,7], anchor: [84,34], preview: [9,6,'TEXT'] },
+          'upper-back': { face: 'back', zone: [25,21,50,23], anchor: [50,32], preview: [29,9,'LOGO / TEXT'] },
+          'back-center': { face: 'back', zone: [31,38,38,33], anchor: [50,54], preview: [20,14,'LOGO'] }
+        },
+        warning: '圆领衫没有门襟；正中区域只需避开领口和腋下褶皱。'
+      },
+      hoodie: {
+        label: '套头卫衣',
+        exclusions: {
+          'hood-neck': { face: 'front', left: 30, top: 4, width: 40, height: 23, radius: '45%' },
+          'kangaroo-pocket': { face: 'front', left: 29, top: 57, width: 42, height: 24, radius: '8px' },
+          'back-hood': { face: 'back', left: 29, top: 3, width: 42, height: 27, radius: '45%' }
+        },
+        positions: {
+          'left-chest': { face: 'front', zone: [58,29,14,16], anchor: [65,37], preview: [8,8,'标'] },
+          'front-center': { face: 'front', zone: [35,28,30,25], anchor: [50,40], preview: [18,11,'LOGO'] },
+          sleeve: { face: 'front', zone: [78,29,13,21,4], anchor: [84,39], preview: [8,8,'TEXT'] },
+          'upper-back': { face: 'back', zone: [26,30,48,19], anchor: [50,39], preview: [28,8,'LOGO / TEXT'] },
+          'back-center': { face: 'back', zone: [32,43,36,29], anchor: [50,57], preview: [20,13,'LOGO'] }
+        },
+        warning: '套头卫衣的帽子会遮挡后领区域，袋鼠兜上方才是正面大图安全位置。'
+      },
+      jacket: {
+        label: '立领外套',
+        exclusions: {
+          neckline: { face: 'front', left: 41, top: 6, width: 18, height: 12, radius: '45%' },
+          'full-zipper': { face: 'front', left: 48.5, top: 15, width: 3, height: 77, radius: '2px' },
+          'left-pocket': { face: 'front', left: 58, top: 56, width: 16, height: 20, radius: '5px' },
+          'right-pocket': { face: 'front', left: 26, top: 56, width: 16, height: 20, radius: '5px' },
+          'back-neck': { face: 'back', left: 41, top: 6, width: 18, height: 9, radius: '45%' },
+          'back-yoke': { face: 'back', left: 22, top: 21, width: 56, height: 8, radius: '2px' }
+        },
+        positions: {
+          'left-chest': { face: 'front', zone: [57,27,16,17], anchor: [65,35.5], preview: [8,8,'标'] },
+          'right-chest': { face: 'front', zone: [27,27,16,17], anchor: [35,35.5], preview: [8,8,'标'] },
+          sleeve: { face: 'front', zone: [79,29,12,20,4], anchor: [85,38], preview: [7,8,'TEXT'] },
+          'upper-back': { face: 'back', zone: [25,30,50,18], anchor: [50,39], preview: [28,8,'LOGO / TEXT'] },
+          'back-center': { face: 'back', zone: [32,43,36,28], anchor: [50,56], preview: [19,12,'LOGO'] }
+        },
+        warning: '立领外套使用全长拉链和双侧口袋禁区，不允许沿用 Polo 的短门襟范围。'
+      },
+      shell: {
+        label: '冲锋衣 / 连帽外套',
+        exclusions: {
+          'hood-neck': { face: 'front', left: 32, top: 3, width: 36, height: 21, radius: '45%' },
+          'full-zipper': { face: 'front', left: 48.5, top: 16, width: 3, height: 76, radius: '2px' },
+          'left-pocket': { face: 'front', left: 57, top: 49, width: 18, height: 24, radius: '6px' },
+          'right-pocket': { face: 'front', left: 25, top: 49, width: 18, height: 24, radius: '6px' },
+          'back-hood': { face: 'back', left: 31, top: 2, width: 38, height: 26, radius: '45%' },
+          'back-yoke': { face: 'back', left: 20, top: 26, width: 60, height: 9, radius: '2px' }
+        },
+        positions: {
+          'left-chest': { face: 'front', zone: [58,27,14,15], anchor: [65,34.5], preview: [7,7,'标'] },
+          'right-chest': { face: 'front', zone: [28,27,14,15], anchor: [35,34.5], preview: [7,7,'标'] },
+          sleeve: { face: 'front', zone: [79,28,12,19,4], anchor: [85,37], preview: [7,8,'TEXT'] },
+          'upper-back': { face: 'back', zone: [26,35,48,16], anchor: [50,43], preview: [27,7,'LOGO / TEXT'] },
+          'back-center': { face: 'back', zone: [33,48,34,24], anchor: [50,60], preview: [18,11,'LOGO'] }
+        },
+        warning: '冲锋衣需避开帽子、压胶拼缝、全长拉链和功能口袋；结构不一致时禁止跨簇继承。'
+      },
+      vest: {
+        label: '工装马甲',
+        exclusions: {
+          neckline: { face: 'front', left: 38, top: 6, width: 24, height: 24, radius: '40%' },
+          'full-zipper': { face: 'front', left: 48.5, top: 21, width: 3, height: 70, radius: '2px' },
+          'left-pocket': { face: 'front', left: 55, top: 46, width: 21, height: 28, radius: '4px' },
+          'right-pocket': { face: 'front', left: 24, top: 46, width: 21, height: 28, radius: '4px' },
+          'back-neck': { face: 'back', left: 40, top: 6, width: 20, height: 10, radius: '45%' }
+        },
+        positions: {
+          'left-chest': { face: 'front', zone: [57,28,16,15], anchor: [65,35.5], preview: [8,7,'标'] },
+          'right-chest': { face: 'front', zone: [27,28,16,15], anchor: [35,35.5], preview: [8,7,'标'] },
+          'upper-back': { face: 'back', zone: [25,25,50,21], anchor: [50,35], preview: [29,8,'LOGO / TEXT'] },
+          'back-center': { face: 'back', zone: [31,40,38,31], anchor: [50,55], preview: [20,13,'LOGO'] }
+        },
+        warning: '马甲没有袖部位置；正面必须避开拉链和大口袋。'
+      }
+    };
+
+    function applyBox(element, box, includeSize = true) {
+      element.style.left = `${box.left}%`;
+      element.style.top = `${box.top}%`;
+      if (includeSize) {
+        element.style.width = `${box.width}%`;
+        element.style.height = `${box.height}%`;
+      }
+      element.style.transform = box.rotate ? `rotate(${box.rotate}deg)` : '';
+      element.style.borderRadius = box.radius || '';
+    }
+
+    function readGarmentFaceFrames(productCode) {
+      const configuredFrames = garmentFaceFrames[productCode];
+      if (!configuredFrames) throw new Error(`商品 ${productCode} 缺少正反面衣服轮廓坐标`);
+      return Object.fromEntries(['front', 'back'].map(face => {
+        const rawFrame = configuredFrames[face];
+        if (!Array.isArray(rawFrame) || rawFrame.length !== 4 || rawFrame.some(value => !Number.isFinite(value))) {
+          throw new Error(`商品 ${productCode} 的 ${face} 轮廓坐标无效: ${JSON.stringify(rawFrame)}`);
+        }
+        const [left, top, width, height] = rawFrame;
+        if (left < 0 || top < 0 || width <= 0 || height <= 0 || left + width > 100.01 || top + height > 100.01) {
+          throw new Error(`商品 ${productCode} 的 ${face} 轮廓越界: ${JSON.stringify(rawFrame)}`);
+        }
+        return [face, { left, top, width, height }];
+      }));
+    }
+
+    function mapGarmentBoxToCanvas(box, frame) {
+      return {
+        ...box,
+        left: frame.left + box.left * frame.width / 100,
+        top: frame.top + box.top * frame.height / 100,
+        width: Number.isFinite(box.width) ? box.width * frame.width / 100 : undefined,
+        height: Number.isFinite(box.height) ? box.height * frame.height / 100 : undefined
+      };
+    }
+
+    function frameForElement(element, faceFrames) {
+      const canvas = element.closest('.face-canvas');
+      if (!canvas) throw new Error(`标注元素 ${element.dataset.zone || element.dataset.anchor || element.dataset.point || element.dataset.exclusion || element.className} 不在单面画布中`);
+      return canvas.classList.contains('back') ? faceFrames.back : faceFrames.front;
+    }
+
+    function applyGarmentBox(element, localBox, faceFrames, includeSize = true) {
+      applyBox(element, mapGarmentBoxToCanvas(localBox, frameForElement(element, faceFrames)), includeSize);
+    }
+
+    function applyStructureTemplate(profileKey, faceFrames) {
+      const isLongSleeve = ['long-polo', 'hoodie', 'jacket', 'shell'].includes(profileKey);
+      const isVest = profileKey === 'vest';
+      const points = isLongSleeve ? {
+        '左领口': [44,12], '右领口': [56,12], '左肩': [25,20], '右肩': [75,20],
+        '左腋': [31,39], '右腋': [69,39], '左袖口': [15,78], '右袖口': [85,78], '左下摆': [28,92], '右下摆': [72,92]
+      } : isVest ? {
+        '左领口': [43,11], '右领口': [57,11], '左肩': [26,19], '右肩': [74,19],
+        '左腋': [23,39], '右腋': [77,39], '左下摆': [28,91], '右下摆': [72,91]
+      } : {
+        '左领口': [44,13], '右领口': [56,13], '左肩': [22,20], '右肩': [78,20],
+        '左腋': [14,37], '右腋': [86,37], '左下摆': [25,91], '右下摆': [75,91]
+      };
+      document.querySelectorAll('.face-canvas').forEach(canvas => {
+        const faceFrame = canvas.classList.contains('back') ? faceFrames.back : faceFrames.front;
+        canvas.querySelectorAll('.point').forEach(point => {
+          const coordinate = points[point.dataset.point];
+          point.classList.toggle('hidden', !coordinate);
+          if (coordinate) applyGarmentBox(point, { left: coordinate[0], top: coordinate[1] }, faceFrames, false);
+        });
+        const seamMap = canvas.querySelector('.seam-map');
+        const seamPaths = isLongSleeve
+          ? '<path d="M44 12 L25 20 L15 78"/><path d="M56 12 L75 20 L85 78"/><path d="M31 39 L28 92"/><path d="M69 39 L72 92"/><line x1="31" y1="39" x2="69" y2="39"/><line x1="28" y1="92" x2="72" y2="92"/>'
+          : isVest
+            ? '<path d="M43 11 L26 19 L23 39 L28 91"/><path d="M57 11 L74 19 L77 39 L72 91"/><line x1="23" y1="39" x2="77" y2="39"/><line x1="28" y1="91" x2="72" y2="91"/>'
+            : '<path d="M44 13 L22 20 L14 37 L25 91"/><path d="M56 13 L78 20 L86 37 L75 91"/><line x1="14" y1="37" x2="86" y2="37"/><line x1="25" y1="91" x2="75" y2="91"/>';
+        seamMap.innerHTML = `<g transform="translate(${faceFrame.left} ${faceFrame.top}) scale(${faceFrame.width / 100} ${faceFrame.height / 100})">${seamPaths}</g>`;
+      });
+      return isLongSleeve ? 10 : 8;
+    }
+
+    function applyGarmentProfile(profileKey, productCode) {
+      const profile = garmentProfiles[profileKey];
+      if (!profile) throw new Error(`未知服装结构模板: ${profileKey}`);
+      const faceFrames = readGarmentFaceFrames(productCode);
+      const pointCount = applyStructureTemplate(profileKey, faceFrames);
+      document.getElementById('profilePill').textContent = `${profile.label}模板`;
+      document.getElementById('frontProfileLabel').textContent = `${profile.label}结构`;
+      document.getElementById('backProfileLabel').textContent = `${profile.label}结构`;
+      document.querySelectorAll('.exclusion').forEach(exclusion => {
+        const config = profile.exclusions[exclusion.dataset.exclusion];
+        exclusion.classList.toggle('hidden', !config);
+        if (config) applyGarmentBox(exclusion, config, faceFrames);
+      });
+      document.querySelectorAll('.zone').forEach(zone => {
+        const config = profile.positions[zone.dataset.zone];
+        zone.classList.toggle('hidden', !config);
+        if (config) applyGarmentBox(zone, { left: config.zone[0], top: config.zone[1], width: config.zone[2], height: config.zone[3], rotate: config.zone[4] || 0 }, faceFrames);
+      });
+      document.querySelectorAll('.placement-anchor').forEach(anchor => {
+        const config = profile.positions[anchor.dataset.anchor];
+        anchor.classList.toggle('hidden', !config);
+        if (config) applyGarmentBox(anchor, { left: config.anchor[0], top: config.anchor[1] }, faceFrames, false);
+      });
+      document.querySelectorAll('.logo-preview').forEach(preview => {
+        const config = profile.positions[preview.dataset.anchor];
+        preview.classList.toggle('hidden', !config);
+        if (config) {
+          applyGarmentBox(preview, { left: config.anchor[0], top: config.anchor[1], width: config.preview[0], height: config.preview[1] }, faceFrames);
+          preview.textContent = config.preview[2];
+        }
+      });
+      document.querySelectorAll('.position-item').forEach(item => {
+        const config = profile.positions[item.dataset.targetZone];
+        item.classList.toggle('hidden', !config);
+        if (config) {
+          item.querySelector('span span').textContent = `衣服坐标 ${config.anchor[0]},${config.anchor[1]} · 默认宽 ${config.preview[0]}%`;
+          item.querySelector('em').textContent = `范围${config.zone[2]}×${config.zone[3]}%`;
+        }
+      });
+      const frontCount = Object.values(profile.positions).filter(position => position.face === 'front').length;
+      const backCount = Object.values(profile.positions).filter(position => position.face === 'back').length;
+      document.getElementById('frontProfileStats').textContent = `FRONT / ${pointCount} POINTS / ${frontCount} AREAS`;
+      document.getElementById('backProfileStats').textContent = `BACK / ${pointCount} POINTS / ${backCount} AREAS`;
+      document.getElementById('frontSummary').textContent = `${pointCount}个结构点 · ${frontCount}个区域`;
+      document.getElementById('backSummary').textContent = `${pointCount}个结构点 · ${backCount}个区域`;
+      document.getElementById('warningBox').textContent = profile.warning;
+      const firstPosition = [...document.querySelectorAll('.position-item')].find(item => !item.classList.contains('hidden'));
+      document.querySelectorAll('.position-item').forEach(item => item.classList.toggle('active', item === firstPosition));
+      document.querySelectorAll('.zone').forEach(zone => zone.classList.toggle('selected', zone.dataset.zone === firstPosition?.dataset.targetZone));
+      document.querySelectorAll('.placement-anchor').forEach(anchor => anchor.classList.toggle('selected', anchor.dataset.anchor === firstPosition?.dataset.targetZone));
+      document.querySelectorAll('.logo-preview').forEach(preview => preview.classList.toggle('selected', preview.dataset.anchor === firstPosition?.dataset.targetZone));
+      document.getElementById('currentEditCopy').textContent = `${profile.label}结构模板 · 已按本款正反面衣服轮廓校正画布偏移，位置、禁区和锚点共用同一衣服坐标系。`;
+      initialGeometry.clear();
+      document.querySelectorAll('.zone, .point, .placement-anchor, .logo-preview').forEach(element => initialGeometry.set(element, element.getAttribute('style') || ''));
+    }
+
+    function openCalibration(button) {
+      activeRow = button.closest('tr');
+      document.getElementById('dialogCode').textContent = button.dataset.code;
+      document.getElementById('dialogName').textContent = button.dataset.name;
+      dialogImages.forEach(image => image.src = button.dataset.src);
+      applyGarmentProfile(button.dataset.profile || 'polo', button.dataset.code);
+      const status = document.getElementById('dialogStatus');
+      const approved = button.dataset.state === 'approved';
+      status.textContent = approved ? '已确认 · 查看模式' : button.dataset.state === 'missing' ? '正面可先确认' : '待人工复核';
+      status.className = `pill ${approved ? 'approved' : button.dataset.state === 'missing' ? 'missing' : 'review'}`;
+      document.getElementById('warningBox').classList.toggle('hidden', approved);
+      const clusterName = document.getElementById('clusterName');
+      const clusterScore = document.getElementById('clusterScore');
+      const clusterDecision = document.getElementById('clusterDecision');
+      const clusterActions = document.getElementById('clusterActions');
+      const hasCluster = Boolean(button.dataset.cluster);
+      const isRepresentative = button.dataset.clusterSource === '本款是代表款';
+      const representativeButton = [...document.querySelectorAll('.calibrate')].find(candidate => candidate.dataset.cluster === button.dataset.cluster && candidate.dataset.clusterSource === '本款是代表款');
+      const clusterProfileMatch = !hasCluster || representativeButton?.dataset.profile === button.dataset.profile;
+      clusterName.textContent = button.dataset.cluster || '暂未进入可复用簇';
+      clusterScore.textContent = button.dataset.clusterScore || '单独校准';
+      if (!clusterProfileMatch) {
+        clusterScore.textContent = '拒绝跨模板';
+        clusterDecision.textContent = '代表款与当前商品的服装结构模板不同，禁止继承，必须单独校准。';
+      } else if (isRepresentative) {
+        clusterDecision.textContent = '本款是这个版型簇的人工代表标准；其他成员仍需逐款检测自身轮廓和结构点，只复用相对位置标准。';
+      } else if (hasCluster) {
+        clusterDecision.textContent = `本款正反面轮廓和结构点已单独检测；可继承 ${button.dataset.clusterSource} 的相对位置标准，再重投影到本款。`;
+      } else {
+        clusterDecision.textContent = '尚无通过结构门禁的代表款，当前商品需要单独校准。';
+      }
+      clusterActions.classList.toggle('hidden', !hasCluster || !clusterProfileMatch || isRepresentative || approved);
+      calibrationBackdrop.classList.remove('hidden');
+    }
+    document.querySelectorAll('.calibrate').forEach(button => button.addEventListener('click', () => openCalibration(button)));
+    document.getElementById('closeCalibration').addEventListener('click', () => calibrationBackdrop.classList.add('hidden'));
+    calibrationBackdrop.addEventListener('click', event => { if (event.target === calibrationBackdrop) calibrationBackdrop.classList.add('hidden'); });
+
+    function navigateDialog(direction) {
+      const calibrateButtons = [...document.querySelectorAll('.calibrate')];
+      const currentButton = activeRow?.querySelector('.calibrate');
+      const index = Math.max(0, calibrateButtons.indexOf(currentButton));
+      openCalibration(calibrateButtons[(index + direction + calibrateButtons.length) % calibrateButtons.length]);
+    }
+    document.getElementById('previousProduct').addEventListener('click', () => navigateDialog(-1));
+    document.getElementById('nextProduct').addEventListener('click', () => navigateDialog(1));
+
+    document.querySelectorAll('[data-focus-face]').forEach(button => button.addEventListener('click', () => {
+      document.querySelectorAll('[data-focus-face]').forEach(item => item.classList.toggle('active', item === button));
+      document.querySelectorAll('.face-panel').forEach(panel => panel.classList.toggle('active', panel.dataset.face === button.dataset.focusFace));
+    }));
+
+    document.querySelectorAll('[data-target-zone]').forEach(button => button.addEventListener('click', () => {
+      document.querySelectorAll('.position-item').forEach(item => item.classList.toggle('active', item === button));
+      document.querySelectorAll('.zone').forEach(zone => zone.classList.toggle('selected', zone.dataset.zone === button.dataset.targetZone));
+      document.querySelectorAll('.placement-anchor').forEach(anchor => anchor.classList.toggle('selected', anchor.dataset.anchor === button.dataset.targetZone));
+      document.querySelectorAll('.logo-preview').forEach(preview => preview.classList.toggle('selected', preview.dataset.anchor === button.dataset.targetZone));
+      document.querySelectorAll('.face-panel').forEach(panel => panel.classList.toggle('active', panel.dataset.face === button.dataset.targetFace));
+      document.querySelectorAll('[data-focus-face]').forEach(item => item.classList.toggle('active', item.dataset.focusFace === button.dataset.targetFace));
+      document.getElementById('currentEditCopy').textContent = `${button.querySelector('strong').textContent} · 橙色锚点接收 Logo 视觉中心；绿色框限制最大范围，半透明图案表示默认尺寸。`;
+    }));
+
+    document.querySelectorAll('[data-layer]').forEach(button => button.addEventListener('click', () => {
+      document.querySelectorAll('[data-layer]').forEach(item => item.classList.toggle('active', item === button));
+      document.querySelectorAll('.face-canvas').forEach(canvas => {
+        canvas.classList.toggle('hide-placement', button.dataset.layer === 'structure');
+        canvas.classList.toggle('hide-structure', button.dataset.layer === 'placement');
+      });
+    }));
+
+    const initialGeometry = new Map();
+    let gesture = null;
+    function pointerPercent(event, canvas) {
+      const rect = canvas.getBoundingClientRect();
+      return { x: (event.clientX - rect.left) / rect.width * 100, y: (event.clientY - rect.top) / rect.height * 100 };
+    }
+    document.querySelectorAll('.zone, .point, .placement-anchor').forEach(target => target.addEventListener('pointerdown', event => {
+      event.preventDefault();
+      const canvas = target.closest('.face-canvas');
+      const rect = target.getBoundingClientRect();
+      const canvasRect = canvas.getBoundingClientRect();
+      const resize = event.target.classList.contains('resize-handle');
+      const preview = target.classList.contains('placement-anchor') ? canvas.querySelector(`.logo-preview[data-anchor="${target.dataset.anchor}"]`) : null;
+      gesture = { target, canvas, resize, preview, start: pointerPercent(event, canvas), left: (rect.left - canvasRect.left) / canvasRect.width * 100, top: (rect.top - canvasRect.top) / canvasRect.height * 100, width: rect.width / canvasRect.width * 100, height: rect.height / canvasRect.height * 100 };
+      target.setPointerCapture(event.pointerId);
+      if (target.classList.contains('zone')) { document.querySelectorAll('.zone').forEach(zone => zone.classList.toggle('selected', zone === target)); target.classList.remove('ai'); }
+      if (target.classList.contains('placement-anchor')) {
+        document.querySelectorAll('.placement-anchor').forEach(anchor => anchor.classList.toggle('selected', anchor === target));
+        document.querySelectorAll('.logo-preview').forEach(item => item.classList.toggle('selected', item === preview));
+      }
+    }));
+    document.addEventListener('pointermove', event => {
+      if (!gesture) return;
+      const now = pointerPercent(event, gesture.canvas);
+      const dx = now.x - gesture.start.x;
+      const dy = now.y - gesture.start.y;
+      if (gesture.target.classList.contains('point') || gesture.target.classList.contains('placement-anchor')) {
+        const nextLeft = Math.max(1, Math.min(99, gesture.left + gesture.width / 2 + dx));
+        const nextTop = Math.max(1, Math.min(99, gesture.top + gesture.height / 2 + dy));
+        gesture.target.style.left = `${nextLeft}%`;
+        gesture.target.style.top = `${nextTop}%`;
+        if (gesture.preview) {
+          gesture.preview.style.left = `${nextLeft}%`;
+          gesture.preview.style.top = `${nextTop}%`;
+        }
+      } else if (gesture.resize) {
+        gesture.target.style.width = `${Math.max(8, Math.min(80, gesture.width + dx))}%`;
+        gesture.target.style.height = `${Math.max(7, Math.min(65, gesture.height + dy))}%`;
+      } else {
+        gesture.target.style.left = `${Math.max(0, Math.min(100 - gesture.width, gesture.left + dx))}%`;
+        gesture.target.style.top = `${Math.max(0, Math.min(100 - gesture.height, gesture.top + dy))}%`;
+      }
+    });
+    document.addEventListener('pointerup', () => gesture = null);
+
+    document.getElementById('resetAi').addEventListener('click', () => {
+      initialGeometry.forEach((style, element) => element.setAttribute('style', style));
+      document.querySelectorAll('.zone').forEach(zone => zone.classList.add('ai'));
+      showToast('已还原结构点、锚点、最大可印范围和默认尺寸');
+    });
+    document.getElementById('saveDraft').addEventListener('click', () => showToast('草稿已保存；不会进入训练集，也不会替换生产标准。'));
+    document.getElementById('keepIndividualCalibration').addEventListener('click', () => {
+      document.getElementById('clusterActions').classList.add('hidden');
+      showToast('已保留为单独校准；不会继承代表款坐标。');
+    });
+    document.getElementById('applyClusterStandard').addEventListener('click', () => {
+      if (activeRow) {
+        const action = activeRow.querySelector('.calibrate');
+        const representativeButton = [...document.querySelectorAll('.calibrate')].find(candidate => candidate.dataset.cluster === action?.dataset.cluster && candidate.dataset.clusterSource === '本款是代表款');
+        if (!action?.dataset.cluster || representativeButton?.dataset.profile !== action.dataset.profile) {
+          showToast('服装结构模板不一致，已阻止跨模板继承。');
+          return;
+        }
+        activeRow.dataset.status = 'approved';
+        const pill = activeRow.querySelector('.pill');
+        if (pill) { pill.className = 'pill approved'; pill.textContent = '已继承'; }
+        const sourceVersion = action?.dataset.clusterSource || '代表款标准';
+        if (action) { action.textContent = '查看位置标准'; action.classList.remove('primary', 'warning'); action.dataset.state = 'approved'; }
+        const standardCopy = activeRow.querySelector('.standard-copy');
+        if (standardCopy) {
+          standardCopy.querySelector('strong').textContent = `已继承 ${sourceVersion}`;
+          standardCopy.querySelector('span').textContent = '结构重投影通过 · 可直接用于效果图';
+          standardCopy.querySelector('code').textContent = `INHERITED / ${sourceVersion}`;
+        }
+        const statusNote = activeRow.querySelector('td:nth-child(5) .cell-note');
+        if (statusNote) statusNote.textContent = `来源 ${sourceVersion} · 无需逐点确认`;
+        const trainingState = activeRow.querySelector('.train-state');
+        if (trainingState) {
+          trainingState.querySelector('strong').textContent = '不计人工真值';
+          trainingState.querySelector('span').textContent = `继承来源 ${sourceVersion}`;
+        }
+      }
+      calibrationBackdrop.classList.add('hidden');
+      showToast('已复用代表款的相对位置标准，并按本款单独检测的结构点重投影；不会复用代表款原图中心。');
+      applyFilter(activeFilter);
+    });
+    document.getElementById('confirmStandard').addEventListener('click', () => {
+      const violations = [];
+      document.querySelectorAll('.logo-preview').forEach(preview => {
+        const canvas = preview.closest('.face-canvas');
+        const zone = canvas.querySelector(`.zone[data-zone="${preview.dataset.anchor}"]`);
+        const previewRect = preview.getBoundingClientRect();
+        const zoneRect = zone.getBoundingClientRect();
+        const outside = previewRect.left < zoneRect.left || previewRect.top < zoneRect.top || previewRect.right > zoneRect.right || previewRect.bottom > zoneRect.bottom;
+        const hitsExclusion = [...canvas.querySelectorAll('.exclusion')].some(exclusion => {
+          const exclusionRect = exclusion.getBoundingClientRect();
+          return previewRect.left < exclusionRect.right && previewRect.right > exclusionRect.left && previewRect.top < exclusionRect.bottom && previewRect.bottom > exclusionRect.top;
+        });
+        if (outside || hitsExclusion) violations.push(preview.dataset.anchor);
+      });
+      if (violations.length) {
+        showToast(`有 ${violations.length} 个默认 Logo 超出最大可印范围或碰到禁止覆盖区，请先调整锚点或尺寸。`);
+        return;
+      }
+      if (activeRow) {
+        activeRow.dataset.status = 'approved';
+        const pill = activeRow.querySelector('.pill');
+        if (pill) { pill.className = 'pill approved'; pill.textContent = '已完成'; }
+        const action = activeRow.querySelector('.calibrate');
+        if (action) { action.textContent = '查看位置标准'; action.classList.remove('primary', 'warning'); action.dataset.state = 'approved'; }
+      }
+      calibrationBackdrop.classList.add('hidden');
+      document.getElementById('trainingCount').textContent = '1,054';
+      document.getElementById('trainingMeter').style.width = '87.8%';
+      showToast('正面和背面位置标准已保存为v1；已用于效果图并加入2张训练数据。');
+      applyFilter(activeFilter);
+    });
+
+    const lightboxBackdrop = document.getElementById('lightboxBackdrop');
+    document.querySelectorAll('.zoom-product').forEach(button => button.addEventListener('click', () => {
+      document.getElementById('lightboxTitle').textContent = `${button.dataset.code} · 正反面高清原图`;
+      document.getElementById('lightboxImage').src = button.dataset.src;
+      lightboxBackdrop.classList.remove('hidden');
+    }));
+    document.getElementById('closeLightbox').addEventListener('click', () => lightboxBackdrop.classList.add('hidden'));
+    lightboxBackdrop.addEventListener('click', event => { if (event.target === lightboxBackdrop) lightboxBackdrop.classList.add('hidden'); });
+
+    const trainingBackdrop = document.getElementById('trainingBackdrop');
+    document.getElementById('trainingDetails').addEventListener('click', () => trainingBackdrop.classList.remove('hidden'));
+    document.getElementById('closeTraining').addEventListener('click', () => trainingBackdrop.classList.add('hidden'));
+    document.getElementById('closeTrainingFooter').addEventListener('click', () => trainingBackdrop.classList.add('hidden'));
+    trainingBackdrop.addEventListener('click', event => { if (event.target === trainingBackdrop) trainingBackdrop.classList.add('hidden'); });
+
+    document.addEventListener('keydown', event => {
+      if (event.key !== 'Escape') return;
+      calibrationBackdrop.classList.add('hidden');
+      lightboxBackdrop.classList.add('hidden');
+      trainingBackdrop.classList.add('hidden');
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-labelledby="title">
+  <title id="title">秒样流光 S 字标</title>
+  <path d="M26 17h66l-8 17H34c-5 0-6 6-1 8l38 15c15 6 12 26-5 26H8l8-17h48c5 0 6-5 1-7L27 44c-15-6-14-27-1-27Z" fill="currentColor"/>
+  <path d="M13 24h20l-5 12H8l5-12Z" fill="currentColor" opacity=".4"/>
+</svg>

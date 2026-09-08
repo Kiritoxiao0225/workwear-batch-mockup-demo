@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>秒样 Logo 精修方向</title>
+  <style>
+    :root{--blue:#258ff0;--ink:#101b2a;--muted:#748195;--paper:#f3f6fa;--card:#fff;--line:#dce3eb}
+    *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:"PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+    main{width:min(1180px,calc(100% - 36px));margin:auto;padding:58px 0 80px}.header{display:flex;justify-content:space-between;align-items:end;gap:24px;margin-bottom:32px}
+    h1{font-size:48px;line-height:1;margin:0 0 12px;letter-spacing:-.05em}.header p{margin:0;color:var(--muted);font-size:14px;letter-spacing:.08em}.controls{display:flex;gap:8px}
+    button{border:1px solid var(--line);border-radius:999px;background:#fff;padding:10px 16px;cursor:pointer;color:var(--ink)}button.active{background:var(--ink);color:#fff;border-color:var(--ink)}
+    .stack{display:grid;gap:18px}.option{background:var(--card);border:1px solid var(--line);border-radius:24px;padding:26px 32px;transition:.22s ease;cursor:pointer}.option:hover{transform:translateY(-2px);box-shadow:0 18px 50px rgba(30,59,93,.08)}.option.selected{outline:3px solid var(--blue);outline-offset:2px}
+    .option-head{display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-size:12px;letter-spacing:.1em}.badge{background:#e8f3ff;color:#1474cf;border-radius:999px;padding:6px 11px;letter-spacing:0}
+    .lockup{display:flex;align-items:center;gap:27px;min-height:150px;margin:8px 0}.mark{width:118px;height:118px;flex:none;filter:invert(50%) sepia(93%) saturate(2053%) hue-rotate(186deg) brightness(99%) contrast(91%)}
+    .brand-cn{font-size:68px;font-weight:900;line-height:.9;letter-spacing:-.1em;color:var(--blue);transform:skew(-7deg);transform-origin:left center}.brand-en{font-family:Inter,Arial,sans-serif;font-size:20px;font-weight:850;letter-spacing:.22em;margin:13px 0 0 3px}.tagline{font-size:12px;color:var(--muted);letter-spacing:.32em;margin:9px 0 0 3px}
+    .note{border-top:1px solid var(--line);padding-top:16px;color:var(--muted);font-size:14px;line-height:1.7}.option.reverse{background:var(--blue);border-color:var(--blue);color:#fff}.option.reverse .option-head,.option.reverse .tagline,.option.reverse .note{color:rgba(255,255,255,.7)}.option.reverse .note{border-color:rgba(255,255,255,.25)}.option.reverse .brand-cn{color:#fff}.option.reverse .mark{filter:brightness(0) invert(1)}
+    body.mono{--blue:#111;--paper:#eee}body.mono .mark{filter:brightness(0)}body.mono .option.reverse{background:#111;border-color:#111}body.mono .option.reverse .mark{filter:brightness(0) invert(1)}
+    @media(max-width:700px){.header{align-items:start;flex-direction:column}h1{font-size:38px}.option{padding:22px}.lockup{gap:15px}.mark{width:78px;height:78px}.brand-cn{font-size:46px}.brand-en{font-size:14px}.tagline{letter-spacing:.18em;font-size:10px}}
+  </style>
+</head>
+<body>
+  <main>
+    <header class="header"><div><h1>秒样·第二轮</h1><p>去掉功能图标，回到抽象符号与字标本身</p></div><div class="controls"><button class="active" data-color="blue">品牌蓝</button><button data-color="mono">单色</button></div></header>
+    <section class="stack">
+      <article class="option selected">
+        <div class="option-head"><span>A / SHAO RADICAL</span><span class="badge">首选</span></div>
+        <div class="lockup"><img class="mark" src="mark-01-shao.svg" alt="抽象少字标"/><div><div class="brand-cn">秒样</div><div class="brand-en">MIAOYANG</div><div class="tagline">选款 · 放标 · 批量出图</div></div></div>
+        <div class="note">从“秒”右侧的“少”提取笔画，改造成加速斜切符号。不画衣服，但和名称有独占性关联。</div>
+      </article>
+      <article class="option">
+        <div class="option-head"><span>B / MY WING</span><span>字母标</span></div>
+        <div class="lockup"><img class="mark" src="mark-02-my.svg" alt="MY 飞翼字母标"/><div><div class="brand-cn">秒样</div><div class="brand-en">MIAOYANG</div><div class="tagline">BATCH MOCKUP STUDIO</div></div></div>
+        <div class="note">将 M、Y 和向前的飞翼感压缩成一个符号，更像完整的 SaaS 品牌，视觉更稳。</div>
+      </article>
+      <article class="option reverse">
+        <div class="option-head"><span>C / STREAM S</span><span>流线</span></div>
+        <div class="lockup"><img class="mark" src="mark-03-stream.svg" alt="流光 S 字标"/><div><div class="brand-cn">秒样</div><div class="brand-en">MIAOYANG</div><div class="tagline">服装效果图批量制作平台</div></div></div>
+        <div class="note">用两片向前流动的纸带构成 S，表达“素材进来，样图出去”，是三个方向中最偏科技的。</div>
+      </article>
+    </section>
+  </main>
+  <script>
+    document.querySelectorAll('[data-color]').forEach(button=>button.addEventListener('click',()=>{document.body.classList.toggle('mono',button.dataset.color==='mono');document.querySelectorAll('[data-color]').forEach(item=>item.classList.toggle('active',item===button))}));
+    document.querySelectorAll('.option').forEach(option=>option.addEventListener('click',()=>option.classList.toggle('selected')));
+  </script>
+</body>
+</html>

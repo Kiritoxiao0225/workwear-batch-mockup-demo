@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1200" role="img" aria-labelledby="title desc">
+  <title id="title">秒样 Logo 六个方向</title>
+  <desc id="desc">为服装效果图批量制作平台设计的六个品牌方向。</desc>
+  <defs>
+    <filter id="blue" color-interpolation-filters="sRGB">
+      <feFlood flood-color="#2f8df5" result="color"/>
+      <feComposite in="color" in2="SourceAlpha" operator="in"/>
+    </filter>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="12" stdDeviation="18" flood-color="#244a73" flood-opacity=".08"/>
+    </filter>
+  </defs>
+  <rect width="1600" height="1200" fill="#f5f8fc"/>
+  <text x="70" y="88" fill="#10233c" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="54" font-weight="800">秒样 MIAOYANG</text>
+  <text x="72" y="130" fill="#718198" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="20" letter-spacing="3">服装效果图批量制作平台 · LOGO 方向提案</text>
+
+  <g transform="translate(55 170)">
+    <rect width="725" height="290" rx="28" fill="white" stroke="#dce6f0" stroke-width="2" filter="url(#shadow)"/>
+    <rect x="1" y="1" width="723" height="288" rx="27" fill="none" stroke="#2f8df5" stroke-width="5"/>
+    <text x="34" y="45" fill="#718198" font-family="Arial, sans-serif" font-size="17" letter-spacing="1">01 / SECOND SHIRT</text>
+    <rect x="614" y="23" width="76" height="32" rx="16" fill="#eaf4ff"/>
+    <text x="652" y="45" text-anchor="middle" fill="#1673d5" font-family="PingFang SC, sans-serif" font-size="15">推荐</text>
+    <image x="42" y="82" width="150" height="150" href="concept-01-second-shirt.svg" filter="url(#blue)"/>
+    <text x="230" y="150" fill="#2f8df5" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="68" font-weight="900" letter-spacing="-6">秒样</text>
+    <text x="234" y="192" fill="#10233c" font-family="Arial, sans-serif" font-size="24" font-weight="800" letter-spacing="6">MIAOYANG</text>
+    <text x="234" y="229" fill="#718198" font-family="PingFang SC, sans-serif" font-size="17" letter-spacing="4">选款 · 放 LOGO · 批量出图</text>
+  </g>
+
+  <g transform="translate(820 170)">
+    <rect width="725" height="290" rx="28" fill="white" stroke="#dce6f0" stroke-width="2"/>
+    <text x="34" y="45" fill="#718198" font-family="Arial, sans-serif" font-size="17" letter-spacing="1">02 / FAST COLLAR</text>
+    <image x="42" y="82" width="150" height="150" href="concept-02-fast-collar.svg" filter="url(#blue)"/>
+    <text x="230" y="150" fill="#2f8df5" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="68" font-weight="900" letter-spacing="-6">秒样</text>
+    <text x="234" y="192" fill="#10233c" font-family="Arial, sans-serif" font-size="24" font-weight="800" letter-spacing="6">MIAOYANG</text>
+    <text x="234" y="229" fill="#718198" font-family="PingFang SC, sans-serif" font-size="17" letter-spacing="3">数字化服装 SaaS 品牌</text>
+  </g>
+
+  <g transform="translate(55 495)">
+    <rect width="725" height="290" rx="28" fill="white" stroke="#dce6f0" stroke-width="2"/>
+    <text x="34" y="45" fill="#718198" font-family="Arial, sans-serif" font-size="17" letter-spacing="1">03 / MOCKUP CARDS</text>
+    <image x="42" y="82" width="150" height="150" href="concept-03-mockup-cards.svg" filter="url(#blue)"/>
+    <text x="230" y="150" fill="#2f8df5" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="68" font-weight="900" letter-spacing="-6">秒样</text>
+    <text x="234" y="192" fill="#10233c" font-family="Arial, sans-serif" font-size="24" font-weight="800" letter-spacing="6">MIAOYANG</text>
+    <text x="234" y="229" fill="#718198" font-family="PingFang SC, sans-serif" font-size="17" letter-spacing="3">批量效果图 · 立即交付</text>
+  </g>
+
+  <g transform="translate(820 495)">
+    <rect width="725" height="290" rx="28" fill="white" stroke="#dce6f0" stroke-width="2"/>
+    <text x="34" y="45" fill="#718198" font-family="Arial, sans-serif" font-size="17" letter-spacing="1">04 / INSTANT LOOP</text>
+    <image x="42" y="82" width="150" height="150" href="concept-04-instant-loop.svg" filter="url(#blue)"/>
+    <text x="230" y="150" fill="#2f8df5" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="68" font-weight="900" letter-spacing="-6">秒样</text>
+    <text x="234" y="192" fill="#10233c" font-family="Arial, sans-serif" font-size="24" font-weight="800" letter-spacing="6">MIAOYANG</text>
+    <text x="234" y="229" fill="#718198" font-family="PingFang SC, sans-serif" font-size="17" letter-spacing="3">更快生成客户确认图</text>
+  </g>
+
+  <g transform="translate(55 820)">
+    <rect width="725" height="290" rx="28" fill="white" stroke="#dce6f0" stroke-width="2"/>
+    <text x="34" y="45" fill="#718198" font-family="Arial, sans-serif" font-size="17" letter-spacing="1">05 / PIXEL M</text>
+    <image x="42" y="82" width="150" height="150" href="concept-05-pixel-m.svg" filter="url(#blue)"/>
+    <text x="230" y="150" fill="#2f8df5" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="68" font-weight="900" letter-spacing="-6">秒样</text>
+    <text x="234" y="192" fill="#10233c" font-family="Arial, sans-serif" font-size="24" font-weight="800" letter-spacing="6">MIAOYANG</text>
+    <text x="234" y="229" fill="#718198" font-family="Arial, sans-serif" font-size="17" letter-spacing="3">BATCH MOCKUP WORKSPACE</text>
+  </g>
+
+  <g transform="translate(820 820)">
+    <rect width="725" height="290" rx="28" fill="white" stroke="#dce6f0" stroke-width="2"/>
+    <text x="34" y="45" fill="#718198" font-family="Arial, sans-serif" font-size="17" letter-spacing="1">06 / HANGER BOLT</text>
+    <image x="42" y="82" width="150" height="150" href="concept-06-hanger-bolt.svg" filter="url(#blue)"/>
+    <text x="230" y="150" fill="#2f8df5" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="68" font-weight="900" letter-spacing="-6">秒样</text>
+    <text x="234" y="192" fill="#10233c" font-family="Arial, sans-serif" font-size="24" font-weight="800" letter-spacing="6">MIAOYANG</text>
+    <text x="234" y="229" fill="#718198" font-family="PingFang SC, sans-serif" font-size="17" letter-spacing="3">服装定制的快速出图工具</text>
+  </g>
+</svg>

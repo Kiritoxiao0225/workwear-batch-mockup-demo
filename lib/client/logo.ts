@@ -1,6 +1,7 @@
 'use client';
 
 import { usesBrowserStorage } from '@/lib/client/browser-demo-store';
+import { cleanLogoWhiteBackground } from '@/lib/client/logo-background';
 
 type UploadedLogo = {
   url: string;
@@ -34,14 +35,38 @@ function fileDataUrl(file: File) {
   });
 }
 
-export async function uploadLogo(file: File): Promise<UploadedLogo> {
+export async function uploadLogo(file: File, serverStorage = false): Promise<UploadedLogo> {
   validateLogo(file);
-  if (usesBrowserStorage()) {
+  if (!serverStorage && usesBrowserStorage()) {
     return { url: await fileDataUrl(file), originalName: file.name };
   }
+  const sha256 = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer())), b => b.toString(16).padStart(2, '0')).join('');
+  const operationId = crypto.randomUUID();
+  const prepare = async () => {
+    const response = await fetch('/api/logos/prepare', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sha256, operationId }) });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || '无法查询图片上传状态');
+    return result as { status: 'local' | 'ready' | 'upload' | 'pending'; url?: string };
+  };
+  let claim = await prepare();
+  const deadline = Date.now() + 310_000;
+  while (claim.status === 'pending' && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    claim = await prepare();
+  }
+  if (claim.status === 'ready') return { url: claim.url!, originalName: file.name };
+  if (claim.status === 'pending') throw new Error('图片仍在上传，稍后重试会复用上传结果');
   const formData = new FormData();
   formData.set('file', file);
-  const response = await fetch('/api/logos', { method: 'POST', body: formData });
+  formData.set('sha256', sha256);
+  formData.set('operationId', operationId);
+  let response: Response;
+  try { response = await fetch('/api/logos', { method: 'POST', body: formData }); }
+  catch (error) {
+    const recovered = await prepare();
+    if (recovered.status === 'ready') return { url: recovered.url!, originalName: file.name };
+    throw error;
+  }
   const body: unknown = await response.json();
   if (!response.ok || !body || typeof body !== 'object' || !('url' in body)) {
     const message = body && typeof body === 'object' && 'error' in body
@@ -51,6 +76,8 @@ export async function uploadLogo(file: File): Promise<UploadedLogo> {
   }
   return body as UploadedLogo;
 }
+
+export const uploadProductionLogo = (file: File) => uploadLogo(file, true);
 
 function loadImage(url: string) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
@@ -73,17 +100,7 @@ export async function removeWhiteBackground(
   if (!context) throw new Error('当前浏览器无法创建 Logo 处理画布');
   context.drawImage(image, 0, 0);
   const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-  const pixels = imageData.data;
-  for (let offset = 0; offset < pixels.length; offset += 4) {
-    const red = pixels[offset];
-    const green = pixels[offset + 1];
-    const blue = pixels[offset + 2];
-    const brightest = Math.max(red, green, blue);
-    const darkest = Math.min(red, green, blue);
-    if (brightest >= 242 && brightest - darkest <= 18) {
-      pixels[offset + 3] = Math.round(((255 - brightest) / 13) * 255);
-    }
-  }
+  imageData.data.set(cleanLogoWhiteBackground(imageData.data, canvas.width, canvas.height));
   context.putImageData(imageData, 0, 0);
   const blob = await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((result) => result ? resolve(result) : reject(new Error('Logo 去白底结果为空')), 'image/png');

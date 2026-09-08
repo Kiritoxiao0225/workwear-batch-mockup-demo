@@ -10,6 +10,8 @@ import {
 import type { DemoState } from '@/lib/types';
 
 type SaveStatus = 'loading' | 'saved' | 'saving' | 'error';
+// A newly mounted picker/workbench must wait for the previous page's final edit.
+let pendingDemoSave: Promise<void> = Promise.resolve();
 
 async function stateResponse(response: Response) {
   const body: unknown = await response.json();
@@ -23,6 +25,7 @@ async function stateResponse(response: Response) {
 }
 
 async function fetchDemoState() {
+  await pendingDemoSave;
   if (usesBrowserStorage()) return readBrowserDemoState();
   const response = await fetch('/api/state', { cache: 'no-store' });
   return stateResponse(response);
@@ -45,7 +48,7 @@ export function useDemoState() {
   const stateRef = useRef<DemoState | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveSequenceRef = useRef(0);
-  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const flushSaveRef = useRef<(() => void) | null>(null);
 
   const reload = useCallback(async () => {
     setSaveStatus('loading');
@@ -79,7 +82,7 @@ export function useDemoState() {
       });
     return () => {
       disposed = true;
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      flushSaveRef.current?.();
     };
   }, []);
 
@@ -91,14 +94,27 @@ export function useDemoState() {
       await saveDemoState(nextState);
       if (sequence === saveSequenceRef.current) setSaveStatus('saved');
     };
-    const queued = saveQueueRef.current.then(save, save);
-    saveQueueRef.current = queued.catch((saveError: unknown) => {
+    const queued = pendingDemoSave.then(save, save);
+    pendingDemoSave = queued;
+    void queued.catch((saveError: unknown) => {
       const message = saveError instanceof Error ? saveError.message : String(saveError);
       setError(message);
       setSaveStatus('error');
     });
     return queued;
   }, []);
+
+  useEffect(() => {
+    const flush = () => {
+      if (!saveTimerRef.current || !stateRef.current) return;
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+      void enqueueSave(stateRef.current).catch(() => {});
+    };
+    flushSaveRef.current = flush;
+    window.addEventListener('pagehide', flush);
+    return () => { window.removeEventListener('pagehide', flush); };
+  }, [enqueueSave]);
 
   const updateState = useCallback((
     updater: (current: DemoState) => DemoState,
@@ -110,6 +126,7 @@ export function useDemoState() {
     stateRef.current = nextState;
     setState(nextState);
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = null;
     if (options?.immediate) return enqueueSave(nextState);
     setSaveStatus('saving');
     saveTimerRef.current = setTimeout(() => {

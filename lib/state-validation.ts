@@ -1,4 +1,6 @@
 import { productByCode } from '@/lib/products';
+import { garmentBindingSchema } from '@/lib/production-garment';
+import { placementPreviewSchema } from '@/lib/catalog-placement-suggestions';
 import { PLACEMENT_KEYS, type DemoState, type LogoPlacement } from '@/lib/types';
 
 function assertString(value: unknown, field: string): asserts value is string {
@@ -26,6 +28,7 @@ function assertPlacement(value: unknown, field: string): asserts value is LogoPl
     throw new Error(`${field} 必须是对象`);
   }
   const placement = value as Record<string, unknown>;
+  if (placement.catalogPosition !== undefined && placement.catalogPosition !== 'upperBack' && placement.catalogPosition !== 'backCenter') throw new Error(`${field} 包含未知后背位置`);
   assertString(placement.logoUrl, `${field}.logoUrl`);
   assertString(placement.logoName, `${field}.logoName`);
   const { widthCm, offsetX, offsetY, rotation } = placement;
@@ -33,8 +36,8 @@ function assertPlacement(value: unknown, field: string): asserts value is LogoPl
   assertFiniteNumber(offsetX, `${field}.offsetX`);
   assertFiniteNumber(offsetY, `${field}.offsetY`);
   assertFiniteNumber(rotation, `${field}.rotation`);
-  if (widthCm < 1 || widthCm > 50) {
-    throw new Error(`${field}.widthCm 超出 1-50cm：${widthCm}`);
+  if (widthCm < 0.5 || widthCm > 100) {
+    throw new Error(`${field}.widthCm 超出 0.5-100cm：${widthCm}`);
   }
   if (Math.abs(offsetX) > 50 || Math.abs(offsetY) > 50) {
     throw new Error(`${field} 的位置偏移超出 -50 到 50`);
@@ -58,7 +61,11 @@ export function assertDemoState(value: unknown): asserts value is DemoState {
     if (ids.has(task.id)) throw new Error(`任务 ID 重复：${task.id}`);
     ids.add(task.id);
     assertString(task.productCode, `tasks[${index}].productCode`);
-    if (!productByCode(task.productCode)) throw new Error(`任务引用了不存在的商品：${task.productCode}`);
+    if (task.garment !== undefined) {
+      const garment = garmentBindingSchema.parse(task.garment);
+      if (task.placementDefaults !== undefined && placementPreviewSchema.parse(task.placementDefaults).assetVersionId !== garment.assetVersionId) throw new Error('默认位置与底图版本不一致');
+      if (garment.styleCode !== task.productCode) throw new Error('任务款号与素材库底图不一致');
+    } else if (!productByCode(task.productCode)) throw new Error(`任务引用了不存在的商品：${task.productCode}`);
     assertIsoDate(task.createdAt, `tasks[${index}].createdAt`);
     assertIsoDate(task.updatedAt, `tasks[${index}].updatedAt`);
     assertIsoDate(task.exportedAt, `tasks[${index}].exportedAt`, true);

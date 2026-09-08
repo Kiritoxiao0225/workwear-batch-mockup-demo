@@ -1,7 +1,6 @@
 'use client';
 
-import { placementCenter, placementWidthRatio } from '@/lib/mockup';
-import { productByCode } from '@/lib/products';
+import { simpleTaskProduct, simplePlacementGeometry, simpleCanvasImageUrl } from '@/lib/simple-batch';
 import type { MockupTask, PlacementKey } from '@/lib/types';
 
 function loadImage(url: string) {
@@ -9,7 +8,7 @@ function loadImage(url: string) {
     const image = new Image();
     image.onload = () => resolve(image);
     image.onerror = () => reject(new Error(`导出图片加载失败：${url}`));
-    image.src = url;
+    image.src = simpleCanvasImageUrl(url);
   });
 }
 
@@ -23,10 +22,11 @@ function canvasBlob(canvas: HTMLCanvasElement) {
 }
 
 export async function renderTaskPng(task: MockupTask) {
-  const product = productByCode(task.productCode);
+  const product = simpleTaskProduct(task);
   if (!product) throw new Error(`任务 ${task.id} 引用了不存在的商品 ${task.productCode}`);
   if (Object.keys(task.placements).length === 0) throw new Error(`任务 ${task.id} 尚未上传 Logo`);
   const productImage = await loadImage(product.originalUrl);
+  if (task.garment && (productImage.naturalWidth !== task.garment.width || productImage.naturalHeight !== task.garment.height)) throw new Error('底图尺寸与保存版本不一致，请重新选择衣服');
   const canvas = document.createElement('canvas');
   canvas.width = productImage.naturalWidth;
   canvas.height = productImage.naturalHeight;
@@ -37,18 +37,17 @@ export async function renderTaskPng(task: MockupTask) {
     if (!placement) continue;
     const key = rawKey as PlacementKey;
     const logo = await loadImage(placement.logoUrl);
-    const center = placementCenter(key, placement);
-    const width = canvas.width * placementWidthRatio(placement, product);
-    const height = width * (logo.naturalHeight / logo.naturalWidth);
+    const geometry = simplePlacementGeometry(task, key, placement, logo.naturalWidth / logo.naturalHeight);
+    const { width, height } = geometry;
     context.save();
-    context.translate(center.x * canvas.width, center.y * canvas.height);
+    context.translate(geometry.centerX, geometry.centerY);
     context.rotate((placement.rotation * Math.PI) / 180);
     context.drawImage(logo, -width / 2, -height / 2, width, height);
     context.restore();
   }
   return {
     blob: await canvasBlob(canvas),
-    fileName: `${product.code}-task-${task.id.slice(0, 8)}.png`,
+    fileName: `${product.code}${task.garment ? `-${task.garment.colorName}` : ''}-task-${task.id.slice(0, 8)}.png`.replace(/[\\/:*?"<>|]/g, '_'),
   };
 }
 
@@ -68,16 +67,21 @@ export async function exportTasks(tasks: MockupTask[]) {
   if (exportable.length === 1) {
     const output = await renderTaskPng(exportable[0]);
     downloadBlob(output.blob, output.fileName);
-    return { exportedTaskIds: [exportable[0].id], skipped };
+    return { exportedTaskIds: [exportable[0].id], skipped, failures: [] as string[] };
   }
   const { default: JSZip } = await import('jszip');
   const zip = new JSZip();
   const exportedTaskIds: string[] = [];
+  const failures: string[] = [];
   for (const task of exportable) {
-    const output = await renderTaskPng(task);
-    zip.file(output.fileName, output.blob);
-    exportedTaskIds.push(task.id);
+    try {
+      const output = await renderTaskPng(task);
+      zip.file(output.fileName, output.blob);
+      exportedTaskIds.push(task.id);
+    } catch (error) { failures.push(`${task.productCode} ${task.garment?.colorName ?? ''}：${error instanceof Error ? error.message : String(error)}`); }
   }
+  if (!exportedTaskIds.length) throw new Error(failures.join('；'));
+  if (failures.length) zip.file('未导出任务.txt', failures.join('\n'));
   downloadBlob(await zip.generateAsync({ type: 'blob' }), `workwear-mockups-${Date.now()}.zip`);
-  return { exportedTaskIds, skipped };
+  return { exportedTaskIds, skipped, failures };
 }

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-labelledby="title">
+  <title id="title">秒样 Logo 方向一：秒针成衣</title>
+  <defs>
+    <mask id="clock-cut">
+      <rect width="100" height="100" fill="white"/>
+      <circle cx="50" cy="55" r="12" fill="black"/>
+    </mask>
+  </defs>
+  <path
+    d="M42 20c2.5 3.6 5.1 5.4 8 5.4s5.5-1.8 8-5.4l16 8 10 16-12 7-6-9v38H34V42l-6 9-12-7 10-16 16-8Z"
+    fill="currentColor"
+    mask="url(#clock-cut)"
+  />
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="50" cy="55" r="12" stroke-width="3"/>
+    <path d="M50 48v8l6 4" stroke-width="3.5"/>
+    <path d="M46 15h8" stroke-width="4"/>
+  </g>
+</svg>
