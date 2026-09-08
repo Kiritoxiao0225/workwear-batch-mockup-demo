@@ -96,6 +96,12 @@ export async function startArtworkCutout(source: Buffer, mode: ArtworkCutoutMode
   if (options.retryOf && (!previous || previous.status !== 'failed' || previous.receipt.sourceSha256 !== sourceSha256)) throw new Error('只有已明确失败的同图任务可以重试；处理中的任务请继续查询');
   const key = sha(JSON.stringify([productionStateKey(), sha(process.env.MEITU_OPENAPI_ACCESS_KEY || 'unconfigured'), sha(process.env.MEDIAKIT_API_KEY || 'unconfigured'), MEITU_CUTOUT_VERSION, ARTWORK_CUTOUT_VERSION, mode, sourceSha256, previous?.requestId ?? '']));
   const found = await readCutoutJob(key);
+  // A new user-requested processing run may retry a proven local failure. Keep
+  // the old job for audit and use the existing retry key to deduplicate clicks.
+  // Queries and uncertain/paid failures never enter this branch.
+  if (found?.status === 'failed' && found.submissionNotStarted && !options.retryOf) {
+    return startArtworkCutout(source, mode, { ...options, retryOf: key });
+  }
   if (found) return found.status === 'completed' ? publicResult(found, true) : queryArtworkCutout(key, services);
   const decision = await analyzeArtworkCutout(bytes, mode);
   const job: StoredCutout = { status: 'pending', phase: 'ready', requestId: randomUUID(), updatedAt: new Date().toISOString(), receipt: {
@@ -140,6 +146,7 @@ export async function startArtworkCutout(source: Buffer, mode: ArtworkCutoutMode
   } catch (error) {
     const notSubmitted = job.phase === 'ready' || error instanceof MeituSubmissionNotStartedError;
     job.status = notSubmitted ? 'failed' : 'unknown';
+    job.submissionNotStarted = notSubmitted;
     if (notSubmitted) job.receipt.actualCredits = 0;
     if (job.status === 'failed') job.phase = 'finished';
     job.error = `${errorText(error)}；${job.status === 'unknown' ? '提交结果待核实，不会自动重提' : '原图已保留'}`;

@@ -5,7 +5,7 @@ import type { ArtworkCutoutResult } from '@/lib/artwork-cutout';
 import { productionStateKey, usesProductionCloud } from './production-storage';
 import { catalogDatabase } from './catalog-database';
 
-export type StoredCutout = ArtworkCutoutResult & { requestId: string; updatedAt: string; phase: 'ready' | 'submitting' | 'submitted' | 'finished'; providerResultUrl?: string; };
+export type StoredCutout = ArtworkCutoutResult & { requestId: string; updatedAt: string; phase: 'ready' | 'submitting' | 'submitted' | 'finished'; providerResultUrl?: string; submissionNotStarted?: boolean; };
 const root = () => process.env.ARTWORK_CUTOUT_CACHE_DIR || path.join(process.cwd(), 'data', 'artwork-cutouts');
 function filename(key: string) { if (!/^[a-f0-9]{64}$/u.test(key)) throw new Error('抠图任务标识无效'); return path.join(root(), `${key}.json`); }
 export async function assertCutoutStoreReady() {

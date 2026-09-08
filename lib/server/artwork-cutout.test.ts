@@ -107,15 +107,17 @@ describe('cutout routing and paid task recovery', () => {
     await expect(startArtworkCutout(t.source, 'meitu', { services: t.services, retryOf: result.receipt.jobKey })).rejects.toThrow('只有已明确失败');
     expect(t.services.submit).toHaveBeenCalledTimes(1);
   });
-  it('allows an explicit retry only after a confirmed pre-submission failure', async () => {
+  it('lets the next processing request recover a confirmed pre-submission failure and deduplicates that retry', async () => {
     const t = await setup();
     vi.mocked(t.services.submit).mockRejectedValueOnce(new MeituSubmissionNotStartedError('美图抠图尚未提交：SDK context failed'));
     const result = await startArtworkCutout(t.source, 'meitu', { services: t.services });
     expect(result.status).toBe('failed'); expect(result.receipt.actualCredits).toBe(0);
-    expect((await startArtworkCutout(t.source, 'meitu', { services: t.services })).status).toBe('failed');
+    expect((await queryArtworkCutout(result.receipt.jobKey, t.services)).status).toBe('failed');
     expect(t.services.submit).toHaveBeenCalledTimes(1);
-    const retry = await startArtworkCutout(t.source, 'meitu', { services: t.services, retryOf: result.receipt.jobKey });
+    const retry = await startArtworkCutout(t.source, 'meitu', { services: t.services });
     expect(retry.receipt.taskId).toBe('provider-1');
+    expect(retry.receipt.jobKey).not.toBe(result.receipt.jobKey);
+    expect((await startArtworkCutout(t.source, 'meitu', { services: t.services })).status).toBe('completed');
     expect(t.services.submit).toHaveBeenCalledTimes(2);
   });
   it('keeps the provider task and unknown billing when saving its submission receipt fails', async () => {
