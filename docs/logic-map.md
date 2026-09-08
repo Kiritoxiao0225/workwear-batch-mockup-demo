@@ -970,3 +970,5 @@
 - `CATALOG_AUTH_MODE=open` 时，页面启动直接 GET `/api/catalog/session`，所有素材与云端生产 API 通过 `catalogUser` 解析 `CATALOG_LOGIN_EMAIL` 对应的真实账号，不需要 cookie。
 - 移除页面登录弹窗和退出入口；连接失败显示实际错误与重试，不提示输入密码。
 - 保留停用账号检查、viewer 写入限制、同源校验，以及原有 revision/CAS 与历史确认人；不修改 WPS 附件保存流程。
+
+- Vercel 数据库每个实例最多 1 条连接，查询与事务计数保护并发操作；通过 Next.js `after()` 在响应后关闭空闲池，避免实例暂停后驱动 idle timer 无法执行。常驻本地进程保持原有连接复用。此调整不释放旧部署已经遗留的数据库连接。

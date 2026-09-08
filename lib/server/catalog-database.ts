@@ -5,6 +5,7 @@ import { createConnection, type Socket } from 'node:net';
 import { checkServerIdentity } from 'node:tls';
 import type { QueryResultRow } from 'pg';
 import postgres from 'postgres';
+import { after } from 'next/server';
 
 export function catalogDatabaseConfig(environment: Record<string, string | undefined> = process.env) {
   const connectionString = environment.CATALOG_DATABASE_URL;
@@ -19,7 +20,7 @@ export function catalogDatabaseConfig(environment: Record<string, string | undef
   const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
   if (!local && !certificate && url.searchParams.get('sslmode') !== 'verify-full') throw new Error(`远程数据库 ${url.hostname} 必须配置 CA 证书或 sslmode=verify-full`);
   return {
-    connectionString, max: 5, connect_timeout: 10, idle_timeout: 30,
+    connectionString, max: environment.VERCEL === '1' ? 1 : 5, connect_timeout: 10, idle_timeout: 30,
     connection: { application_name: 'workwear-mockup', search_path: 'garment_catalog,public', statement_timeout: 30000 },
     ...(!local ? { socket: () => new Promise<Socket>((resolve, reject) => {
       const port = Number(url.port || 5432);
@@ -44,6 +45,7 @@ export function catalogDatabaseConfig(environment: Record<string, string | undef
 type CatalogConnection = ReturnType<typeof postgres>;
 export type CatalogQueryClient = { query: (sql: string, values?: unknown[]) => Promise<{ rows: QueryResultRow[]; rowCount: number }> };
 let connection: CatalogConnection | undefined;
+let activeOperations = 0;
 function connectedDatabase() {
   if (!connection) {
     const { connectionString, ...options } = catalogDatabaseConfig();
@@ -58,16 +60,33 @@ function queryClient(client: Pick<CatalogConnection, 'unsafe'>): CatalogQueryCli
   } };
 }
 export function catalogDatabase() {
-  return queryClient(connectedDatabase());
+  return { query: (sql: string, values?: unknown[]) => withDatabase(client => queryClient(client).query(sql, values)) };
+}
+async function withDatabase<T>(operation: (client: CatalogConnection) => Promise<T>): Promise<T> {
+  const pool = connectedDatabase();
+  if (process.env.VERCEL === '1') {
+    // Serverless suspension can freeze the driver's idle timer. Close idle pools
+    // during the request lifecycle; never close another request's active transaction.
+    after(async () => {
+      if (connection !== pool || activeOperations !== 0) return;
+      connection = undefined;
+      await pool.end();
+    });
+  }
+  activeOperations++;
+  try { return await operation(pool); }
+  finally { activeOperations--; }
 }
 export async function catalogTransaction<T>(operation: (client: CatalogQueryClient) => Promise<T>): Promise<T> {
-  const reserved = await connectedDatabase().reserve();
-  const client = queryClient(reserved);
-  try { await client.query('BEGIN'); const result = await operation(client); await client.query('COMMIT'); return result; }
-  catch (error) { await client.query('ROLLBACK'); throw error; }
-  finally { reserved.release(); }
+  return withDatabase(async pool => {
+    const reserved = await pool.reserve();
+    const client = queryClient(reserved);
+    try { await client.query('BEGIN'); const result = await operation(client); await client.query('COMMIT'); return result; }
+    catch (error) { await client.query('ROLLBACK'); throw error; }
+    finally { reserved.release(); }
+  });
 }
-export async function closeCatalogDatabase() { if (connection) { await connection.end(); connection = undefined; } }
+export async function closeCatalogDatabase() { const pool = connection; connection = undefined; if (pool) await pool.end(); }
 export async function migrateCatalog() {
   return catalogTransaction(async client => {
     await client.query("SELECT pg_advisory_xact_lock(hashtext('garment_catalog_migrations'))");
