@@ -2,8 +2,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ArtworkCutoutDecision, ArtworkCutoutMode, ArtworkCutoutResult } from '@/lib/artwork-cutout';
 import { ARTWORK_CUTOUT_VERSION, CUTOUT_ROUTE_LABELS, cutoutFeeLabel } from '@/lib/artwork-cutout';
+import type { CutoutSession } from '@/lib/client/artwork-cutout-sessions';
+export type { CutoutSession } from '@/lib/client/artwork-cutout-sessions';
 
-export type CutoutSession = { result: ArtworkCutoutResult; snapshot: string; purpose?: 'recut' | 'generated' | 'component' };
 export function CutoutModes({ value, disabled, change }: { value: ArtworkCutoutMode; disabled?: boolean; change: (mode: ArtworkCutoutMode) => void }) {
   return <div className="wps-cutout-modes" role="group" aria-label="抠图方式">{(['auto', 'standard', 'meitu'] as const).map(mode => <button type="button" key={mode} aria-pressed={mode === value} disabled={disabled} onClick={() => change(mode)}>{{ auto: '自动', standard: '标准', meitu: '美图精细' }[mode]}</button>)}</div>;
 }
@@ -50,14 +51,22 @@ export function WpsCutoutControls({ mode, sourceUrl, generated, busy, change }: 
       <p>{route === 'reuse' ? '已有透明背景，避免重复抠图。' : mode === 'standard' ? '简单底色本地处理，其余使用火山模型；不自动切换美图。' : mode === 'meitu' ? '使用美图抠图并核对结果；已识别的完整圆形徽章保留原图底色。' : decision?.reasons.join(' · ') || '简单图本地处理，普通镂空或复杂背景用火山，小字、细笔画等精细风险用美图。'}</p>
     </div><small>仅抠图费用；增强、生图另计，实际扣费以账单回执为准。</small><CutoutRules /></div>;
 }
-export function CutoutTaskStatus({ session, busy, query, retry, apply, discard }: { session: CutoutSession; busy: boolean; query: () => void; retry: () => void; apply?: () => void; discard: () => void }) {
+export function CutoutTaskStatus({ session, busy, query, retry, apply, discard, hasArtwork = true }: { session: CutoutSession; busy: boolean; query: () => void; retry: () => void; apply?: () => void; discard: () => void; hasArtwork?: boolean }) {
   const { result } = session;
-  return <div className="wps-cutout-task" role="status"><strong>{{ completed: '新抠图结果待选用', pending: '抠图仍在处理中', failed: '这次抠图未完成', unknown: '提交结果待核实' }[result.status]}</strong>
-    <p>{result.error || (result.status === 'completed' ? session.purpose === 'component' ? '制作中间素材已恢复，可下载后在图层编辑器中继续制作；不会直接替换完整图案。' : '当前版本继续保留，选用后才替换。' : '已记录任务，继续查询本次结果，不重新提交。')}</p>
+  const component = session.purpose === 'component';
+  const waiting = result.status === 'pending' || result.status === 'unknown';
+  const title = result.status === 'completed' ? session.stale ? '先前制作的抠图素材' : component ? '抠图已完成，图案制作未完成' : hasArtwork ? session.purpose === 'generated' ? '完整图案已完成，待选用' : '重新抠图已完成，待选用' : '抠图已完成，待保存图案'
+    : { pending: '抠图仍在处理中', failed: '这次抠图未完成', unknown: '提交结果待核实' }[result.status];
+  return <div className="wps-cutout-task" role="status"><strong>{title}</strong>
+    {session.stale && <p>这次任务之后，图案、要求或状态已变化。素材可查看或下载，请在编辑器中核对后使用。</p>}
+    <p>{result.error || (result.status === 'completed' ? component
+      ? '这是上次制作中断时保留的同一次抠图结果，完整图案尚未由这次流程保存。可下载素材，在图层编辑器中继续制作。'
+      : session.stale ? '保留这次素材供核对，当前图案继续显示。' : hasArtwork ? '选用后才更新当前图案。' : '保存后才会成为当前图案。'
+      : result.status === 'failed' ? session.stale ? '本次任务已失败，可关闭提示后按当前要求制作。' : '本次任务明确失败，可手动重试。' : '已保留原任务，查询只获取这次结果，不重新提交抠图。')}</p>
     <small>{CUTOUT_ROUTE_LABELS[result.receipt.route]} · {cutoutFeeLabel(result.receipt)}</small>
-    <div>{result.status === 'pending' && <button disabled={busy} type="button" onClick={query}>查询本次结果</button>}{result.status === 'failed' && <button disabled={busy} type="button" onClick={retry}>重试抠图</button>}
-      {result.status === 'completed' && session.purpose === 'component' && <a href={result.url} download>下载恢复的素材</a>}
-      {result.status === 'completed' && apply && session.purpose !== 'component' && <button className="primary" disabled={busy} type="button" onClick={apply}>使用这版抠图</button>}
-      {['completed', 'failed'].includes(result.status) && <button disabled={busy} type="button" onClick={discard}>保留当前版本</button>}
+    <div>{waiting && <button disabled={busy} type="button" onClick={query}>查询本次结果</button>}{result.status === 'failed' && !session.stale && <button disabled={busy} type="button" onClick={retry}>重试抠图</button>}
+      {result.status === 'completed' && result.url && (component || session.stale) && <a href={result.url} download>下载抠图素材</a>}
+      {result.status === 'completed' && result.url && apply && !component && !session.stale && <button className="primary" disabled={busy} type="button" onClick={apply}>{hasArtwork ? '使用这版抠图' : '保存为当前图案'}</button>}
+      {!waiting && <button disabled={busy} type="button" onClick={discard}>{component || session.stale || !hasArtwork ? '关闭这条提示' : '保留当前版本'}</button>}
     </div><details><summary>任务记录</summary><small>任务：{result.receipt.taskId || result.receipt.jobKey}</small></details></div>;
 }

@@ -7,6 +7,7 @@ import { productionFileId } from '@/lib/production-file-url';
 
 import Image from 'next/image';
 import { WpsCutoutControls, CutoutTaskStatus, cutoutInputDataUrl, cutoutRequest, type CutoutSession } from '@/components/wps-cutout-controls';
+import { useArtworkCutoutSessions } from '@/hooks/use-artwork-cutout-sessions';
 import { CUTOUT_ROUTE_LABELS, cutoutFeeLabel, type ArtworkCutoutMode, type ArtworkCutoutResult } from '@/lib/artwork-cutout';
 import { WpsArtworkReview } from '@/components/wps-artwork-review';
 import { WpsArtworkRouting, WpsArtworkMethodSelector } from '@/components/wps-artwork-routing';
@@ -193,7 +194,7 @@ export function WpsProductionClient() {
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ url: string; title: string } | null>(null);
   const [artworkErrors, setArtworkErrors] = useState<Record<string, string>>({});
-  const [cutoutSessions, setCutoutSessions] = useState<Record<string, CutoutSession>>({});
+  const { sessions: cutoutSessions, store: cutoutStore } = useArtworkCutoutSessions(production, Boolean(catalogUser));
   const [cutoutSettings, setCutoutSettings] = useState<Record<string, boolean>>({});
   const [nativeCandidates, setNativeCandidates] = useState<Record<string, NativeArtworkCandidate>>({});
   const [artworkProgress, setArtworkProgress] = useState<Record<string, { preview?: { url: string; label: string }; timings: ArtworkTiming[] }>>({});
@@ -261,32 +262,9 @@ export function WpsProductionClient() {
   }, [artworkJobs.length]);
 
   const rememberCutout = (unit: ProductionUnit, result: ArtworkCutoutResult, snapshot: string, purpose: CutoutSession['purpose'] = 'recut') => {
-    setCutoutSessions(current => ({ ...current, [unit.id]: { result, snapshot, purpose } }));
-    try {
-      const saved = JSON.parse(localStorage.getItem('wps-artwork-cutouts-v1') || '{}');
-      saved[unit.id] = { jobKey: result.receipt.jobKey, snapshot, purpose, batchId: production?.batchId };
-      localStorage.setItem('wps-artwork-cutouts-v1', JSON.stringify(saved));
-    } catch { /* The server still retains the task and deduplicates the same input. */ }
+    return cutoutStore.remember(unit.id, result, snapshot, purpose);
   };
-  const discardCutout = (unitId: string) => {
-    setCutoutSessions(current => { const next = { ...current }; delete next[unitId]; return next; });
-    try { const saved = JSON.parse(localStorage.getItem('wps-artwork-cutouts-v1') || '{}'); delete saved[unitId]; localStorage.setItem('wps-artwork-cutouts-v1', JSON.stringify(saved)); } catch { /* storage is optional */ }
-  };
-  const cutoutBatchId = production?.batchId;
-  useEffect(() => {
-    if (!cutoutBatchId || !catalogUser) return;
-    let cancelled = false;
-    try {
-      const saved = JSON.parse(localStorage.getItem('wps-artwork-cutouts-v1') || '{}') as Record<string, { jobKey: string; snapshot: string; batchId: string; purpose?: CutoutSession['purpose'] }>;
-      for (const [unitId, bookmark] of Object.entries(saved)) {
-        if (bookmark.batchId !== cutoutBatchId) continue;
-        void cutoutRequest({ action: 'query', jobKey: bookmark.jobKey }).then(result => {
-          if (!cancelled) setCutoutSessions(current => current[unitId] ? current : { ...current, [unitId]: { result, snapshot: bookmark.snapshot, purpose: bookmark.purpose } });
-        }).catch(() => { /* The bookmark remains available for the next signed-in visit. */ });
-      }
-    } catch { /* Ignore malformed or unavailable browser storage. */ }
-    return () => { cancelled = true; };
-  }, [cutoutBatchId, catalogUser]);
+  const discardCutout = cutoutStore.discard;
 
   const cancelSync = useCallback(() => {
     syncRequest.current?.abort();
@@ -635,6 +613,7 @@ export function WpsProductionClient() {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
     })));
     unsavedArtworks.current.delete(unitId);
+    cutoutStore.reconcile(state);
     return state;
   };
 
@@ -650,8 +629,10 @@ export function WpsProductionClient() {
         const current = responseState(await responseJson(await fetch('/api/wps-production', { cache: 'no-store' })));
         if (current.units.find(candidate => candidate.id === unit.id)?.artwork?.url === payload.url) {
           unsavedArtworks.current.delete(unit.id);
+          cutoutStore.reconcile(current);
           acceptProductionState(current);
         } else acceptProductionState(await saveQueuedArtwork(unit.id, payload));
+        // Reconciliation also handles a save whose response was lost, using its receipts.
         if (String(payload.requestSummary).startsWith('仅重新抠图')) discardCutout(unit.id);
         setArtworkProgress(current => ({ ...current, [unit.id]: { timings: current[unit.id]?.timings ?? [] } }));
       });
@@ -838,13 +819,23 @@ export function WpsProductionClient() {
           result = await cutoutRequest({ action: 'query', jobKey: result.receipt.jobKey });
           rememberCutout(unit, result, snapshot, previous?.purpose);
         }
-        if (result.status === 'completed') { if (unit.artwork) setArtworkReviewId(unit.id); setMessage('新抠图结果已就绪，当前版本保留，选用后才替换。'); }
+        if (result.status === 'completed') {
+          const active = cutoutStore.getSnapshot()[unit.id];
+          if (!active) setMessage('这次抠图已用于当前图案，无需重复选用。');
+          else if (active.purpose === 'component' || active.stale) {
+            if (result.url) setPreview({ url: result.url, title: '上次制作的抠图素材' });
+            setMessage('已取得同一次抠图结果，可下载后在图层编辑器中继续制作。');
+          } else {
+            if (unit.artwork) setArtworkReviewId(unit.id);
+            setMessage(unit.artwork ? '重新抠图已完成，选用后才更新当前图案。' : '抠图已完成，保存后成为当前图案。');
+          }
+        }
       });
     } catch (error) { setArtworkErrors(current => ({ ...current, [unit.id]: error instanceof Error ? error.message : String(error) })); }
   };
   const applyCutout = async (unit: ProductionUnit) => {
     const session = cutoutSessions[unit.id];
-    if (!production || session?.result.status !== 'completed' || !session.result.url || session.purpose === 'component') return;
+    if (!production || session?.result.status !== 'completed' || !session.result.url || session.purpose === 'component' || session.stale) return;
     const resultUrl = session.result.url;
     const release = beginOperation(`applyCutout:${unit.id}`, { action: 'submitArtwork', unitId: unit.id }, '正在选用新抠图结果');
     if (!release) return;
@@ -1085,7 +1076,11 @@ export function WpsProductionClient() {
                     <p role="status" aria-live="polite" className={`wps-artwork-status ${issues.length || unit.error || rowError ? 'needs-attention' : unit.gateB ? 'complete' : ''}`}>{queueJob ? queueJob.status === 'queued' ? `排队中 · 第 ${queuePosition} 张` : queueJob.progress : activeAttempt ? '正在制作，请查询进度' : rowError ? '本次操作未完成' : status}</p>
                     {rowError && <p className="wps-production-row-error" role="alert">{rowError}</p>}
                     {artworkProgress[unit.id] && <WpsArtworkProgress {...artworkProgress[unit.id]} failed={Boolean(rowError) && !queueJob} open={(url, title) => setPreview({ url, title })} />}
-                    {cutoutSessions[unit.id] && <><CutoutTaskStatus session={cutoutSessions[unit.id]} busy={Boolean(queueJob)} query={() => void runCutout(unit, cutoutSessions[unit.id].result.receipt.mode, true)} retry={() => void runCutout(unit, cutoutSessions[unit.id].result.receipt.mode)} discard={() => discardCutout(unit.id)} apply={!unit.artwork ? () => void applyCutout(unit) : undefined} />{cutoutSessions[unit.id].result.status === 'completed' && <button type="button" onClick={() => unit.artwork ? setArtworkReviewId(unit.id) : setPreview({ url: cutoutSessions[unit.id].result.url!, title: '新抠图结果 · 尚未选用' })}>查看新抠图结果</button>}{cutoutSessions[unit.id].result.status === 'failed' && ['standard', 'volcano'].includes(cutoutSessions[unit.id].result.receipt.route) && <button type="button" className="primary" disabled={Boolean(queueJob)} onClick={() => void runCutout(unit, 'meitu')}>可选：美图精细 · 预计 1 积分</button>}</>}
+                    {cutoutSessions[unit.id] && <>
+                      <CutoutTaskStatus session={cutoutSessions[unit.id]} hasArtwork={Boolean(unit.artwork)} busy={Boolean(queueJob)} query={() => void runCutout(unit, cutoutSessions[unit.id].result.receipt.mode, true)} retry={() => void runCutout(unit, cutoutSessions[unit.id].result.receipt.mode)} discard={() => discardCutout(unit.id)} apply={!unit.artwork ? () => void applyCutout(unit) : undefined} />
+                      {cutoutSessions[unit.id].result.status === 'completed' && cutoutSessions[unit.id].result.url && <button type="button" onClick={() => unit.artwork && cutoutSessions[unit.id].purpose !== 'component' && !cutoutSessions[unit.id].stale ? setArtworkReviewId(unit.id) : setPreview({ url: cutoutSessions[unit.id].result.url!, title: '本次抠图素材' })}>{cutoutSessions[unit.id].purpose === 'component' || cutoutSessions[unit.id].stale ? '查看抠图素材' : '查看新抠图结果'}</button>}
+                      {cutoutSessions[unit.id].result.status === 'failed' && !cutoutSessions[unit.id].stale && ['standard', 'volcano'].includes(cutoutSessions[unit.id].result.receipt.route) && <button type="button" className="primary" disabled={Boolean(queueJob)} onClick={() => void runCutout(unit, 'meitu')}>可选：美图精细 · 预计 1 积分</button>}
+                    </>}
                     {nativeCandidate && <div className="wps-production-row-error">
                       <a href={nativeCandidate.url} target="_blank" rel="noreferrer">查看模型原图（尚未完成透明处理）</a>
                       <a href={nativeCandidate.url} download={`${unit.id}-candidate.png`}>下载候选 PNG</a>

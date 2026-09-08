@@ -23,7 +23,7 @@ export function WpsArtworkReview({ unit, source, busy, error, close, edit, onChe
   const closeButton = useRef<HTMLButtonElement>(null);
   useEffect(() => { const previous = document.activeElement as HTMLElement | null; closeButton.current?.focus(); return () => previous?.focus(); }, []);
   const artwork = unit.artwork!;
-  const candidate = cutoutSession?.result.status === 'completed' && cutoutSession.purpose !== 'component' ? cutoutSession.result : null;
+  const candidate = cutoutSession?.result.status === 'completed' && cutoutSession.result.url && cutoutSession.purpose !== 'component' && !cutoutSession.stale ? cutoutSession.result : null;
   const needsLayerPreview = Boolean(candidate && artwork.draft && cutoutSession?.purpose !== 'generated');
   const previewKey = `${candidate?.receipt.jobKey}:${artwork.validation.sha256}`;
   const [preview, setPreview] = useState<{ key: string; url?: string; error?: string } | null>(null);
@@ -61,7 +61,7 @@ export function WpsArtworkReview({ unit, source, busy, error, close, edit, onChe
         <h3>{candidate ? '新抠图结果' : '当前图案'}</h3>
         {receipt ? <div className="wps-cutout-receipt"><p>抠图方式 <strong>{CUTOUT_ROUTE_LABELS[receipt.route]}</strong></p><p>抠图费用 <strong>{cutoutFeeLabel(receipt)}</strong></p><small>{receipt.reasons.join(' · ')}</small></div> : <p>历史结果未记录抠图方式与积分。</p>}
         {cutoutSession && <CutoutTaskStatus session={cutoutSession} busy={busy} query={onQueryCutout} retry={() => onReCutout(mode)} discard={discardCandidate} />}
-        {!candidate && <section className="wps-cutout-redo"><h3>需要重新抠图？</h3><CutoutModes value={mode} change={setMode} disabled={busy || cutoutSession?.result.status === 'pending' || cutoutSession?.result.status === 'unknown'} /><p>使用保留的抠图前原图，不重新生图。当前版本保留，选用新结果后才替换。</p><small>{mode === 'standard' ? '简单底色本地免费处理；火山按服务账单计费。' : mode === 'meitu' ? '美图预计 1 积分；命中缓存不再调用。' : '简单底色本地处理；普通孔洞及复杂背景用火山，纯色背景中的细小细节、细笔画或低对比度图案用美图。'}</small><button type="button" disabled={busy || cutoutSession?.result.status === 'pending' || cutoutSession?.result.status === 'unknown'} onClick={() => onReCutout(mode)}>仅重新抠图</button><CutoutRules /></section>}
+        {!cutoutSession && <section className="wps-cutout-redo"><h3>需要重新抠图？</h3><CutoutModes value={mode} change={setMode} disabled={busy} /><p>使用保留的抠图前原图，不重新生图。当前版本保留，选用新结果后才替换。</p><small>{mode === 'standard' ? '简单底色本地免费处理；火山按服务账单计费。' : mode === 'meitu' ? '美图预计 1 积分；命中缓存不再调用。' : '简单底色本地处理；普通孔洞及复杂背景用火山，纯色背景中的细小细节、细笔画或低对比度图案用美图。'}</small><button type="button" disabled={busy} onClick={() => onReCutout(mode)}>仅重新抠图</button><CutoutRules /></section>}
         <h3>制作要求</h3><p className="wps-preserve-lines">{unit.instruction}</p>
         <p>请对照原图核对图形、文字、颜色和排版。</p>
         <p className={`wps-artwork-status ${!qualityReady ? 'needs-attention' : unit.gateB ? 'complete' : ''}`}>{!qualityReady ? '图案制作有待完成项' : unit.gateB ? '图案已确认' : '随整件效果核对'}</p>
