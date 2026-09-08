@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
-import { meituCutoutClient, submitMeituCutout, MeituSubmissionNotStartedError } from './meitu-cutout';
+import { meituCutoutClient, submitMeituCutout, queryMeituCutout, meituCutoutCredits, MeituSubmissionNotStartedError } from './meitu-cutout';
 
 beforeEach(() => {
   vi.stubEnv('MEITU_OPENAPI_ACCESS_KEY', 'test-access');
@@ -35,4 +35,18 @@ it('distinguishes SDK preparation failure from an uncertain network submission',
   prepare.mockRestore();
   await expect(submitMeituCutout('https://test.stariidata.com/input.png', 'request-2')).rejects.toThrow('network timeout');
   expect(transport).toHaveBeenCalledOnce();
+});
+
+it('queries an existing task and its billing on a fresh instance without a writable home', async () => {
+  const prototype = Object.getPrototypeOf(meituCutoutClient());
+  const transport = vi.spyOn(prototype, 'rawRequest').mockResolvedValueOnce({ code: 0, data: { status: 10 } })
+    .mockResolvedValueOnce({ code: 0, data: { records: [{ listing_code: 'image-cutout', trace_id: 'request-1', status: 'consumed', credits: 1 }] } });
+  const read = vi.spyOn(fs, 'readFile').mockRejectedValue(Object.assign(new Error('fresh serverless instance'), { code: 'ENOENT' }));
+  const mkdir = vi.spyOn(fs, 'mkdir').mockRejectedValue(Object.assign(new Error('home is not writable'), { code: 'EROFS' }));
+  await expect(queryMeituCutout('task-1')).resolves.toMatchObject({ data: { status: 10 } });
+  await expect(meituCutoutCredits('request-1')).resolves.toBe(1);
+  expect(transport).toHaveBeenCalledTimes(2);
+  expect(transport.mock.calls[0][1]).toContain('task_id=task-1');
+  expect(read).not.toHaveBeenCalled();
+  expect(mkdir).not.toHaveBeenCalled();
 });

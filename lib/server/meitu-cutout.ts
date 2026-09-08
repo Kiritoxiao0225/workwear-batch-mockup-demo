@@ -14,7 +14,7 @@ type MeituClient = {
   strategyBaseUrl: () => string;
   resolveOpenApiAuth: () => Promise<unknown>;
   iamMtccUid: () => Promise<string>;
-  mcpPassthroughState: (context: unknown) => Promise<Record<string, unknown>>;
+  mcpPassthroughState: (context?: Record<string, unknown>, options?: unknown) => Promise<Record<string, unknown>>;
 };
 // The official CLI has no public SDK entry. Pin its runtime and cover this adapter
 // with transport contract tests; no shell execution or account-login fallback.
@@ -38,6 +38,12 @@ export function meituCutoutClient() {
   client.strategyBaseUrl = () => 'https://strategy.stariidata.com';
   client.resolveOpenApiAuth = async () => ({ mode: 'signed', accessKey, secretKey, source: 'env', authMode: 'aksk' });
   client.iamMtccUid = async () => '';
+  // getTask also prepares passthrough headers, but supplies an empty context.
+  // Apply the disk-free identity to every SDK operation, including fresh pollers.
+  const passthrough = client.mcpPassthroughState.bind(client);
+  client.mcpPassthroughState = (context = {}, options) => passthrough({
+    ...context, mtcc_client: { ...(context.mtcc_client as Record<string, unknown> | undefined), gnum: instanceGnum },
+  }, options);
   return client;
 }
 export async function uploadMeituCutoutInput(bytes: Buffer) {
