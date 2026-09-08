@@ -22,7 +22,8 @@ function safeArchiveName(value: string) {
 export async function GET(request?: Request) {
   try {
     await productionUser(request);
-    const [source, stored] = await Promise.all([listWpsSourceTaskRecords(), readWpsProductionState()]);
+    const stored = await readWpsProductionState();
+    const source = await listWpsSourceTaskRecords({ recordIds: stored.records.map(record => record.source.recordId), downloadMaterials: false });
     const state = liveWpsProductionState(stored, source.records);
     const approved = state.mockupVersions.filter((version) => version.status === 'approved' && version.output);
     if (approved.length === 0) {

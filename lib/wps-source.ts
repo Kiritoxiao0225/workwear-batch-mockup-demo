@@ -17,6 +17,17 @@ export function orderWpsSourceRecords(previous: SourceTaskRecord[], incoming: So
 }
 
 // Status and row location may change without changing the artwork brief.
+function materialEvidenceUrl(value: string | null | undefined) {
+  if (!value) return value;
+  try {
+    const url = new URL(value);
+    // WPS renews these authentication parameters without changing FileId or bytes.
+    for (const key of [...url.searchParams.keys()]) {
+      if (['expires', 'kssaccesskeyid', 'signature', 'response-cache-control'].includes(key.toLowerCase())) url.searchParams.delete(key);
+    }
+    return url.href;
+  } catch { return value; }
+}
 export function wpsSourceEvidence(record: SourceTaskRecord) {
   return JSON.stringify({
     recordId: record.recordId,
@@ -24,7 +35,7 @@ export function wpsSourceEvidence(record: SourceTaskRecord) {
     revision: record.revision,
     requirementText: record.requirementText,
     productStyleText: record.productStyleText,
-    materials: record.materials.map((material) => ({ id: material.id, url: material.originalUrl ?? material.url })),
+    materials: record.materials.map((material) => ({ id: material.id, url: materialEvidenceUrl(material.originalUrl ?? material.url) })),
   });
 }
 

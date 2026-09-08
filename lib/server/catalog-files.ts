@@ -145,3 +145,23 @@ export async function signedCatalogFile(id: string) {
   assertOssObjectKey(file.object_key);
   return ossClient().signatureUrlV4('GET', 900, { queries: file.object_version_id ? { versionId: file.object_version_id } : {} }, file.object_key);
 }
+
+/** One authorized list request signs the visible card thumbnails in one query. */
+export async function signedCatalogThumbnails(urls: string[]) {
+  const config = catalogStorageConfig();
+  if (config.backend !== 'oss' || !urls.length) return new Map<string, string>();
+  const ids = [...new Set(urls.map(url => {
+    const match = /^\/api\/catalog\/files\/([0-9a-f-]{36})$/.exec(url);
+    if (!match) throw new Error('缩略图必须使用素材库文件 ID');
+    return match[1];
+  }))];
+  const { rows } = await catalogDatabase().query("SELECT id,backend,bucket,object_key,object_version_id FROM files WHERE id=ANY($1::uuid[]) AND status='ready' AND gc_state='active'", [ids]);
+  const client = ossClient();
+  const signed = new Map<string, string>();
+  for (const file of rows) {
+    if (file.backend !== 'oss' || file.bucket !== config.bucket) throw new Error('缩略图存储与当前配置不一致');
+    assertOssObjectKey(file.object_key);
+    signed.set(`/api/catalog/files/${file.id}`, await client.signatureUrlV4('GET', 900, { queries: file.object_version_id ? { versionId: file.object_version_id } : {} }, file.object_key));
+  }
+  return signed;
+}

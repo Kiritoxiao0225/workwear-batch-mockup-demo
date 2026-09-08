@@ -6,9 +6,10 @@ import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { airscriptConfiguration, airscriptRecords, airscriptSource } from '@/lib/server/wps-airscript';
 import { listWpsSourceTaskRecords, updateWpsTaskStatus, wpsConfigurationStatus } from '@/lib/server/wps-dbsheet';
 import { wpsSourceEvidence } from '@/lib/wps-source';
+import { cacheWpsMaterial } from '@/lib/server/wps-source-assets';
 
 vi.mock('@/lib/server/wps-user-oauth', () => ({ wpsUserAccessToken: vi.fn(() => { throw new Error('不得调用旧应用授权'); }) }));
-vi.mock('@/lib/server/wps-source-assets', () => ({ cacheWpsMaterial: async (material: unknown) => material }));
+vi.mock('@/lib/server/wps-source-assets', () => ({ cacheWpsMaterial: vi.fn(async (material: unknown) => material) }));
 const cacheRoot = mkdtempSync(path.join(os.tmpdir(), 'wps-airscript-test-'));
 afterAll(() => rmSync(cacheRoot, { recursive: true, force: true }));
 const script = readFileSync(path.join(process.cwd(), 'public/integrations/wps-task-bridge.txt'), 'utf8');
@@ -81,6 +82,36 @@ function configure() {
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe('original-table AirScript bridge', () => {
+  it('reads only pending IDs and never downloads image bytes during list synchronization', async () => {
+    configure();
+    vi.mocked(cacheWpsMaterial).mockClear();
+    vi.stubEnv('WPS_AIRSCRIPT_WEBHOOK', 'https://365.kdocs.cn/api/v3/ide/file/cj5Qvp0WVtjz/script/V2-pending-test/sync_task');
+    const table = originalTable(true);
+    table.rows.set('designing', { 任务要求说明: '设计中', 领取任务: 1 });
+    table.rows.set('completed', { 任务要求说明: '已完成', 交付效果图成品: 'done.png' });
+    table.rows.set('cancelled', { 任务要求说明: '已取消', 异常标签: '取消' });
+    const reads: string[][] = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+      const input = JSON.parse(String(init.body)).Context.argv;
+      if (input.action === 'read') reads.push(input.recordIds);
+      return Response.json({ status: 'finished', data: { result: table.run(input) } });
+    }));
+    const pending = await listWpsSourceTaskRecords({ pendingOnly: true, downloadMaterials: false });
+    expect(reads).toEqual([['r1']]);
+    expect(pending.records.map(record => record.wpsSource?.status)).toEqual(['🔴待领取']);
+    expect(pending.records[0].materials).toHaveLength(2);
+    expect(cacheWpsMaterial).not.toHaveBeenCalled();
+    // Once claimed, the record leaves the pending list without reading any attachments.
+    table.rows.get('r1')!.领取任务 = 1;
+    expect((await listWpsSourceTaskRecords({ pendingOnly: true, downloadMaterials: false })).records).toEqual([]);
+    expect(reads).toEqual([['r1']]);
+    // Explicit analysis/status checks can still inspect an in-progress record.
+    const targeted = await listWpsSourceTaskRecords({ recordIds: ['cj5Qvp0WVtjz:9:r1'] });
+    expect(targeted.records).toHaveLength(1);
+    expect(targeted.records[0].wpsSource?.status).toBe('🟢设计中');
+    expect(cacheWpsMaterial).toHaveBeenCalledTimes(2);
+    expect(table.writes).toEqual([]);
+  });
   it('does not write when manually run, exports only task fields, and preserves attachment identities', () => {
     const table = originalTable();
     const metadata = table.run();

@@ -20,7 +20,7 @@ export async function POST(request: Request) {
     assertProductionArtworkSnapshot(state, body.unitId, body.expectedUnitSnapshot);
     const unit = state.units.find(unit => unit.id === body.unitId)!;
     const stored = state.records.find(record => record.source.recordId === unit.sourceRecordId)!.source;
-    const source = (await listWpsSourceTaskRecords()).records.find(record => record.recordId === unit.sourceRecordId);
+    const source = (await listWpsSourceTaskRecords({ recordIds: [unit.sourceRecordId] })).records.find(record => record.recordId === unit.sourceRecordId);
     if (!source || !canAnalyzeWpsTask(source) || wpsSourceEvidence(source) !== wpsSourceEvidence(stored)) return NextResponse.json({ error: '原表需求、素材或状态已变化，请同步后重新整理提示词' }, { status: 409 });
     const result = await planArtworkGenerationPrompt(source, { id: unit.id, garmentLabel: unit.garmentLabel, variantLabel: unit.variantLabel, placement: unit.placement, instruction: unit.instruction, layoutNote: unit.layoutNote, exactText: unit.exactText, textMode: unit.textMode, sourceScope: unit.sourceScope, artworkMethod: unit.artworkMethod });
     const compiled = buildCanonicalArtworkModelPrompt({ generationPrompt: result.generationPrompt, instruction: unit.instruction, layoutNote: '',

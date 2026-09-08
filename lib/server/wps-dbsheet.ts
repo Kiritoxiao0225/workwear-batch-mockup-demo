@@ -9,6 +9,8 @@ const API = 'https://openapi.wps.cn/v7';
 const MAX_RECORDS = 10_000;
 type JsonObject = Record<string, unknown>;
 type FieldSchema = { id: string; name: string; type: string; data?: JsonObject };
+type SyncOptions = { pendingOnly?: boolean; recordIds?: string[]; downloadMaterials?: boolean };
+const isPendingStatus = (value: unknown) => ['🔴待领取', '待领取'].includes(textValue(value));
 
 export function wpsConfigurationStatus() {
   const mode = process.env.WPS_CONNECTION_MODE?.trim() || 'airscript';
@@ -151,14 +153,14 @@ async function rawRecords(token: string, source: Awaited<ReturnType<typeof confi
   return { records, mapping: wpsFieldMapping(schema) };
 }
 
-async function sourceTaskRecord(record: JsonObject, source: Awaited<ReturnType<typeof configuration>>, mapping: ReturnType<typeof wpsFieldMapping>): Promise<SourceTaskRecord> {
+async function sourceTaskRecord(record: JsonObject, source: Awaited<ReturnType<typeof configuration>>, mapping: ReturnType<typeof wpsFieldMapping>, downloadMaterials = true): Promise<SourceTaskRecord> {
   if (record.error) throw new Error(String(record.error));
   const fields = parsedFields(record.fields);
   const id = record.id as string;
   const requirementText = textValue(fields[mapping.requirement.name]);
   // New WPS rows may be saved before their requirement is entered; keep them visible.
   const materials: TaskMaterial[] = [];
-  for (const material of wpsTaskMaterials(id, fields[mapping.materials.name])) materials.push(await cacheWpsMaterial(material));
+  for (const material of wpsTaskMaterials(id, fields[mapping.materials.name])) materials.push(downloadMaterials ? await cacheWpsMaterial(material) : material);
   return {
     recordId: `${source.fileId}:${source.sheetId}:${id}`,
     customerId: mapping.customer ? textValue(fields[mapping.customer.name]) || '未填客户ID' : '未填客户ID',
@@ -179,15 +181,30 @@ function serialized<T>(operation: () => Promise<T>): Promise<T> {
   return result;
 }
 
-function syncWpsSourceTaskRecords() {
+function syncWpsSourceTaskRecords(options: SyncOptions) {
   return serialized(async () => {
     const token = wpsConfigurationStatus().mode === 'oauth' ? await wpsUserAccessToken() : '';
-    const source = await configuration(token);
-    const { records: raw, mapping } = await rawRecords(token, source);
+    let source = await configuration(token);
+    // The existing bridge manifest already contains statuses. Narrow IDs before
+    // asking WPS for attachment download links; no bridge installation is needed.
+    if ('scriptSnapshot' in source) {
+      const snapshot = source.scriptSnapshot;
+      const mapping = wpsFieldMapping(snapshot.fields);
+      if (options.pendingOnly && !mapping.status) throw new Error('WPS 缺少任务状态，无法只同步待领取任务');
+      const ids = snapshot.recordIds.filter(id =>
+        (!options.recordIds || options.recordIds.includes(`${source.fileId}:${source.sheetId}:${id}`))
+        && (!options.pendingOnly || isPendingStatus(snapshot.manifestFields[id][mapping.status!.name])));
+      source = { ...source, scriptSnapshot: { ...snapshot, recordIds: ids } };
+    }
+    const { records: allRaw, mapping } = await rawRecords(token, source);
+    if (options.pendingOnly && !mapping.status) throw new Error('WPS 缺少任务状态，无法只同步待领取任务');
+    const raw = allRaw.filter(record =>
+      (!options.recordIds || options.recordIds.includes(`${source.fileId}:${source.sheetId}:${record.id}`))
+      && (!options.pendingOnly || (record.error || isPendingStatus(parsedFields(record.fields)[mapping.status!.name]))));
     const records: SourceTaskRecord[] = [];
     const issues: string[] = [];
     for (let offset = 0; offset < raw.length; offset += 6) {
-      const results = await Promise.allSettled(raw.slice(offset, offset + 6).map((record) => sourceTaskRecord(record, source, mapping)));
+      const results = await Promise.allSettled(raw.slice(offset, offset + 6).map((record) => sourceTaskRecord(record, source, mapping, options.downloadMaterials !== false)));
       for (const [index, result] of results.entries()) {
         if (result.status === 'fulfilled') records.push(result.value);
         else {
@@ -202,10 +219,11 @@ function syncWpsSourceTaskRecords() {
   });
 }
 
-let sourceSync: ReturnType<typeof syncWpsSourceTaskRecords> | null = null;
-export function listWpsSourceTaskRecords() {
-  if (!sourceSync) sourceSync = syncWpsSourceTaskRecords().finally(() => { sourceSync = null; });
-  return sourceSync;
+const sourceSyncs = new Map<string, ReturnType<typeof syncWpsSourceTaskRecords>>();
+export function listWpsSourceTaskRecords(options: SyncOptions = {}) {
+  const key = JSON.stringify(options);
+  if (!sourceSyncs.has(key)) sourceSyncs.set(key, syncWpsSourceTaskRecords(options).finally(() => { sourceSyncs.delete(key); }));
+  return sourceSyncs.get(key)!;
 }
 
 export function updateWpsTaskStatus(recordId: string, expectedStatus: string, expectedEvidence: string, status: unknown) {

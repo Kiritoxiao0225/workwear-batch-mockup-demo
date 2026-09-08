@@ -4,6 +4,16 @@ import { confirmProductionPlan, emptyWpsProductionState, importTaskReviews, upse
 import { canAnalyzeWpsTask, liveWpsProductionState, orderWpsSourceRecords, pendingWpsAnalysisRecords, wpsSourceEvidence } from '@/lib/wps-source';
 
 describe('live WPS production reconciliation', () => {
+  it('retains work when WPS renews a signed URL but detects changed file identity or image options', () => {
+    const source = taskReviewFixture()[0].source;
+    const withUrl = (url: string, id = 'wps-file-1') => ({ ...source, materials: [{ id, url, previewUrl: url, name: 'logo.png', description: 'logo' }] });
+    const old = withUrl('https://cdn.wps.cn/file.png?Expires=1&KSSAccessKeyId=old&Signature=old&response-cache-control=old');
+    const renewed = withUrl('https://cdn.wps.cn/file.png?Expires=2&KSSAccessKeyId=new&Signature=new&response-cache-control=new');
+    expect(wpsSourceEvidence(old)).toBe(wpsSourceEvidence(renewed));
+    expect(wpsSourceEvidence(withUrl('https://cdn.wps.cn/other.png'))).not.toBe(wpsSourceEvidence(old));
+    expect(wpsSourceEvidence(withUrl('https://cdn.wps.cn/file.png', 'wps-file-2'))).not.toBe(wpsSourceEvidence(old));
+    expect(wpsSourceEvidence(withUrl('https://cdn.wps.cn/file.png?width=50'))).not.toBe(wpsSourceEvidence(old));
+  });
   it('shows source rows before analysis while keeping historical test work untouched', () => {
     const existing = importTaskReviews(emptyWpsProductionState(), taskReviewFixture());
     const source = { ...taskReviewFixture()[0].source, recordId: 'real-file:sheet:record' };

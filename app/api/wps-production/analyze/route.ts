@@ -30,7 +30,7 @@ export async function POST(request: Request) {
   try {
     await productionUser(request, true);
     const records = parsedRecords(await request.json());
-    const { records: currentRecords } = await listWpsSourceTaskRecords();
+    const { records: currentRecords } = await listWpsSourceTaskRecords({ recordIds: records.map(record => record.recordId) });
     const currentById = new Map(currentRecords.map((record) => [record.recordId, record]));
     const verifiedRecords = records.map((record) => {
       const current = currentById.get(record.recordId);

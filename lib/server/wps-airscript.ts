@@ -95,17 +95,19 @@ export async function airscriptSource() {
   if (!Array.isArray(result.fields_schema)) throw new Error('脚本未返回字段定义');
   if (!Array.isArray(result.recordManifest)) throw new Error('原表脚本缺少增量清单，请更新接入脚本');
   const fingerprints: Record<string, string> = {};
+  const manifestFields: Record<string, JsonObject> = {};
   for (const entry of result.recordManifest) {
     const record = objectValue(entry, '原表清单');
     if (typeof record.id !== 'string' || !recordIds.includes(record.id) || fingerprints[record.id]) throw new Error(`原表清单 ID 无效或重复：${String(record.id)}`);
-    fingerprints[record.id] = createHash('sha256').update(manifestFingerprint(objectValue(record.fields, '清单字段'))).digest('hex');
+    manifestFields[record.id] = objectValue(record.fields, '清单字段');
+    fingerprints[record.id] = createHash('sha256').update(manifestFingerprint(manifestFields[record.id])).digest('hex');
   }
   if (Object.keys(fingerprints).length !== recordIds.length) throw new Error('原表清单与记录 ID 数量不一致');
   return {
     fileId: airscriptConfiguration().fileId, fileName: '【测试】效果图任务管理系统v3.5', fileType: 'db', version: '',
     sheetId: result.sheetId as number, sheetName: result.sheetName as string,
     sourceUrl: process.env.WPS_SOURCE_URL!.trim(),
-    scriptSnapshot: { recordIds, fields: result.fields_schema, fingerprints },
+    scriptSnapshot: { recordIds, fields: result.fields_schema, fingerprints, manifestFields },
   };
 }
 
@@ -117,7 +119,8 @@ export async function airscriptRecords(source: { sheetId: number; scriptSnapshot
   for (const id of source.scriptSnapshot.recordIds) {
     const cached = recordCache.get(identity + id);
     const fingerprint = source.scriptSnapshot.fingerprints?.[id];
-    if (!fresh && fingerprint && cached?.fingerprint === fingerprint) results.set(id, cached.record);
+    // Attachment URLs are signed and expire even when the source row is unchanged.
+    if (!fresh && fingerprint && cached?.fingerprint === fingerprint && Date.now() - cached.readAt < 5 * 60 * 1000) results.set(id, cached.record);
     else pendingIds.push(id);
   }
   // Read independent groups concurrently; each script retains its exact ID order.

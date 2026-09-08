@@ -36,7 +36,7 @@ export type StandardVersion = { id: string; revision: number; status: 'draft' | 
 export type CatalogView = { id: string; face: 'front' | 'back'; crop: Box; revision: number; latest: StandardVersion | null; confirmedId: string | null; history: StandardVersion[] };
 export type CatalogItem = {
   id: string; styleId: string; styleCode: string; colorName: string; namespace: string; assetVersionId: string; assetVersion: number;
-  filename: string; imageUrl: string; thumbnailUrl: string; width: number; height: number; calibrationFaces?: CalibrationFace[];
+  filename: string; imageUrl: string; thumbnailUrl: string; signedThumbnailUrl?: string; width: number; height: number; calibrationFaces?: CalibrationFace[];
   layout: 'front_back' | 'front_only'; sha256: string; confirmedFaces: number; faceCount: number; hasDraft: boolean;
 };
 export type CatalogDetail = CatalogItem & { isCurrent: boolean; views: CatalogView[]; sources: { filename: string; url: string }[]; provenance: Record<string, unknown>; versions: { id: string; version: number; createdAt: string; sha256: string }[] };

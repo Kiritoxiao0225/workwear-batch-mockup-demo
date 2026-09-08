@@ -22,11 +22,13 @@ async function requestJson<T>(url: string, options?: RequestInit): Promise<T> {
 }
 function StyleCard({ style, priority, viewer, open, preview }: { style: CatalogStyle; priority: boolean; viewer: boolean; open: (id: string) => void; preview: (id: string) => void }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [failedThumbnail, setFailedThumbnail] = useState<string | null>(null);
   const preferred = style.matchedIds.includes(style.referenceVariantId ?? '') ? style.referenceVariantId : style.colors.find(c => style.matchedIds.includes(c.id))?.id;
   const item = style.colors.find(c => c.id === selectedId) ?? style.colors.find(c => c.id === preferred) ?? style.colors[0];
   const ready = style.colors.filter(c => calibrationStatus(c).key === 'confirmed').length;
   const status = calibrationStatus(item);
-  return <article className="catalog-card catalog-style-card"><button type="button" className="catalog-card-image" onClick={() => preview(item.id)} aria-label={`查看 ${item.styleCode} ${item.colorName} 高清图`}><Image src={item.thumbnailUrl} alt={`${item.styleCode} ${item.colorName}`} fill sizes="(max-width: 680px) 50vw, (max-width: 1100px) 33vw, 25vw" priority={priority} unoptimized /><span className="catalog-color-count">{style.colors.length} 色</span></button>
+  const thumbnail = item.signedThumbnailUrl && failedThumbnail !== item.signedThumbnailUrl ? item.signedThumbnailUrl : item.thumbnailUrl;
+  return <article className="catalog-card catalog-style-card"><button type="button" className="catalog-card-image" onClick={() => preview(item.id)} aria-label={`查看 ${item.styleCode} ${item.colorName} 高清图`}><Image src={thumbnail} onError={() => setFailedThumbnail(thumbnail)} alt={`${item.styleCode} ${item.colorName}`} fill sizes="(max-width: 680px) 50vw, (max-width: 1100px) 33vw, 25vw" priority={priority} unoptimized /><span className="catalog-color-count">{style.colors.length} 色</span></button>
     <div className="catalog-card-copy"><div><h2>{style.styleCode}</h2><span>{item.colorName}</span></div>
       <div className="catalog-color-options" aria-label={`${style.styleCode}的颜色`}>{style.colors.map(color => <button type="button" key={color.id} aria-pressed={item.id === color.id} title={`${color.colorName} · ${calibrationStatus(color).label}${color.id === style.referenceVariantId ? ' · 代表颜色' : ''}`} className={style.matchedIds.includes(color.id) ? '' : 'not-matched'} onClick={() => setSelectedId(color.id)}><span className={`catalog-status-symbol ${calibrationStatus(color).key}`} aria-hidden="true">{calibrationStatus(color).symbol}</span> {color.colorName}{color.id === style.referenceVariantId ? ' ★' : ''}</button>)}</div>
       <section className="catalog-calibration-summary" aria-label={`${item.colorName}校准状态`}>
