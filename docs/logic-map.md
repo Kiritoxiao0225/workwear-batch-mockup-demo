@@ -964,3 +964,9 @@
 - `/api/wps-tasks`、其 status 接口和 `/api/logo-studio` 在云模式使用同一项目账号；写接口校验角色和 Origin。
 - Meitu 动态运行依赖显式纳入 Next.js 文件追踪。发布排除环境文件、运行数据、构建目录和输出目录；测试只扫描正式源码。
 - 验证：单元测试、Lint、类型检查、生产构建、素材库独立 PostgreSQL 备份恢复、生产存储并发/回执重连/源附件云化。线上发布状态以当次 Vercel 回读为准，不把构建成功等同于真实付费生图验收。
+
+## 2026-09-08 免密码共享工作台
+
+- `CATALOG_AUTH_MODE=open` 时，页面启动直接 GET `/api/catalog/session`，所有素材与云端生产 API 通过 `catalogUser` 解析 `CATALOG_LOGIN_EMAIL` 对应的真实账号，不需要 cookie。
+- 移除页面登录弹窗和退出入口；连接失败显示实际错误与重试，不提示输入密码。
+- 保留停用账号检查、viewer 写入限制、同源校验，以及原有 revision/CAS 与历史确认人；不修改 WPS 附件保存流程。

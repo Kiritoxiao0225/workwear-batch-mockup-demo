@@ -9,9 +9,9 @@
 - PostgreSQL 使用 Zeabur 现有服务内的独立 `mockup` 数据库、`garment_catalog` schema，与 CatalogHub 的 `zeabur` 库分离。运行账号 `mockup_app` 只有业务表读写权限，`mockup_owner` 负责迁移。`npm run catalog:migrate` 执行带内容 hash 校验的迁移；管理连接只放在 `.env.catalog-admin.local`，普通 Web 进程不加载它。
 - `.env.local` 保存 `CATALOG_DATABASE_URL`、`CATALOG_DATABASE_CA_CERT` 和 `CATALOG_OSS_*`。数据库采用 postgres.js、已连接的 IPv4 socket 与最多 5 个连接，事务固定同一连接；远程连接必须验证 TLS 证书和主机身份。私有 CA 的 PEM 可用转义换行保存；连接字符串不能再指定会覆盖 CA 的 SSL 参数。
 - OSS 使用 `oss-bucket-mockfits` 的 `workwear-mockup/prod/objects/` 内容哈希路径，由 `CATALOG_OSS_PREFIX` 限定项目范围。独立 RAM 账号 `workwear-mockup` 绑定 `WorkwearMockupStorage` 策略，只能列举、读取及写入 `workwear-mockup/prod/`，没有删除对象、管理 Bucket 或读取 CatalogHub 目录的权限。上传显式设置私有权限、禁止覆盖，重试已有对象须读回验证哈希；文件访问生成 15 分钟签名地址。本次未配置 Bucket 版本控制，换图依靠不可覆盖的新哈希对象保留历史。
-- 通过环境变量 `CATALOG_USER_PASSWORD` 提供至少 8 位的密码，执行 `npm run catalog:user -- <邮箱> <姓名>` 创建管理员。服务端 `CATALOG_LOGIN_EMAIL` 绑定此账号，页面只需输入密码；密码只保存 scrypt 摘要，API 的确认人和权限仍来自该账号的登录会话。当前账号配置通过 CLI 管理，未提供公开注册。
-- 项目账号首次登录后，商品素材库与批量效果图共用登录。页面可见时每小时、回到前台或网络恢复时自动续期；cookie 与 PostgreSQL 会话均保留 30 天。关闭浏览器后可恢复，连续约 30 天未使用或主动退出后重新登录。不同浏览器/域名各需首次登录；未过期的旧 7 天会话会在访问页面时自动延长。
-- 反向代理部署设置 `CATALOG_APP_ORIGIN` 为浏览器访问的准确 origin；写接口校验来源，会话使用 HttpOnly / SameSite cookie，路径 `/api`，覆盖素材库和云端制作接口；旧 `/api/catalog` cookie 在续期时自动升级。
+- 工作台使用 `CATALOG_AUTH_MODE=open` 免密码访问，打开链接即可查看和操作。`CATALOG_LOGIN_EMAIL` 指定已有工作台账号，所有访问者共用该账号的角色和操作记录；停用账号或设为 viewer 仍会阻止相应操作。
+- 页面不再显示登录弹窗或退出按钮，也不依赖浏览器 cookie。现有账号和历史素材、任务、确认记录保持不变。新环境需先用 `CATALOG_USER_PASSWORD` 与 `npm run catalog:user -- <邮箱> <姓名>` 创建真实账号；初始化密码不用于页面访问。
+- 反向代理部署设置 `CATALOG_APP_ORIGIN` 为浏览器访问的准确 origin；写接口继续校验来源。底层保留密码会话接口供兼容测试使用，未设置 open 时 API 仍要求原会话，但当前页面不再提供密码登录入口。
 
 印花位置：点击卡片“查看印花位置”直接打开正反面标记，可切换印花/结构图层并拖动调整。已有标记原样读取；本批 21 款未保存的面按已核对参考类型生成建议，并分别对齐各面透明轮廓。未知款式先选择结构类型，无透明轮廓时先手动调整衣服边界。建议不自动保存或确认；核对当前面并确认后，才可“应用到同款其他颜色”。
 

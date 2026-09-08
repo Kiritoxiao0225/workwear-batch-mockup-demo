@@ -65,7 +65,7 @@ export function WpsArtworkSizePreview({ unit, draft }: { unit: ProductionUnit; d
         {!layout.heights.length && <p>当前图案没有可单独测量的文字层，请放大核对图片中的小字。</p>}
         {draft.extraGraphics?.some(graphic => graphic.role === 'styledText') && <p>图片形式的特殊文字未计入字高检测，请单独核对。</p>}
         <small>字高按实际可见字形估算。提高字号或缩小上方图形后重新查看；刺绣、细笔画和低对比配色仍需打样核对。</small></> : <p>正在更新上衣预览…</p>}
-    {!session.user && <p>登录工作台后显示服装底图；图案编辑与字高检查可继续。</p>}
+    {!session.user && <p>工作台连接恢复后显示服装底图；图案编辑与字高检查可继续。</p>}
     {message && <p className="artwork-text-warning">{message}</p>}
     </details></section>;
 }

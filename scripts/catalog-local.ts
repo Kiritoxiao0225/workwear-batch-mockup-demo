@@ -17,6 +17,7 @@ if (!existsSync(configFile)) await writeFile(configFile, JSON.stringify(credenti
 process.env.CATALOG_DATABASE_URL = `postgresql://catalog_local:${credentials.databasePassword}@127.0.0.1:55439/postgres`;
 process.env.CATALOG_LOCAL_OBJECT_ROOT = path.join(root, 'objects');
 process.env.CATALOG_LOGIN_EMAIL = credentials.email;
+process.env.CATALOG_AUTH_MODE = 'open';
 process.env.CATALOG_NEXT_DIST_DIR = '.next-catalog';
 process.env.CATALOG_APP_ORIGIN = 'http://127.0.0.1:3177';
 const database = new EmbeddedPostgres({ databaseDir: path.join(root, 'postgres'), user: 'catalog_local', password: credentials.databasePassword, port: 55439, persistent: true, authMethod: 'scram-sha-256', postgresFlags: ['-h', '127.0.0.1'], onLog: () => {}, onError: message => console.error(message) });

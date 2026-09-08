@@ -20,8 +20,8 @@ export function AppHeader() {
         <Link className={pathname === '/workbench' ? 'active' : ''} href="/workbench">简单批量生图</Link>
       </nav>
       <div className="project-account">
-        {!session.initialized ? <span>正在恢复登录…</span> : session.user ? <><span>{session.user.displayName}{session.localStorage ? ' · 本机存储' : ''}</span><button className="button" type="button" disabled={session.busy} onClick={() => void session.logout()}>退出</button></> : <button className="button" type="button" onClick={session.openLogin}>登录工作台</button>}
-        {session.error && <span role="alert">登录状态：{session.error}<button className="button" type="button" onClick={() => void session.refresh()}>重试</button></span>}
+        {!session.initialized ? <span>正在加载工作台…</span> : session.user && <span>{session.user.displayName}{session.localStorage ? ' · 本机存储' : ''}</span>}
+        {session.error && <span role="alert">工作台：{session.error}<button className="button" type="button" disabled={session.busy} onClick={() => void session.refresh()}>重试</button></span>}
       </div></div>
     </header>
   );

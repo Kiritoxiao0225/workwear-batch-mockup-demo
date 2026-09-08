@@ -13,6 +13,7 @@ function request(method: string, body?: unknown) {
   return new NextRequest('https://mockup.example/api/catalog/session', { method, headers: { origin: 'https://mockup.example', cookie: `catalog_session=${token}`, 'content-type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
 }
 beforeEach(() => {
+  vi.stubEnv('CATALOG_AUTH_MODE', 'password');
   vi.clearAllMocks(); vi.stubEnv('NODE_ENV', 'production'); vi.stubEnv('CATALOG_APP_ORIGIN', 'https://mockup.example');
   vi.mocked(loginWorkspace).mockResolvedValue({ user, token });
   vi.mocked(renewCatalogSession).mockResolvedValue({ user, token });
@@ -20,6 +21,17 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllEnvs());
 describe('persistent project sessions', () => {
+  it('opens a shared workspace without credentials or session cookies, including old clients using PATCH', async () => {
+    vi.stubEnv('CATALOG_AUTH_MODE', 'open');
+    for (const [method, handler] of [['GET', GET], ['PATCH', PATCH], ['POST', POST]] as const) {
+      const response = await handler(new NextRequest('https://mockup.example/api/catalog/session', { method, headers: { origin: 'https://mockup.example' } }));
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ user, localStorage: false });
+      expect(response.headers.has('set-cookie')).toBe(false);
+    }
+    expect(loginWorkspace).not.toHaveBeenCalled();
+    expect(renewCatalogSession).not.toHaveBeenCalled();
+  });
   it('sets the same protected 30-day cookie on login and renewal without exposing the token in JSON', async () => {
     const responses = [await POST(request('POST', { password: 'example-password' })), await PATCH(request('PATCH'))];
     expect(loginWorkspace).toHaveBeenCalledExactlyOnceWith('example-password');

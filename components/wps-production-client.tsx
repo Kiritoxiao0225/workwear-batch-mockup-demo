@@ -425,7 +425,7 @@ export function WpsProductionClient() {
   };
 
   const openPlacement = async (unit: ProductionUnit) => {
-    if (!catalogUser) { session.openLogin(); return; }
+    if (!catalogUser) { void session.refresh(); return; }
     if (!unit.garment) { setError('请先选择衣服款式和颜色'); return; }
     cancelSync();
     const request = ++inspectionRequest.current;
@@ -980,7 +980,7 @@ export function WpsProductionClient() {
 
         <p className="wps-production-message" aria-live="polite">{syncing ? sourceInfo ? '正在后台同步 WPS，可继续操作。' : '正在读取 WPS 状态与素材…' : syncMessage}{sourceInfo && <> · <a href={sourceInfo.sourceUrl} target="_blank" rel="noreferrer">{sourceInfo.sourceFile.fileName}</a> · 最近同步 {new Date(sourceInfo.syncedAt).toLocaleTimeString('zh-CN')}</>}{!syncMode && sourceInfo ? ' · 连接异常，显示上次同步数据' : ''}</p>
         {message && <p className="wps-production-message" role="status">{message}</p>}
-        {!sessionInitialized ? <p className="wps-sync-note">正在恢复登录并读取衣服款式…</p> : !catalogUser ? <div className="error-banner"><span>登录工作台后，自动读取衣服款式、颜色和底图。</span><button type="button" onClick={session.openLogin}>登录并保持</button></div> : catalogError && <div className="error-banner" role="alert"><span>商品素材库：{catalogError}</span><button type="button" onClick={() => void loadCatalog()}>重新读取款式</button></div>}
+        {!sessionInitialized ? <p className="wps-sync-note">正在读取衣服款式…</p> : !catalogUser ? <div className="error-banner"><span>工作台暂时无法读取，请重试连接。</span><button type="button" onClick={() => void session.refresh()}>重新连接</button></div> : catalogError && <div className="error-banner" role="alert"><span>商品素材库：{catalogError}</span><button type="button" onClick={() => void loadCatalog()}>重新读取款式</button></div>}
         {syncError && <div className="error-banner" role="alert"><span>WPS 同步：{syncError}</span>{syncAuthorizeUrl && <a className="button primary" href={syncAuthorizeUrl}>连接 WPS</a>}<button disabled={syncPaused || syncing} onClick={() => void load()} type="button">重试同步</button></div>}
         {error && <div className="error-banner" role="alert"><span>{error}</span>{authorizeUrl && <a className="button primary" href={authorizeUrl}>连接 WPS</a>}<button onClick={() => setError(null)} type="button">关闭</button></div>}
 

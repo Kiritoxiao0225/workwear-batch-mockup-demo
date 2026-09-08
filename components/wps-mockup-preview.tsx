@@ -30,7 +30,7 @@ export function WpsMockupPreview({ version, units, open, adjust, disabled, pause
   return <div className="wps-framed-preview">
     {paused || composing ? <div className="wps-image-notice" role="status">{composing ? '位置已保存，正在生成客户图…可继续处理其他衣服' : '位置调整完成后更新预览'}</div>
       : !output && !session.initialized ? <div className="wps-image-notice" role="status">正在读取工作台登录状态…</div>
-      : !output && !session.user ? <div className="wps-image-notice"><strong>登录后查看服装效果</strong><p>已保存的制作内容仍保留。</p><button type="button" onClick={session.openLogin}>登录工作台</button></div>
+      : !output && !session.user ? <div className="wps-image-notice"><strong>工作台连接暂不可用</strong><p>已保存的制作内容仍保留。</p><button type="button" onClick={() => void session.refresh()}>重新连接</button></div>
       : failedUrl === previewKey ? <div className="wps-image-notice" role="alert"><strong>效果图暂时无法读取</strong><p>制作状态已保留，可重新加载预览。</p><button type="button" onClick={() => { setFailedUrl(null); setRetry(value => value + 1); }}>重新读取</button></div>
       : <button className="wps-output-preview" aria-label={`放大查看${title}`} type="button" onClick={() => open({ url, title })}>
         {loadedUrl !== previewKey && <span role="status">效果图更新中…</span>}

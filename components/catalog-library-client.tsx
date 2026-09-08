@@ -58,7 +58,7 @@ function UploadDialog({ target, style, close, saved }: { target: CatalogDetail |
     {error && <div className="error-banner" role="alert">{error}</div>}<div className="catalog-upload-actions"><button type="button" className="button" disabled={busy} onClick={close}>取消</button><button className="button primary" type="submit" disabled={busy}>{busy ? '上传并校验…' : '保存素材'}</button></div></form></div>;
 }
 export function CatalogLibraryClient() {
-  const { user, initialized, openLogin } = useProjectSession();
+  const { user, initialized, refresh } = useProjectSession();
   const [page, setPage] = useState<CatalogPage | null>(null);
   const [query, setQuery] = useState(''); const [status, setStatus] = useState('all'); const [pageNumber, setPageNumber] = useState(1);
   const [error, setError] = useState(''); const [loading, setLoading] = useState(false);
@@ -117,7 +117,7 @@ export function CatalogLibraryClient() {
   return <div className="app-shell"><AppHeader /><main className="catalog-page">
     <div className="catalog-heading"><div><h1>商品素材库</h1><p>按款号和颜色找素材，逐款建立可复用的位置标准。</p></div><div className="catalog-account"><Link href="/products?mode=append">添加到简单批量生图 ↗</Link></div></div>
     {error && <div className="error-banner" role="alert">{error}</div>}
-    {!initialized ? <p>正在读取素材库…</p> : !user ? <div className="catalog-login"><h2>登录工作台</h2><p>使用项目账号登录后，素材库与批量效果图自动共用登录状态。</p><button type="button" className="button primary" onClick={openLogin}>登录并保持</button></div> : <>
+    {!initialized ? <p>正在读取素材库…</p> : !user ? <div className="catalog-login"><h2>工作台暂时无法读取</h2><p>请重试连接，详细原因见页面顶部。</p><button type="button" className="button primary" onClick={() => void refresh()}>重新连接</button></div> : <>
     <div className="catalog-toolbar"><input type="search" aria-label="搜索款号或颜色" placeholder="搜索完整款号、颜色…" value={query} onChange={e => { setQuery(e.target.value); setPageNumber(1); }} /><div className="catalog-filters">{[['all', '全部'], ['pending', '待校准'], ['draft', '有草稿'], ['confirmed', '已确认'], ['front_only', '仅正面']].map(([key, label]) => <button key={key} type="button" aria-pressed={status === key} onClick={() => { setStatus(key); setPageNumber(1); }}>{label}</button>)}</div>{user.role !== 'viewer' && <button type="button" className="button primary" onClick={() => setUpload({ target: null })}>添加素材</button>}</div>
     <div className="catalog-count"><span>{page?.total ?? '—'} 个款式 · {page?.totalColors ?? '—'} 个颜色{query || status !== 'all' ? ` · ${page?.matchingColors ?? 0} 个颜色符合筛选` : ''}{loading ? ' · 正在读取…' : ''}</span><button className="button" type="button" onClick={() => setReload(n => n + 1)}>刷新</button></div>
     {page?.importIssues.length ? <details className="catalog-issues"><summary>{page.importIssues.length} 项导入待处理</summary>{page.importIssues.map((issue, i) => <p key={`${issue.filename}-${i}`}><strong>{issue.filename}</strong> · {issue.error}</p>)}</details> : null}

@@ -6,6 +6,7 @@ import { catalogDatabase, catalogTransaction } from './catalog-database';
 export class CatalogHttpError extends Error { constructor(public status: number, message: string) { super(message); } }
 export const CATALOG_COOKIE = 'catalog_session';
 export const SESSION_SECONDS = 60 * 60 * 24 * 30;
+export const workspaceOpenAccess = () => process.env.CATALOG_AUTH_MODE === 'open';
 const tokenHash = (value: string) => createHash('sha256').update(value).digest('hex');
 function passwordHash(password: string) {
   if (password.length < 8 || password.length > 256) throw new Error('密码长度必须在 8 到 256 字符之间');
@@ -69,6 +70,17 @@ function sessionToken(request: NextRequest) {
 }
 export async function catalogUser(request: NextRequest, write = false): Promise<CatalogUser> {
   if (write) assertSameOrigin(request);
+  if (workspaceOpenAccess()) {
+    const email = process.env.CATALOG_LOGIN_EMAIL?.trim().toLowerCase();
+    if (!email) throw new CatalogHttpError(503, '工作台账号尚未配置，请设置 CATALOG_LOGIN_EMAIL');
+    // Keep a real identity for existing ownership, confirmation and audit foreign keys.
+    // Password lockouts do not apply to this explicitly configured shared workspace.
+    const found = await catalogDatabase().query('SELECT id,email,display_name,role FROM users WHERE email=$1 AND NOT disabled', [email]);
+    const row = found.rows[0];
+    if (!row) throw new CatalogHttpError(503, '工作台账号不存在或已停用');
+    if (write && row.role === 'viewer') throw new CatalogHttpError(403, '当前账号只有查看权限');
+    return { id: row.id, email: row.email, displayName: row.display_name, role: row.role };
+  }
   const token = sessionToken(request);
   const found = await catalogDatabase().query('SELECT u.id,u.email,u.display_name,u.role FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now() AND NOT u.disabled', [tokenHash(token)]);
   if (!found.rowCount) throw new CatalogHttpError(401, '登录已过期，请重新登录');
