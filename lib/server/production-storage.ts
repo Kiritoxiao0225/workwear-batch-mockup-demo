@@ -14,7 +14,7 @@ export async function productionUser(request: Request | undefined, write = false
 }
 export async function readProductionFile(url: string) {
   const id = productionFileId(url);
-  if (id) return (await readCatalogFile(id)).bytes;
+  if (id) return (await readCatalogFile(id, { accelerated: true })).bytes;
   const match = /^\/uploads\/(logos|mockups|wps-source)\/([^/\\]+)$/u.exec(url);
   if (!match || ['.', '..'].includes(match[2])) throw new Error(`不支持的生产文件地址：${url}`);
   if (usesProductionCloud()) throw new Error(`云端状态仍引用本地文件，请完成迁移：${url}`);

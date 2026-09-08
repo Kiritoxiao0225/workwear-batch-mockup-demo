@@ -26,9 +26,13 @@ export function catalogStorageConfig() {
   catalogObjectPrefix();
   return { backend: 'oss' as const, bucket };
 }
-function ossClient() {
+// Opt in only for server-side production image transfers; browser URLs and
+// ordinary catalog traffic retain their existing regional endpoint.
+function ossClient(acceleratedProduction = false) {
   const config = catalogStorageConfig();
-  return new OSS({ bucket: config.bucket, region: process.env.CATALOG_OSS_REGION!, accessKeyId: process.env.CATALOG_OSS_ACCESS_KEY_ID!, accessKeySecret: process.env.CATALOG_OSS_ACCESS_KEY_SECRET!, secure: true, authorizationV4: true, timeout: 120000 });
+  return new OSS({ bucket: config.bucket, region: process.env.CATALOG_OSS_REGION!, accessKeyId: process.env.CATALOG_OSS_ACCESS_KEY_ID!, accessKeySecret: process.env.CATALOG_OSS_ACCESS_KEY_SECRET!, secure: true, authorizationV4: true, timeout: 120000,
+    ...(acceleratedProduction ? { endpoint: 'https://oss-accelerate.aliyuncs.com' } : {}),
+  });
 }
 function localObjectPath(bucket: string, key: string) {
   if (!/^(?:production\/)?objects\/[0-9a-f]{2}\/[0-9a-f]{64}$/.test(key)) throw new Error(`文件 object_key 无效：${key}`);
@@ -89,7 +93,7 @@ export async function saveCatalogFile(bytes: Buffer, originalName: string, purpo
       const temporary = `${destination}.${randomUUID()}.tmp`;
       await writeFile(temporary, bytes); await rename(temporary, destination); saved = await readFile(destination);
     } else {
-      const objectClient = ossClient();
+      const objectClient = ossClient(purpose === 'production');
       // A previous response may have been lost after OSS accepted the file. Read it before retrying PUT.
       let exists = false;
       try { const existing = await objectClient.get(storedKey); if (fileSha256(Buffer.from(existing.content)) !== metadata.sha256) throw new Error('已有对象内容不匹配'); exists = true; }
@@ -123,7 +127,7 @@ export async function catalogFile(id: string) {
   if (found.rows[0].gc_state && found.rows[0].gc_state !== 'active') throw new Error(`文件正在回收：${id}`);
   return found.rows[0];
 }
-export async function readCatalogFile(id: string) {
+export async function readCatalogFile(id: string, options?: { accelerated?: boolean }) {
   const file = await catalogFile(id);
   let bytes: Buffer;
   if (file.backend === 'local') bytes = await readFile(localObjectPath(file.bucket, file.object_key));
@@ -131,7 +135,7 @@ export async function readCatalogFile(id: string) {
     const config = catalogStorageConfig();
     if (config.backend !== 'oss' || config.bucket !== file.bucket) throw new Error('文件所属 OSS Bucket 与当前配置不一致');
     assertOssObjectKey(file.object_key);
-    const result = await ossClient().get(file.object_key, { versionId: file.object_version_id ?? undefined });
+    const result = await ossClient(options?.accelerated).get(file.object_key, { versionId: file.object_version_id ?? undefined });
     bytes = Buffer.from(result.content);
   }
   if (fileSha256(bytes) !== file.sha256) throw new Error(`文件内容校验失败：${id}`);
