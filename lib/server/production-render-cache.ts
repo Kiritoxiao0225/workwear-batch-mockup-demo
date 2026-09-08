@@ -48,8 +48,40 @@ async function publishCurrent(version: ProductionMockupVersion, originalUnits: P
   });
 }
 
+const rendering = new Map<string, Promise<Buffer>>();
+function renderPixels(version: ProductionMockupVersion, units: ProductionUnit[], hash: string) {
+  const active = rendering.get(hash);
+  if (active) return active;
+  const work = renderProductionMockup(version, units);
+  rendering.set(hash, work);
+  void work.finally(() => { if (rendering.get(hash) === work) rendering.delete(hash); }).catch(() => {});
+  return work;
+}
+
+/** A preview can display verified source pixels without waiting for durable output storage.
+ * The caller must schedule persist in Next after(); delivery still awaits savedProductionRender.
+ */
+export async function prepareProductionPreview(version: ProductionMockupVersion, originalUnits: ProductionUnit[]) {
+  const units = await productionPreviewUnits(originalUnits);
+  const hash = await renderFingerprint(version, units);
+  const hit = await catalogDatabase().query(`SELECT c.file_id,EXISTS(
+    SELECT 1 FROM production_renders r WHERE r.state_key=$2 AND r.version_id=$3 AND r.input_hash=c.input_hash AND r.file_id=c.file_id
+  ) AS is_current FROM production_render_cache c JOIN files f ON f.id=c.file_id
+    WHERE c.input_hash=$1 AND f.status='ready' AND f.gc_state='active'`, [hash, productionStateKey(), version.id]);
+  if (hit.rowCount) {
+    const cached = await readCatalogFile(hit.rows[0].file_id);
+    return { bytes: cached.bytes, persist: async () => {
+      if (!hit.rows[0].is_current) await publishCurrent(version, originalUnits, hash, hit.rows[0].file_id);
+    } };
+  }
+  // A concurrent writer may own the durable claim. Do not make the preview wait
+  // for its OSS upload/verification; the same instance shares in-flight pixels.
+  const bytes = await renderPixels(version, units, hash);
+  return { bytes, persist: async () => { await savedProductionRender(version, originalUnits, { hash, bytes }); } };
+}
+
 /** Durable input cache plus a short renewable claim; rendering never holds a state/database lock. */
-export async function savedProductionRender(version: ProductionMockupVersion, originalUnits: ProductionUnit[]) {
+export async function savedProductionRender(version: ProductionMockupVersion, originalUnits: ProductionUnit[], prepared?: { hash: string; bytes: Buffer }) {
   const units = await productionPreviewUnits(originalUnits);
   const hash = await renderFingerprint(version, units);
   const owner = randomUUID();
@@ -74,7 +106,7 @@ export async function savedProductionRender(version: ProductionMockupVersion, or
       WHERE production_operations.lease_until<now() RETURNING owner`, [operationKey, owner]);
     if (!claim.rowCount) { await new Promise(resolve => setTimeout(resolve, 500)); continue; }
     try {
-      const png = await renderProductionMockup(version, units);
+      const png = prepared?.hash === hash ? prepared.bytes : await renderPixels(version, units, hash);
       const saved = await saveProductionFile(png, `${version.id}.png`);
       await catalogDatabase().query(`INSERT INTO production_render_cache(input_hash,file_id) VALUES($1,$2)
         ON CONFLICT(input_hash) DO UPDATE SET file_id=EXCLUDED.file_id`, [hash, saved.id]);

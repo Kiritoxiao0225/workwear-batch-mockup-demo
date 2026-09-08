@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { savedProductionRender } from './production-render-cache';
+import { prepareProductionPreview, savedProductionRender } from './production-render-cache';
 import { catalogDatabase, catalogTransaction } from './catalog-database';
 import { readCatalogFile } from './catalog-files';
-import { productionPreviewUnits } from './wps-production-assets';
+import { productionPreviewUnits, renderProductionMockup } from './wps-production-assets';
+import { saveProductionFile } from './production-storage';
 import { queueReplacedFiles } from './production-replaced-files';
 import { garmentFixture } from '../testing/production-garment-fixture';
 import { taskReviewFixture } from '../testing/task-review-fixture';
@@ -13,6 +14,7 @@ vi.mock('./catalog-database', () => ({ catalogDatabase: vi.fn(), catalogTransact
 vi.mock('./catalog-files', () => ({ readCatalogFile: vi.fn(), fileSha256: (value: string) => createHash('sha256').update(value).digest('hex') }));
 vi.mock('./wps-production-assets', () => ({ productionPreviewUnits: vi.fn(), renderProductionMockup: vi.fn() }));
 vi.mock('./production-replaced-files', () => ({ queueReplacedFiles: vi.fn() }));
+vi.mock('./production-storage', () => ({ productionStateKey: () => 'main', saveProductionFile: vi.fn() }));
 const query = vi.fn(), transactionQuery = vi.fn();
 function fixture() {
   const review = taskReviewFixture()[2];
@@ -30,6 +32,46 @@ beforeEach(() => {
   vi.mocked(catalogTransaction).mockImplementation(async work => work({ query: transactionQuery }));
   vi.mocked(productionPreviewUnits).mockImplementation(async units => units);
   vi.mocked(readCatalogFile).mockResolvedValue({ file: { id: 'cached' }, bytes: Buffer.from('verified cached image') });
+});
+
+describe('preview before durable storage', () => {
+  it('returns pixels without taking or waiting for the durable render lease', async () => {
+    query.mockResolvedValue({ rowCount: 0, rows: [] });
+    vi.mocked(renderProductionMockup).mockResolvedValue(Buffer.from('new pixels'));
+    const state = fixture();
+    const preview = await prepareProductionPreview(state.mockupVersions[0], state.units);
+    expect(preview.bytes.toString()).toBe('new pixels');
+    expect(query).toHaveBeenCalledOnce();
+    expect(saveProductionFile).not.toHaveBeenCalled();
+    expect(catalogTransaction).not.toHaveBeenCalled();
+  });
+
+  it('persists the displayed pixels afterwards and rejects publication when input changed', async () => {
+    const state = fixture(), latest = structuredClone(state);
+    latest.units[0].placement!.widthCm += 1;
+    query.mockImplementation(async (sql: string) => ({ rowCount: sql.includes('INSERT INTO production_operations') ? 1 : 0, rows: [] }));
+    transactionQuery.mockResolvedValue({ rowCount: 1, rows: [{ state_jsonb: latest }] });
+    vi.mocked(renderProductionMockup).mockResolvedValue(Buffer.from('new pixels'));
+    vi.mocked(saveProductionFile).mockResolvedValue({ id: 'new-file' } as Awaited<ReturnType<typeof saveProductionFile>>);
+    const preview = await prepareProductionPreview(state.mockupVersions[0], state.units);
+    await preview.persist();
+    expect(renderProductionMockup).toHaveBeenCalledOnce();
+    expect(saveProductionFile).toHaveBeenCalledWith(preview.bytes, expect.any(String));
+    expect(queueReplacedFiles).toHaveBeenCalledWith(expect.anything(), ['new-file']);
+    expect(transactionQuery).toHaveBeenCalledOnce();
+    expect(query.mock.calls.some(([sql]) => sql.includes('DELETE FROM production_operations'))).toBe(true);
+  });
+
+  it('does not invalidate the returned preview when background storage fails', async () => {
+    query.mockImplementation(async (sql: string) => ({ rowCount: sql.includes('INSERT INTO production_operations') ? 1 : 0, rows: [] }));
+    vi.mocked(renderProductionMockup).mockResolvedValue(Buffer.from('visible pixels'));
+    vi.mocked(saveProductionFile).mockRejectedValue(new Error('OSS timeout'));
+    const state = fixture();
+    const preview = await prepareProductionPreview(state.mockupVersions[0], state.units);
+    await expect(preview.persist()).rejects.toThrow('OSS timeout');
+    expect(preview.bytes.toString()).toBe('visible pixels');
+    expect(catalogTransaction).not.toHaveBeenCalled();
+  });
 });
 describe('unchanged render cache hits', () => {
   it('reads verified bytes without republishing an already-current image', async () => {
