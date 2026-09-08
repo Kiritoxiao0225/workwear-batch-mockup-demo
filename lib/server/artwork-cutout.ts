@@ -5,7 +5,7 @@ import { ARTWORK_CUTOUT_VERSION } from '@/lib/artwork-cutout';
 import { analyzeArtworkCutout, validateCutoutOutput } from './artwork-cutout-analysis';
 import { inspectArtworkSource, removeFlatArtworkBackground } from './artwork-image-processing';
 import { assertCutoutStoreReady, readCutoutJob, claimCutoutJob, saveCutoutJob, type StoredCutout } from './artwork-cutout-store';
-import { MEITU_CUTOUT_VERSION, uploadMeituCutoutInput, submitMeituCutout, queryMeituCutout, downloadMeituCutout, meituCutoutCredits } from './meitu-cutout';
+import { MEITU_CUTOUT_VERSION, MeituSubmissionNotStartedError, uploadMeituCutoutInput, submitMeituCutout, queryMeituCutout, downloadMeituCutout, meituCutoutCredits } from './meitu-cutout';
 import { productionStateKey } from './production-storage';
 import { submitArtworkBackgroundRemoval, downloadArtworkBackgroundRemoval } from './media-kit-artwork';
 import { protectArtworkBadges } from './artwork-badge-protection';
@@ -138,7 +138,9 @@ export async function startArtworkCutout(source: Buffer, mode: ArtworkCutoutMode
     else { job.status = 'unknown'; job.error = '美图提交未返回任务编号，结果待核实；不会自动重新提交'; }
     await saveCutoutJob(job);
   } catch (error) {
-    job.status = job.phase === 'submitting' ? 'unknown' : 'failed';
+    const notSubmitted = job.phase === 'ready' || error instanceof MeituSubmissionNotStartedError;
+    job.status = notSubmitted ? 'failed' : 'unknown';
+    if (notSubmitted) job.receipt.actualCredits = 0;
     if (job.status === 'failed') job.phase = 'finished';
     job.error = `${errorText(error)}；${job.status === 'unknown' ? '提交结果待核实，不会自动重提' : '原图已保留'}`;
     await saveCutoutJob(job);

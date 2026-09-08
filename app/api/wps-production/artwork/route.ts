@@ -17,7 +17,20 @@ const MAX_REQUEST_BYTES = 13 * 1024 * 1024;
 async function failure(error: unknown): Promise<{ body: ArtworkFailure; status: number }> {
   const body = error instanceof ArtworkCutoutPendingError ? { error: error.message, cutout: error.result }
     : error instanceof NativeArtworkCandidateError ? { error: error.message, candidate: error.candidate } : null;
-  if (body) return { body: usesProductionCloud() ? await persistProductionReferences(body) : body, status: 422 };
+  if (body) {
+    try { return { body: usesProductionCloud() ? await persistProductionReferences(body) : body, status: 422 }; }
+    catch (storageError) {
+      const cutout = 'cutout' in body ? body.cutout : body.candidate?.cutout;
+      console.error('[artwork] failure attachment persistence failed', {
+        jobKey: cutout?.receipt.jobKey,
+        name: storageError instanceof Error ? storageError.name : 'UnknownError',
+        code: storageError && typeof storageError === 'object' && 'code' in storageError ? storageError.code : undefined,
+      });
+      // Return the original receipt and inline candidate so the client can keep
+      // its recovery bookmark even when the secondary attachment save fails.
+      return { body: { ...body, error: `${body.error}；错误记录附件暂未保存到云端，请保留当前页面${cutout ? `，任务编号：${cutout.receipt.jobKey}` : ''}。` }, status: 502 };
+    }
+  }
   const message = error instanceof Error ? error.message : String(error);
   const configurationError = message.startsWith('抠图服务尚未启用') || error instanceof CliproxyImageConfigurationError || message.includes('MEDIAKIT_API_KEY is not configured')
     || message.includes('ARK_RUNTIME_API_KEY or ARK_API_KEY is not configured');
@@ -52,8 +65,7 @@ function streamingPreparation(input: ArtworkPreparationRequest) {
       work = (async () => {
         try { send({ type: 'complete', result: await prepare(input, send) }); }
         catch (error) {
-          try { const rejected = await failure(error); send({ type: 'error', status: rejected.status, ...rejected.body }); }
-          catch { send({ type: 'error', status: 502, error: '图案文件保存未完成，请保留当前页面并核对任务记录。' }); }
+          const rejected = await failure(error); send({ type: 'error', status: rejected.status, ...rejected.body });
         } finally {
           clearInterval(heartbeat);
           if (connected) controller.close();

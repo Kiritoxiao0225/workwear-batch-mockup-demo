@@ -2,6 +2,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
+import { randomUUID } from 'node:crypto';
 
 type ApiResponse = { code?: number; error_code?: number; message?: string; data?: { task_id?: string; status?: number; result?: { parameters?: { result?: { submit_body?: { parameter?: { trace_id?: string } } } }; media_info_list?: Array<{ media_data: string }> }; records?: Array<{ listing_code: string; trace_id: string; status: string; credits: number }> } };
 type MeituClient = {
@@ -13,6 +14,7 @@ type MeituClient = {
   strategyBaseUrl: () => string;
   resolveOpenApiAuth: () => Promise<unknown>;
   iamMtccUid: () => Promise<string>;
+  mcpPassthroughState: (context: unknown) => Promise<Record<string, unknown>>;
 };
 // The official CLI has no public SDK entry. Pin its runtime and cover this adapter
 // with transport contract tests; no shell execution or account-login fallback.
@@ -24,6 +26,10 @@ const uploadPath = path.join(runtimeDir, 'upload.js');
 const { APIClient } = require(/* turbopackIgnore: true */ apiPath) as { APIClient: new () => MeituClient };
 const { uploadLocalFile } = require(/* turbopackIgnore: true */ uploadPath) as { uploadLocalFile: (client: MeituClient, file: string) => Promise<string> };
 export const MEITU_CUTOUT_VERSION = 'meitu-cli-2.1.21-intl-image-cutout-graphic-2';
+// Supply the SDK's supported device identity explicitly. Serverless instances
+// have no writable home directory; this identity needs no on-disk CLI session.
+const instanceGnum = randomUUID();
+export class MeituSubmissionNotStartedError extends Error {}
 export function meituCutoutClient() {
   const accessKey = process.env.MEITU_OPENAPI_ACCESS_KEY, secretKey = process.env.MEITU_OPENAPI_SECRET_KEY;
   if (!accessKey || !secretKey) throw new Error('美图海外抠图未配置 AK/SK');
@@ -45,9 +51,22 @@ export function meituCutoutPayload(imageUrl: string, requestId: string) {
     request_id: requestId, trace_id: requestId, context: '', rsp_media_type: 'url' };
 }
 export async function submitMeituCutout(imageUrl: string, requestId: string) {
-  return meituCutoutClient().createImage(meituCutoutPayload(imageUrl, requestId), { extraContext: {
+  const extraContext = {
+    mtcc_client: { gnum: instanceGnum },
     function: { name: 'image-cutout', effect: 'skill_image-cutout' }, ext_info: { source: 'cli_command', listing_code: 'image-cutout' },
-  } });
+  };
+  let client: MeituClient;
+  try {
+    client = meituCutoutClient();
+    // Resolve local SDK context before entering the potentially paid request.
+    const context = await client.mcpPassthroughState(extraContext);
+    // The CLI otherwise replaces payload IDs with fresh random IDs. Keep the
+    // durable job ID in both the signed headers and provider billing trace.
+    client.mcpPassthroughState = async () => ({ ...context, requestId, traceId: requestId });
+  } catch (error) {
+    throw new MeituSubmissionNotStartedError(`美图抠图尚未提交：${error instanceof Error ? error.message : String(error)}`);
+  }
+  return client.createImage(meituCutoutPayload(imageUrl, requestId), { extraContext });
 }
 export async function queryMeituCutout(taskId: string) { return meituCutoutClient().getTask(taskId); }
 export async function meituCutoutCredits(requestId: string) {

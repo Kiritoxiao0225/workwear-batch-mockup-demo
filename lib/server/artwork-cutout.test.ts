@@ -5,10 +5,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { analyzeArtworkCutout } from './artwork-cutout-analysis';
 import { startArtworkCutout, queryArtworkCutout, type CutoutServices } from './artwork-cutout';
-import { meituCutoutPayload } from './meitu-cutout';
+import { meituCutoutPayload, MeituSubmissionNotStartedError } from './meitu-cutout';
 import { alignCutoutLayer } from './artwork-cutout-layer';
 import { visibleArtworkBounds } from './artwork-image-processing';
 import { cutoutFeeLabel } from '../artwork-cutout';
+import * as cutoutStore from './artwork-cutout-store';
 
 let directory: string;
 const svg = (content: string, transparent = false) => sharp(Buffer.from(`<svg width="400" height="300">${transparent ? '' : '<rect width="400" height="300" fill="white"/>'}${content}</svg>`)).png().toBuffer();
@@ -105,6 +106,33 @@ describe('cutout routing and paid task recovery', () => {
     expect((await startArtworkCutout(t.source, 'meitu', { services: t.services })).status).toBe('unknown');
     await expect(startArtworkCutout(t.source, 'meitu', { services: t.services, retryOf: result.receipt.jobKey })).rejects.toThrow('只有已明确失败');
     expect(t.services.submit).toHaveBeenCalledTimes(1);
+  });
+  it('allows an explicit retry only after a confirmed pre-submission failure', async () => {
+    const t = await setup();
+    vi.mocked(t.services.submit).mockRejectedValueOnce(new MeituSubmissionNotStartedError('美图抠图尚未提交：SDK context failed'));
+    const result = await startArtworkCutout(t.source, 'meitu', { services: t.services });
+    expect(result.status).toBe('failed'); expect(result.receipt.actualCredits).toBe(0);
+    expect((await startArtworkCutout(t.source, 'meitu', { services: t.services })).status).toBe('failed');
+    expect(t.services.submit).toHaveBeenCalledTimes(1);
+    const retry = await startArtworkCutout(t.source, 'meitu', { services: t.services, retryOf: result.receipt.jobKey });
+    expect(retry.receipt.taskId).toBe('provider-1');
+    expect(t.services.submit).toHaveBeenCalledTimes(2);
+  });
+  it('keeps the provider task and unknown billing when saving its submission receipt fails', async () => {
+    const t = await setup();
+    const save = cutoutStore.saveCutoutJob;
+    let interrupted = false;
+    const spy = vi.spyOn(cutoutStore, 'saveCutoutJob').mockImplementation(async job => {
+      if (job.receipt.taskId && !interrupted) { interrupted = true; throw new Error('database timeout'); }
+      return save(job);
+    });
+    try {
+      const first = await startArtworkCutout(t.source, 'meitu', { services: t.services });
+      expect(first.status).toBe('unknown'); expect(first.receipt.actualCredits).toBeNull();
+      expect(first.receipt.taskId).toBe('provider-1');
+      expect((await queryArtworkCutout(first.receipt.jobKey, t.services)).status).toBe('completed');
+      expect(t.services.submit).toHaveBeenCalledOnce();
+    } finally { spy.mockRestore(); }
   });
   it('queries after a download failure and never creates another paid task', async () => {
     const t = await setup(); vi.mocked(t.services.download).mockRejectedValueOnce(new Error('download timeout'));
