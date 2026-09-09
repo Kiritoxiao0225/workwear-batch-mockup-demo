@@ -300,7 +300,7 @@ export function WpsProductionClient() {
       setSyncMode('live');
       setSyncAuthorizeUrl(null);
       acceptProductionState(state);
-      setSyncMessage(`${addedCount ? `自动发现 ${addedCount} 条新增任务，匹配当前筛选的新增任务显示在最上方。` : ''}已同步 ${sync.records.length} 条待领取任务、${sync.records.reduce((total, record) => total + record.materials.length, 0)} 张素材；仅检查待领取任务，空闲时每 30 秒更新。`);
+      setSyncMessage(`${addedCount ? `自动发现 ${addedCount} 条新增任务，匹配当前筛选的新增任务显示在最上方。` : ''}已同步 ${sync.records.length} 条设计中 / 待领取任务、${sync.records.reduce((total, record) => total + record.materials.length, 0)} 张素材；仅检查设计中和待领取任务，空闲时每 30 秒更新。`);
       setSyncError(sync.issues?.length ? sync.issues.join('；') : null);
     } catch (loadError) {
       if (syncRequest.current !== request || (request.signal.aborted && request.signal.reason?.name !== 'TimeoutError')) return;
@@ -966,7 +966,7 @@ export function WpsProductionClient() {
       <main className="wps-production-page">
         <header className="wps-production-heading">
           <div><span>WPS BATCH PRODUCTION</span><h1>效果图生产总表</h1><p>方案与位置、完整透明素材、正反面合成和客户确认，全部围绕同一个版本推进。</p></div>
-          <div><button className="button secondary" disabled={busy || syncMode !== 'live' || pendingAnalysisCount === 0} onClick={() => void syncAndAnalyze()} type="button">{operations.some(operation => operation.key === 'sync') ? '分析待领取…' : `分析待领取（${pendingAnalysisCount}）`}</button><button className="button secondary" disabled={syncPaused || syncing} onClick={() => void load()} type="button">{syncing ? '正在同步 WPS…' : '同步 WPS 状态与素材'}</button>{approvedVersions > 0 && <a className="button primary" href="/api/wps-production/export">导出已确认 ZIP</a>}</div>
+          <div><button className="button secondary" disabled={busy || syncMode !== 'live' || pendingAnalysisCount === 0} onClick={() => void syncAndAnalyze()} type="button">{operations.some(operation => operation.key === 'sync') ? '分析设计中 / 待领取…' : `分析设计中 / 待领取（${pendingAnalysisCount}）`}</button><button className="button secondary" disabled={syncPaused || syncing} onClick={() => void load()} type="button">{syncing ? '正在同步 WPS…' : '同步 WPS 状态与素材'}</button>{approvedVersions > 0 && <a className="button primary" href="/api/wps-production/export">导出已确认 ZIP</a>}</div>
         </header>
 
         <p className="wps-production-queue" role="status" aria-live="polite">需求解析：最多同时 {WPS_ANALYSIS_CONCURRENCY} 条订单。图案制作：同时生图最多 {ARTWORK_CONCURRENCY} 张 · 制作中 {artworkJobs.filter(job => job.status === 'running').length} 张 · 后处理与保存 {artworkJobs.filter(job => job.status === 'finishing').length} 张 · 排队 {artworkJobs.filter(job => job.status === 'queued').length} 张{artworkJobs.length > 0 ? '。其他图案可继续确认、编辑或加入制作队列，请保持页面打开。' : '。点击各行“制作图案”即可加入队列。'}</p>
@@ -979,7 +979,7 @@ export function WpsProductionClient() {
           <div><span>已记录费用 / 上限</span><strong>¥{actualCost.toFixed(2)} / ¥{(production?.budgetLimitCny ?? 0).toFixed(2)}</strong></div>
         </section>
 
-        <p className="wps-production-message" aria-live="polite">{syncing ? sourceInfo ? '正在后台同步 WPS，可继续操作。' : '正在同步待领取任务；已显示的制作记录为上次保存内容…' : syncMessage}{sourceInfo && <> · <a href={sourceInfo.sourceUrl} target="_blank" rel="noreferrer">{sourceInfo.sourceFile.fileName}</a> · 最近同步 {new Date(sourceInfo.syncedAt).toLocaleTimeString('zh-CN')}</>}{!syncMode && sourceInfo ? ' · 连接异常，显示上次同步数据' : ''}</p>
+        <p className="wps-production-message" aria-live="polite">{syncing ? sourceInfo ? '正在后台同步 WPS，可继续操作。' : '正在同步设计中和待领取任务；已显示的制作记录为上次保存内容…' : syncMessage}{sourceInfo && <> · <a href={sourceInfo.sourceUrl} target="_blank" rel="noreferrer">{sourceInfo.sourceFile.fileName}</a> · 最近同步 {new Date(sourceInfo.syncedAt).toLocaleTimeString('zh-CN')}</>}{!syncMode && sourceInfo ? ' · 连接异常，显示上次同步数据' : ''}</p>
         {message && <p className="wps-production-message" role="status">{message}</p>}
         {!sessionInitialized ? <p className="wps-sync-note">正在读取衣服款式…</p> : !catalogUser ? <div className="error-banner"><span>工作台暂时无法读取，请重试连接。</span><button type="button" onClick={() => void session.refresh()}>重新连接</button></div> : catalogError && <div className="error-banner" role="alert"><span>商品素材库：{catalogError}</span><button type="button" onClick={() => void loadCatalog()}>重新读取款式</button></div>}
         {syncError && <div className="error-banner" role="alert"><span>WPS 同步：{syncError}</span>{syncAuthorizeUrl && <a className="button primary" href={syncAuthorizeUrl}>连接 WPS</a>}<button disabled={syncPaused || syncing} onClick={() => void load()} type="button">重试同步</button></div>}
@@ -992,7 +992,7 @@ export function WpsProductionClient() {
           {selectedStatuses !== null && <button type="button" onClick={() => setSelectedStatuses(null)}>查看全部</button>}
         </div>}
 
-        {!production?.records.length ? <section className="wps-production-empty"><strong>{syncMode ? '当前没有待领取的 WPS 任务' : '等待连接真实 WPS 表'}</strong><p>仅同步待领取任务的原文、素材图与状态。</p>{!syncMode && <a className="button secondary" href="/wps-connect">查看原表接入步骤</a>}<button className="button primary" disabled={syncPaused || syncing} onClick={() => void load()} type="button">{syncing ? '正在同步 WPS…' : '同步 WPS'}</button></section> : !filteredRecords.length ? <section className="wps-production-empty"><strong>{selectedStatuses?.length === 0 ? '尚未选择任务状态' : `当前没有“${selectedStatuses?.join('、')}”任务`}</strong><p>{selectedStatuses?.length === 0 ? '可以同时勾选多个状态，也可以恢复为待领取。' : '自动同步后，符合任一所选状态的任务会出现在这里。'}</p><button className="button secondary" onClick={() => setSelectedStatuses([...DEFAULT_WPS_STATUSES])} type="button">恢复默认筛选</button><button className="button secondary" onClick={() => setSelectedStatuses(null)} type="button">查看全部任务</button></section> : <div className="wps-production-table-wrap" onPointerDownCapture={cancelSync} onFocusCapture={cancelSync}>
+        {!production?.records.length ? <section className="wps-production-empty"><strong>{syncMode ? '当前没有设计中或待领取的 WPS 任务' : '等待连接真实 WPS 表'}</strong><p>仅同步设计中和待领取任务的原文、素材图与状态。</p>{!syncMode && <a className="button secondary" href="/wps-connect">查看原表接入步骤</a>}<button className="button primary" disabled={syncPaused || syncing} onClick={() => void load()} type="button">{syncing ? '正在同步 WPS…' : '同步 WPS'}</button></section> : !filteredRecords.length ? <section className="wps-production-empty"><strong>{selectedStatuses?.length === 0 ? '尚未选择任务状态' : `当前没有“${selectedStatuses?.join('、')}”任务`}</strong><p>{selectedStatuses?.length === 0 ? '可以同时勾选多个状态，也可以恢复为设计中和待领取。' : '自动同步后，符合任一所选状态的任务会出现在这里。'}</p><button className="button secondary" onClick={() => setSelectedStatuses([...DEFAULT_WPS_STATUSES])} type="button">恢复默认筛选</button><button className="button secondary" onClick={() => setSelectedStatuses(null)} type="button">查看全部任务</button></section> : <div className="wps-production-table-wrap" onPointerDownCapture={cancelSync} onFocusCapture={cancelSync}>
           <table className="wps-production-table">
             <thead><tr><th scope="col">客户需求与原始素材</th><th scope="col">服装方案与位置</th><th scope="col">AI理解需求</th><th scope="col">图案制作</th><th scope="col">客户效果图</th></tr></thead>
             {filteredRecords.map((record) => {
@@ -1005,7 +1005,7 @@ export function WpsProductionClient() {
                 <small className="wps-technical-id">{record.source.recordId} · {record.source.revision}</small><strong>{record.source.customerId}</strong><p>{record.source.requirementText}</p><small>商品款式：{record.source.productStyleText}</small>
                 <div>{record.source.materials.map((material, index) => <button key={material.id} type="button" onClick={() => material.url && setPreview({ url: material.url, title: material.description })}>{material.previewUrl && <Image alt={material.description} fill sizes="54px" src={material.previewUrl} unoptimized />}<span>图{index + 1}</span></button>)}</div>
                 {statusEditor(record.source)}
-              </td><td/><td className="wps-requirement-cell">{record.summary}<p>{!record.source.requirementText.trim() ? '在 WPS 填写需求和上传素材后，这里会自动更新。' : canAnalyzeWpsTask(record.source) ? '点击“分析待领取”开始理解这条需求。' : '仅待领取和设计中的任务参与 AI 分析。'}</p></td><td/><td/></tr></tbody>;
+              </td><td/><td className="wps-requirement-cell">{record.summary}<p>{!record.source.requirementText.trim() ? '在 WPS 填写需求和上传素材后，这里会自动更新。' : canAnalyzeWpsTask(record.source) ? '点击“分析设计中 / 待领取”开始理解这条需求。' : '仅待领取和设计中的任务参与 AI 分析。'}</p></td><td/><td/></tr></tbody>;
               const groups = [...new Set(units.map(unit => versionByUnit.get(unit.id)!.id))].map(id => ({
                 version: versionByUnit.get(units.find(unit => versionByUnit.get(unit.id)!.id === id)!.id)!,
                 units: units.filter(unit => versionByUnit.get(unit.id)!.id === id),

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 
-export const DEFAULT_WPS_STATUSES = ['🔴待领取'];
+export const DEFAULT_WPS_STATUSES = ['🟢设计中', '🔴待领取'];
 
 export function WpsStatusFilter({ counts, selected, change }: {
   counts: Map<string, number>; selected: string[] | null; change: (statuses: string[] | null) => void;

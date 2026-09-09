@@ -82,7 +82,7 @@ function configure() {
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe('original-table AirScript bridge', () => {
-  it('reads only pending IDs and never downloads image bytes during list synchronization', async () => {
+  it('reads only designing and pending IDs and never downloads image bytes during list synchronization', async () => {
     configure();
     vi.mocked(cacheWpsMaterial).mockClear();
     vi.stubEnv('WPS_AIRSCRIPT_WEBHOOK', 'https://365.kdocs.cn/api/v3/ide/file/cj5Qvp0WVtjz/script/V2-pending-test/sync_task');
@@ -96,15 +96,19 @@ describe('original-table AirScript bridge', () => {
       if (input.action === 'read') reads.push(input.recordIds);
       return Response.json({ status: 'finished', data: { result: table.run(input) } });
     }));
-    const pending = await listWpsSourceTaskRecords({ pendingOnly: true, downloadMaterials: false });
-    expect(reads).toEqual([['r1']]);
-    expect(pending.records.map(record => record.wpsSource?.status)).toEqual(['🔴待领取']);
-    expect(pending.records[0].materials).toHaveLength(2);
+    const active = await listWpsSourceTaskRecords({ activeOnly: true, downloadMaterials: false });
+    expect(reads).toEqual([['r1', 'designing']]);
+    expect(active.records.map(record => record.wpsSource?.status)).toEqual(['🔴待领取', '🟢设计中']);
+    expect(active.records[0].materials).toHaveLength(2);
     expect(cacheWpsMaterial).not.toHaveBeenCalled();
-    // Once claimed, the record leaves the pending list without reading any attachments.
+    // Claiming keeps the record in the active list; completion removes it.
     table.rows.get('r1')!.领取任务 = 1;
-    expect((await listWpsSourceTaskRecords({ pendingOnly: true, downloadMaterials: false })).records).toEqual([]);
-    expect(reads).toEqual([['r1']]);
+    expect((await listWpsSourceTaskRecords({ activeOnly: true, downloadMaterials: false })).records.map(record => record.wpsSource?.status)).toEqual(['🟢设计中', '🟢设计中']);
+    expect(reads).toEqual([['r1', 'designing'], ['r1']]);
+    table.rows.get('designing')!.交付效果图成品 = 'done.png';
+    expect((await listWpsSourceTaskRecords({ activeOnly: true, downloadMaterials: false })).records.map(record => record.recordId)).toEqual(['cj5Qvp0WVtjz:9:r1']);
+    expect(reads).toEqual([['r1', 'designing'], ['r1']]);
+    expect(cacheWpsMaterial).not.toHaveBeenCalled();
     // Explicit analysis/status checks can still inspect an in-progress record.
     const targeted = await listWpsSourceTaskRecords({ recordIds: ['cj5Qvp0WVtjz:9:r1'] });
     expect(targeted.records).toHaveLength(1);

@@ -9,8 +9,8 @@ const API = 'https://openapi.wps.cn/v7';
 const MAX_RECORDS = 10_000;
 type JsonObject = Record<string, unknown>;
 type FieldSchema = { id: string; name: string; type: string; data?: JsonObject };
-type SyncOptions = { pendingOnly?: boolean; recordIds?: string[]; downloadMaterials?: boolean };
-const isPendingStatus = (value: unknown) => ['🔴待领取', '待领取'].includes(textValue(value));
+type SyncOptions = { activeOnly?: boolean; recordIds?: string[]; downloadMaterials?: boolean };
+const isActiveStatus = (value: unknown) => ['🟢设计中', '🔴待领取', '设计中', '待领取'].includes(textValue(value));
 
 export function wpsConfigurationStatus() {
   const mode = process.env.WPS_CONNECTION_MODE?.trim() || 'airscript';
@@ -190,17 +190,17 @@ function syncWpsSourceTaskRecords(options: SyncOptions) {
     if ('scriptSnapshot' in source) {
       const snapshot = source.scriptSnapshot;
       const mapping = wpsFieldMapping(snapshot.fields);
-      if (options.pendingOnly && !mapping.status) throw new Error('WPS 缺少任务状态，无法只同步待领取任务');
+      if (options.activeOnly && !mapping.status) throw new Error('WPS 缺少任务状态，无法只同步设计中和待领取任务');
       const ids = snapshot.recordIds.filter(id =>
         (!options.recordIds || options.recordIds.includes(`${source.fileId}:${source.sheetId}:${id}`))
-        && (!options.pendingOnly || isPendingStatus(snapshot.manifestFields[id][mapping.status!.name])));
+        && (!options.activeOnly || isActiveStatus(snapshot.manifestFields[id][mapping.status!.name])));
       source = { ...source, scriptSnapshot: { ...snapshot, recordIds: ids } };
     }
     const { records: allRaw, mapping } = await rawRecords(token, source);
-    if (options.pendingOnly && !mapping.status) throw new Error('WPS 缺少任务状态，无法只同步待领取任务');
+    if (options.activeOnly && !mapping.status) throw new Error('WPS 缺少任务状态，无法只同步设计中和待领取任务');
     const raw = allRaw.filter(record =>
       (!options.recordIds || options.recordIds.includes(`${source.fileId}:${source.sheetId}:${record.id}`))
-      && (!options.pendingOnly || (record.error || isPendingStatus(parsedFields(record.fields)[mapping.status!.name]))));
+      && (!options.activeOnly || (record.error || isActiveStatus(parsedFields(record.fields)[mapping.status!.name]))));
     const records: SourceTaskRecord[] = [];
     const issues: string[] = [];
     for (let offset = 0; offset < raw.length; offset += 6) {

@@ -22,10 +22,10 @@ export async function GET(request?: Request) {
     }, { status: 503 });
   }
   try {
-    const sync = await listWpsSourceTaskRecords({ pendingOnly: true, downloadMaterials: false });
+    const sync = await listWpsSourceTaskRecords({ activeOnly: true, downloadMaterials: false });
     return NextResponse.json({
       mode: 'live',
-      scope: 'pending',
+      scope: 'active',
       sourceType: 'dbsheet',
       connectionMode: status.mode,
       configured: true,
