@@ -5,7 +5,8 @@ export function artworkTextFont(text: ArtworkTextLayer) {
   return `${text.italic ? 'italic ' : ''}${text.fontWeight} ${text.fontSize}px ${text.fontFamily}`;
 }
 export async function loadArtworkFont(text: ArtworkTextLayer) {
-  await document.fonts.load(artworkTextFont(text), text.value);
+  const loaded = await document.fonts.load(artworkTextFont(text), text.value);
+  if (text.fontFamily.startsWith('Douyin Sans') && !loaded.length) throw new Error('抖音美好体加载失败，请重试');
 }
 export function artworkTextLayout(text: ArtworkTextLayer) {
   const context = document.createElement('canvas').getContext('2d');

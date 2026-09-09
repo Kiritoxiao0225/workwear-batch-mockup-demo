@@ -322,7 +322,13 @@ function pairGarmentVersions(source: SourceTaskRecord, units: GenerationUnit[]) 
 
 export function normalizeTaskReview(review: TaskReview): TaskReview {
   const normalizedUnits = review.units.filter(unit => !emptySourcePlacement(review.source.requirementText, unit.placement)).map(raw => {
-    const unit = keepExplicitReferenceMaterials(review.source, raw);
+    const literalText = plainSourcePlacementText(review.source.requirementText, raw.placement);
+    const repaired = literalText && (!raw.exactText.trim() || raw.exactText.trim() === literalText)
+      ? { ...raw, logo: { ...raw.logo, materialId: null }, referenceMaterialIds: [], textMode: 'replace' as const, exactText: literalText,
+        instruction: raw.instruction, generationPrompt: '', sourceScope: 'subject' as const }
+      : raw;
+    const unit = keepExplicitReferenceMaterials(review.source, repaired);
+    if (isTextOnlyArtwork({ ...unit, materialId: unit.logo.materialId })) { unit.generationPrompt = ''; unit.processingRoute = 'fidelity'; }
     const references = [...new Set(unit.referenceMaterialIds)].filter(id => id !== unit.logo.materialId);
     const checks = artworkPlanIssues(review.source, { ...unit, materialId: unit.logo.materialId, referenceMaterialIds: references, placement: unit.placement ? { key: unit.placement } : null });
     return {
@@ -380,6 +386,7 @@ ${productOptions}
 
 客户简写的固定语义：
 - 空白位置字段不是制作要求。例如“左胸:1+poppy手机数码 后背: 字体: 颜色: 工艺: 尺寸:”只生成左胸一个单元，不生成后背，也不把未填字体/尺寸/工艺作为歧义。
+- 纯文字位置例如“左胸:诺维特酒店保洁”直接设置 logoMaterialId=null、referenceMaterialIds=[]、textMode=replace、exactText="诺维特酒店保洁"、generationPrompt=""；附件只是需求截图时不得当成图案内容。普通文字由程序排版，默认抖音美好体，未指定字色时从黑白红中自动选择与衣服色差最大的颜色；这些是系统默认值，不冒充客户要求，不要求补充图片或调用生图。
 - 同一款色、同一版本的正面、后背、袖子分别制作图案，但必须共用 garmentLabel、variantLabel，最终在同一件衣服的正反面底图上一次合成。只有客户明确“各出一版”才分不同版本。例如“左胸：图一图二各出一版 后背：图一图二各出一版”生成四个位置单元但只有两个版本：图1版的左胸和后背、图2版的左胸和后背，绝不能把后背编号为版本3/版本4。
 - 按“正面、正前面、左胸、右胸、后背、左袖、右袖”等位置标题切分原文；“按照图N做”只绑定同一位置段，不得影响前一个或后一个位置段。
 - 位置字段中，图片序号后直接使用“+”连接非纯数字内容，表示“该图作为 Logo 图形来源 + 后面的内容作为新增准确文字”。例如“左胸:1+poppy手机数码”必须理解为：左胸使用图1作为 Logo 图形来源，textMode=replace，exactText="poppy手机数码"。
@@ -497,3 +504,4 @@ export function parseTaskReviewAnalysis(records: SourceTaskRecord[], content: st
     });
   });
 }
+import { isTextOnlyArtwork, plainSourcePlacementText } from '@/lib/artwork-reference';

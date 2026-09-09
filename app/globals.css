@@ -1547,3 +1547,10 @@ button.catalog-card-image { width: 100%; padding: 0; border: 0; cursor: zoom-in;
 .simple-logo-size-control input[type=number] { width: 72px; padding: 5px 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); color: var(--text); }
 .simple-logo-size-control input[type=range] { width: 100%; accent-color: var(--brand); }
 .simple-logo-size-control small { color: var(--muted); font-size: 10px; }
+@font-face {
+  font-family: 'Douyin Sans';
+  src: url('/fonts/DOUYINSANSBOLD.TTF') format('truetype');
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: block;
+}

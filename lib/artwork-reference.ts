@@ -27,6 +27,26 @@ export function artworkPlacementFields(text: string) {
   return [...text.matchAll(new RegExp(`(${Object.keys(ARTWORK_PLACEMENT_ALIASES).join('|')}|字体|颜色|工艺|尺寸)\\s*(?:[:：]|\\s+(?=(?:使用|取用|用)?\\s*图)|(?=图))`, 'gu'))];
 }
 
+/** Literal text in a named position, e.g. 左胸:诺维特酒店保洁. Never infer text from image numbers. */
+export function plainSourcePlacementText(requirement: string, placement: string | null) {
+  const fields = artworkPlacementFields(requirement);
+  const matches = fields.flatMap((field, index) => ARTWORK_PLACEMENT_ALIASES[field[1]] === placement
+    ? [requirement.slice(field.index! + field[0].length, fields[index + 1]?.index ?? requirement.length).trim().replace(/[；;，,。]+$/u, '').trim()] : []);
+  if (matches.length !== 1) return null;
+  const value = matches[0].replace(/^[“「"]|[”」"]$/gu, '');
+  return value && /\p{L}/u.test(value) && /^[\p{L}\p{N}\s·•&.'’-]+$/u.test(value)
+    && !/图|logo|标志|参考|按照|使用|不要|加上|写上|印上|文字|排版|字体|颜色|各出/iu.test(value) ? value : null;
+}
+
+export function isTextOnlyArtwork(plan: {
+  materialId: string | null; referenceMaterialIds?: string[]; textMode?: string | null; exactText?: string;
+  instruction?: string; layoutNote?: string;
+}) {
+  if (plan.materialId || plan.referenceMaterialIds?.length || plan.textMode !== 'replace' || !plan.exactText?.trim()) return false;
+  const instructions = `${plan.instruction ?? ''}\n${plan.layoutNote ?? ''}`.replaceAll(plan.exactText, '');
+  return !artworkImageNumbers(instructions).length && !/(?:参考|仿照).*(?:字体|字形)|(?:字体|字形).*(?:参考|仿照)|书法|手写|特殊字形/u.test(instructions);
+}
+
 /** Explicit source crops are content constraints, never a whole-foreground default. */
 export function artworkSourceSelections(text: string, imageNumber: number) {
   return [...normalizeArtworkImageNumbers(text).matchAll(/图(\d+)\s*(?:中|里)?(?:的)?\s*((?:前|后|第)[零一二三四五六七八九十0-9]+(?:排|行)|[上下左右]半(?:部(?:分)?|区)?)/gu)]
@@ -38,7 +58,16 @@ export function artworkSourceSelections(text: string, imageNumber: number) {
 export function artworkPlanIssues(source: { requirementText: string; materials: Array<{ id: string }> }, plan: {
   materialId: string | null; referenceMaterialIds: string[]; instruction: string; layoutNote: string; generationPrompt?: string;
   sourceScope: string; placement: { key: string } | null;
+  textMode?: string | null; exactText?: string;
 }) {
+  if (isTextOnlyArtwork(plan)) {
+    const fields = artworkPlacementFields(source.requirementText);
+    const scoped = fields.flatMap((field, index) => ARTWORK_PLACEMENT_ALIASES[field[1]] === plan.placement?.key
+      ? [source.requirementText.slice(field.index! + field[0].length, fields[index + 1]?.index ?? source.requirementText.length)] : []).join('\n');
+    const requirements = scoped || (fields.length ? '' : source.requirementText);
+    if (artworkImageNumbers(requirements).length || /(?:^|\s)\d+\s*\+/u.test(requirements)) return ['原文要求使用图片，请绑定主要素材'];
+    return plan.instruction.trim() ? [] : ['缺少制作要求'];
+  }
   const primaryIndex = source.materials.findIndex(material => material.id === plan.materialId);
   const issues = primaryIndex < 0 ? ['主要内容素材未绑定或已不存在'] : [];
   if (!plan.instruction.trim()) issues.push('缺少制作要求');

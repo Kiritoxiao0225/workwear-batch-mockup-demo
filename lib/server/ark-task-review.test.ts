@@ -34,6 +34,18 @@ function validAnalysis() {
 }
 
 describe('task review vision analysis input', () => {
+  it('accepts empty generation prompts for plain text without asking for another model call', async () => {
+    useProxy();
+    const source = { ...sourceTaskSnapshot()[0], requirementText: '左胸:诺维特酒店保洁 后背: 字体: 颜色:', materials: [] };
+    const body = validAnalysis();
+    Object.assign(body.records[0].units[0], { logoMaterialId: null, exactText: '诺维特酒店保洁', instruction: '左胸制作文字“诺维特酒店保洁”。', generationPrompt: '' });
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(body) } }] })));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await analyzeSourceTaskRecords([source]);
+    expect(result.reviews[0].units[0].generationPrompt).toBe('');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('caps model requests at five across calls and frees a failed slot without retrying', async () => {
     useProxy();
     const replies: Array<(response: Response) => void> = [];

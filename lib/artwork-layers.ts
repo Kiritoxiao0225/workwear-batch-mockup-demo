@@ -1,4 +1,5 @@
 import { artworkGraphicLayers, artworkTextLayers, type ArtworkBounds, type ArtworkDraft, type ArtworkGraphicLayer, type ArtworkTextLayer } from './artwork-editor';
+import { DEFAULT_ARTWORK_FONT } from './artwork-text-defaults';
 
 export type ArtworkLayer = { kind: 'graphic'; id: string; index: number; value: ArtworkGraphicLayer } | { kind: 'text'; id: string; index: number; value: ArtworkTextLayer };
 
@@ -49,12 +50,12 @@ function availableLayerId(draft: ArtworkDraft, prefix: string) {
 }
 
 /** A new overlay is authored text, never an inferred editable version of lettering in the source image. */
-export function addArtworkText(draft: ArtworkDraft, position: { x: number; y: number }) {
+export function addArtworkText(draft: ArtworkDraft, position: { x: number; y: number }, color = '#000000') {
   const next = editableArtworkDraft(draft), id = availableLayerId(next, 'text');
   const layer: ArtworkTextLayer = {
     id, label: '新文字', visible: true, value: '新文字', x: position.x, y: position.y,
-    boxWidth: 600, fontFamily: 'Noto Sans SC, PingFang SC, Microsoft YaHei, sans-serif',
-    fontSize: 64, color: '#44416d', letterSpacing: 2, lineHeight: 1.4, fontWeight: 600,
+    boxWidth: 600, fontFamily: DEFAULT_ARTWORK_FONT,
+    fontSize: 64, color, letterSpacing: 2, lineHeight: 1.4, fontWeight: 700,
     italic: false, underline: false, align: 'center', arc: { mode: 'none', bend: 40 },
   };
   const texts = [...artworkTextLayers(next), layer];

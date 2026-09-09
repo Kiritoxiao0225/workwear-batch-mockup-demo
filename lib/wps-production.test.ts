@@ -61,6 +61,22 @@ function twoSidedState() {
   return importTaskReviews(emptyWpsProductionState(now), [review], now);
 }
 
+describe('text-only production', () => {
+  it('saves, confirms and places text without requiring an image source', () => {
+    const review = taskReviewFixture()[0];
+    review.source.requirementText = '左胸:诺维特酒店保洁 后背: 字体: 颜色:';
+    review.units = [{ ...review.units[0], logo: { materialId: null, url: null, name: '' }, textMode: 'replace', exactText: '诺维特酒店保洁', layoutNote: '', instruction: '左胸制作文字“诺维特酒店保洁”。', ambiguities: [] }];
+    let state = importTaskReviews(emptyWpsProductionState(now), [review], now);
+    const unit = state.units[0];
+    expect(unit.route).toBe('deterministic');
+    state = confirmProductionPlan(state, unit.id, '测试员', now);
+    state = attachProductionArtwork(state, unit.id, { url: '/uploads/logos/text.png', name: 'text.png', validation: validArtwork('text'), service: 'deterministic', requestSummary: '程序文字排版' }, 'text-attempt', now);
+    state = confirmProductionArtwork(state, unit.id, '测试员', now);
+    expect(state.units[0].status).toBe('artworkApproved');
+    assertWpsProductionState(state);
+  });
+});
+
 describe('WPS production state machine', () => {
   it('changing the next cutout mode retains the approved current artwork and gates', () => {
     let state = twoSidedState();

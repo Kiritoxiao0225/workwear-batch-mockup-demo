@@ -11,6 +11,7 @@ import { GENERATION_PROMPT_WRITING_RULES, parseGenerationPrompt } from '@/lib/ar
 import type { ProductionUnit } from '@/lib/wps-production';
 import type { SourceTaskRecord } from '@/lib/batch-task-review';
 import { buildTaskReviewPrompt, parseTaskReviewAnalysis } from '@/lib/task-review-analysis';
+import { isTextOnlyArtwork } from '@/lib/artwork-reference';
 import { formatArkErrorMessage } from '@/lib/server/ark-logo-studio';
 
 const ARK_CHAT_ENDPOINT = 'https://ark.cn-beijing.volces.com/api/v3/chat/completions';
@@ -183,7 +184,7 @@ async function requestVisionModel(records: SourceTaskRecord[], config: ReturnTyp
 async function performAnalysis(records: SourceTaskRecord[], config: ReturnType<typeof analysisConfiguration>) {
   const { content, ...metadata } = await requestVisionModel(records, config, buildTaskReviewPrompt(records, await productionCatalogStyles()));
   const reviews = parseTaskReviewAnalysis(records, content);
-  if (reviews.some(review => review.units.some(unit => !unit.generationPrompt))) throw new Error('需求解析没有返回完整生图提示词，请重新分析');
+  if (reviews.some(review => review.units.some(unit => !unit.generationPrompt && !isTextOnlyArtwork({ ...unit, materialId: unit.logo.materialId })))) throw new Error('需求解析没有返回完整生图提示词，请重新分析');
   return { reviews, ...metadata };
 }
 

@@ -257,6 +257,7 @@ function normalizedActor(actor: string) {
 }
 
 function productionRoute(unit: GenerationUnit): ProductionRoute {
+  if (isTextOnlyArtwork({ ...unit, materialId: unit.logo.materialId }) && !artworkBlockingAmbiguities(unit.ambiguities).length) return 'deterministic';
   if (artworkBlockingAmbiguities(unit.ambiguities).length > 0 || !unit.logo.materialId) return 'blocked';
   return unit.processingRoute === 'fidelity' ? 'deterministic' : unit.processingRoute ?? 'auto';
 }
@@ -265,7 +266,7 @@ function assertArtworkRecipe(unit: ProductionUnit) {
   if (artworkProcessingRoute(unit) === 'blocked' || artworkBlockingAmbiguities(unit.ambiguities).length) {
     throw new ProductionTransitionError(`请先补充图案要求：${unit.ambiguities.join('；') || unit.routeEvidence}`);
   }
-  if (!unit.materialId || !unit.instruction.trim()) throw new ProductionTransitionError('缺少主要素材或制作要求，不能制作图案');
+  if ((!unit.materialId && !isTextOnlyArtwork(unit)) || !unit.instruction.trim()) throw new ProductionTransitionError('缺少主要素材或制作要求，不能制作图案');
 }
 
 function defaultPlacement(key: PlacementKey | null): ProductionPlacement | null {
@@ -738,7 +739,7 @@ export function confirmProductionPlan(
       ...unit.ambiguities,
       ...(unit.garment !== undefined ? [garmentPlacementIssue(unit.garment, unit.placement)].filter((issue): issue is string => Boolean(issue)) : []),
       ...(artworkProcessingRoute(unit) === 'blocked' ? ['制作路线仍处于阻塞状态'] : []),
-      ...(!unit.materialId ? ['主要素材未确认'] : []),
+      ...(!unit.materialId && !isTextOnlyArtwork(unit) ? ['主要素材未确认'] : []),
       ...(!unit.placement ? ['位置未确认'] : []),
       ...(!unit.instruction.trim() ? ['制作要求为空'] : []),
     ];
@@ -1195,3 +1196,4 @@ export function selectProductionGarment(state: WpsProductionState, unitId: strin
   }
   return { ...next, revision: state.revision + 1 };
 }
+import { isTextOnlyArtwork } from '@/lib/artwork-reference';

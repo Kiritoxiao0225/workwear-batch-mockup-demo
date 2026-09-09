@@ -51,6 +51,20 @@ function analysisContent(input: {
   });
 }
 
+describe('plain text WPS requirements', () => {
+  it('renders hotel wording without treating the requirement screenshot as artwork', () => {
+    const source = sourceRecord('货号:B01SD-蔚来灰 左胸:诺维特酒店保洁 后背: 字体: 颜色: 工艺: 尺寸:');
+    const [review] = parseTaskReviewAnalysis([source], analysisContent({ logoMaterialId: 'material-1', textMode: 'replace', exactText: '诺维特酒店保洁', layoutNote: '', instruction: '左胸制作文字“诺维特酒店保洁”。', generationPrompt: '参考图1制作文字', ambiguities: ['方案核对：主要内容素材未绑定或已不存在'] }));
+    expect(review.units).toHaveLength(1);
+    expect(review.units[0]).toMatchObject({ logo: { materialId: null }, textMode: 'replace', exactText: '诺维特酒店保洁', generationPrompt: '', processingRoute: 'fidelity', ambiguities: [] });
+    expect(review.source).toEqual(source);
+  });
+  it('does not turn image-number combinations into plain text', () => {
+    const [review] = parseTaskReviewAnalysis([sourceRecord('左胸:1+2')], analysisContent({ textMode: 'replace', exactText: '1+2', instruction: '左胸制作文字', layoutNote: '' }));
+    expect(review.units[0].ambiguities.join('；')).toContain('原文要求使用图片');
+  });
+});
+
 describe('WPS image plus text shorthand', () => {
   it('retains visual observations and restores color/font requirements when the model only kept layout', () => {
     const record = sourceRecord('后背：图1，加志愿者文字；后背排版和字体颜色参考图2');

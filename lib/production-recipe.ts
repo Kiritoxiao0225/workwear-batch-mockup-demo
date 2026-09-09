@@ -4,6 +4,7 @@ import type { ProductionUnit } from '@/lib/wps-production';
 import { ARTWORK_METHODS, ARTWORK_ROUTING_STANDARD, decideArtworkMethod, type ArtworkRoutingDecision } from '@/lib/artwork-routing-standard';
 import { artworkRequirementFacts } from '@/lib/artwork-routing-request';
 import { artworkBlockingAmbiguities, artworkProcessingRoute } from '@/lib/task-review-analysis';
+import { artworkPlanIssues, isTextOnlyArtwork } from './artwork-reference';
 
 /** Use the same request classifier as the processing endpoint; historical native scores remain unverified. */
 export function productionArtworkRouting(unit: ProductionUnit, source: SourceTaskRecord) {
@@ -18,6 +19,10 @@ export function productionArtworkRouting(unit: ProductionUnit, source: SourceTas
     primaryImageLabel: `图${primaryIndex + 1}`, referenceImages: unit.referenceMaterialIds.map(id => ({ label: `图${source.materials.findIndex(material => material.id === id) + 1}` })) });
   const sourceMaterial = source.materials[primaryIndex];
   facts.sourcePresent = Boolean(sourceMaterial && (sourceMaterial.url || sourceMaterial.previewUrl));
+  if (isTextOnlyArtwork(unit)) {
+    facts.intent = 'compose'; facts.sourcePresent = true; facts.blockers = artworkPlanIssues(source, unit);
+    return { facts, decision: { version: ARTWORK_ROUTING_STANDARD.version, method: null, state: facts.blockers.length ? 'review' : 'ready', action: 'inspect', checks: [], reason: facts.blockers.join('；') || '直接排版准确文字，保存透明图层并放到衣服上。' } as ArtworkRoutingDecision, historicalClarity: null, report: undefined };
+  }
   facts.blockers.push(...artworkBlockingAmbiguities(unit.ambiguities),
     ...unit.referenceMaterialIds.filter(id => !source.materials.some(material => material.id === id && (material.url || material.previewUrl))).map(id => `缺少参考素材 ${id}`),
     ...(artworkProcessingRoute(unit) === 'blocked' ? ['制作要求尚待补充'] : []));
@@ -38,6 +43,7 @@ export function productionArtworkRouting(unit: ProductionUnit, source: SourceTas
 }
 
 export function productionRecipe(unit: ProductionUnit, source: SourceTaskRecord) {
+  if (isTextOnlyArtwork(unit)) return { title: '纯文字排版', reason: '默认抖音美好体，未指定字色时从黑白红中选择与衣服色差最大的颜色。', components: [`准确文字：${unit.exactText}`], actual: unit.artwork?.draft?.preprocessing, actualLabel: unit.artwork ? '程序文字排版' : null };
   unit = { ...unit, route: artworkProcessingRoute(unit) };
   const primaryIndex = source.materials.findIndex(material => material.id === unit.materialId);
   const input = { instruction: unit.instruction, exactText: unit.textMode === 'replace' ? unit.exactText : '', layoutNote: unit.layoutNote,

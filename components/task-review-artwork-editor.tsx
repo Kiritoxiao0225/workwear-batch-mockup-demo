@@ -7,9 +7,10 @@ import { addArtworkText, duplicateArtworkLayers, removeArtworkLayers, artworkLay
 import { splitArtworkGraphic } from '@/lib/client/artwork-layer-editing';
 import { artworkTextLayout, loadArtworkFont } from '@/lib/client/artwork-text-layout';
 import { artworkDraftCanvasBounds, drawArtworkText, loadArtworkGraphicView } from '@/lib/client/render-artwork';
+import { DEFAULT_ARTWORK_FONT, ARTWORK_TEXT_COLORS } from '@/lib/artwork-text-defaults';
 
-type Props = { title: string; originalRequirement: string; initialDraft: ArtworkDraft; saving: boolean; onCancel: () => void; onSave: (draft: ArtworkDraft) => Promise<void>; renderPreview?: (draft: ArtworkDraft) => ReactNode; saveLabel?: string; saveHint?: string };
-const FONTS = [['Noto Sans SC, PingFang SC, Microsoft YaHei, sans-serif', '现代黑体'], ['PingFang SC, Microsoft YaHei, sans-serif', '苹方 / 微软雅黑'], ['STKaiti, KaiTi, serif', '楷体'], ['STSong, SimSun, serif', '宋体'], ['FZKai-Z03, STKaiti, serif', '标题楷体']];
+type Props = { title: string; originalRequirement: string; initialDraft: ArtworkDraft; saving: boolean; onCancel: () => void; onSave: (draft: ArtworkDraft) => Promise<void>; renderPreview?: (draft: ArtworkDraft) => ReactNode; saveLabel?: string; saveHint?: string; defaultTextColor?: () => Promise<string> };
+const FONTS = [[DEFAULT_ARTWORK_FONT, '抖音美好体（默认）'], ['Noto Sans SC, PingFang SC, Microsoft YaHei, sans-serif', '现代黑体'], ['PingFang SC, Microsoft YaHei, sans-serif', '苹方 / 微软雅黑'], ['STKaiti, KaiTi, serif', '楷体'], ['STSong, SimSun, serif', '宋体'], ['FZKai-Z03, STKaiti, serif', '标题楷体']];
 const S = ARTWORK_CANVAS_SIZE;
 const labelOf = (layer: ArtworkLayer) => layer.value.label || (layer.kind === 'graphic' ? `图形 ${layer.index + 1}` : `文字 ${layer.index + 1}`);
 function boundsOf(layer: ArtworkLayer): ArtworkBounds {
@@ -47,7 +48,7 @@ function EditorIcon({ name }: { name: string }) { return <svg viewBox="0 0 24 24
 function NumericInput({ label, value, min, max, onChange, step = 1, suffix = 'px' }: { label: string; value: number; min: number; max: number; onChange: (value: number) => void; step?: number; suffix?: string }) {
   return <label>{label}<span className="artwork-v2-number"><input aria-label={label} type="number" value={Number(value.toFixed(2))} min={min} max={max} step={step} onChange={event => { if (event.target.value === '') return; const next = Number(event.target.value); if (Number.isFinite(next) && next >= min && next <= max) onChange(next); }}/><small>{suffix}</small></span></label>;
 }
-const SWATCHES = ['#44416d', '#24654b', '#222b27', '#b73838', '#ffffff'];
+const SWATCHES = [...ARTWORK_TEXT_COLORS, '#44416d', '#24654b'];
 function GraphicView({ graphic, onError }: { graphic: ArtworkGraphicLayer; onError: (error: string) => void }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const { sourceUrl, recolorMaskUrl, recolorScope, recolor: { mode, color }, inkSpread = 0 } = graphic;
@@ -90,7 +91,7 @@ function TextView({ text, scale, onError, onFontLoaded }: { text: ArtworkTextLay
   return <canvas ref={ref} style={{ width: '100%', height: '100%', pointerEvents: 'none' }}/>;
 }
 
-export function TaskReviewArtworkEditor({ title, originalRequirement, initialDraft, saving, onCancel, onSave, renderPreview, saveLabel = '保存调整并返回任务表', saveHint = '图层与透明 PNG 一起保存，下次打开可以继续分层编辑。' }: Props) {
+export function TaskReviewArtworkEditor({ title, originalRequirement, initialDraft, saving, onCancel, onSave, renderPreview, defaultTextColor, saveLabel = '保存调整并返回任务表', saveHint = '图层与透明 PNG 一起保存，下次打开可以继续分层编辑。' }: Props) {
   const [history, setHistory] = useState<ArtworkHistory>(() => ({ past: [], present: editableArtworkDraft(initialDraft), future: [] }));
   const historyRef = useRef(history), gesture = useRef<ArtworkDraft | null>(null);
   const [gestureChanged, setGestureChanged] = useState(false);
@@ -132,15 +133,18 @@ export function TaskReviewArtworkEditor({ title, originalRequirement, initialDra
   const choose = (id: string | null) => {
     finishGesture(); setSelectedIds(id ? [id] : []); setSelection(null); setError(null); if (inspector.current) inspector.current.scrollTop = 0;
   };
-  const addText = () => {
+  const addText = async () => {
     if (busy) return;
     finishGesture();
+    setSplitting(true);
     try {
+      const color = defaultTextColor ? await defaultTextColor() : '#000000';
       const visible = artworkLayers(historyRef.current.present).filter(layer => layer.value.visible !== false);
       const bottom = Math.max(300, ...visible.map(layer => { const b = boundsOf(layer); return b.top + b.height; }));
-      const result = addArtworkText(historyRef.current.present, { x: 512, y: Math.min(1980, bottom + 84) });
+      const result = addArtworkText(historyRef.current.present, { x: 512, y: Math.min(1980, bottom + 84) }, color);
       change(() => result.draft); setSelectedIds([result.selectedId]); setSelection(null); setPreviewOpen(false); setTool('auto'); focusNewText.current = true;
     } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
+    finally { setSplitting(false); }
   };
   const modifyLayers = (action: 'duplicate' | 'delete') => {
     if (busy || !selectedIds.length) return;

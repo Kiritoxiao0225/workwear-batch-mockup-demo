@@ -1,4 +1,5 @@
 import type { ArtworkRoutingReport } from '@/lib/artwork-routing-standard';
+import { DEFAULT_ARTWORK_FONT } from './artwork-text-defaults';
 
 export const ARTWORK_CANVAS_SIZE = 1024;
 export const ARTWORK_SNAP_SCREEN_PX = 8;
@@ -201,7 +202,7 @@ export function inferredArtworkColor(text: string, fallback: string) {
   return COLOR_KEYWORDS.find(([keyword]) => normalized.includes(keyword))?.[1] ?? fallback;
 }
 
-function requestedArtworkColor(text: string) {
+export function requestedArtworkColor(text: string) {
   return text.match(/#[0-9a-f]{6}\b/iu)?.[0] ?? (inferredArtworkColor(text, '') || null);
 }
 
@@ -297,7 +298,7 @@ export function createStructuredArtworkDraft(input: {
       x: textX,
       y: textY,
       boxWidth: isHorizontal ? 500 : 760,
-      fontFamily: 'Noto Sans SC, PingFang SC, Microsoft YaHei, sans-serif',
+      fontFamily: DEFAULT_ARTWORK_FONT,
       fontSize: Math.max(20, Math.min(84, Math.round(640 / Math.max([...textValue].length, 5)))),
       color: textColor,
       letterSpacing: 2,
