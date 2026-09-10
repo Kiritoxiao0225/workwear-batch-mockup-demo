@@ -30,6 +30,10 @@ describe('requirement-driven artwork methods', () => {
     expect(artworkRequirementFacts({ ...request, artworkMethod: 'generate' })).toMatchObject({ intent: 'generate' });
     expect(artworkMethodIssue(input({ instruction: '严格保真，禁止重绘', generationPrompt: request.generationPrompt }), 'generate')).toContain('严格保真');
   });
+  it('does not use model-based old-text removal under an explicit no-redraw requirement', () => {
+    const facts = artworkRequirementFacts(input({ instruction: '将原文字替换为康悦，禁止重绘', exactText: '康悦' }));
+    expect(facts.blockers.join('；')).toContain('禁止模型改图');
+  });
   it('does not let an authored prompt hide a missing reference from the source order', () => {
     expect(artworkRequirementFacts(input({ sourceRequirementText: '左胸：图1，整体排版参考图2', printPlacement: { key: 'leftChest' } as ArtworkRequirementInput['printPlacement'],
       generationPrompt: '使用图1，保留原图案。' })).blockers.join(' ')).toContain('原文要求参考图2');

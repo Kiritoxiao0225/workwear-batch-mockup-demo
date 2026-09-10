@@ -8,6 +8,14 @@ import type { ArtworkRoutingReport } from '@/lib/artwork-routing-standard';
 
 const flatAssessment = { version: 'artwork-source-v1' as const, kind: 'flat-artwork' as const, targetDescription: '独立平面 Logo', needsReconstruction: false, evidence: ['测试素材为独立平面图案'], uncertainDetails: [] };
 describe('production recipe explanations', () => {
+  it('explains replacement separately without changing the historical add-text mode', () => {
+    const review = taskReviewFixture()[0];
+    const unit = { ...importTaskReviews(emptyWpsProductionState(), [review]).units[0], sourceAssessment: flatAssessment,
+      textMode: 'replace' as const, exactText: '康悦', layoutNote: '', instruction: '将原文字替换为康悦' };
+    expect(productionRecipe(unit, review.source).title).toBe('清除指定旧字＋准确文字替换');
+    expect(productionRecipe(unit, review.source).reason).toContain('先清除指定旧字');
+    expect(productionRecipe({ ...unit, instruction: '保留原字，新增康悦' }, review.source).title).not.toContain('清除');
+  });
   it('distinguishes a preflight plan from measured processing and preserves WPS image numbers', () => {
     const review = taskReviewFixture()[1];
     const state = importTaskReviews(emptyWpsProductionState(), [review]);

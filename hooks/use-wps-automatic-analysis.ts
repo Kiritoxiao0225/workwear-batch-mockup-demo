@@ -1,14 +1,19 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import type { SourceTaskRecord, TaskReview } from '@/lib/batch-task-review';
+import type { SourceTaskRecord } from '@/lib/batch-task-review';
 import type { WpsProductionState } from '@/lib/wps-production';
 import { canAnalyzeWpsTask, pendingWpsAnalysisRecords, wpsSourceEvidence } from '@/lib/wps-source';
 import { runTaskReviewAnalysisBatch } from '@/lib/client/task-review-analysis-batch';
+import { readWpsAnalysisResponse, WpsAnalysisResponseError } from '@/lib/client/wps-analysis-response';
+import { WPS_ANALYSIS_CLIENT_TIMEOUT_MS, type WpsAnalysisResult, type WpsAnalysisStage, type WpsAnalysisTiming } from '@/lib/wps-analysis-progress';
 
 export type WpsAnalysisStatus = {
   phase: 'queued' | 'analyzing' | 'saving' | 'failed';
   error?: string;
   parsed?: boolean;
+  stage?: WpsAnalysisStage;
+  timings?: WpsAnalysisTiming[];
+  requestId?: string;
 };
 
 async function json<T>(response: Response): Promise<T> {
@@ -20,7 +25,7 @@ async function json<T>(response: Response): Promise<T> {
 /** A source revision is attempted once per page session; failed entries require explicit retry. */
 export function useWpsAutomaticAnalysis(state: WpsProductionState | null, enabled: boolean, accept: (state: WpsProductionState) => void) {
   const attempted = useRef(new Set<string>()), running = useRef(false);
-  const parsed = useRef(new Map<string, { reviews: TaskReview[] }>());
+  const parsed = useRef(new Map<string, WpsAnalysisResult>());
   const currentSources = useRef<SourceTaskRecord[]>([]);
   const [progress, setProgress] = useState({ running: false, completed: 0, total: 0 });
   const [statuses, setStatuses] = useState<Record<string, WpsAnalysisStatus>>({});
@@ -46,25 +51,29 @@ export function useWpsAutomaticAnalysis(state: WpsProductionState | null, enable
         return parsed.current.get(key)!;
       }
       setStatuses(current => ({ ...current, [key]: { phase: 'analyzing' } }));
-      const result = await json<{ reviews: TaskReview[] }>(await fetch('/api/wps-production/analyze', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ records: [source] }), signal: AbortSignal.timeout(180_000),
-      }));
+      const result = await readWpsAnalysisResponse(await fetch('/api/wps-production/analyze', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' }, body: JSON.stringify({ records: [source] }), signal: AbortSignal.timeout(WPS_ANALYSIS_CLIENT_TIMEOUT_MS),
+      }), event => setStatuses(current => ({ ...current, [key]: { ...current[key], phase: 'analyzing',
+        ...(event.type === 'stage' ? { stage: event.stage } : { timings: [...(current[key]?.timings ?? []), event.timing] }),
+      } })));
       if (!result.reviews?.some(review => review.source.recordId === source.recordId && review.units.length > 0)) throw new Error('未解析出可制作的印花位置，请检查需求后重试');
       parsed.current.set(key, result);
-      setStatuses(current => ({ ...current, [key]: { phase: 'saving' } }));
+      setStatuses(current => ({ ...current, [key]: { ...current[key], phase: 'saving', requestId: result.requestId } }));
       return result;
     }, async (result, source) => {
-      setStatuses(current => ({ ...current, [wpsSourceEvidence(source)]: { phase: 'saving' } }));
+      const savingAt = Date.now();
+      const savedTiming = () => console.info('[wps-analysis-save]', { requestId: result.requestId, durationMs: Date.now() - savingAt });
+      setStatuses(current => ({ ...current, [wpsSourceEvidence(source)]: { ...current[wpsSourceEvidence(source)], phase: 'saving' } }));
       // Other rows may save while the model runs. Retry only the commit, never the model.
       for (let attempt = 0; attempt < 3; attempt++) {
         assertCurrentSource(source);
-        const latest = await json<WpsProductionState>(await fetch('/api/wps-production', { cache: 'no-store' }));
+        const latest = await json<WpsProductionState>(await fetch('/api/wps-production', { cache: 'no-store', signal: AbortSignal.timeout(60_000) }));
         const alreadySaved = latest.records.find(record => record.source.recordId === source.recordId && wpsSourceEvidence(record.source) === wpsSourceEvidence(source) && record.unitIds.length);
-        if (alreadySaved) { accept(latest); return; }
+        if (alreadySaved) { accept(latest); savedTiming(); return; }
         try {
-          const saved = await json<WpsProductionState>(await fetch('/api/wps-production', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          const saved = await json<WpsProductionState>(await fetch('/api/wps-production', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(60_000),
             body: JSON.stringify({ action: 'upsertReviews', expectedRevision: latest.revision, reviews: result.reviews }) }));
-          accept(saved); return;
+          accept(saved); savedTiming(); return;
         } catch (error) {
           if (attempt === 2 || !(error instanceof Error) || !('status' in error) || error.status !== 409) throw error;
         }
@@ -75,7 +84,11 @@ export function useWpsAutomaticAnalysis(state: WpsProductionState | null, enable
       const hasParsed = parsed.current.has(key);
       setStatuses(current => {
         const next = { ...current };
-        if (error) next[key] = { phase: 'failed', error: error instanceof Error ? error.message : String(error), parsed: hasParsed };
+        if (error) next[key] = { ...current[key], phase: 'failed',
+          error: error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name) ? hasParsed ? '保存请求超时；重试保存时会先核对是否已成功保存' : '解析请求等待超时，请重试解析'
+            : error instanceof Error ? error.message : String(error), parsed: hasParsed,
+          ...(error instanceof WpsAnalysisResponseError ? { stage: error.failure.stage, timings: error.failure.timings ?? current[key]?.timings, requestId: error.failure.requestId } : {}),
+        };
         else delete next[key];
         return next;
       });

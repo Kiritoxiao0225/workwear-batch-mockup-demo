@@ -7,7 +7,7 @@ import { taskReviewFixture } from '@/lib/testing/task-review-fixture';
 import { emptyWpsProductionState, importTaskReviews, selectProductionGarment, upsertTaskReviews, type ProductionPlacement } from '@/lib/wps-production';
 import { liveWpsProductionState } from '@/lib/wps-source';
 
-const styles = [styleFixture('301SRX', ['极致黑', '安可拉红', '酒红']), styleFixture('B01SD', ['活力黑', '月牙白'], 1), styleFixture('719SF', ['黑色'], 2), styleFixture('9600SRX', ['大红'], 3)];
+const styles = [styleFixture('301SRX', ['极致黑', '安可拉红', '酒红']), styleFixture('B01SD', ['活力黑', '月牙白', '冰霜蓝'], 1), styleFixture('719SF', ['黑色'], 2), styleFixture('9600SRX', ['大红'], 3)];
 function match(text: string, label: string, productStyleText = '未填商品款式') {
   return matchProductionGarment({ ...taskReviewFixture()[0].source, requirementText: text, productStyleText }, { garmentLabel: label, productCode: null }, styles);
 }
@@ -37,6 +37,20 @@ describe('real garment matching', () => {
     expect(match(text, 'B01SD 活力黑').item?.colorName).toBe('活力黑');
     expect(match(text, 'B01SD 月牙白').item?.colorName).toBe('月牙白');
     expect(match(text, 'B01SD').item).toBeNull();
+  });
+  it.each(['、', '，', ',', '；', ';'])('matches every garment separated by %s, including the first and middle colors', separator => {
+    const labels = ['B01SD-活力黑', 'B01SD-月牙白', 'B01SD-冰霜蓝'];
+    const text = `货号:${labels.join(separator)}\n左胸:logo+下面文字 激宇光电\n后背:\n字体:\n颜色:\n工艺:刺绣\n尺寸：`;
+    for (const label of labels) {
+      expect(match(text, label)).toMatchObject({ item: { styleCode: 'B01SD', colorName: label.slice('B01SD-'.length) }, selection: 'exact' });
+    }
+    expect(match(text, 'B01SD').item).toBeNull();
+  });
+  it('keeps dunhao-separated styles, sizes and logo colors separate', () => {
+    const text = '货号:B01SD-月牙白-L、719SF-黑色-XL\n左胸:Logo改冰霜蓝、文字做活力黑';
+    expect(match(text, 'B01SD-月牙白').item?.colorName).toBe('月牙白');
+    expect(match(text, '719SF-黑色').item?.styleCode).toBe('719SF');
+    expect(match(text, '未确定').item).toBeNull();
   });
   it('does not merge same style codes from different namespaces', () => {
     const source = { ...taskReviewFixture()[0].source, productStyleText: '301SRX-黑色', requirementText: '左胸图一' };

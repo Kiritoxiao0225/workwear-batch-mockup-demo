@@ -172,6 +172,20 @@ describe('polygon selections isolate irregular artwork', () => {
     expect(parts.selected.data).toEqual(interiorBefore);
   });
 
+  it('recolors only the lasso interior, leaving adjacent pixels inside its rectangular bounds untouched', () => {
+    const source = raster(), parts = splitArtworkPixels(source, graphic, polygon());
+    const result = new Uint8ClampedArray(source.data.length);
+    restore(parts.remaining, result, source.width);
+    restore({ ...parts.selected, data: recolorArtworkPixels(parts.selected.data, '#ff0000') }, result, source.width);
+    for (let y = 0; y < source.height; y++) for (let x = 0; x < source.width; x++) {
+      const offset = (y * source.width + x) * 4;
+      const inside = x >= 1 && x < 7 && (x < 4 || y >= 3);
+      expect(result[offset + 3]).toBe(source.data[offset + 3]);
+      if (!inside) expect(result.slice(offset, offset + 4)).toEqual(source.data.slice(offset, offset + 4));
+      else if (source.data[offset + 3]) expect([...result.slice(offset, offset + 3)]).toEqual([255, 0, 0]);
+    }
+  });
+
   it('rejects incomplete, non-finite, collinear and transparent selections', () => {
     expect(artworkPolygonSelection([])).toBeNull();
     expect(artworkPolygonSelection([{ x: 0, y: 0 }, { x: 1, y: 1 }])).toBeNull();

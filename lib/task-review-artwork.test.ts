@@ -67,7 +67,7 @@ describe('task review artwork preparation contract', () => {
     expect(canonical.prompt).toContain('Logo 内部原有白色与其他细节保持原样');
     expect(canonical.prompt).not.toContain('真实 Alpha 通道的透明 PNG');
     expect(canonical.prompt).not.toContain('使用系统指定的均匀纯色抠像底');
-    expect(canonical.version).toBe('task-review-artwork-v10');
+    expect(canonical.version).toBe('task-review-artwork-v11');
     expect(canonical.promptHash).toMatch(/^fnv1a-[0-9a-f]{8}$/u);
   });
 
@@ -393,7 +393,7 @@ describe('MediaKit artwork preparation adapter', () => {
         },
       }],
       processingRoute: 'model',
-      expectedPromptVersion: 'task-review-artwork-v10',
+      expectedPromptVersion: 'task-review-artwork-v11',
       expectedPromptHash: 'fnv1a-deadbeef',
     }))).rejects.toThrow('页面显示的制作要求与服务端最终要求不一致');
 

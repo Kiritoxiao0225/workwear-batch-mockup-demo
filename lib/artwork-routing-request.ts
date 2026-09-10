@@ -5,6 +5,7 @@ import { artworkReferenceEvidence, artworkReferenceIssues, normalizeArtworkImage
 import { artworkReferenceColors } from '@/lib/artwork-reference-color';
 import { artworkModelEdits } from '@/lib/artwork-model-edits';
 import { needsArtworkReconstruction, artworkReconstructionPrompt } from './artwork-source-assessment';
+import { artworkTextOperation, artworkTextRemovalPrompt, artworkTextStyle } from './artwork-text-contract';
 
 export type ArtworkRequirementInput = Pick<ArtworkPreparationRequest, 'sourceAssessment' | 'primaryImageRole' | 'artworkMethod' | 'instruction' | 'layoutNote' | 'exactText' | 'primaryImageLabel' | 'sourceScope' | 'processingRoute'> & Partial<Pick<ArtworkPreparationRequest, 'sourceRequirementText' | 'printPlacement' | 'generationPrompt'>> & { referenceImages: Array<{ label: string }> };
 
@@ -61,6 +62,7 @@ export function artworkRequirementFacts(input: ArtworkRequirementInput): Artwork
   const strictPreservation = input.processingRoute === 'fidelity' || /(?:严格保真|禁止重绘|不得重绘|不要重绘)/u.test(`${input.instruction}\n${input.layoutNote}`);
   if (strictPreservation && generate) blockers.push('严格保真与整图生成要求冲突，请先明确制作方式');
   if (strictPreservation && (intent.hasStyleReference || intent.specialTypography) && input.exactText.trim()) blockers.push('严格保真不能生成特殊字形，请提供可直接使用的文字素材');
+  if (strictPreservation && artworkTextOperation(input) === 'replace') blockers.push('严格保真要求禁止模型改图，请先提供已清除指定旧字的主体素材，再新增准确文字');
   // Arbitrary crop instructions cannot be implemented by sending the entire logo to a generator.
   const needsCrop = intent.selectiveComposition && !generate;
   const knownColor = artworkEditColor(requirement);
@@ -71,6 +73,7 @@ export function artworkRequirementFacts(input: ArtworkRequirementInput): Artwork
   return {
     intent: generate ? 'generate' : compose ? 'compose' : 'preserve',
     intentReason: referenceText ? '按准确文字与参考样式生成文字标识，不提取参考图内容' : input.processingRoute === 'model' ? '人工指定整图生成' : modelEdits.length ? '原图包含指定区域改色或明暗调整，先按完整要求编辑，再抠图' : redesign ? '明确要求重新设计完整图案' : wholeReference ? '参考图决定整体构图与排版'
+      : artworkTextOperation(input) === 'replace' ? `先删除并核对指定旧字，再组合准确文字“${input.exactText.trim()}”`
       : input.exactText.trim() ? `保留主体，组合准确文字“${input.exactText.trim()}”` : compose ? '保留主体，修改指定局部' : '沿用原图案，未要求新增或重新设计',
     sourcePresent: true, blockers,
     sourceAssessment: input.sourceAssessment,
@@ -83,7 +86,7 @@ export function artworkRequirementFacts(input: ArtworkRequirementInput): Artwork
   };
 }
 
-export const STANDARD_ARTWORK_PROMPT_VERSION = 'artwork-standard-prompts-v13';
+export const STANDARD_ARTWORK_PROMPT_VERSION = 'artwork-standard-prompts-v14';
 export function artworkPromptHash(text: string) {
   let hash = 0x811c9dc5;
   for (let index = 0; index < text.length; index++) hash = Math.imul(hash ^ text.charCodeAt(index), 0x01000193);
@@ -115,12 +118,14 @@ export function standardArtworkPrompts(input: Omit<ArtworkPreparationRequest, 'i
     ...input.referenceImages.map((reference, index) => `模型输入图${index + 1} = WPS ${reference.label}，仅用于字形参考。`),
     `只制作独立的二维文字素材，唯一允许出现的文字为“${text}”，逐字准确，不得增字、漏字、拆字或增加其他图形。`,
     input.referenceImages.length ? '输入图仅参考客户明确指定的字体笔触、粗细与风格；不得复制参考图的背景、其他图案或原文字。' : '使用客户要求的字形风格，保持清晰。',
-    `本任务的字形和排版要求：\n${input.instruction}\n${input.layoutNote}`,
+    `本组件的文字样式属性：${JSON.stringify(artworkTextStyle(input))}。空属性沿用普通清晰文字，不自行增加图案。`,
     '本次只输出上述准确文字，整体图文组合由程序完成。纯白背景，完整居中，保留留白，不生成衣服、场景或水印。',
   ].join('\n') }));
+  const textOperation = artworkTextOperation(input);
+  const removeText = textOperation === 'replace' ? artworkTextRemovalPrompt(input) : null;
   const reconstruct = input.sourceAssessment ? artworkReconstructionPrompt(input.sourceAssessment, input.primaryImageLabel) : null;
-  const hash = artworkPromptHash(JSON.stringify({ version: STANDARD_ARTWORK_PROMPT_VERSION, route: input.processingRoute, ...(input.artworkMethod ? { artworkMethod: input.artworkMethod } : {}), canonical: generate, redraw, reconstruct, styledTexts, imageMapping: canonical.imageMapping }));
-  return { version: STANDARD_ARTWORK_PROMPT_VERSION, hash, redraw, reconstruct, generate, styledTexts, imageMapping: canonical.imageMapping };
+  const hash = artworkPromptHash(JSON.stringify({ version: STANDARD_ARTWORK_PROMPT_VERSION, route: input.processingRoute, ...(input.artworkMethod ? { artworkMethod: input.artworkMethod } : {}), canonical: generate, redraw, reconstruct, textOperation, removeText, styledTexts, imageMapping: canonical.imageMapping }));
+  return { version: STANDARD_ARTWORK_PROMPT_VERSION, hash, redraw, reconstruct, generate, textOperation, removeText, styledTexts, imageMapping: canonical.imageMapping };
 }
 
 export function resolvedFlatLogoRedrawPrompt(base: string, facts: { palette: Array<[number, number, number]>; recognizedText: string; structureDescription?: string }) {

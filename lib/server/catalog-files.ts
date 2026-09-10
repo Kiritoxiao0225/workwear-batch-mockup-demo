@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import OSS from 'ali-oss';
 import sharp from 'sharp';
-import { catalogDatabase, catalogTransaction } from './catalog-database';
+import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './catalog-database';
+import { catalogOssBrowserSigner, catalogOssObjects } from './catalog-oss';
 
 export function fileSha256(bytes: Buffer | string) { return createHash('sha256').update(bytes).digest('hex'); }
 export function catalogObjectPrefix(value = process.env.CATALOG_OSS_PREFIX) {
@@ -26,14 +26,6 @@ export function catalogStorageConfig() {
   catalogObjectPrefix();
   return { backend: 'oss' as const, bucket };
 }
-// Opt in only for server-side production image transfers; browser URLs and
-// ordinary catalog traffic retain their existing regional endpoint.
-function ossClient(acceleratedProduction = false) {
-  const config = catalogStorageConfig();
-  return new OSS({ bucket: config.bucket, region: process.env.CATALOG_OSS_REGION!, accessKeyId: process.env.CATALOG_OSS_ACCESS_KEY_ID!, accessKeySecret: process.env.CATALOG_OSS_ACCESS_KEY_SECRET!, secure: true, authorizationV4: true, timeout: 120000,
-    ...(acceleratedProduction ? { endpoint: 'https://oss-accelerate.aliyuncs.com' } : {}),
-  });
-}
 function localObjectPath(bucket: string, key: string) {
   if (!/^(?:production\/)?objects\/[0-9a-f]{2}\/[0-9a-f]{64}$/.test(key)) throw new Error(`文件 object_key 无效：${key}`);
   const config = catalogStorageConfig();
@@ -48,7 +40,8 @@ export async function inspectCatalogImage(bytes: Buffer) {
   await sharp(bytes, { failOn: 'error', limitInputPixels: 80_000_000 }).stats();
   return { sha256: fileSha256(bytes), width: metadata.width, height: metadata.height, hasAlpha: metadata.hasAlpha ?? false, byteLength: bytes.length, mimeType: `image/${metadata.format === 'jpeg' ? 'jpeg' : metadata.format}` };
 }
-export async function saveCatalogFile(bytes: Buffer, originalName: string, purpose: 'catalog' | 'production' = 'catalog') {
+export async function saveCatalogFile(bytes: Buffer, originalName: string, purpose: 'catalog' | 'production' = 'catalog',
+  retain?: (client: CatalogQueryClient, id: string) => Promise<void>) {
   const config = catalogStorageConfig();
   const hash = fileSha256(bytes);
   const existing = await catalogDatabase().query('SELECT id FROM files WHERE backend=$1 AND bucket=$2 AND sha256=$3', [config.backend, config.bucket, hash]);
@@ -65,7 +58,9 @@ export async function saveCatalogFile(bytes: Buffer, originalName: string, purpo
   return catalogTransaction(async client => {
     // Use this connection for all SQL while holding the lock; never wait for another pool slot.
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`file:${config.backend}:${config.bucket}:${hash}`]);
-    return saveLocked(client);
+    const saved = await saveLocked(client);
+    if (retain) await retain(client, saved.id);
+    return saved;
   });
   async function saveLocked(client: ReturnType<typeof catalogDatabase>) {
   const config = catalogStorageConfig();
@@ -93,7 +88,7 @@ export async function saveCatalogFile(bytes: Buffer, originalName: string, purpo
       const temporary = `${destination}.${randomUUID()}.tmp`;
       await writeFile(temporary, bytes); await rename(temporary, destination); saved = await readFile(destination);
     } else {
-      const objectClient = ossClient(purpose === 'production');
+      const objectClient = catalogOssObjects(config.bucket);
       // A previous response may have been lost after OSS accepted the file. Read it before retrying PUT.
       let exists = false;
       try { const existing = await objectClient.get(storedKey); if (fileSha256(Buffer.from(existing.content)) !== metadata.sha256) throw new Error('已有对象内容不匹配'); exists = true; }
@@ -127,7 +122,7 @@ export async function catalogFile(id: string) {
   if (found.rows[0].gc_state && found.rows[0].gc_state !== 'active') throw new Error(`文件正在回收：${id}`);
   return found.rows[0];
 }
-export async function readCatalogFile(id: string, options?: { accelerated?: boolean }) {
+export async function readCatalogFile(id: string) {
   const file = await catalogFile(id);
   let bytes: Buffer;
   if (file.backend === 'local') bytes = await readFile(localObjectPath(file.bucket, file.object_key));
@@ -135,7 +130,7 @@ export async function readCatalogFile(id: string, options?: { accelerated?: bool
     const config = catalogStorageConfig();
     if (config.backend !== 'oss' || config.bucket !== file.bucket) throw new Error('文件所属 OSS Bucket 与当前配置不一致');
     assertOssObjectKey(file.object_key);
-    const result = await ossClient(options?.accelerated).get(file.object_key, { versionId: file.object_version_id ?? undefined });
+    const result = await catalogOssObjects(config.bucket).get(file.object_key, { versionId: file.object_version_id ?? undefined });
     bytes = Buffer.from(result.content);
   }
   if (fileSha256(bytes) !== file.sha256) throw new Error(`文件内容校验失败：${id}`);
@@ -147,7 +142,7 @@ export async function signedCatalogFile(id: string) {
   const config = catalogStorageConfig();
   if (config.backend !== 'oss' || config.bucket !== file.bucket) throw new Error('文件所属 OSS Bucket 与当前配置不一致');
   assertOssObjectKey(file.object_key);
-  return ossClient().signatureUrlV4('GET', 900, { queries: file.object_version_id ? { versionId: file.object_version_id } : {} }, file.object_key);
+  return catalogOssBrowserSigner(config.bucket).signatureUrlV4('GET', 900, { queries: file.object_version_id ? { versionId: file.object_version_id } : {} }, file.object_key);
 }
 
 /** One authorized list request signs the visible card thumbnails in one query. */
@@ -160,7 +155,7 @@ export async function signedCatalogThumbnails(urls: string[]) {
     return match[1];
   }))];
   const { rows } = await catalogDatabase().query("SELECT id,backend,bucket,object_key,object_version_id FROM files WHERE id=ANY($1::uuid[]) AND status='ready' AND gc_state='active'", [ids]);
-  const client = ossClient();
+  const client = catalogOssBrowserSigner(config.bucket);
   const signed = new Map<string, string>();
   for (const file of rows) {
     if (file.backend !== 'oss' || file.bucket !== config.bucket) throw new Error('缩略图存储与当前配置不一致');

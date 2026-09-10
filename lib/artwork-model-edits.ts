@@ -24,3 +24,13 @@ export type ArtworkEditVerification = {
   model: string;
   checks: ArtworkEditCheck[];
 };
+
+export type ArtworkTextComponentVerification = {
+  version: 'artwork-text-component-v1';
+  outputSha256: string;
+  targetText: string;
+  recognizedText: string | null;
+  model: string;
+  status: 'passed' | 'failed' | 'uncertain';
+  evidence: string;
+};

@@ -88,6 +88,11 @@ export type ArtworkRoutingReport = {
   model: string | null;
   prompt: string | null;
   promptHash: string;
+  textComposition?: {
+    operation: import('./artwork-text-contract').ArtworkTextOperation;
+    removal?: import('./artwork-model-edits').ArtworkEditVerification;
+    components: import('./artwork-model-edits').ArtworkTextComponentVerification[];
+  };
   redraw?: {
     status: 'completed' | 'failed';
     stage: 'generation' | 'cleanup' | 'measurement';

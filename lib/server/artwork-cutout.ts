@@ -1,3 +1,5 @@
+import type { ArtworkCutoutReceipt } from '@/lib/artwork-cutout';
+import { artworkJobStep } from './artwork-job-runtime';
 import { createHash, randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import type { ArtworkCutoutMode, ArtworkCutoutResult } from '@/lib/artwork-cutout';
@@ -174,7 +176,10 @@ export async function startArtworkCutout(source: Buffer, mode: ArtworkCutoutMode
 export class ArtworkCutoutPendingError extends Error {
   constructor(public result: ArtworkCutoutResult) { super(result.error || '抠图仍在处理中，可继续查询本次任务'); }
 }
-export async function cutoutArtworkForPipeline(bytes: Buffer, mode: ArtworkCutoutMode = 'auto') {
+export async function cutoutArtworkForPipeline(bytes: Buffer, mode: ArtworkCutoutMode = 'auto'): Promise<{ bytes: Buffer; receipt: ArtworkCutoutReceipt }> {
+  return artworkJobStep('cutout', 'cutout', { bytes, mode }, () => pipelineCutout(bytes, mode));
+}
+async function pipelineCutout(bytes: Buffer, mode: ArtworkCutoutMode) {
   let result = await startArtworkCutout(bytes, mode);
   const deadline = Date.now() + 60000;
   while (result.status === 'pending' && Date.now() < deadline) {

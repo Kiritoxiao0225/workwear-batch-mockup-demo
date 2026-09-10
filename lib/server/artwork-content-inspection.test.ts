@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import sharp from 'sharp';
 import { inspectArtworkReferenceImage } from './ark-task-review';
-import { inspectArtworkWatermarks, verifyArtworkModelEdits } from './artwork-content-inspection';
+import { inspectArtworkWatermarks, verifyArtworkModelEdits, verifyArtworkTextComponent } from './artwork-content-inspection';
 import { artworkSha256 } from './artwork-quality';
 
 vi.mock('./ark-task-review', () => ({ inspectArtworkReferenceImage: vi.fn() }));
@@ -42,4 +42,25 @@ it('binds every edit check to both actual images and downgrades low confidence i
 it('does not silently pass a missing customer requirement', async () => {
   reply({ checks: [{ index: 0, status: 'passed', confidence: 'high', evidence: '蓝色描边' }] });
   await expect(verifyArtworkModelEdits(await source(), await source(), ['描边改蓝', '底形调浅'])).rejects.toThrow('逐项');
+});
+
+it.each([
+  ['康悦', true, 'high', 'passed'],
+  ['康悦', false, 'high', 'failed'],
+  ['到家帮 康悦', true, 'high', 'failed'],
+  ['康说', true, 'high', 'failed'],
+  ['康悦', true, 'low', 'uncertain'],
+  [null, true, 'high', 'uncertain'],
+  ['康悦', null, 'high', 'uncertain'],
+] as const)('checks actual text and graphics instead of trusting the layer label: %s %s %s', async (recognizedText, onlyText, confidence, status) => {
+  reply({ recognizedText, onlyText, confidence, evidence: onlyText ? '图片中的文字' : '文字上方还有一个盾牌图形' });
+  const bytes = await source();
+  const result = await verifyArtworkTextComponent(bytes, '康悦');
+  expect(result).toMatchObject({ status, outputSha256: artworkSha256(bytes), targetText: '康悦', recognizedText });
+  expect(vi.mocked(inspectArtworkReferenceImage).mock.calls[0][1]).toContain('整张图');
+});
+
+it('rejects malformed content inspection instead of accepting it', async () => {
+  reply({ recognizedText: '康悦', confidence: 'high', evidence: '没有返回是否夹带图形' });
+  await expect(verifyArtworkTextComponent(await source(), '康悦')).rejects.toThrow();
 });

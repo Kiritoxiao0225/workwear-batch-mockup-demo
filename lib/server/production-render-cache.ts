@@ -69,7 +69,7 @@ export async function prepareProductionPreview(version: ProductionMockupVersion,
   ) AS is_current FROM production_render_cache c JOIN files f ON f.id=c.file_id
     WHERE c.input_hash=$1 AND f.status='ready' AND f.gc_state='active'`, [hash, productionStateKey(), version.id]);
   if (hit.rowCount) {
-    const cached = await readCatalogFile(hit.rows[0].file_id, { accelerated: true });
+    const cached = await readCatalogFile(hit.rows[0].file_id);
     return { bytes: cached.bytes, persist: async () => {
       if (!hit.rows[0].is_current) await publishCurrent(version, originalUnits, hash, hit.rows[0].file_id);
     } };
@@ -96,7 +96,7 @@ export async function savedProductionRender(version: ProductionMockupVersion, or
       // File integrity and current-input publication are independent checks.
       // Complete both before returning, without serializing OSS and SQL waits.
       const [cached] = await Promise.all([
-        readCatalogFile(hit.rows[0].file_id, { accelerated: true }),
+        readCatalogFile(hit.rows[0].file_id),
         hit.rows[0].is_current ? Promise.resolve() : publishCurrent(version, originalUnits, hash, hit.rows[0].file_id),
       ]);
       return cached;

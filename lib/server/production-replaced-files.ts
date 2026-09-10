@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { unlink, access } from 'node:fs/promises';
 import path from 'node:path';
-import OSS from 'ali-oss';
 import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './catalog-database';
 import { catalogObjectPrefix, catalogStorageConfig } from './catalog-files';
+import { catalogOssBucketControl, catalogOssObjects } from './catalog-oss';
 
 const unreferenced = `NOT EXISTS(SELECT 1 FROM production_file_refs r WHERE r.file_id=f.id)
+  AND NOT EXISTS(SELECT 1 FROM artwork_job_files j WHERE j.file_id=f.id)
   AND NOT EXISTS(SELECT 1 FROM production_renders r WHERE r.file_id=f.id)
   AND NOT EXISTS(SELECT 1 FROM garment_asset_versions v WHERE v.file_id=f.id OR v.thumbnail_file_id=f.id)
   AND NOT EXISTS(SELECT 1 FROM asset_sources s WHERE s.file_id=f.id)
@@ -30,10 +31,8 @@ export async function cleanupReplacedFiles(limit = 20, budgetMs = 60_000) {
   const deleted: string[] = [], failures: { id: string; error: string }[] = [];
   if (!candidates.length) return { deleted, failures };
   if (storage.backend === 'oss' && (!process.env.PRODUCTION_DELETE_ACCESS_KEY_ID || !process.env.PRODUCTION_DELETE_ACCESS_KEY_SECRET)) throw new Error('替换后的旧图删除尚未配置 PRODUCTION_DELETE_ACCESS_KEY_ID / SECRET');
-  const client = storage.backend === 'oss' ? new OSS({ region: process.env.CATALOG_OSS_REGION!, bucket: storage.bucket,
-    accessKeyId: process.env.PRODUCTION_DELETE_ACCESS_KEY_ID!, accessKeySecret: process.env.PRODUCTION_DELETE_ACCESS_KEY_SECRET!,
-    secure: true, authorizationV4: true, timeout: 5000 }) : null;
-  const versioning = client ? await (client as OSS & { getBucketVersioning(bucket: string): Promise<{ versionStatus?: string }> }).getBucketVersioning(storage.bucket) : null;
+  const client = storage.backend === 'oss' ? catalogOssObjects(storage.bucket, 'cleanup') : null;
+  const versioning = client ? await catalogOssBucketControl(storage.bucket).getBucketVersioning(storage.bucket) : null;
   for (const candidate of candidates) {
     if (Date.now() + 15_000 > deadline) break;
     const operationKey = `delete:${candidate.id}`;

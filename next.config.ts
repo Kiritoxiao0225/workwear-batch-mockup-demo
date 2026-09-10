@@ -2,7 +2,7 @@ import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
   distDir: process.env.CATALOG_NEXT_DIST_DIR || '.next',
-  serverExternalPackages: ['ali-oss', 'meitu-cli'],
+  serverExternalPackages: ['ali-oss', 'meitu-cli', '@napi-rs/canvas'],
   // The Meitu CLI loads obfuscated runtime dependencies through computed require paths.
   outputFileTracingIncludes: {
     '/api/wps-production/*': [

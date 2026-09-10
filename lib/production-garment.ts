@@ -47,7 +47,7 @@ export function matchProductionGarment(source: SourceTaskRecord, unit: Pick<Gene
   const segments: string[] = [];
   for (let index = normalizedSource.indexOf(code); index >= 0; index = normalizedSource.indexOf(code, index + code.length)) {
     const tail = normalizedSource.slice(index + code.length).replace(/^[ \t—:/-]+/u, '');
-    segments.push(tail.split(/\n|[，,；;]|(?:左胸|右胸|后背|正面|后脖|左袖|右袖|字体|工艺|尺寸)\s*[:：]?/u)[0].split(/\s+/u)[0]);
+    segments.push(tail.split(/\n|[、，,；;]|(?:左胸|右胸|后背|正面|后脖|左袖|右袖|字体|工艺|尺寸)\s*[:：]?/u)[0].split(/\s+/u)[0]);
   }
   const requested = unit.garmentRequest?.colorText?.trim() ?? '';
   const explicitColors = [...new Set(segments.flatMap(segment => segment.split(/[-—/]/u).filter(token => token && !/^(?:[XSML]+|\d+XL|\d+)$/iu.test(token))))];

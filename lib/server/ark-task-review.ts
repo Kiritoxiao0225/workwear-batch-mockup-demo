@@ -10,9 +10,11 @@ import { readProductionFile } from '@/lib/server/production-storage';
 import { GENERATION_PROMPT_WRITING_RULES, parseGenerationPrompt } from '@/lib/artwork-generation-prompt';
 import type { ProductionUnit } from '@/lib/wps-production';
 import type { SourceTaskRecord } from '@/lib/batch-task-review';
-import { buildTaskReviewPrompt, parseTaskReviewAnalysis } from '@/lib/task-review-analysis';
+import { buildTaskReviewPrompt, parseTaskReviewAnalysis, taskReviewCatalogCandidates } from '@/lib/task-review-analysis';
 import { isTextOnlyArtwork } from '@/lib/artwork-reference';
 import { formatArkErrorMessage } from '@/lib/server/ark-logo-studio';
+import { WPS_ANALYSIS_MODEL_TIMEOUT_MS, WPS_ANALYSIS_REQUEST_TIMEOUT_MS, type WpsAnalysisStage } from '@/lib/wps-analysis-progress';
+import { WpsAnalysisTrace } from './wps-analysis-trace';
 
 const ARK_CHAT_ENDPOINT = 'https://ark.cn-beijing.volces.com/api/v3/chat/completions';
 const DEFAULT_ANALYSIS_MODEL = 'doubao-seed-2-0-lite-260215';
@@ -73,7 +75,8 @@ async function responseBody(response: Response, provider: string) {
   let body: unknown;
   try {
     body = await response.json();
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && ['AbortError', 'TimeoutError'].includes(error.name)) throw error;
     throw new Error(`任务分析模型返回了无效 JSON：HTTP ${response.status}`);
   }
   if (!response.ok) throw new Error(formatArkErrorMessage('任务分析模型', response.status, body));
@@ -122,31 +125,56 @@ async function analysisImageUrl(sourceUrl: string) {
   return `data:${mimeType};base64,${bytes.toString('base64')}`;
 }
 
-export async function analyzeSourceTaskRecords(records: SourceTaskRecord[]) {
-  const config = analysisConfiguration();
-  const queuedAt = Date.now();
-  return analysisQueue.run(randomUUID(), async () => {
-    const startedAt = Date.now();
-    const result = await performAnalysis(records, config);
-    return { ...result, timing: { queueMs: startedAt - queuedAt, processingMs: Date.now() - startedAt } };
-  });
+type AnalysisOptions = { trace?: WpsAnalysisTrace; signal?: AbortSignal; timeoutMs?: number };
+async function measure<T>(options: AnalysisOptions, stage: WpsAnalysisStage, work: () => Promise<T> | T): Promise<T> {
+  options.signal?.throwIfAborted();
+  const result = options.trace ? await options.trace.measure(stage, work) : await work();
+  options.signal?.throwIfAborted();
+  return result;
 }
 
-async function requestVisionModel(records: SourceTaskRecord[], config: ReturnType<typeof analysisConfiguration>, prompt: string) {
+export async function analyzeSourceTaskRecords(records: SourceTaskRecord[], options: AnalysisOptions = {}) {
+  const config = analysisConfiguration();
+  const trace = options.trace ?? new WpsAnalysisTrace();
+  const signal = options.signal ?? AbortSignal.timeout(WPS_ANALYSIS_REQUEST_TIMEOUT_MS);
+  signal.throwIfAborted();
+  const queuedAt = Date.now();
+  const jobId = randomUUID();
+  trace.start('queue');
+  const cancel = () => analysisQueue.cancel(jobId);
+  signal.addEventListener('abort', cancel, { once: true });
+  try {
+    return await analysisQueue.run(jobId, async () => {
+      const startedAt = Date.now();
+      trace.finish('queue', queuedAt, 'completed');
+      signal.throwIfAborted();
+      const result = await performAnalysis(records, config, { trace, signal, timeoutMs: WPS_ANALYSIS_MODEL_TIMEOUT_MS });
+      console.info('[wps-analysis]', { requestId: trace.requestId, status: 'completed', ...result.optimization });
+      return { ...result, requestId: trace.requestId, timing: { queueMs: startedAt - queuedAt, processingMs: Date.now() - startedAt,
+        totalMs: Date.now() - trace.startedAt, stages: [...trace.timings] } };
+    });
+  } catch (error) {
+    if (trace.stage === 'queue') trace.finish('queue', queuedAt, 'failed');
+    signal.throwIfAborted();
+    throw error;
+  } finally { signal.removeEventListener('abort', cancel); }
+}
+
+async function requestVisionModel(records: SourceTaskRecord[], config: ReturnType<typeof analysisConfiguration>, prompt: string, options: AnalysisOptions = {}) {
   const { provider } = config;
   const content: Array<Record<string, unknown>> = [
     { type: 'text', text: prompt },
   ];
-  const imageBlocks = await Promise.all(records.flatMap(record => record.materials.map(async (material, index) => {
+  const imageBlocks = await measure(options, 'images', () => Promise.all(records.flatMap(record => record.materials.map(async (material, index) => {
     const modelImageUrl = material.url ?? material.previewUrl;
     if (!modelImageUrl) return [];
     return [
       { type: 'text', text: `以下是源记录 ${record.recordId} 的图${index + 1}，素材 ${material.id}（${material.name}）：` },
       { type: 'image_url', image_url: { url: await analysisImageUrl(modelImageUrl), ...(provider === 'cliproxy' ? { detail: 'high' } : {}) } },
     ];
-  })));
+  }))));
   content.push(...imageBlocks.flat());
-  return requestVisionContent(content, records.map(record => `${record.customerId}/${record.recordId}`).join('、'), config);
+  return requestVisionContent(content, records.map(record => `${record.customerId}/${record.recordId}`).join('、'), config, options.timeoutMs, options);
 }
 
 /** Share the configured analysis provider, credentials and error handling with focused visual inspections. */
@@ -158,11 +186,11 @@ export async function inspectArtworkReferenceImage(dataUrl: string, prompt: stri
   ], options.label ?? '图案参考色', config, options.timeoutMs));
 }
 
-async function requestVisionContent(content: Array<Record<string, unknown>>, label: string, config: ReturnType<typeof analysisConfiguration>, timeoutMs = ANALYSIS_TIMEOUT_MS) {
+async function requestVisionContent(content: Array<Record<string, unknown>>, label: string, config: ReturnType<typeof analysisConfiguration>, timeoutMs = ANALYSIS_TIMEOUT_MS, options: AnalysisOptions = {}) {
   const { model, provider } = config;
   let response: Response;
   try {
-    response = await fetch(config.endpoint, {
+    response = await measure(options, 'model', () => fetch(config.endpoint, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${config.apiKey}`,
@@ -178,28 +206,40 @@ async function requestVisionContent(content: Array<Record<string, unknown>>, lab
         } : { max_tokens: 8_000, temperature: 0.1 }),
         stream: false,
       }),
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
       redirect: 'error',
-    });
+    }));
   } catch (error) {
+    options.signal?.throwIfAborted();
     if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
       throw new Error(`任务分析模型处理超时（${timeoutMs / 1000} 秒）：${label}；该行请求失败不会影响其他行，可重新分析`);
     }
     if (provider === 'cliproxy') throw new Error('需求解析（CLIProxyAPI）连接中断，结果未确认；未自动重试或切换模型');
     throw error;
   }
-  const body = await responseBody(response, provider);
+  let body: unknown;
+  try { body = await measure(options, 'response', () => responseBody(response, provider)); }
+  catch (error) {
+    options.signal?.throwIfAborted();
+    if (error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name)) throw new Error(`任务分析模型返回内容超时（${timeoutMs / 1000} 秒）：${label}；请重试解析`);
+    throw error;
+  }
   return {
     content: responseContent(body),
     model, provider, ...(provider === 'cliproxy' ? { reasoningEffort: config.effort } : {}),
   };
 }
 
-async function performAnalysis(records: SourceTaskRecord[], config: ReturnType<typeof analysisConfiguration>) {
-  const { content, ...metadata } = await requestVisionModel(records, config, buildTaskReviewPrompt(records, await productionCatalogStyles()));
-  const reviews = parseTaskReviewAnalysis(records, content);
+async function performAnalysis(records: SourceTaskRecord[], config: ReturnType<typeof analysisConfiguration>, options: AnalysisOptions) {
+  const catalog = await measure(options, 'catalog', () => productionCatalogStyles());
+  const prompt = buildTaskReviewPrompt(records, catalog);
+  const { content, ...metadata } = await requestVisionModel(records, config, prompt, options);
+  const reviews = await measure(options, 'expand', () => parseTaskReviewAnalysis(records, content));
   if (reviews.some(review => review.units.some(unit => !unit.generationPrompt && !isTextOnlyArtwork({ ...unit, materialId: unit.logo.materialId })))) throw new Error('需求解析没有返回完整生图提示词，请重新分析');
-  return { reviews, ...metadata };
+  const raw = JSON.parse(content.replace(/^```(?:json)?\s*|\s*```$/gu, '').trim()) as { records: Array<{ artworks?: unknown[]; units?: unknown[] }> };
+  return { reviews, ...metadata, optimization: { catalogStyles: catalog.length, candidateStyles: taskReviewCatalogCandidates(records, catalog).length,
+    promptCharacters: prompt.length, outputCharacters: content.length, artworkDefinitions: raw.records.reduce((sum, row) => sum + (row.artworks ?? row.units ?? []).length, 0),
+    expandedUnits: reviews.reduce((sum, review) => sum + review.units.length, 0) } };
 }
 
 export async function planArtworkGenerationPrompt(source: SourceTaskRecord, unit: Pick<ProductionUnit, 'id' | 'garmentLabel' | 'variantLabel' | 'placement'> & Partial<Pick<ProductionUnit, 'instruction' | 'layoutNote' | 'exactText' | 'textMode' | 'sourceScope' | 'artworkMethod'>>) {

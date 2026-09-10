@@ -24,4 +24,9 @@ describe('per-task analysis feedback', () => {
     expect(render({ phase: 'saving' })).toContain('解析已完成，正在保存');
     expect(render(undefined, false)).toContain('等待自动解析恢复');
   });
+  it('shows the actual model stage and failed duration with a trace number', () => {
+    expect(render({ phase: 'analyzing', stage: 'images' })).toContain('读取图案素材');
+    const html = render({ phase: 'failed', stage: 'model', error: '模型处理超时', requestId: 'request-1', timings: [{ stage: 'model', durationMs: 180000, status: 'failed' }] });
+    expect(html).toContain('等待模型解析结果'); expect(html).toContain('180.0'); expect(html).toContain('未完成'); expect(html).toContain('request-1');
+  });
 });

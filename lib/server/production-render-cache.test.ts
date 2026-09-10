@@ -79,7 +79,7 @@ describe('unchanged render cache hits', () => {
     const state = fixture();
     const result = await savedProductionRender(state.mockupVersions[0], state.units);
     expect(result.bytes.toString()).toBe('verified cached image');
-    expect(readCatalogFile).toHaveBeenCalledWith('cached', { accelerated: true });
+    expect(readCatalogFile).toHaveBeenCalledWith('cached');
     expect(catalogTransaction).not.toHaveBeenCalled();
   });
   it('still checks latest input under a lock before publishing a different pointer', async () => {
@@ -100,7 +100,7 @@ describe('unchanged render cache hits', () => {
       return { rowCount: 1, rows: [] };
     });
     const pending = savedProductionRender(state.mockupVersions[0], state.units);
-    try { await vi.waitFor(() => expect(readCatalogFile).toHaveBeenCalledWith('cached', { accelerated: true })); }
+    try { await vi.waitFor(() => expect(readCatalogFile).toHaveBeenCalledWith('cached')); }
     finally { release(); }
     expect((await pending).bytes.toString()).toBe('verified cached image');
     expect(transactionQuery.mock.calls.some(([sql]) => sql.includes('INSERT INTO production_renders'))).toBe(true);

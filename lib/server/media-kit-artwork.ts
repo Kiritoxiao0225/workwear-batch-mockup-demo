@@ -1,6 +1,8 @@
+import { artworkJobStep, withArtworkStage } from './artwork-job-runtime';
 import { artworkPrintInstruction } from '@/lib/production-artwork-layout';
 import sharp from 'sharp';
 import { refineCircularArtworkEdge } from '@/lib/server/circular-artwork-edge';
+import { withArtworkNetworkContext } from './artwork-network-error';
 
 import {
   createHybridArtworkDraft,
@@ -75,8 +77,15 @@ function mediaKitFailure(label: string, status: number, body: unknown) {
   return new Error(`${label}失败：${code} · ${message}${requestId ? ` · request_id=${requestId}` : ''}`);
 }
 
-async function mediaKitPost(path: string, body: Record<string, unknown>, label: string) {
-  const response = await fetch(`${MEDIA_KIT_ORIGIN}${path}`, {
+async function mediaKitPost(path: string, body: Record<string, unknown>, label: string): Promise<Record<string, unknown>> {
+  // Upload tickets are unique per input; never memoize their empty request body.
+  if (path.includes('request-media-upload-url')) return rawMediaKitPost(path, body, label);
+  if (path.includes('remove-image-background')) return withArtworkStage('cutout', () => rawMediaKitPost(path, body, label));
+  if (path.includes('evaluate-image-quality')) return withArtworkStage('quality', () => rawMediaKitPost(path, body, label));
+  return artworkJobStep(`mediakit:${path}`, 'processing', body, () => rawMediaKitPost(path, body, label));
+}
+async function rawMediaKitPost(path: string, body: Record<string, unknown>, label: string) {
+  const response = await withArtworkNetworkContext(label, () => fetch(`${MEDIA_KIT_ORIGIN}${path}`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${mediaKitApiKey()}`,
@@ -84,11 +93,12 @@ async function mediaKitPost(path: string, body: Record<string, unknown>, label: 
     },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(120_000),
-  });
+  }));
   let responseBody: unknown;
   try {
-    responseBody = await response.json();
-  } catch {
+    responseBody = await withArtworkNetworkContext(`${label}读取响应`, () => response.json());
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
     throw new Error(`${label}返回无效 JSON：HTTP ${response.status}`);
   }
   if (!response.ok
@@ -135,7 +145,11 @@ function uploadHeaders(value: unknown) {
   }));
 }
 
-async function uploadImage(bytes: Buffer, mimeType: string) {
+async function uploadImage(bytes: Buffer, mimeType: string): Promise<string> {
+  // Upload I/O must not hold a processing slot while another stage waits for it.
+  return artworkJobStep('mediakit-upload', 'processing', { bytes, mimeType }, () => rawUploadImage(bytes, mimeType), false);
+}
+async function rawUploadImage(bytes: Buffer, mimeType: string) {
   const uploadRequest = await mediaKitPost(
     '/api/v1/tools-sync/request-media-upload-url',
     {},
@@ -145,7 +159,7 @@ async function uploadImage(bytes: Buffer, mimeType: string) {
   const uploadUrl = resultText(result, 'upload_url', 'MediaKit 申请上传地址');
   const fileId = resultText(result, 'file_id', 'MediaKit 申请上传地址');
   if (!fileId.startsWith('mediakit://')) throw new Error(`MediaKit file_id 协议不正确：${fileId.slice(0, 40)}`);
-  const response = await fetch(uploadUrl, {
+  const response = await withArtworkNetworkContext('MediaKit 上传图片', () => fetch(uploadUrl, {
     method: 'PUT',
     headers: {
       ...uploadHeaders(result.upload_headers),
@@ -153,7 +167,7 @@ async function uploadImage(bytes: Buffer, mimeType: string) {
     },
     body: new Uint8Array(bytes),
     signal: AbortSignal.timeout(120_000),
-  });
+  }));
   if (!response.ok) throw new Error(`MediaKit 上传图片失败：HTTP ${response.status}`);
   return fileId;
 }
@@ -217,9 +231,9 @@ async function transparentImageUrl(imageUrl: string, options: { scene?: 'product
 }
 
 async function downloadResult(url: string, label: string) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+  const response = await withArtworkNetworkContext(`${label}下载`, () => fetch(url, { signal: AbortSignal.timeout(60_000) }));
   if (!response.ok) throw new Error(`${label}下载失败：HTTP ${response.status}`);
-  const bytes = Buffer.from(await response.arrayBuffer());
+  const bytes = Buffer.from(await withArtworkNetworkContext(`${label}读取下载结果`, () => response.arrayBuffer()));
   if (bytes.length === 0 || bytes.length > MAX_RESULT_BYTES) {
     throw new Error(`${label}必须在 1B–20MB，实际 ${bytes.length}B`);
   }

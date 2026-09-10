@@ -22,9 +22,12 @@
     "catalog:restore": "tsx scripts/catalog.ts restore",
     "test:catalog": "tsx scripts/catalog-integration.ts",
     "test:production-storage": "tsx scripts/production-storage-integration.ts",
-    "production:dev": "node scripts/start-production-local.mjs"
+    "production:dev": "node scripts/start-production-local.mjs",
+    "artwork:worker": "tsx scripts/artwork-worker.ts",
+    "test:artwork-jobs": "tsx scripts/artwork-jobs-integration.ts"
   },
   "dependencies": {
+    "@napi-rs/canvas": "1.0.9",
     "@paddleocr/paddleocr-js": "^0.4.2",
     "ali-oss": "^6.23.0",
     "fast-xml-parser": "5.11.1",

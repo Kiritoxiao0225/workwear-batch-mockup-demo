@@ -1,0 +1,15 @@
+.git
+.env
+.env.*
+.vercel
+node_modules
+.next*
+output
+data
+coverage
+*.log
+*.tsbuildinfo
+.DS_Store
+public/uploads
+public/products
+public/task-review-originals

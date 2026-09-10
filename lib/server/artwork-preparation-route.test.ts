@@ -35,3 +35,29 @@ it('retains a generated candidate without rerunning the model when its failure a
   expect(error.failure.candidate).toEqual(candidate);
   expect(prepareStandardArtwork).toHaveBeenCalledOnce();
 });
+
+it.each(['application/x-ndjson', 'application/json'])('returns the unsaved original without treating a storage failure as a cutout failure (%s)', async accept => {
+  const candidate = { runId: 'run-1', url: input.image.dataUrl, model: 'test', reason: '图案已生成，但保存原图失败', promptHash: 'hash', stage: 'original-save' as const };
+  vi.mocked(prepareStandardArtwork).mockRejectedValue(new NativeArtworkCandidateError(candidate));
+  vi.mocked(persistProductionReferences).mockRejectedValue(new Error('storage unavailable'));
+  const response = await POST(new Request('http://localhost/api/wps-production/artwork', { method: 'POST', headers: { accept }, body: JSON.stringify(input) }));
+  const error = await readArtworkResponse(response, () => {}).catch(error => error);
+  expect(error.failure.candidate).toEqual(candidate);
+  expect(error.failure.cutout).toBeUndefined();
+  expect(error.message).toContain('请保留当前页面');
+  expect(error.message).not.toContain('storage unavailable');
+  expect(prepareStandardArtwork).toHaveBeenCalledOnce();
+});
+
+it.each(['application/x-ndjson', 'application/json'])('keeps a rejected text component out of the completed artwork response (%s)', async accept => {
+  const candidate = { runId: 'run-text', url: input.image.dataUrl, model: 'test', reason: '文字组件夹带Logo，未合成或保存成品',
+    promptHash: 'text-hash', stage: 'edit-review' as const, requiresEditVerification: true, cutout };
+  vi.mocked(prepareStandardArtwork).mockRejectedValue(new NativeArtworkCandidateError(candidate));
+  vi.mocked(persistProductionReferences).mockImplementation(async value => value);
+  const response = await POST(new Request('http://localhost/api/wps-production/artwork', { method: 'POST', headers: { accept }, body: JSON.stringify(input) }));
+  const error = await readArtworkResponse(response, () => {}).catch(error => error);
+  expect(error).toBeInstanceOf(ArtworkResponseError);
+  expect(error.failure.candidate).toEqual(candidate);
+  expect(error.failure.result).toBeUndefined();
+  expect(prepareStandardArtwork).toHaveBeenCalledOnce();
+});

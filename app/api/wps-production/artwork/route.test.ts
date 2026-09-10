@@ -49,6 +49,25 @@ it('sends structured streaming failures, and authenticates before opening the st
   expect(prepareStandardArtwork).not.toHaveBeenCalled();
 });
 
+it.each(['application/x-ndjson', 'application/json'])('reports the failed step in Chinese and logs only safe network diagnostics (%s)', async accept => {
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    vi.mocked(prepareStandardArtwork).mockImplementation(async (_request, _services, notify) => {
+      notify?.({ type: 'timing', timing: { stage: 'sourceQuality', startMs: 0, durationMs: 10000, status: 'failed' } });
+      throw new TypeError('fetch failed', { cause: Object.assign(new Error('https://private.example/?key=secret'), { code: 'UND_ERR_CONNECT_TIMEOUT' }) });
+    });
+    const response = await POST(new Request('http://localhost/api/wps-production/artwork', { method: 'POST', headers: { accept }, body: '{}' }));
+    const events = (await response.text()).trim().split('\n').map(line => JSON.parse(line));
+    const failure = events.at(-1);
+    expect(failure.error).toContain('检查原图清晰度未完成：连接服务超时');
+    expect(failure.error).toContain('排查编号');
+    expect(failure.error).not.toContain('fetch failed');
+    expect(log).toHaveBeenCalledWith('[artwork] network failure', expect.objectContaining({ failedStages: ['sourceQuality'], codes: ['UND_ERR_CONNECT_TIMEOUT'] }));
+    expect(JSON.stringify(log.mock.calls)).not.toContain('secret');
+    expect(prepareStandardArtwork).toHaveBeenCalledOnce();
+  } finally { log.mockRestore(); }
+});
+
 it('streams complete only after generated references are persisted', async () => {
   const result = { status: 'prepared', draft: createLegacyArtworkDraft('/api/production-files/ready'), preprocessing: {} } as ArtworkPreparationResponse;
   vi.mocked(prepareStandardArtwork).mockResolvedValue(result);

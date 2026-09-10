@@ -1,5 +1,7 @@
 'use client';
 
+import { useArtworkJobs } from '@/hooks/use-artwork-jobs';
+import { activeArtworkJob, ARTWORK_STAGE_LABELS, type ArtworkStage } from '@/lib/artwork-jobs';
 import { artworkReconstructionPrompt } from '@/lib/artwork-source-assessment';
 import { ProductionOperationLocks, productionOperation, productionOperationsOverlap, type ProductionOperation } from '@/lib/production-operation-lock';
 import { artworkPixelFingerprint } from '@/lib/artwork-save-fingerprint';
@@ -194,7 +196,12 @@ export function WpsProductionClient() {
   const [production, setProduction] = useState<WpsProductionState | null>(null);
   const [operations, setOperations] = useState<ProductionOperation[]>([]);
   const [operationLocks] = useState(() => new ProductionOperationLocks(setOperations));
-  const [artworkJobs, setArtworkJobs] = useState<ArtworkQueueJob[]>([]);
+  const cloudQueue = useArtworkJobs(Boolean(catalogUser));
+  const cloudJobs = cloudQueue.data?.jobs ?? [];
+  const [localArtworkJobs, setArtworkJobs] = useState<ArtworkQueueJob[]>([]);
+  const artworkJobs: ArtworkQueueJob[] = [...localArtworkJobs, ...cloudJobs.filter(activeArtworkJob).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map(job => ({
+    id: job.unitId, status: job.status === 'queued' ? 'queued' as const : 'running' as const, progress: job.message,
+  }))];
   const [artworkQueue] = useState(() => new ArtworkWorkQueue(ARTWORK_CONCURRENCY, setArtworkJobs));
 
   const [message, setMessage] = useState('');
@@ -240,7 +247,7 @@ export function WpsProductionClient() {
     const active = [...operationLocks.entries];
     for (const unit of production.units) {
       const job = artworkJobs.find(job => job.id === unit.id);
-      const reason = artworkQueue.has(unit.id) ? job?.progress || '正在制作图案'
+      const reason = job ? job.progress || '正在制作图案'
         : unsavedArtworks.current.has(unit.id) && options.ignorePending !== unit.id ? '图案等待保存，请先重试保存'
         : ['pending', 'unknown'].includes(cutoutSessions[unit.id]?.result.status) && options.ignoreCutout !== unit.id ? '抠图任务已提交，请继续查询本次结果'
         : activeAttemptFor(unit) && options.ignoreAttempt !== unit.id ? '正在制作，请查询进度' : null;
@@ -267,14 +274,24 @@ export function WpsProductionClient() {
       return { ...next, records: orderWpsSourceRecords(next.sourceRecordOrder, next.records.map(record => record.source)).map(source => byId.get(source.recordId)!) };
     });
   }, []);
+  const completedCloudJobs = cloudJobs.filter(job => job.status === 'completed').map(job => job.id).sort().join(',');
+  useEffect(() => {
+    if (!completedCloudJobs) return;
+    const abort = new AbortController();
+    void fetch('/api/wps-production', { cache: 'no-store', signal: abort.signal })
+      .then(responseJson).then(responseState).then(state => { if (!abort.signal.aborted) acceptProductionState(state); })
+      .catch(() => { /* The next normal production read also restores completed jobs. */ });
+    return () => abort.abort();
+  }, [completedCloudJobs, acceptProductionState]);
+
   const analysis = useWpsAutomaticAnalysis(production, syncMode === 'live' && Boolean(catalogUser) && catalogUser?.role !== 'viewer', acceptProductionState);
 
   useEffect(() => {
-    if (!artworkJobs.length) return;
+    if (!localArtworkJobs.length) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
-  }, [artworkJobs.length]);
+  }, [localArtworkJobs.length]);
 
   const rememberCutout = (unit: ProductionUnit, result: ArtworkCutoutResult, snapshot: string, purpose: CutoutSession['purpose'] = 'recut') => {
     return cutoutStore.remember(unit.id, result, snapshot, purpose);
@@ -632,6 +649,20 @@ export function WpsProductionClient() {
     if (preparationIssue) { setArtworkErrors(current => ({ ...current, [unit.id]: preparationIssue })); return; }
     if (unit.attempts.some(attempt => ['submitted', 'processing', 'unknownSubmission'].includes(attempt.status))) return;
     const expectedUnitSnapshot = productionArtworkSnapshot(unit, record.source);
+    if (cloudQueue.data?.enabled) {
+      try {
+        const queued = await cloudQueue.submit({ action: 'enqueue', units: [{ unitId: unit.id, snapshot: expectedUnitSnapshot }] });
+        const failure = queued.results?.find(result => result.error);
+        if (failure) throw new Error(failure.error);
+        setArtworkErrors(current => ({ ...current, [unit.id]: '' }));
+        setMessage('已加入云端队列，可以切换页面；完成后会自动保存。');
+      } catch (error) { setArtworkErrors(current => ({ ...current, [unit.id]: error instanceof Error ? error.message : String(error) })); }
+      return;
+    }
+    if (cloudQueue.error || !cloudQueue.data) {
+      setArtworkErrors(current => ({ ...current, [unit.id]: '后台队列状态尚未读到，请稍后再试，避免重复提交。' }));
+      return;
+    }
     const processingRoute = artworkProcessingRoute(unit);
     const started = performance.now();
     setArtworkProgress(current => ({ ...current, [unit.id]: { timings: [] } }));
@@ -951,6 +982,25 @@ export function WpsProductionClient() {
     return counts;
   }, [production]);
   const filteredRecords = production?.records.filter((record) => selectedStatuses === null || selectedStatuses.includes(record.source.wpsSource?.status || '未识别状态')) ?? [];
+  const batchReadyUnits = filteredRecords.flatMap(record => production!.units.filter(unit => unit.sourceRecordId === record.source.recordId
+    && !unit.artwork && unit.route !== 'gpt-image-2' && !unitBusyReason(unit.id) && !artworkPreparationIssue(unit, record.source)));
+  const enqueueVisibleArtworks = async () => {
+    if (!production || !batchReadyUnits.length) return;
+    let accepted = 0;
+    const failures: string[] = [];
+    try {
+      for (let start = 0; start < batchReadyUnits.length; start += 100) {
+        const queued = await cloudQueue.submit({ action: 'enqueue', units: batchReadyUnits.slice(start, start + 100).map(unit => ({ unitId: unit.id,
+          snapshot: productionArtworkSnapshot(unit, production.records.find(record => record.source.recordId === unit.sourceRecordId)!.source) })) });
+        for (const result of queued.results ?? []) { if (result.error) failures.push(`${result.unitId}：${result.error}`); else accepted++; }
+      }
+      setMessage(`已加入云端队列 ${accepted} 个图案位置${failures.length ? `，${failures.length} 个未提交` : ''}。可以切换页面，完成后自动保存。`);
+      if (failures.length) setError(failures.join('；'));
+    } catch (error) { setError(`已提交 ${accepted} 个；${error instanceof Error ? error.message : String(error)}。请先查看云端队列，再重试。`); }
+  };
+  const changeCloudJob = async (id: string, action: 'retry' | 'cancel') => {
+    try { await cloudQueue.submit({ id, action }); } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
+  };
   const pendingAnalysisCount = pendingWpsAnalysisRecords(production?.records ?? []).length;
   const actualCost = production?.units.reduce((sum, unit) => sum + unit.attempts.reduce((inner, attempt) => inner + (attempt.actualCostCny ?? 0), 0), 0) ?? 0;
   const approvedVersions = production?.mockupVersions.filter((version) => version.status === 'approved').length ?? 0;
@@ -968,7 +1018,9 @@ export function WpsProductionClient() {
           <div>{analysis.errors.length > 0 && <button className="button secondary" disabled={analysis.running || !analysis.enabled} onClick={() => analysis.retryFailed()} type="button">重试解析失败的任务（{analysis.errors.length}）</button>}<button className="button secondary" disabled={syncPaused || syncing} onClick={() => void load()} type="button">{syncing ? '正在同步 WPS…' : '同步 WPS 状态与素材'}</button>{approvedVersions > 0 && <a className="button primary" href="/api/wps-production/export">导出已确认 ZIP</a>}</div>
         </header>
 
-        <p className="wps-production-queue" role="status" aria-live="polite">需求解析：最多同时 {WPS_ANALYSIS_CONCURRENCY} 条订单。图案制作：同时生图最多 {ARTWORK_CONCURRENCY} 张 · 制作中 {artworkJobs.filter(job => job.status === 'running').length} 张 · 后处理与保存 {artworkJobs.filter(job => job.status === 'finishing').length} 张 · 排队 {artworkJobs.filter(job => job.status === 'queued').length} 张{artworkJobs.length > 0 ? '。其他图案可继续确认、编辑或加入制作队列，请保持页面打开。' : '。点击各行“制作图案”即可加入队列。'}</p>
+        {!cloudQueue.data ? <p className="wps-production-queue" role="status">正在读取制作队列…</p> : cloudQueue.data.enabled ? <p className="wps-production-queue" role="status" aria-live="polite">云端制作：生图最多 6 张 · 抠图最多 2 张 · 评分 1 张，各自空闲即处理。排队 {cloudJobs.filter(job => job.status === 'queued').length} 个 · 处理中 {cloudJobs.filter(job => job.status === 'running').length} 个。切换页面或电脑后仍可查看进度，完成后自动保存。{!cloudQueue.data.workerOnline && ' 后台暂未连接，任务已保存，等待后台恢复。'}</p> : <p className="wps-production-queue" role="status" aria-live="polite">需求解析：最多同时 {WPS_ANALYSIS_CONCURRENCY} 条订单。图案制作：同时生图最多 {ARTWORK_CONCURRENCY} 张 · 制作中 {artworkJobs.filter(job => job.status === 'running').length} 张 · 后处理与保存 {artworkJobs.filter(job => job.status === 'finishing').length} 张 · 排队 {artworkJobs.filter(job => job.status === 'queued').length} 张{artworkJobs.length > 0 ? '。其他图案可继续确认、编辑或加入制作队列，请保持页面打开。' : '。点击各行“制作图案”即可加入队列。'}</p>}
+        {cloudQueue.error && <p className="error-banner" role="alert">后台队列：{cloudQueue.error}</p>}
+        {cloudQueue.data?.enabled && <button type="button" className="button primary" disabled={cloudQueue.submitting || !batchReadyUnits.length} onClick={() => void enqueueVisibleArtworks()}>{cloudQueue.submitting ? '正在提交…' : `批量制作当前筛选的待制作图案（${batchReadyUnits.length}）`}</button>}
 
         <section className="wps-production-stats">
           <div><span>WPS 记录</span><strong>{production?.records.length ?? 0}</strong></div>
@@ -1025,8 +1077,9 @@ export function WpsProductionClient() {
                 const unitBlocked = unitBusyReason(unit.id);
                 const versionBlocked = versionBusyReason(version.id);
                 const preparationDisabled = Boolean(unitBlocked || preparationIssue);
-                const rowError = artworkErrors[unit.id];
-                const nativeCandidate = nativeCandidates[unit.id];
+                const cloudJob = cloudJobs.find(job => job.unitId === unit.id);
+                const rowError = artworkErrors[unit.id] || (cloudJob && !['queued', 'running', 'completed', 'cancelled'].includes(cloudJob.status) ? cloudJob.error : null);
+                const nativeCandidate = cloudJob?.candidate ?? nativeCandidates[unit.id];
                 const activeAttempt = [...unit.attempts].reverse().find(attempt => ['submitted', 'processing', 'unknownSubmission'].includes(attempt.status));
                 const reusableDraft = unit.artwork?.draft;
                 const canReflow = Boolean(reusableDraft?.text && !reusableDraft.extraGraphics?.length && !reusableDraft.extraTexts?.length && reusableDraft.layout.preset !== 'custom' && unit.artwork?.recipeFingerprint === unit.recipeFingerprint);
@@ -1089,11 +1142,14 @@ export function WpsProductionClient() {
                       {cutoutSessions[unit.id].result.status === 'failed' && !cutoutSessions[unit.id].stale && ['standard', 'volcano'].includes(cutoutSessions[unit.id].result.receipt.route) && <button type="button" className="primary" disabled={Boolean(queueJob)} onClick={() => void runCutout(unit, 'meitu')}>可选：美图精细 · 预计 1 积分</button>}
                     </>}
                     {nativeCandidate && <div className="wps-production-row-error">
-                      <a href={nativeCandidate.url} target="_blank" rel="noreferrer">{nativeCandidate.stage === 'edit-review' ? '查看这次做出的图（尚未保存成品）' : '查看刚生成的图（背景还没去好）'}</a>
+                      <a href={nativeCandidate.url} target="_blank" rel="noreferrer">{nativeCandidate.stage === 'original-save' ? '查看刚生成的原图（尚未保存成品）' : nativeCandidate.stage === 'edit-review' ? '查看这次做出的图（尚未保存成品）' : '查看刚生成的图（背景还没去好）'}</a>
                       <a href={nativeCandidate.url} download={`${unit.id}-candidate.png`}>下载这张图</a>
                       <small>这张图还没用到衣服上。需要保留的话，请先下载，再刷新页面。</small>
                     </div>}
-                    {queueJob?.status === 'queued' && <button className="wps-text-button" type="button" onClick={() => artworkQueue.cancel(unit.id)}>取消排队</button>}
+                    {queueJob?.status === 'queued' && <button className="wps-text-button" type="button" onClick={() => cloudJob ? void changeCloudJob(cloudJob.id, 'cancel') : artworkQueue.cancel(unit.id)}>取消排队</button>}
+                    {cloudJob && <details className="wps-inline-records"><summary>后台处理记录</summary><p>{cloudJob.message} · 任务 {cloudJob.id.slice(0, 8)}</p>{cloudJob.steps.length > 0 && <ul>{cloudJob.steps.map((step, index) => <li key={index}>{ARTWORK_STAGE_LABELS[step.stage as ArtworkStage] ?? step.stage}：{step.status === 'completed' ? '已完成' : step.status === 'running' ? '处理中' : step.status === 'unknown' ? '结果不确定' : '未完成'}{step.durationMs !== null ? ` · ${(step.durationMs / 1000).toFixed(1)} 秒` : ''}</li>)}</ul>}</details>}
+                    {cloudJob?.status === 'failed' && <button type="button" disabled={cloudQueue.submitting} onClick={() => void changeCloudJob(cloudJob.id, 'retry')}>继续未完成步骤（复用已生成图片）</button>}
+                    {cloudJob?.status === 'unknown' && <p role="alert">生图返回结果不确定，已锁定原任务，避免重复扣费。任务号：{cloudJob.id}</p>}
                     {pendingSave && !queueJob && <div className="wps-production-row-error"><button type="button" disabled={Boolean(operationReason({ action: 'submitArtwork', unitId: unit.id }, { ignorePending: unit.id }))} onClick={() => void retryArtworkSave(unit)}>重试保存图案</button><a href={String(pendingSave.url)} download>下载已生成图案</a><small>保存重试不会重新生图；请先保存或下载，再刷新页面。</small></div>}
                     {preparationIssue && (!unit.artwork || issues.length > 0) && <div className="wps-production-row-error"><p>{preparationIssue}</p><button className="wps-text-button" disabled={Boolean(unitBlocked)} title={unitBlocked ?? undefined} type="button" onClick={editRequest}>核对素材与参考要求</button></div>}
                     {unit.route !== 'gpt-image-2' && (!unit.artwork || issues.length > 0) && <button className="primary" disabled={preparationDisabled || Boolean(activeAttempt)} onClick={prepare} type="button">{queueJob ? queueJob.status === 'queued' ? '已加入队列' : '正在制作…' : `${unit.artwork ? '重新制作' : '制作'}${positionLabel}图案`}</button>}

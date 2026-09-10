@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import sharp from 'sharp';
-import OSS from 'ali-oss';
-const oss = () => new OSS({ region: process.env.CATALOG_OSS_REGION!, bucket: process.env.CATALOG_OSS_BUCKET!, accessKeyId: process.env.PRODUCTION_DELETE_ACCESS_KEY_ID!, accessKeySecret: process.env.PRODUCTION_DELETE_ACCESS_KEY_SECRET!, secure: true, authorizationV4: true, timeout: 5000 });
+import { catalogOssObjects } from '../lib/server/catalog-oss';
+const oss = () => catalogOssObjects(process.env.CATALOG_OSS_BUCKET!, 'cleanup');
 async function assertObjectDeleted(id: string) {
   const deadline = Date.now() + 45_000;
   while (Date.now() < deadline) {

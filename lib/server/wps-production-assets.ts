@@ -119,7 +119,7 @@ export async function renderProductionMockup(
     return bindings.get(key)!;
   };
   const [, { bytes: garmentBytes }] = await Promise.all([
-    verify(garment), readCatalogFile(garment.imageUrl.split('/').at(-1)!, { accelerated: true }),
+    verify(garment), readCatalogFile(garment.imageUrl.split('/').at(-1)!),
   ]);
   if (sha256(garmentBytes) !== garment.sha256) throw new Error('服装底图内容与确认版本不一致');
   const garmentMetadata = await sharp(garmentBytes, { failOn: 'error' }).metadata();

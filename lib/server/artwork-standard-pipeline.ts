@@ -17,7 +17,8 @@ import type { ArtworkProgressEvent, ArtworkTiming } from '@/lib/artwork-progress
 import { artworkReferenceColors, type ArtworkReferenceColorReceipt } from '@/lib/artwork-reference-color';
 import { resolveArtworkReferenceColor } from './artwork-reference-color';
 import { artworkModelEdits, type ArtworkEditVerification } from '@/lib/artwork-model-edits';
-import { verifyArtworkModelEdits } from './artwork-content-inspection';
+import { verifyArtworkModelEdits, verifyArtworkTextComponent } from './artwork-content-inspection';
+import { artworkTextRemovalChecks } from '@/lib/artwork-text-contract';
 import { inspectArtworkSourceAssessment } from './artwork-source-assessment';
 import { artworkReconstructionRequirements } from '@/lib/artwork-source-assessment';
 
@@ -41,6 +42,7 @@ export const standardArtworkServices = {
   saveGeneration: saveArtworkGenerationReceipt,
   resolveReferenceColor: resolveArtworkReferenceColor,
   verifyEdits: verifyArtworkModelEdits,
+  verifyText: verifyArtworkTextComponent,
 };
 export type StandardArtworkServices = typeof standardArtworkServices;
 const dataUrl = (bytes: Buffer) => `data:image/png;base64,${bytes.toString('base64')}`;
@@ -137,9 +139,42 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
   const sourceProfile = await inspectArtworkSource(sourceBytes);
   const runId = randomUUID();
   const operations: string[] = [];
+  const textComposition: NonNullable<ArtworkRoutingReport['textComposition']> = { operation: prompts.textOperation, components: [] };
+  // Generated components are never standalone finished artwork. Preserve a paid
+  // result on any failure, but do not permit a cutout retry to bypass its checks.
+  async function prepareComponent(prompt: string, images: string[], label: string, verify: (bytes: Buffer) => Promise<void>, preserveBackground = false) {
+    const generated = await services.generate(prompt, images, { background: 'auto' });
+    let bytes = generated.bytes;
+    let stage = '保存组件原图';
+    try {
+      await services.saveImage(runId, `${label}-original`, bytes);
+      stage = '处理组件背景';
+      bytes = preserveBackground ? await sharp(bytes).png().toBuffer() : await generatedCutout(bytes, services);
+      stage = '核对组件内容';
+      await verify(bytes);
+      stage = '检查组件清晰度';
+      const quality = await services.measure(bytes);
+      if (!artworkQualityPassed(quality)) throw new Error(`清晰度 ${quality.score.toFixed(2)}，尚未达到使用标准`);
+      stage = '保存核对后的组件';
+      await services.saveImage(runId, `${label}-checked`, bytes);
+      return { ...generated, bytes, quality };
+    } catch (error) {
+      const reason = `${stage}未通过：${error instanceof Error ? error.message : String(error)}`;
+      // Receipt storage failure must not hide the already generated image.
+      try { await services.saveGeneration(runId, { runId, model: generated.model, prompt, promptHash: artworkPromptHash(prompt),
+        status: 'needs-review', component: label, reason, textComposition, timings: [...timings],
+        originalSha256: artworkSha256(generated.bytes), outputSha256: artworkSha256(bytes) }); }
+      catch { /* The response still carries the actual image for recovery. */ }
+      throw new NativeArtworkCandidateError({ runId, url: dataUrl(bytes), model: generated.model, promptHash: artworkPromptHash(prompt),
+        stage: 'edit-review', requiresEditVerification: true,
+        cutout: error instanceof ArtworkCutoutPendingError ? error.result : undefined,
+        reason: `${reason}。已保留本次图片，尚未合成或保存成品，请先核对；不会自动再次生图。` });
+    }
+  }
   if (referenceColor) operations.push(`参考${referenceColor.label}取色 ${referenceColor.hex}：${referenceColor.description}`);
   const needsSubjectCutout = !modelPreparation && request.sourceScope !== 'wholeImage';
   let earlyGenerated: Awaited<ReturnType<StandardArtworkServices['generate']>> | undefined;
+  let earlyCutout: PromiseSettledResult<Buffer> | undefined;
   let source: ArtworkQualityMeasurement;
   if (modelPreparation) {
     // Full generation and object-artwork reconstruction do not depend on source clarity.
@@ -150,9 +185,21 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
       (async () => {
         const images = reconstructSource && decision.method !== 'generate' ? [request.image.dataUrl] : prompts.imageMapping.map(mapping => mapping.sourceLabel === request.primaryImageLabel ? request.image.dataUrl : request.referenceImages.find(reference => reference.label === mapping.sourceLabel)!.image.dataUrl);
         const generated = await services.generate(modelPrompt!, images, { background: 'auto' });
-        await services.saveImage(runId, 'generated-original', generated.bytes);
-        progress('图案已生成，正在处理透明背景…', true);
+        progress('图案已生成，正在保存原图…', true);
         await preview(generated.bytes, '刚生成的图 · 还要去背景和检查，尚未保存成品');
+        try { await services.saveImage(runId, 'generated-original', generated.bytes); }
+        catch (error) {
+          console.error('[artwork] generated original persistence failed', { runId,
+            name: error instanceof Error ? error.name : 'UnknownError',
+            code: error && typeof error === 'object' && 'code' in error ? error.code : undefined });
+          throw new NativeArtworkCandidateError({ runId, url: dataUrl(generated.bytes), model: generated.model,
+            stage: 'original-save', promptHash: artworkPromptHash(modelPrompt!),
+            requiresEditVerification: reconstructSource || modelEdits.length > 0 || prompts.textOperation === 'replace',
+            reason: '图案已生成，但保存原图失败，还没有开始抠图或保存成品。请先下载这张原图，避免重复生图。' });
+        }
+        progress('图案原图已保存，正在处理透明背景…');
+        // Source scoring is independent: do not leave a cutout worker idle while it runs.
+        [earlyCutout] = await Promise.allSettled([services.cutout(generated.bytes, { scene: 'product', crop: false })]);
         return generated;
       })(),
     ]);
@@ -198,7 +245,8 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
     let pendingCutout: ArtworkCutoutResult | undefined;
     try {
       // Keep the full model layout, including detached lettering, on its original canvas.
-      graphic = await services.cutout(generated.bytes, { scene: 'product', crop: false });
+      if (earlyCutout?.status === 'rejected') throw earlyCutout.reason;
+      graphic = earlyCutout?.status === 'fulfilled' ? earlyCutout.value : await services.cutout(generated.bytes, { scene: 'product', crop: false });
       const preparedMetadata = await sharp(graphic).metadata();
       if (preparedMetadata.format !== 'png' || !preparedMetadata.hasAlpha) throw new Error('抠图结果不是带透明通道的 PNG');
       mask = await alphaMaskReport(graphic);
@@ -217,6 +265,9 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
     const verificationRequirements = reconstructSource
       ? artworkReconstructionRequirements(request.sourceAssessment!)
       : modelEdits.length ? [...modelEdits, '未点名修改的原有文字、字形、数字、装饰、配色及相对排版保持原样；无关来源水印与外围背景除外'] : [];
+    if (decision.method === 'generate' && prompts.textOperation === 'replace') verificationRequirements.push(
+      `指定旧字已按要求替换为 ${JSON.stringify(request.exactText)}，新字只出现要求的次数，旧字不再残留：${request.instruction}`,
+      '未指定替换的原文字与原 Logo 图形数量、结构仍保留，没有把原图和改字后的完整图重复拼接。');
     if (!cutoutFailure && verificationRequirements.length) {
       progress(reconstructSource ? '正在核对原文字、标志与载体残留…' : '正在检查颜色是否改对、其他地方有没有被误改…');
       try {
@@ -336,6 +387,27 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
       ? '保真处理已达标，无需高清重绘。请选择原图保真；本次未执行重绘。'
       : `高清重绘未完成，未将其他处理结果当作重绘成品保存。${reviewReasons.join('；') || graphicDecision.reason}`);
   }
+  if (executedMethod === 'compose' && prompts.textOperation === 'replace') {
+    if (reviewReasons.length) throw new Error(`替换旧字前，主体尚未可用：${reviewReasons.join('；')}`);
+    progress('正在清除指定旧字，核对后再添加新文字…');
+    const checks = artworkTextRemovalChecks(request);
+    const removed = await prepareComponent(prompts.removeText!, [dataUrl(graphic)], 'text-base', async bytes => {
+      const verification = await timed('textRemovalVerification', () => services.verifyEdits(sourceBytes, bytes, checks));
+      textComposition.removal = verification;
+      if (verification.sourceSha256 !== artworkSha256(sourceBytes) || verification.outputSha256 !== artworkSha256(bytes)
+        || verification.checks.length !== checks.length || checks.some((requirement, index) => verification.checks[index]?.requirement !== requirement)) {
+        throw new Error('去旧字核对没有对应当前图片或全部修改要求');
+      }
+      const issues = verification.checks.filter(check => check.status !== 'passed');
+      if (issues.length) throw new Error(`旧字清除或原图保留尚未通过核对：${issues.map(check => check.evidence).join('；')}`);
+    }, request.sourceScope === 'wholeImage');
+    graphic = removed.bytes;
+    graphicQuality = removed.quality;
+    model = removed.model;
+    usedPrompt = [usedPrompt, prompts.removeText].filter(Boolean).join('\n\n');
+    operations.push('已删除指定旧字，并核对其余文字与 Logo 数量、结构；通过后才添加新字');
+    if (removed.generationNote) operations.push(removed.generationNote);
+  }
   const route: ArtworkRouteDecision = { route: executedMethod === 'generate' || executedMethod === 'redraw' ? 'model' : 'fidelity', label: `${{ preserve: 'A 原图保真', redraw: 'B 原设计重建', compose: 'C 图文组合', generate: 'D 整图生成' }[executedMethod]}`, reasons: [decision.reason, ...operations], userOverride: request.processingRoute !== 'auto' };
   const resolution = assessArtworkResolution({ subjectWidth: source.subjectWidth, subjectHeight: source.subjectHeight });
   if (executedMethod === 'compose' && (intent.hasStyleReference || intent.specialTypography) && request.exactText.trim()) route.route = 'hybrid';
@@ -363,12 +435,15 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
   } else if (route.route === 'hybrid') {
     const styledTexts = [];
     for (const [index, text] of prompts.styledTexts.entries()) {
-      const generated = await services.generate(text.prompt, request.referenceImages.map(reference => reference.image.dataUrl));
+      progress(`正在制作并核对文字“${text.text}”…`);
+      const generated = await prepareComponent(text.prompt, request.referenceImages.map(reference => reference.image.dataUrl), `styled-text-${index}`, async bytes => {
+        const verification = await timed('textComponentVerification', () => services.verifyText(bytes, text.text));
+        textComposition.components.push(verification);
+        if (verification.outputSha256 !== artworkSha256(bytes) || verification.targetText !== text.text) throw new Error('文字组件核对没有对应当前图片与目标文字');
+        if (verification.status !== 'passed') throw new Error(`文字组件内容尚未通过核对：${verification.evidence}`);
+      });
       if (generated.generationNote) operations.push(generated.generationNote);
-      await services.saveImage(runId, `styled-text-${index}`, generated.bytes);
-      const bytes = await generatedCutout(generated.bytes, services);
-      const measured = await services.measure(bytes);
-      if (!artworkQualityPassed(measured)) reviewReasons.push(`文字“${text.text}”清晰度 ${measured.score.toFixed(2)}，尚未达标`);
+      const bytes = generated.bytes;
       const size = await sharp(bytes).metadata();
       styledTexts.push({ id: componentPlan.texts[index].id, value: text.text, sourceUrl: dataUrl(bytes), recolorMaskUrl: dataUrl(bytes), width: size.width!, height: size.height! });
       model = generated.model;
@@ -385,7 +460,7 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
       draft.graphic = position(draft.graphic);
       draft.extraGraphics = draft.extraGraphics?.map(position);
     }
-    operations.push(`C 特殊字形生成 ${styledTexts.length} 个组件，程序合成`);
+    operations.push(`C 特殊字形生成 ${styledTexts.length} 个组件，逐一核对准确文字且无额外图形后程序合成`);
   } else if (executedMethod === 'compose') {
     if (componentPlan.texts.length > 1 && draft.text) {
       const vertical = draft.layout.preset === 'vertical' || draft.layout.preset === 'verticalReverse';
@@ -403,11 +478,12 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
   }
   const actualPromptHash = usedPrompt ? artworkPromptHash(usedPrompt) : prompts.hash;
   const report: ArtworkRoutingReport = { version: ARTWORK_ROUTING_STANDARD.version, runId, requestHash: prompts.hash, sourceSha256: artworkSha256(sourceBytes), decision, graphicDecision, executedMethod, graphicMethod,
-    facts, source, repair, graphic: graphicQuality, reviewReasons, operations, model, prompt: usedPrompt, promptHash: actualPromptHash, timings: [...timings], ...(redraw ? { redraw } : {}) };
+    facts, source, repair, graphic: graphicQuality, reviewReasons, operations, model, prompt: usedPrompt, promptHash: actualPromptHash, timings: [...timings], ...(redraw ? { redraw } : {}),
+    ...(executedMethod === 'compose' ? { textComposition } : {}) };
   await services.saveImage(runId, 'prepared-graphic', graphic);
   await services.saveReport(report);
   progress('图案处理完成，正在保存文件…', true);
   draft.preprocessing = { ...draft.preprocessing, referenceColor, cutout: primaryCutoutReceipt, cutoutRuns, backgroundRemoval, edgeRefinement, routingReport: report, processingRoute: route.route, routeReasons: route.reasons, generationModel: model, resolvedPrompt: usedPrompt, promptVersion: prompts.version, promptHash: actualPromptHash, imageMapping: prompts.imageMapping };
-  return { status: 'prepared', draft, preprocessing: { timings: [...timings], cutout: primaryCutoutReceipt, cutoutRuns, nativeOutput: executedMethod === 'generate' && backgroundRemoval === 'none', modelLayoutPreserved: modelPreparation, edgeRefinement, evaluation: evaluation(source), enhancement, backgroundRemoval, sourceKind: sourceProfile.kind, resolution,
+  return { status: 'prepared', draft, preprocessing: { timings: [...timings], cutout: primaryCutoutReceipt, cutoutRuns, nativeOutput: executedMethod === 'generate' && backgroundRemoval === 'none', modelLayoutPreserved: modelPreparation && executedMethod !== 'compose', edgeRefinement, evaluation: evaluation(source), enhancement, backgroundRemoval, sourceKind: sourceProfile.kind, resolution,
     maskQuality: await alphaMaskReport(graphic), decisionRule: [...operations, ...reviewReasons].join('；'), route, generationModel: model, componentPlan, resolvedPrompt: usedPrompt, promptVersion: prompts.version, promptHash: actualPromptHash, imageMapping: prompts.imageMapping } };
 }

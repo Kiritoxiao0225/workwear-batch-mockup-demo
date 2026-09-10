@@ -1,4 +1,5 @@
 import { parseArtworkSourceAssessment } from './artwork-source-assessment';
+import { artworkTextOperation } from './artwork-text-contract';
 import { compileGenerationPrompt, parseGenerationPrompt } from './artwork-generation-prompt';
 import { artworkPrintInstruction, artworkPrintPlacementSchema, type ArtworkPrintPlacement } from './production-artwork-layout';
 import { clarityFromStandardBlur } from '@/lib/artwork-routing-standard';
@@ -89,9 +90,9 @@ export type ArtworkPreparationRequest = {
   expectedPromptHash?: string;
 };
 
-export const ARTWORK_MODEL_PROMPT_VERSION = 'task-review-artwork-v10';
+export const ARTWORK_MODEL_PROMPT_VERSION = 'task-review-artwork-v11';
 
-export type NativeArtworkCandidate = { runId: string; url: string; model: string; reason: string; promptHash: string; stage?: 'edit-review'; requiresEditVerification?: boolean; cutout?: import('@/lib/artwork-cutout').ArtworkCutoutResult };
+export type NativeArtworkCandidate = { runId: string; url: string; model: string; reason: string; promptHash: string; stage?: 'edit-review' | 'original-save'; requiresEditVerification?: boolean; cutout?: import('@/lib/artwork-cutout').ArtworkCutoutResult };
 
 export type ArtworkModelImageMapping = {
   sourceLabel: string;
@@ -239,14 +240,18 @@ export function buildCanonicalArtworkModelPrompt(
     const compiled = compileGenerationPrompt(input.generationPrompt, imageMapping);
     const prompt = input.primaryImageRole === 'reference'
       ? `${compiled}\n\n【文字内容与参考边界】唯一允许出现的文字为 ${JSON.stringify(exactText)}，逐字准确。所有输入图片仅供字形、颜色或排版参考；不复制其原文字、标识内容、人物、服装、场景或界面。`
-      : compiled;
+      : artworkTextOperation(input) === 'replace'
+        ? `${compiled}\n\n【替换文字边界】只替换本单元明确指定的旧字为 ${JSON.stringify(exactText)}，旧字不得残留；未指定替换的其他原文字照常保留。原 Logo 数量、结构、配色保持一致，不复制原图或将旧版与新版上下拼接。`
+        : compiled;
     return { version: ARTWORK_MODEL_PROMPT_VERSION, prompt, promptHash: stablePromptHash(prompt), targetText: exactText, imageMapping };
   }
   const mappingLines = imageMapping.map((mapping) => (
     `- 模型输入${mapping.modelInputLabel} = WPS ${mapping.sourceLabel}；${mapping.role === 'content' ? '内容素材' : '参考素材'}：${mapping.requirement}`
   ));
   const targetTextRule = exactText
-    ? `需要新增的准确文字为“${exactText}”；新增文字必须逐字、逐数字准确，不得增字、漏字、错字或改写。此限制只约束新增文字，不得删除或改写内容素材本身已有的品牌、校徽或标志文字。`
+    ? artworkTextOperation(input) === 'replace'
+      ? `删除本单元明确指定替换的旧字，替换为准确文字“${exactText}”，逐字准确。未指定替换的原文字仍须保留；Logo 只保留原有数量，不复制整图，不把旧字与新字上下叠加。`
+      : `需要新增的准确文字为“${exactText}”；新增文字必须逐字、逐数字准确，不得增字、漏字、错字或改写。此限制只约束新增文字，不得删除或改写内容素材本身已有的品牌、校徽或标志文字。`
     : '客户没有要求新增文字，不得自行添加任何文字。';
   const layoutRule = layoutNote || 'WPS 原文没有提供更多排版细节，不得自行补充为客户要求。';
   const prompt = [

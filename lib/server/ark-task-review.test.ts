@@ -2,10 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { analyzeSourceTaskRecords, planArtworkGenerationPrompt } from '@/lib/server/ark-task-review';
 import { sourceTaskSnapshot } from '@/lib/task-review-snapshot';
+import { WpsAnalysisTrace } from './wps-analysis-trace';
 
 vi.mock('@/lib/server/wps-production-garments', () => ({ productionCatalogStyles: async () => [] }));
 
 beforeEach(() => {
+  vi.spyOn(console, 'info').mockImplementation(() => {});
   vi.stubEnv('WPS_ANALYSIS_PROVIDER', 'ark');
   vi.stubEnv('WPS_ANALYSIS_MODEL', '');
   vi.stubEnv('WPS_ANALYSIS_REASONING_EFFORT', 'medium');
@@ -13,6 +15,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   delete process.env.ARK_RUNTIME_API_KEY;
@@ -121,7 +124,7 @@ describe('task review vision analysis input', () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw timeout; }));
 
     await expect(analyzeSourceTaskRecords([record])).rejects.toThrow(
-      `任务分析模型处理超时（120 秒）：${record.customerId}/${record.recordId}；该行请求失败不会影响其他行，可重新分析`,
+      `任务分析模型处理超时（180 秒）：${record.customerId}/${record.recordId}；该行请求失败不会影响其他行，可重新分析`,
     );
   });
 
@@ -177,6 +180,48 @@ describe('task review vision analysis input', () => {
     useProxy();
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ choices: [{ finish_reason: 'length', message: { content: JSON.stringify(validAnalysis()) } }] }))));
     await expect(analyzeSourceTaskRecords([sourceTaskSnapshot()[0]])).rejects.toThrow('任务分析输出被截断');
+  });
+
+  it('records separate input, model wait, response and expansion durations without logging content', async () => {
+    useProxy();
+    const source = sourceTaskSnapshot()[0];
+    const body = validAnalysis(), unit = body.records[0].units[0];
+    const reply = { records: [{ recordId: source.recordId, summary: '测试',
+      garments: [{ id: 'g1', styleCode: 'B01SD', colorText: '活力黑', sizeText: '' }, { id: 'g2', styleCode: 'B01SD', colorText: '月牙白', sizeText: '' }],
+      artworks: [{ ...unit, id: 'a1', garmentIds: ['g1', 'g2'] }],
+    }] };
+    const progress = vi.fn();
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(reply) } }] }))));
+    const result = await analyzeSourceTaskRecords([source], { trace: new WpsAnalysisTrace(progress) });
+    expect(result.optimization).toMatchObject({ artworkDefinitions: 1, expandedUnits: 2, candidateStyles: 0 });
+    expect(result.timing.stages.map(item => item.stage)).toEqual(['queue', 'catalog', 'images', 'model', 'response', 'expand']);
+    expect(result.timing.stages.every(item => item.durationMs >= 0 && item.status === 'completed')).toBe(true);
+    expect(progress.mock.calls.filter(([event]) => event.type === 'stage').map(([event]) => event.stage)).toEqual(result.timing.stages.map(item => item.stage));
+    expect(JSON.stringify(vi.mocked(console.info).mock.calls)).not.toContain(source.requirementText);
+  });
+
+  it('removes canceled queued work so it never calls the paid model later', async () => {
+    useProxy();
+    const replies: Array<(response: Response) => void> = [];
+    const fetchMock = vi.fn(() => new Promise<Response>(resolve => replies.push(resolve)));
+    vi.stubGlobal('fetch', fetchMock);
+    const jobs = Array.from({ length: 5 }, () => analyzeSourceTaskRecords([sourceTaskSnapshot()[0]]));
+    await vi.waitFor(() => expect(replies).toHaveLength(5));
+    const controller = new AbortController();
+    const canceled = analyzeSourceTaskRecords([sourceTaskSnapshot()[0]], { signal: controller.signal }).catch(error => error);
+    controller.abort(new DOMException('deadline', 'TimeoutError'));
+    expect((await canceled).name).toBe('TimeoutError');
+    replies.forEach(reply => reply(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(validAnalysis()) } }] }))));
+    await Promise.all(jobs);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+
+  it('labels a response-body timeout and releases the request instead of treating it as invalid JSON', async () => {
+    useProxy();
+    const response = new Response('');
+    vi.spyOn(response, 'json').mockRejectedValue(new DOMException('body timeout', 'TimeoutError'));
+    vi.stubGlobal('fetch', vi.fn(async () => response));
+    await expect(analyzeSourceTaskRecords([sourceTaskSnapshot()[0]])).rejects.toThrow('模型返回内容超时');
   });
 });
 
