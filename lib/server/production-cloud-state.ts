@@ -9,6 +9,24 @@ export async function readCloudProductionState(): Promise<WpsProductionState> {
   if (!row) throw new Error('云端生产状态尚未初始化；请先完成迁移');
   return row.state_jsonb;
 }
+
+/** Preview requests arrive in parallel. Transfer only this version and its units,
+ * while retaining the state-row lock when publishing a current render pointer. */
+export async function readCloudProductionPreviewState(versionId: string, client: CatalogQueryClient = catalogDatabase(), lock = false) {
+  const row = (await client.query(`SELECT jsonb_build_object(
+    'mockupVersions', COALESCE((SELECT jsonb_agg(v) FROM jsonb_array_elements(s.state_jsonb->'mockupVersions') v WHERE v->>'id'=$2), '[]'::jsonb),
+    'units', COALESCE((SELECT jsonb_agg(u) FROM jsonb_array_elements(s.state_jsonb->'units') u WHERE u->>'id' IN (
+      SELECT jsonb_array_elements_text(v->'unitIds') FROM jsonb_array_elements(s.state_jsonb->'mockupVersions') v WHERE v->>'id'=$2
+    )), '[]'::jsonb)
+  ) AS state_jsonb FROM production_states s WHERE s.state_key=$1${lock ? ' FOR UPDATE OF s' : ''}`, [productionStateKey(), versionId])).rows[0];
+  return row ? row.state_jsonb as Pick<WpsProductionState, 'mockupVersions' | 'units'> : null;
+}
+
+export async function readCloudProductionSourceOrder(): Promise<string[]> {
+  const row = (await catalogDatabase().query("SELECT state_jsonb->'sourceRecordOrder' AS source_order FROM production_states WHERE state_key=$1", [productionStateKey()])).rows[0];
+  if (!row) throw new Error('云端生产状态尚未初始化；请先完成迁移');
+  return row.source_order ?? [];
+}
 export async function writeCloudProductionState(client: CatalogQueryClient, state: WpsProductionState, key = productionStateKey()) {
   const refs = productionFileReferences(state);
   const ids = [...new Set(refs.map(ref => ref.id))].sort();

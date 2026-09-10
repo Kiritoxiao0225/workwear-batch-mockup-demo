@@ -11,7 +11,7 @@ import { catalogDatabase, catalogTransaction, migrateCatalog, closeCatalogDataba
 import { fileSha256, readCatalogFile } from '../lib/server/catalog-files';
 import { saveProductionFile, productionFileReferences } from '../lib/server/production-storage';
 import { claimProductionUpload } from '../lib/server/production-upload';
-import { writeCloudProductionState } from '../lib/server/production-cloud-state';
+import { writeCloudProductionState, readCloudProductionPreviewState, readCloudProductionSourceOrder } from '../lib/server/production-cloud-state';
 import { cleanupReplacedFiles, queueReplacedFiles } from '../lib/server/production-replaced-files';
 import { readWpsProductionState, mutateWpsProductionState } from '../lib/server/wps-production-store';
 import { emptyWpsProductionState, importTaskReviews, confirmProductionArtwork } from '../lib/wps-production';
@@ -78,7 +78,26 @@ try {
   pass('并发单上传资格、同哈希单文件、20 次复用及响应丢失后查询恢复');
   const hidden = await saveProductionFile(await sharp(pixels).negate().png().toBuffer(), 'hidden.png');
   let state = importTaskReviews(emptyWpsProductionState(), [taskReviewFixture()[2]]);
+  state.sourceRecordOrder = state.records.map(record => record.source.recordId);
   await catalogTransaction(client => writeCloudProductionState(client, state));
+  const projectionFixture = importTaskReviews(emptyWpsProductionState(), taskReviewFixture());
+  await catalogTransaction(client => writeCloudProductionState(client, projectionFixture, 'preview-projection-test'));
+  process.env.WPS_PRODUCTION_STATE_KEY = 'preview-projection-test';
+  const previewVersion = projectionFixture.mockupVersions[0];
+  const previewState = await readCloudProductionPreviewState(previewVersion.id);
+  assert.deepEqual(previewState, JSON.parse(JSON.stringify({
+    mockupVersions: [previewVersion], units: projectionFixture.units.filter(unit => previewVersion.unitIds.includes(unit.id)),
+  })));
+  assert.ok(previewState!.units.length < projectionFixture.units.length);
+  assert.deepEqual(await catalogTransaction(client => readCloudProductionPreviewState(previewVersion.id, client, true)), previewState);
+  assert.deepEqual(await readCloudProductionPreviewState('missing-version'), { mockupVersions: [], units: [] });
+  process.env.WPS_PRODUCTION_STATE_KEY = 'integration';
+  assert.deepEqual(await readCloudProductionSourceOrder(), state.sourceRecordOrder);
+  process.env.WPS_PRODUCTION_STATE_KEY = 'another-workspace';
+  assert.equal(await readCloudProductionPreviewState(previewVersion.id), null);
+  await assert.rejects(() => readCloudProductionSourceOrder(), /尚未初始化/u);
+  process.env.WPS_PRODUCTION_STATE_KEY = 'integration';
+  pass('预览仅读取指定版本及其单元，发布锁与工作台隔离保留；同步仅读取任务顺序');
   const inputs = state.units.map(unit => ({ action: 'submitArtwork', operationId: randomUUID(), expectedRevision: state.revision,
     expectedUnitSnapshot: productionArtworkSnapshot(unit, state.records[0].source), unitId: unit.id, url: image.url, name: 'image.png', service: 'manual-upload', requestSummary: 'integration' }));
   const responses = await Promise.all(inputs.map(input => post(input)));

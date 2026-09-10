@@ -9,7 +9,7 @@ import { catalogDatabase, catalogTransaction } from './catalog-database';
 import { fileSha256, readCatalogFile } from './catalog-files';
 import { productionStateKey, saveProductionFile } from './production-storage';
 import { productionPreviewUnits, renderProductionMockup } from './wps-production-assets';
-import { readCloudProductionState } from './production-cloud-state';
+import { readCloudProductionPreviewState } from './production-cloud-state';
 import { queueReplacedFiles } from './production-replaced-files';
 
 function sourceFingerprint(version: ProductionMockupVersion, units: ProductionUnit[]) {
@@ -33,9 +33,8 @@ async function renderFingerprint(version: ProductionMockupVersion, units: Produc
 async function publishCurrent(version: ProductionMockupVersion, originalUnits: ProductionUnit[], inputHash: string, fileId: string) {
   const expected = sourceFingerprint(version, originalUnits);
   return catalogTransaction(async client => {
-    const row = (await client.query('SELECT state_jsonb FROM production_states WHERE state_key=$1 FOR UPDATE', [productionStateKey()])).rows[0];
-    if (!row) { await queueReplacedFiles(client, [fileId]); return false; }
-    const state = row.state_jsonb as Awaited<ReturnType<typeof readCloudProductionState>>;
+    const state = await readCloudProductionPreviewState(version.id, client, true);
+    if (!state) { await queueReplacedFiles(client, [fileId]); return false; }
     const latest = state.mockupVersions.find(candidate => candidate.id === version.id);
     if (!latest) { await queueReplacedFiles(client, [fileId]); return false; }
     const units = latest.unitIds.map(id => state.units.find(unit => unit.id === id)!);

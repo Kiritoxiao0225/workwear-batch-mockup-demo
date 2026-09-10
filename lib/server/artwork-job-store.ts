@@ -16,7 +16,7 @@ export async function retainJobFiles(client: CatalogQueryClient, id: string, val
 }
 export async function enqueueArtworkJob(input: ArtworkJobInput, snapshot: string) {
   return catalogTransaction(async client => {
-    const stored = (await client.query('SELECT state_jsonb FROM production_states WHERE state_key=$1 FOR SHARE', [productionStateKey()])).rows[0];
+    const stored = (await client.query(`SELECT ${input.sharedSnapshot ? 'state_jsonb' : 'revision'} FROM production_states WHERE state_key=$1 FOR SHARE`, [productionStateKey()])).rows[0];
     if (input.sharedSnapshot && !stored) throw new Error('共用图稿生产状态不存在');
     if (stored && input.sharedSnapshot) {
       assertProductionArtworkSnapshot(stored.state_jsonb, input.unit.id, snapshot);
