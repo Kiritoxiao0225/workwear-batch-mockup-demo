@@ -2,32 +2,48 @@ import { createHash, randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import type { ArtworkCutoutMode, ArtworkCutoutResult } from '@/lib/artwork-cutout';
 import { ARTWORK_CUTOUT_VERSION } from '@/lib/artwork-cutout';
-import { analyzeArtworkCutout, validateCutoutOutput } from './artwork-cutout-analysis';
+import { analyzeArtworkCutout, validateCutoutOutput, ArtworkCutoutContentError } from './artwork-cutout-analysis';
 import { inspectArtworkSource, removeFlatArtworkBackground } from './artwork-image-processing';
 import { assertCutoutStoreReady, readCutoutJob, claimCutoutJob, saveCutoutJob, type StoredCutout } from './artwork-cutout-store';
 import { MEITU_CUTOUT_VERSION, MeituSubmissionNotStartedError, uploadMeituCutoutInput, submitMeituCutout, queryMeituCutout, downloadMeituCutout, meituCutoutCredits } from './meitu-cutout';
 import { productionStateKey } from './production-storage';
 import { submitArtworkBackgroundRemoval, downloadArtworkBackgroundRemoval } from './media-kit-artwork';
 import { protectArtworkBadges } from './artwork-badge-protection';
+import { inspectArtworkWatermarks } from './artwork-content-inspection';
 
 const sha = (value: Buffer | string) => createHash('sha256').update(value).digest('hex');
 const inline = (bytes: Buffer) => `data:image/png;base64,${bytes.toString('base64')}`;
 export const cutoutServices = { upload: uploadMeituCutoutInput, submit: submitMeituCutout, query: queryMeituCutout, download: downloadMeituCutout, credits: meituCutoutCredits,
-  volcano: submitArtworkBackgroundRemoval, volcanoDownload: downloadArtworkBackgroundRemoval };
+  volcano: submitArtworkBackgroundRemoval, volcanoDownload: downloadArtworkBackgroundRemoval, inspectWatermarks: inspectArtworkWatermarks };
 export type CutoutServices = typeof cutoutServices;
-function publicResult(job: StoredCutout, cacheHit = false): ArtworkCutoutResult { return { status: job.status, url: job.url, error: job.error, receipt: { ...job.receipt, cacheHit } }; }
+function publicResult(job: StoredCutout, cacheHit = false): ArtworkCutoutResult { return { status: job.status, url: job.url, error: job.error, candidate: job.candidate, receipt: { ...job.receipt, cacheHit } }; }
 function errorText(error: unknown) { return error instanceof Error ? error.message : String(error); }
 
-async function checkedProviderOutput(bytes: Buffer, job: StoredCutout) {
+async function checkedProviderOutput(bytes: Buffer, job: StoredCutout, services: CutoutServices) {
+  const metadata = await sharp(bytes).metadata();
+  if (metadata.width && metadata.height) job.candidate = { url: inline(bytes), width: metadata.width, height: metadata.height, missingRegions: [] };
   await validateCutoutOutput(bytes);
   const source = Buffer.from(job.receipt.sourceUrl.split(',')[1], 'base64');
   const protectedResult = await protectArtworkBadges(source, bytes);
-  await validateCutoutOutput(protectedResult.bytes, source);
+  if (job.candidate) job.candidate.url = inline(protectedResult.bytes);
+  // Retain the paid provider output before a potentially slow visual inspection.
+  await saveCutoutJob(job);
+  try {
+    const watermarks = await validateCutoutOutput(protectedResult.bytes, source, { inspectWatermarks: services.inspectWatermarks });
+    if (watermarks.length) {
+      job.receipt.excludedWatermarks = watermarks;
+      job.receipt.reasons.push(`完整性检查已排除确认的生成平台水印：${[...new Set(watermarks.map(mark => mark.text))].join('、')}`);
+    }
+  } catch (error) {
+    if (job.candidate && error instanceof ArtworkCutoutContentError) job.candidate.missingRegions = error.missingRegions;
+    throw error;
+  }
   if (protectedResult.regions.length) {
     job.receipt.badgeProtection = { regions: protectedResult.regions.length, restoredPixels: protectedResult.restoredPixels };
     const reason = `已保护 ${protectedResult.regions.length} 个圆形徽章，圆内使用原图像素，保留底色与白色图形`;
     if (!job.receipt.reasons.includes(reason)) job.receipt.reasons.push(reason);
   }
+  job.candidate = undefined;
   return protectedResult.bytes;
 }
 
@@ -35,7 +51,7 @@ async function finishVolcanoCutout(job: StoredCutout, services: CutoutServices):
   let bytes: Buffer;
   try { bytes = await services.volcanoDownload(job.providerResultUrl!); }
   catch (error) { return { ...publicResult(job), error: `火山结果下载暂未完成：${errorText(error)}；继续查询同一任务，不重新抠图` }; }
-  try { bytes = await checkedProviderOutput(bytes, job); }
+  try { bytes = await checkedProviderOutput(bytes, job, services); }
   catch (error) {
     job.status = 'failed'; job.phase = 'finished'; job.error = `火山抠图结果未通过检查：${errorText(error)}；原图已保留，可查看原图或手动选择其他方式`;
     await saveCutoutJob(job); return publicResult(job);
@@ -72,7 +88,7 @@ export async function queryArtworkCutout(key: string, services: CutoutServices =
       const url = response.data?.result?.media_info_list?.[0]?.media_data;
       if (!url) throw new Error('美图任务完成但缺少图片地址，继续查询本次任务');
       let bytes: Buffer = await services.download(url);
-      try { bytes = await checkedProviderOutput(bytes, job); }
+      try { bytes = await checkedProviderOutput(bytes, job, services); }
       catch (error) { job.status = 'failed'; job.error = `美图结果未通过图案检查：${errorText(error)}`; job.phase = 'finished'; await saveCutoutJob(job); return publicResult(job); }
       job.url = inline(bytes); job.status = 'completed'; job.phase = 'finished'; job.error = undefined;
       job.receipt.outputSha256 = sha(bytes); job.receipt.completedAt = new Date().toISOString();

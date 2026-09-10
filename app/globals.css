@@ -1507,6 +1507,11 @@ button.catalog-card-image { width: 100%; padding: 0; border: 0; cursor: zoom-in;
 /* Unified garment canvas: one edit entry and one save for all print positions. */
 .wps-framed-preview .wps-output-preview { cursor: zoom-in !important; }
 .wps-preview-status { position: absolute; z-index: 1; bottom: 8px; left: 8px; right: 8px; padding: 6px; background: rgb(255 255 255 / 92%); color: #405047; font-size: 12px; }
+.wps-material-image-status { position: absolute; inset: 0 0 20px; display: grid; place-content: center; padding: 3px; color: #526158; background: #eef2ed; font: normal 11px/1.45 sans-serif; text-align: center; white-space: normal; }
+.wps-material-image[data-load-state='failed'] { cursor: pointer; }
+.wps-material-image[data-load-state='failed'] .wps-material-image-status { color: #93402f; }
+.wps-material-image-large { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; padding: 0; background: transparent; }
+.wps-material-image-large .wps-material-image-status { inset: 0; font-size: 14px; }
 .wps-placement-dialog > footer > div { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; flex-shrink: 0; }
 .wps-placement-canvas [role="button"]:focus-visible { outline: 2px solid #16815b; outline-offset: 4px; }
 

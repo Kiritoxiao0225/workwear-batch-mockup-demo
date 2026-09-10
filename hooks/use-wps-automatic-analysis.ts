@@ -5,6 +5,12 @@ import type { WpsProductionState } from '@/lib/wps-production';
 import { canAnalyzeWpsTask, pendingWpsAnalysisRecords, wpsSourceEvidence } from '@/lib/wps-source';
 import { runTaskReviewAnalysisBatch } from '@/lib/client/task-review-analysis-batch';
 
+export type WpsAnalysisStatus = {
+  phase: 'queued' | 'analyzing' | 'saving' | 'failed';
+  error?: string;
+  parsed?: boolean;
+};
+
 async function json<T>(response: Response): Promise<T> {
   const body = await response.json();
   if (!response.ok) throw Object.assign(new Error(body.error || `HTTP ${response.status}`), { status: response.status });
@@ -17,7 +23,7 @@ export function useWpsAutomaticAnalysis(state: WpsProductionState | null, enable
   const parsed = useRef(new Map<string, { reviews: TaskReview[] }>());
   const currentSources = useRef<SourceTaskRecord[]>([]);
   const [progress, setProgress] = useState({ running: false, completed: 0, total: 0 });
-  const [failures, setFailures] = useState<Record<string, string>>({});
+  const [statuses, setStatuses] = useState<Record<string, WpsAnalysisStatus>>({});
   const [retry, setRetry] = useState(0);
   useEffect(() => { currentSources.current = state?.records.map(record => record.source) ?? []; }, [state]);
   useEffect(() => {
@@ -25,6 +31,7 @@ export function useWpsAutomaticAnalysis(state: WpsProductionState | null, enable
     const pending = pendingWpsAnalysisRecords(state.records).map(record => record.source).filter(source => !attempted.current.has(wpsSourceEvidence(source)));
     if (!pending.length) return;
     pending.forEach(source => attempted.current.add(wpsSourceEvidence(source)));
+    setStatuses(current => ({ ...current, ...Object.fromEntries(pending.map(source => [wpsSourceEvidence(source), { phase: 'queued' as const }])) }));
     running.current = true;
     setProgress({ running: true, completed: 0, total: pending.length });
     const assertCurrentSource = (source: SourceTaskRecord) => {
@@ -34,13 +41,20 @@ export function useWpsAutomaticAnalysis(state: WpsProductionState | null, enable
     void runTaskReviewAnalysisBatch(pending, async source => {
       assertCurrentSource(source);
       const key = wpsSourceEvidence(source);
-      if (parsed.current.has(key)) return parsed.current.get(key)!;
+      if (parsed.current.has(key)) {
+        setStatuses(current => ({ ...current, [key]: { phase: 'saving' } }));
+        return parsed.current.get(key)!;
+      }
+      setStatuses(current => ({ ...current, [key]: { phase: 'analyzing' } }));
       const result = await json<{ reviews: TaskReview[] }>(await fetch('/api/wps-production/analyze', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ records: [source] }), signal: AbortSignal.timeout(180_000),
       }));
+      if (!result.reviews?.some(review => review.source.recordId === source.recordId && review.units.length > 0)) throw new Error('未解析出可制作的印花位置，请检查需求后重试');
       parsed.current.set(key, result);
+      setStatuses(current => ({ ...current, [key]: { phase: 'saving' } }));
       return result;
     }, async (result, source) => {
+      setStatuses(current => ({ ...current, [wpsSourceEvidence(source)]: { phase: 'saving' } }));
       // Other rows may save while the model runs. Retry only the commit, never the model.
       for (let attempt = 0; attempt < 3; attempt++) {
         assertCurrentSource(source);
@@ -58,7 +72,13 @@ export function useWpsAutomaticAnalysis(state: WpsProductionState | null, enable
     }, (source, error) => {
       const key = wpsSourceEvidence(source);
       if (!error) parsed.current.delete(key);
-      setFailures(current => { const next = { ...current }; if (error) next[key] = `${source.customerId}：${error instanceof Error ? error.message : String(error)}`; else delete next[key]; return next; });
+      const hasParsed = parsed.current.has(key);
+      setStatuses(current => {
+        const next = { ...current };
+        if (error) next[key] = { phase: 'failed', error: error instanceof Error ? error.message : String(error), parsed: hasParsed };
+        else delete next[key];
+        return next;
+      });
       setProgress(current => ({ ...current, completed: current.completed + 1 }));
     }).finally(() => {
       running.current = false;
@@ -66,9 +86,22 @@ export function useWpsAutomaticAnalysis(state: WpsProductionState | null, enable
       setRetry(current => current + 1);
     });
   }, [state, enabled, accept, retry]);
-  const activeEvidence = new Set(state?.records.filter(record => canAnalyzeWpsTask(record.source)).map(record => wpsSourceEvidence(record.source)));
-  const errors = Object.entries(failures).filter(([key]) => activeEvidence.has(key));
-  return { ...progress, errors: errors.map(([, message]) => message), retryFailed: () => {
-    errors.forEach(([key]) => attempted.current.delete(key)); setFailures({}); setRetry(current => current + 1);
-  } };
+  const pendingSources = pendingWpsAnalysisRecords(state?.records ?? []).map(record => record.source);
+  const failedSources = pendingSources.filter(source => statuses[wpsSourceEvidence(source)]?.phase === 'failed');
+  return {
+    ...progress,
+    enabled,
+    statuses: Object.fromEntries(pendingSources.map(source => [source.recordId, statuses[wpsSourceEvidence(source)]])),
+    errors: failedSources.map(source => `${source.customerId}：${statuses[wpsSourceEvidence(source)].error}`),
+    retryFailed: (source?: SourceTaskRecord) => {
+      const keys = failedSources.filter(failed => !source || wpsSourceEvidence(failed) === wpsSourceEvidence(source)).map(wpsSourceEvidence);
+      keys.forEach(key => attempted.current.delete(key));
+      setStatuses(current => {
+        const next = { ...current };
+        keys.forEach(key => { next[key] = { phase: 'queued' }; });
+        return next;
+      });
+      setRetry(current => current + 1);
+    },
+  };
 }

@@ -10,6 +10,8 @@ import {
   createHybridArtworkDraft,
   createLegacyArtworkDraft,
   createStructuredArtworkDraft,
+  inferredArtworkLayout,
+  inferredArtworkTextArc,
   snapArtworkPosition,
 } from '@/lib/artwork-editor';
 import { alphaContentBounds, artworkDraftCanvasBounds } from '@/lib/client/render-artwork';
@@ -157,6 +159,23 @@ describe('artwork editor draft contract', () => {
 });
 
 describe('artwork text deformation', () => {
+  it.each([
+    ['圆弧形文字“小景是牙医”，文字下面组合图1', '小景是牙医', 'up', 'verticalReverse'],
+    ['文字“小景是牙医”排成圆弧形，置于牙齿图形上方', '小景是牙医', 'up', 'verticalReverse'],
+    ['文字排成下弧，图上字下', '牙医', 'down', 'vertical'],
+    ['文字沿弧排列，字上图下', '牙医', 'up', 'verticalReverse'],
+    ['文字做扇形，字左图右', '牙医', 'up', 'horizontalReverse'],
+    ['弧形', '牙医', 'up', 'vertical'],
+    ['牙齿图案外轮廓为弧形，下方添加文字', '牙医', 'none', 'vertical'],
+    ['保留弧形轮廓并添加文字', '牙医', 'none', 'vertical'],
+    ['文字不要弧形，改为直排', '牙医', 'none', 'vertical'],
+    ['文字不要直排，改为圆弧形', '牙医', 'up', 'vertical'],
+    ['文字“弧形艺术”', '弧形艺术', 'none', 'vertical'],
+  ])('interprets text geometry without confusing copy or logo shapes: %s', (requirement, exactText, arc, layout) => {
+    expect(inferredArtworkTextArc(requirement, exactText).mode).toBe(arc);
+    expect(inferredArtworkLayout(requirement, exactText)).toBe(layout);
+  });
+
   it('lays out multiline copy on separate baselines with per-line alignment and measured widths', () => {
     const text = addArtworkText(createLegacyArtworkDraft('/old.png'), { x: 512, y: 512 }).draft.text!;
     Object.assign(text, { value: 'AB\r\nC', fontSize: 40, lineHeight: 1.5, boxWidth: 200, letterSpacing: 0, align: 'left' });
@@ -192,6 +211,12 @@ describe('artwork text deformation', () => {
     expect(downward[1].y).toBeGreaterThan(0);
     expect(Math.abs(upward[1].y)).toBeCloseTo(Math.abs(downward[1].y));
     expect(upward.map((glyph) => glyph.x)).toEqual(downward.map((glyph) => glyph.x));
+    expect(upward[0].rotation).toBeLessThan(0);
+    expect(upward.at(-1)!.rotation).toBeGreaterThan(0);
+    expect(downward[0].rotation).toBeGreaterThan(0);
+    expect(downward.at(-1)!.rotation).toBeLessThan(0);
+    const middleSlope = (upward[2].y - upward[0].y) / (upward[2].x - upward[0].x);
+    expect(Math.tan(upward[1].rotation * Math.PI / 180)).toBeCloseTo(middleSlope);
   });
 
   it('preserves the font proportions when text exceeds its alignment box', () => {

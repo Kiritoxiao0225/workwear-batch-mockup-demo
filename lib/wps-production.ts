@@ -16,6 +16,7 @@ export { WPS_COMPOSITOR_VERSION } from '@/lib/confirmation-frame';
 
 import type {
   GenerationUnit,
+  SourceTaskRecord,
   SourceScope,
   TaskReview,
   TextMode,
@@ -200,6 +201,8 @@ export type WpsProductionState = {
   batchId: string;
   budgetLimitCny: number;
   records: ProductionRecord[];
+  /** Persisted first-discovery order, independent of analysis and status. */
+  sourceRecordOrder?: string[];
   units: ProductionUnit[];
   mockupVersions: ProductionMockupVersion[];
   updatedAt: string;
@@ -257,16 +260,21 @@ function normalizedActor(actor: string) {
 }
 
 function productionRoute(unit: GenerationUnit): ProductionRoute {
-  if (isTextOnlyArtwork({ ...unit, materialId: unit.logo.materialId }) && !artworkBlockingAmbiguities(unit.ambiguities).length) return 'deterministic';
-  if (artworkBlockingAmbiguities(unit.ambiguities).length > 0 || !unit.logo.materialId) return 'blocked';
+  if (isTextOnlyArtwork({ ...unit, materialId: unit.logo.materialId }) && !artworkBlockingAmbiguities(currentArtworkAmbiguities({ ...unit, materialId: unit.logo.materialId })).length) return 'deterministic';
+  if (artworkBlockingAmbiguities(currentArtworkAmbiguities({ ...unit, materialId: unit.logo.materialId })).length > 0 || (!unit.logo.materialId && !isReferenceTextArtwork({ ...unit, materialId: unit.logo.materialId }))) return 'blocked';
   return unit.processingRoute === 'fidelity' ? 'deterministic' : unit.processingRoute ?? 'auto';
 }
 
-function assertArtworkRecipe(unit: ProductionUnit) {
-  if (artworkProcessingRoute(unit) === 'blocked' || artworkBlockingAmbiguities(unit.ambiguities).length) {
+function assertArtworkRecipe(unit: ProductionUnit, source: SourceTaskRecord) {
+  if (isReferenceTextArtwork(unit)) {
+    const issues = artworkPlanIssues(source, unit);
+    if (unit.referenceMaterialIds.some(id => !source.materials.some(material => material.id === id && (material.url || material.previewUrl)))) issues.push('缺少可读取的样式参考图');
+    if (issues.length) throw new ProductionTransitionError(`制作方案尚不完整：${issues.join('；')}`);
+  }
+  if (artworkProcessingRoute(unit) === 'blocked' || artworkBlockingAmbiguities(currentArtworkAmbiguities(unit)).length) {
     throw new ProductionTransitionError(`请先补充图案要求：${unit.ambiguities.join('；') || unit.routeEvidence}`);
   }
-  if ((!unit.materialId && !isTextOnlyArtwork(unit)) || !unit.instruction.trim()) throw new ProductionTransitionError('缺少主要素材或制作要求，不能制作图案');
+  if ((!unit.materialId && !isTextOnlyArtwork(unit) && !isReferenceTextArtwork(unit)) || !unit.instruction.trim()) throw new ProductionTransitionError('缺少主要素材或制作要求，不能制作图案');
 }
 
 function defaultPlacement(key: PlacementKey | null): ProductionPlacement | null {
@@ -330,9 +338,9 @@ function versionKey(unit: Pick<ProductionUnit, 'sourceRecordId' | 'garmentLabel'
   return `${unit.sourceRecordId}\u0000${garmentIdentity(unit)}\u0000${unit.variantLabel}`;
 }
 
-function unitStatus(unit: Pick<ProductionUnit, 'materialId' | 'ambiguities' | 'route' | 'gateA' | 'artwork' | 'gateB' | 'error'>): ProductionUnitStatus {
+function unitStatus(unit: ProductionUnit): ProductionUnitStatus {
   if (unit.error) return 'failed';
-  if (artworkProcessingRoute(unit) === 'blocked' || artworkBlockingAmbiguities(unit.ambiguities).length > 0) return 'blocked';
+  if (artworkProcessingRoute(unit) === 'blocked' || artworkBlockingAmbiguities(currentArtworkAmbiguities(unit)).length > 0) return 'blocked';
   if (!unit.artwork) return 'pendingArtwork';
   if (!unit.gateB) return 'pendingArtworkConfirmation';
   if (!unit.gateA) return 'pendingPlanConfirmation';
@@ -736,10 +744,11 @@ export function confirmProductionPlan(
 ) {
   return changedUnitState(state, unitId, (unit) => {
     const issues = [
-      ...unit.ambiguities,
+      ...currentArtworkAmbiguities(unit),
+      ...(isReferenceTextArtwork(unit) ? artworkPlanIssues(state.records.find(record => record.source.recordId === unit.sourceRecordId)!.source, unit) : []),
       ...(unit.garment !== undefined ? [garmentPlacementIssue(unit.garment, unit.placement)].filter((issue): issue is string => Boolean(issue)) : []),
       ...(artworkProcessingRoute(unit) === 'blocked' ? ['制作路线仍处于阻塞状态'] : []),
-      ...(!unit.materialId && !isTextOnlyArtwork(unit) ? ['主要素材未确认'] : []),
+      ...(!unit.materialId && !isTextOnlyArtwork(unit) && !isReferenceTextArtwork(unit) ? ['主要素材未确认'] : []),
       ...(!unit.placement ? ['位置未确认'] : []),
       ...(!unit.instruction.trim() ? ['制作要求为空'] : []),
     ];
@@ -775,7 +784,7 @@ export function beginGptImage2Attempt(
     );
   }
   return changedUnitState(state, unitId, (unit) => {
-    assertArtworkRecipe(unit);
+    assertArtworkRecipe(unit, state.records.find(record => record.source.recordId === unit.sourceRecordId)!.source);
     if (unit.route !== 'gpt-image-2') throw new ProductionTransitionError(`当前路线是 ${unit.route}，不能提交 GPT Image 2`);
     const active = unit.attempts.find((attempt) => attempt.recipeFingerprint === unit.recipeFingerprint
       && ['queued', 'submitted', 'processing', 'unknownSubmission'].includes(attempt.status));
@@ -876,7 +885,7 @@ export function attachProductionArtwork(
     );
   }
   return changedUnitState(state, unitId, (unit) => {
-    assertArtworkRecipe(unit);
+    assertArtworkRecipe(unit, state.records.find(record => record.source.recordId === unit.sourceRecordId)!.source);
     requiredText(input.url, 'artwork.url');
     requiredText(input.name, 'artwork.name');
     validIsoDate(input.validation.checkedAt, 'artwork.validation.checkedAt');
@@ -977,7 +986,7 @@ export function confirmProductionArtwork(
   now = new Date(),
 ) {
   return changedUnitState(state, unitId, (unit) => {
-    assertArtworkRecipe(unit);
+    assertArtworkRecipe(unit, state.records.find(record => record.source.recordId === unit.sourceRecordId)!.source);
     if (!unit.artwork || unit.artwork.recipeFingerprint !== unit.recipeFingerprint) {
       throw new ProductionTransitionError('当前配方还没有可确认的完整素材图');
     }
@@ -1196,4 +1205,4 @@ export function selectProductionGarment(state: WpsProductionState, unitId: strin
   }
   return { ...next, revision: state.revision + 1 };
 }
-import { isTextOnlyArtwork } from '@/lib/artwork-reference';
+import { currentArtworkAmbiguities, isReferenceTextArtwork, isTextOnlyArtwork } from '@/lib/artwork-reference';

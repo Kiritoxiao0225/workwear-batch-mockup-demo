@@ -7,6 +7,7 @@ import { prepareStandardArtwork, type StandardArtworkServices } from '@/lib/serv
 import { measureArtworkQuality, artworkSha256 } from '@/lib/server/artwork-quality';
 import { redrawEligibility, type RedrawInspection } from '@/lib/server/ark-artwork-processing';
 import type { ArtworkProgressEvent } from '@/lib/artwork-progress';
+import { ArtworkCutoutPendingError } from './artwork-cutout';
 
 const url = (bytes: Buffer) => `data:image/png;base64,${bytes.toString('base64')}`;
 async function sample(transparent = false) {
@@ -19,11 +20,70 @@ async function setup(scores: number[] = [90, 90]) {
   const fidelity = vi.fn(async (input: typeof request) => ({ status: 'prepared', draft: createLegacyArtworkDraft(url(prepared)), preprocessing: { enhancement: input.enhancementMode, backgroundRemoval: 'edge-connected' } } as ArtworkPreparationResponse));
   const generate = vi.fn<StandardArtworkServices['generate']>(async () => ({ bytes: source, model: 'test-seedream' }));
   const inspect = vi.fn(async (): Promise<RedrawInspection> => ({ type: 'flat-logo', textReadable: true, graphicReadable: true, hasWhiteForeground: false, recognizedText: '', reasons: ['测试图为平面纯色'] }));
-  const services: StandardArtworkServices = { measure, fidelity, generate, inspect, cutout: vi.fn(async () => prepared), saveReport: vi.fn(), saveImage: vi.fn(), saveGeneration: vi.fn() };
+  const services: StandardArtworkServices = { measure, fidelity, generate, inspect, cutout: vi.fn(async () => prepared), saveReport: vi.fn(), saveImage: vi.fn(), saveGeneration: vi.fn(), resolveReferenceColor: vi.fn(async () => { throw new Error('Unexpected reference color inspection'); }), verifyEdits: vi.fn(async () => { throw new Error('Unexpected edit verification'); }) };
   return { request, services, measure, fidelity, generate, inspect, source };
 }
 
 describe('executed artwork standard', () => {
+  it('keeps an interrupted regional edit as a component until its edit requirements have been verified', async () => {
+    const t = await setup();
+    const pending = { status: 'pending' as const, receipt: { jobKey: 'a'.repeat(64), mode: 'auto' as const, route: 'meitu' as const,
+      version: 'artwork-cutout-v4' as const, reasons: [], sourceSha256: artworkSha256(t.source), sourceUrl: url(t.source), actualCredits: null, estimatedCredits: 1, cacheHit: false } };
+    t.services.cutout = vi.fn(async () => { throw new ArtworkCutoutPendingError(pending); });
+    const error = await prepareStandardArtwork({ ...t.request, instruction: '红色描边改成深蓝色，底形调浅', generationPrompt: '编辑图1' }, t.services).catch(error => error);
+    expect(error.candidate).toMatchObject({ requiresEditVerification: true, cutout: pending });
+    expect(t.services.verifyEdits).not.toHaveBeenCalled();
+    expect(t.services.saveReport).not.toHaveBeenCalled();
+    expect(t.generate).toHaveBeenCalledOnce();
+  });
+  it('edits the original before cutout and verifies both regional colour changes before preparing it', async () => {
+    const t = await setup();
+    const generated = await sharp(t.source).modulate({ brightness: .9 }).png().toBuffer();
+    t.generate.mockResolvedValue({ bytes: generated, model: 'test-editor' });
+    t.services.verifyEdits = vi.fn<StandardArtworkServices['verifyEdits']>(async (source, output, requirements) => ({ version: 'artwork-edit-check-v1',
+      sourceSha256: artworkSha256(source), outputSha256: artworkSha256(output), model: 'test-inspector',
+      checks: requirements.map(requirement => ({ requirement, status: 'passed', evidence: '对应部位修改正确' })) }));
+    const request = { ...t.request, instruction: '将字体红色描边改成深蓝色，将原深蓝色底形调浅，其他内容保留原样', generationPrompt: '保留图1并按要求修改，白色背景' };
+    const result = await prepareStandardArtwork(request, t.services);
+    expect(t.generate).toHaveBeenCalledExactlyOnceWith(expect.stringContaining(request.instruction), [t.request.image.dataUrl], { background: 'auto' });
+    expect(t.services.cutout).toHaveBeenCalledExactlyOnceWith(generated, { scene: 'product', crop: false });
+    expect(vi.mocked(t.services.cutout).mock.invocationCallOrder[0]).toBeGreaterThan(t.generate.mock.invocationCallOrder[0]);
+    expect(t.services.verifyEdits).toHaveBeenCalledExactlyOnceWith(t.source, await sample(true), [
+      '将字体红色描边改成深蓝色', '将原深蓝色底形调浅', expect.stringContaining('未点名修改'),
+    ]);
+    expect(t.fidelity).not.toHaveBeenCalled();
+    expect(result.draft.preprocessing.routingReport?.executedMethod).toBe('generate');
+    expect(t.services.saveGeneration).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ editVerification: expect.objectContaining({ sourceSha256: artworkSha256(t.source) }) }));
+  });
+  it.each(['failed', 'uncertain', 'unavailable'] as const)('keeps the actual candidate without saving or regenerating when edit verification is %s', async status => {
+    const t = await setup();
+    t.services.verifyEdits = vi.fn<StandardArtworkServices['verifyEdits']>(async (source, output, requirements) => {
+      if (status === 'unavailable') throw new Error('inspection timeout');
+      return { version: 'artwork-edit-check-v1', sourceSha256: artworkSha256(source), outputSha256: artworkSha256(output), model: 'test',
+        checks: requirements.map(requirement => ({ requirement, status, evidence: '描边仍然是红色' })) };
+    });
+    const error = await prepareStandardArtwork({ ...t.request, instruction: '红色描边改为深蓝色，深蓝色底形调浅', generationPrompt: '编辑图1' }, t.services).catch(error => error);
+    expect(error.candidate).toMatchObject({ stage: 'edit-review', url: url(await sample(true)) });
+    expect(error.candidate.cutout).toBeUndefined();
+    expect(t.services.saveReport).not.toHaveBeenCalled();
+    expect(t.services.saveImage).toHaveBeenCalledWith(expect.any(String), 'edit-review-candidate', await sample(true));
+    expect(t.generate).toHaveBeenCalledOnce();
+    expect(t.services.cutout).toHaveBeenCalledOnce();
+  });
+  it('executes ordinary arc lettering above the logo without purchasing styled text', async () => {
+    const t = await setup();
+    const result = await prepareStandardArtwork({ ...t.request, exactText: '小景是牙医',
+      instruction: '左胸制作圆弧形文字“小景是牙医”，文字下面组合WPS图1',
+      layoutNote: '文字“小景是牙医”排成圆弧形，置于牙齿图形上方' }, t.services);
+    expect(t.generate).not.toHaveBeenCalled();
+    expect(result.draft.preprocessing.routingReport?.executedMethod).toBe('compose');
+    expect(result.draft.layout.preset).toBe('verticalReverse');
+    expect(result.draft.text).toMatchObject({ value: '小景是牙医', arc: { mode: 'up', bend: 65 } });
+    expect(result.draft.text!.y).toBeLessThan(result.draft.graphic.y);
+    expect(result.preprocessing.componentPlan).toMatchObject({ texts: [{ method: 'deterministic-transform' }],
+      sequence: [{ kind: 'text', id: 'text-1' }, { kind: 'graphic' }] });
+  });
+
   it('starts D generation alongside source scoring and exposes previews without skipping final quality', async () => {
     const t = await setup();
     const prepared = await sample(true);
@@ -142,6 +202,34 @@ describe('executed artwork standard', () => {
     expect(result.draft.preprocessing.routingReport?.executedMethod).toBe('compose');
     expect(result.draft.text?.value).toBe('poppy手机数码');
     expect(result.draft.graphic.recolor.mode).toBe('solid');
+  });
+  it.each([
+    ['将图案原黑色统一改为图3所示的深蓝色。', '图3', '#234967'],
+    ['左胸使用图一完整标识，保留原有图形、文字和排版，整体改为图二标志所示的绿色。', '图2', '#18ee09'],
+  ])('applies the sampled color for %s without regenerating the logo', async (instruction, label, hex) => {
+    const t = await setup();
+    const receipt = { version: 'reference-pixels-v1' as const, label, hex, description: '参考图印花', sourceSha256: artworkSha256(t.source),
+      region: { left: 10, top: 10, width: 30, height: 30 }, sampleImageSize: { width: 1200, height: 900 }, sampledPixels: 50, model: 'test-vision' };
+    const resolveColor = vi.fn<StandardArtworkServices['resolveReferenceColor']>(async () => receipt);
+    t.services.resolveReferenceColor = resolveColor;
+    const reference = { label, image: { dataUrl: url(t.source), mimeType: 'image/png' as const, fileName: 'reference.png' } };
+    const result = await prepareStandardArtwork({ ...t.request, instruction, referenceImages: [reference] }, t.services);
+    expect(resolveColor).toHaveBeenCalledOnce();
+    expect(resolveColor.mock.calls[0][0].referenceImages[0]).toEqual(reference);
+    expect(t.generate).not.toHaveBeenCalled();
+    expect(result.draft.graphic.recolor).toEqual({ mode: 'solid', color: hex });
+    expect(result.draft.graphic.sourceUrl).toBe(url(await sample(true)));
+    expect(result.draft.preprocessing.referenceColor).toEqual(receipt);
+    expect(result.draft.preprocessing.routingReport?.operations.join(' ')).toContain(hex);
+  });
+  it('does not substitute a preset or start other paid work when reference color inspection fails', async () => {
+    const t = await setup();
+    t.services.resolveReferenceColor = vi.fn(async () => { throw new Error('参考图的目标颜色尚不能确定'); });
+    await expect(prepareStandardArtwork({ ...t.request, instruction: '图案改成图2的深蓝色', referenceImages: [{ label: '图2', image: t.request.image }] }, t.services)).rejects.toThrow('尚不能确定');
+    expect(t.measure).not.toHaveBeenCalled();
+    expect(t.fidelity).not.toHaveBeenCalled();
+    expect(t.generate).not.toHaveBeenCalled();
+    expect(t.services.saveReport).not.toHaveBeenCalled();
   });
   it('does not redraw a manually preserved logo when repair is insufficient', async () => {
     const t = await setup([25, 30]);

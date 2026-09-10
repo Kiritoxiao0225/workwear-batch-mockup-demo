@@ -2,8 +2,10 @@ import { artworkIntent, buildCanonicalArtworkModelPrompt, describeArtworkComposi
 import { inferredArtworkColor } from '@/lib/artwork-editor';
 import type { ArtworkRoutingFacts } from '@/lib/artwork-routing-standard';
 import { artworkReferenceEvidence, artworkReferenceIssues, normalizeArtworkImageNumbers } from '@/lib/artwork-reference';
+import { artworkReferenceColors } from '@/lib/artwork-reference-color';
+import { artworkModelEdits } from '@/lib/artwork-model-edits';
 
-export type ArtworkRequirementInput = Pick<ArtworkPreparationRequest, 'artworkMethod' | 'instruction' | 'layoutNote' | 'exactText' | 'primaryImageLabel' | 'sourceScope' | 'processingRoute'> & Partial<Pick<ArtworkPreparationRequest, 'sourceRequirementText' | 'printPlacement' | 'generationPrompt'>> & { referenceImages: Array<{ label: string }> };
+export type ArtworkRequirementInput = Pick<ArtworkPreparationRequest, 'primaryImageRole' | 'artworkMethod' | 'instruction' | 'layoutNote' | 'exactText' | 'primaryImageLabel' | 'sourceScope' | 'processingRoute'> & Partial<Pick<ArtworkPreparationRequest, 'sourceRequirementText' | 'printPlacement' | 'generationPrompt'>> & { referenceImages: Array<{ label: string }> };
 
 export const ARTWORK_METHOD_OPTIONS = ['auto', 'preserve', 'redraw', 'compose', 'generate'] as const;
 export type ArtworkMethodChoice = typeof ARTWORK_METHOD_OPTIONS[number];
@@ -16,12 +18,13 @@ export function artworkMethodIssue(input: ArtworkRequirementInput, method: Artwo
   if (natural.blockers.length) return natural.blockers[0];
   if ((method === 'preserve' || method === 'redraw') && natural.intent !== 'preserve') return '要求包含加字、换色或重新设计，请选择图文组合或整图生成';
   if ((method === 'redraw' || method === 'generate') && natural.strictPreservation) return '客户要求严格保真，不能重绘或生成新图';
-  if (method === 'compose' && natural.intent === 'generate') return '当前要求重新设计完整图案，请选择整图生成';
+  if (method === 'compose' && natural.intent === 'generate') return '当前要求需要模型编辑完整图案，请选择自动或整图生成';
   if (method === 'compose' && natural.intent === 'preserve') return '请先在制作要求中填写要添加的文字或局部修改';
   return null;
 }
 
 export function artworkEditColor(requirement: string) {
+  if (artworkReferenceColors({ instruction: requirement, layoutNote: '' }).length) return null;
   const target = requirement.match(/(?:改(?:成|为)?|换(?:成|为)?|颜色[:：])\s*(#[0-9a-f]{6}|[\u4e00-\u9fff]{1,6}色)/iu)?.[1];
   return target ? target.startsWith('#') ? target : inferredArtworkColor(target, '') || null : null;
 }
@@ -43,11 +46,15 @@ export function artworkRequirementFacts(input: ArtworkRequirementInput): Artwork
   const wholeReference = artworkReferenceEvidence(referenceRequirement).some(reference => reference.role === 'layout'
     && input.referenceImages.some(image => normalizeArtworkImageNumbers(image.label) === `图${reference.number}`)) || intent.wholeCompositionReference || (input.referenceImages.length > 0
     && /(?:参考|按照|仿照).{0,12}(?:整体构图|整体排版|完整布局)|(?:整体构图|整体排版|完整布局).{0,12}(?:参考|按照|仿照)/u.test(requirement));
-  const colorEdit = /(?:换色|改(?:成|为)?|换(?:成|为)?|颜色[:：]).{0,8}(?:色|#[0-9a-f]{6})/iu.test(requirement);
+  const colorReferences = artworkReferenceColors(input);
+  const modelEdits = input.primaryImageRole === 'reference' ? [] : artworkModelEdits(input);
+  const colorEdit = colorReferences.length > 0 || /(?:换色|改(?:成|为)?|换(?:成|为)?|颜色[:：]).{0,8}(?:色|#[0-9a-f]{6})/iu.test(requirement);
   const localEdit = Boolean(input.exactText.trim()) || intent.selectiveComposition || colorEdit || /(?:换成|改成|改为|换色|替换|新增|加上|加字|添加文字|调整.{0,6}(?:排版|间距|对齐))/u.test(requirement);
-  const generate = input.processingRoute === 'model' || redesign || wholeReference;
+  const referenceText = input.primaryImageRole === 'reference';
+  const generate = referenceText || input.processingRoute === 'model' || redesign || wholeReference || modelEdits.length > 0;
   const compose = input.processingRoute === 'hybrid' || localEdit;
   const blockers: string[] = artworkReferenceIssues(input);
+  if (referenceText && !input.exactText.trim()) blockers.push('缺少准确文字');
   if (!input.instruction.trim()) blockers.push('缺少制作要求');
   const strictPreservation = input.processingRoute === 'fidelity' || /(?:严格保真|禁止重绘|不得重绘|不要重绘)/u.test(`${input.instruction}\n${input.layoutNote}`);
   if (strictPreservation && generate) blockers.push('严格保真与整图生成要求冲突，请先明确制作方式');
@@ -55,20 +62,23 @@ export function artworkRequirementFacts(input: ArtworkRequirementInput): Artwork
   // Arbitrary crop instructions cannot be implemented by sending the entire logo to a generator.
   const needsCrop = intent.selectiveComposition && !generate;
   const knownColor = artworkEditColor(requirement);
-  if (colorEdit && !knownColor) blockers.push('未识别到准确目标颜色');
+  for (const reference of colorReferences) {
+    if (!(referenceText && normalizeArtworkImageNumbers(input.primaryImageLabel) === reference.label) && !input.referenceImages.some(image => normalizeArtworkImageNumbers(image.label) === reference.label)) blockers.push(`颜色参考${reference.label}尚未绑定，请补充该素材`);
+  }
+  if (colorEdit && !knownColor && !colorReferences.length && !modelEdits.length) blockers.push('未识别到准确目标颜色');
   return {
     intent: generate ? 'generate' : compose ? 'compose' : 'preserve',
-    intentReason: input.processingRoute === 'model' ? '人工指定整图生成' : redesign ? '明确要求重新设计完整图案' : wholeReference ? '参考图决定整体构图与排版'
+    intentReason: referenceText ? '按准确文字与参考样式生成文字标识，不提取参考图内容' : input.processingRoute === 'model' ? '人工指定整图生成' : modelEdits.length ? '原图包含指定区域改色或明暗调整，先按完整要求编辑，再抠图' : redesign ? '明确要求重新设计完整图案' : wholeReference ? '参考图决定整体构图与排版'
       : input.exactText.trim() ? `保留主体，组合准确文字“${input.exactText.trim()}”` : compose ? '保留主体，修改指定局部' : '沿用原图案，未要求新增或重新设计',
     sourcePresent: true, blockers,
     sourceClarity: null, requiredScale: null,
     repair: { attempts: 0, clarity: null, requiredScale: null }, redrawEligibility: 'unknown',
-    editSpecification: blockers.length || needsCrop ? 'incomplete' : generate || input.exactText.trim() || knownColor ? 'complete' : compose ? 'unknown' : 'complete',
+    editSpecification: blockers.length || needsCrop ? 'incomplete' : generate || input.exactText.trim() || knownColor || colorReferences.length ? 'complete' : compose ? 'unknown' : 'complete',
     strictPreservation,
   };
 }
 
-export const STANDARD_ARTWORK_PROMPT_VERSION = 'artwork-standard-prompts-v10';
+export const STANDARD_ARTWORK_PROMPT_VERSION = 'artwork-standard-prompts-v12';
 export function artworkPromptHash(text: string) {
   let hash = 0x811c9dc5;
   for (let index = 0; index < text.length; index++) hash = Math.imul(hash ^ text.charCodeAt(index), 0x01000193);
@@ -77,6 +87,15 @@ export function artworkPromptHash(text: string) {
 
 export function standardArtworkPrompts(input: Omit<ArtworkPreparationRequest, 'image' | 'enhancementMode' | 'referenceImages'> & { referenceImages: Array<{ label: string }> }) {
   const canonical = buildCanonicalArtworkModelPrompt({ ...input, referenceImageLabels: input.referenceImages.map(reference => reference.label) });
+  const modelEdits = input.primaryImageRole === 'reference' ? [] : artworkModelEdits(input);
+  const generate = modelEdits.length ? [canonical.prompt,
+    '【原图局部编辑必须执行】',
+    `当前完整制作要求：${input.instruction}`,
+    ...modelEdits.map((requirement, index) => `${index + 1}. ${requirement}`),
+    '逐项修改指定区域，不把描边色、字面色和底形色混为一种整体换色。相对调浅或调深以原图该部位为基准，不臆造客户指定色号。',
+    '未点名修改的字形、文字、数字、装饰、位置及配色按内容原图保留。已有文字直接按原图保留，不按观察描述中可能误读的字母重新排字。原有设计投影与纹理保留；不新增场景阴影或底板。',
+    '无关的平台生成水印不属于图案。先完成全部修改，后续抠图只去背景，不会代替本步换色。',
+  ].join('\n') : canonical.prompt;
   const redraw = [
     `模型输入图1 = WPS ${input.primaryImageLabel}，为唯一内容来源。`,
     '以输入图1为唯一内容来源，忠实临摹这张低清纯色平面 Logo，输出一张高清二维图稿。',
@@ -94,8 +113,8 @@ export function standardArtworkPrompts(input: Omit<ArtworkPreparationRequest, 'i
     `本任务的字形和排版要求：\n${input.instruction}\n${input.layoutNote}`,
     '本次只输出上述准确文字，整体图文组合由程序完成。纯白背景，完整居中，保留留白，不生成衣服、场景或水印。',
   ].join('\n') }));
-  const hash = artworkPromptHash(JSON.stringify({ version: STANDARD_ARTWORK_PROMPT_VERSION, route: input.processingRoute, ...(input.artworkMethod ? { artworkMethod: input.artworkMethod } : {}), canonical: canonical.prompt, redraw, styledTexts, imageMapping: canonical.imageMapping }));
-  return { version: STANDARD_ARTWORK_PROMPT_VERSION, hash, redraw, generate: canonical.prompt, styledTexts, imageMapping: canonical.imageMapping };
+  const hash = artworkPromptHash(JSON.stringify({ version: STANDARD_ARTWORK_PROMPT_VERSION, route: input.processingRoute, ...(input.artworkMethod ? { artworkMethod: input.artworkMethod } : {}), canonical: generate, redraw, styledTexts, imageMapping: canonical.imageMapping }));
+  return { version: STANDARD_ARTWORK_PROMPT_VERSION, hash, redraw, generate, styledTexts, imageMapping: canonical.imageMapping };
 }
 
 export function resolvedFlatLogoRedrawPrompt(base: string, facts: { palette: Array<[number, number, number]>; recognizedText: string; structureDescription?: string }) {

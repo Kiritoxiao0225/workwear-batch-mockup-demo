@@ -18,12 +18,41 @@ const hole = '<path d="M90 60h220v180H90z M130 100v100h140V100z" fill="black" fi
 async function setup() {
   const output = await svg(hole, true);
   const services: CutoutServices = { upload: vi.fn(async () => 'https://test.stariidata.com/input.png'), submit: vi.fn(async () => ({ code: 0, data: { task_id: 'provider-1' } })),
-    query: vi.fn(async () => ({ code: 0, data: { status: 10, result: { media_info_list: [{ media_data: 'https://test.meitudata.com/output.png' }] } } })), download: vi.fn(async () => output), credits: vi.fn(async () => 1), volcano: vi.fn(async (_bytes, options) => { await options?.beforeSubmit?.(); return 'https://test.volces.com/output.png'; }), volcanoDownload: vi.fn(async () => output) };
+    query: vi.fn(async () => ({ code: 0, data: { status: 10, result: { media_info_list: [{ media_data: 'https://test.meitudata.com/output.png' }] } } })), download: vi.fn(async () => output), credits: vi.fn(async () => 1), volcano: vi.fn(async (_bytes, options) => { await options?.beforeSubmit?.(); return 'https://test.volces.com/output.png'; }), volcanoDownload: vi.fn(async () => output), inspectWatermarks: vi.fn(async () => []) };
   return { source: await svg(hole), output, services };
 }
 beforeEach(async () => { directory = await mkdtemp(path.join(os.tmpdir(), 'cutout-test-')); vi.stubEnv('WPS_PRODUCTION_STORAGE', 'local'); vi.stubEnv('ARTWORK_CUTOUT_CACHE_DIR', directory); vi.stubEnv('MEITU_OPENAPI_ACCESS_KEY', 'test-account'); });
 afterEach(async () => { vi.unstubAllEnvs(); await rm(directory, { recursive: true, force: true }); });
 describe('cutout routing and paid task recovery', () => {
+  it.each(['standard', 'meitu'] as const)('exempts only a confirmed watermark from %s output, retaining the receipt', async mode => {
+    const t = await setup();
+    t.services.inspectWatermarks = vi.fn(async () => [{ bounds: { left: 350, top: 270, width: 20, height: 8 }, text: '豆包AI生成', model: 'test-inspector' }]);
+    let result = await startArtworkCutout(await svg(`${hole}<rect x="350" y="270" width="20" height="8" fill="gray"/>`), mode, { services: t.services });
+    if (result.status === 'pending') result = await queryArtworkCutout(result.receipt.jobKey, t.services);
+    expect(result.status).toBe('completed');
+    expect(result.receipt.excludedWatermarks?.[0].text).toBe('豆包AI生成');
+    expect(result.candidate).toBeUndefined();
+    expect(t.services.inspectWatermarks).toHaveBeenCalledOnce();
+  });
+  it('still rejects lost customer content beside a confirmed watermark and preserves the returned image through queries', async () => {
+    const t = await setup();
+    t.services.inspectWatermarks = vi.fn(async () => [{ bounds: { left: 350, top: 270, width: 20, height: 8 }, text: '豆包AI生成', model: 'test' }]);
+    const result = await startArtworkCutout(await svg(`${hole}<rect x="350" y="270" width="20" height="8" fill="gray"/><rect x="350" y="220" width="20" height="12" fill="black"/>`), 'standard', { services: t.services });
+    expect(result.status).toBe('failed');
+    expect(result.url).toBeUndefined();
+    expect(result.candidate).toMatchObject({ url: `data:image/png;base64,${t.output.toString('base64')}`, missingRegions: [{ left: 350, top: 220, width: 20, height: 12 }] });
+    expect((await queryArtworkCutout(result.receipt.jobKey, t.services)).candidate).toEqual(result.candidate);
+    expect(t.services.volcano).toHaveBeenCalledOnce();
+    expect(t.services.inspectWatermarks).toHaveBeenCalledOnce();
+  });
+  it('keeps a reviewable failed candidate when watermark inspection is unavailable', async () => {
+    const t = await setup();
+    t.services.inspectWatermarks = vi.fn(async () => { throw new Error('inspection timeout'); });
+    const result = await startArtworkCutout(await svg(`${hole}<rect x="350" y="270" width="20" height="8" fill="black"/>`), 'standard', { services: t.services });
+    expect(result.status).toBe('failed');
+    expect(result.candidate?.missingRegions).toHaveLength(1);
+    expect(result.url).toBeUndefined();
+  });
   it('reuses qualified alpha, keeps simple holes on Volcano and selects Meitu only for fine details', async () => {
     expect((await analyzeArtworkCutout(await svg(solid))).route).toBe('standard');
     expect((await analyzeArtworkCutout(await svg(hole))).route).toBe('volcano');

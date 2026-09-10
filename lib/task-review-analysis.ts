@@ -1,6 +1,6 @@
 import { parseGenerationPrompt, GENERATION_PROMPT_WRITING_RULES } from './artwork-generation-prompt';
 import { garmentRequestSchema } from '@/lib/production-garment';
-import { ARTWORK_PLACEMENT_ALIASES, artworkPlanIssues, artworkPlacementFields, artworkSourceSelections, artworkReferenceCovers, artworkReferenceEvidence, sourceArtworkReferenceRequirement } from '@/lib/artwork-reference';
+import { ARTWORK_PLACEMENT_ALIASES, currentArtworkAmbiguities, isReferenceTextArtwork, type ArtworkContentPlan, artworkPlanIssues, artworkPlacementFields, artworkSourceSelections, artworkReferenceCovers, artworkReferenceEvidence, sourceArtworkReferenceRequirement } from '@/lib/artwork-reference';
 import type { CatalogStyle } from '@/lib/catalog';
 import { PLACEMENT_LABELS } from '@/lib/mockup';
 import { PRODUCTS } from '@/lib/products';
@@ -277,9 +277,9 @@ export function artworkBlockingAmbiguities(ambiguities: string[]) {
   return ambiguities.filter(ambiguity => ambiguity.startsWith('方案核对：'));
 }
 
-export function artworkProcessingRoute<Route extends string>(unit: { route: Route; materialId: string | null; ambiguities: string[] }): Route | 'auto' {
+export function artworkProcessingRoute<Route extends string>(unit: ArtworkContentPlan & { route: Route; ambiguities: string[] }): Route | 'auto' {
   // Recover legacy AI-only blocks without rewriting saved recipe fingerprints.
-  return unit.route === 'blocked' && unit.materialId && unit.ambiguities.length > 0 && !artworkBlockingAmbiguities(unit.ambiguities).length ? 'auto' : unit.route;
+  return unit.route === 'blocked' && (unit.materialId || isReferenceTextArtwork(unit)) && unit.ambiguities.length > 0 && !artworkBlockingAmbiguities(currentArtworkAmbiguities(unit)).length ? 'auto' : unit.route;
 }
 
 function pairGarmentVersions(source: SourceTaskRecord, units: GenerationUnit[]) {
@@ -386,6 +386,7 @@ ${productOptions}
 
 客户简写的固定语义：
 - 空白位置字段不是制作要求。例如“左胸:1+poppy手机数码 后背: 字体: 颜色: 工艺: 尺寸:”只生成左胸一个单元，不生成后背，也不把未填字体/尺寸/工艺作为歧义。
+- 准确文字只借用图片样式时（例如 XJY 与享聚源参考图1字形），设置 logoMaterialId=null、referenceMaterialIds=[对应图片ID]、textMode=replace，并给出准确文字及完整 generationPrompt；所有图片仅作样式参考，不能为了通过校验把参考图设为内容图。
 - 纯文字位置例如“左胸:诺维特酒店保洁”直接设置 logoMaterialId=null、referenceMaterialIds=[]、textMode=replace、exactText="诺维特酒店保洁"、generationPrompt=""；附件只是需求截图时不得当成图案内容。普通文字由程序排版，默认抖音美好体，未指定字色时从黑白红中自动选择与衣服色差最大的颜色；这些是系统默认值，不冒充客户要求，不要求补充图片或调用生图。
 - 同一款色、同一版本的正面、后背、袖子分别制作图案，但必须共用 garmentLabel、variantLabel，最终在同一件衣服的正反面底图上一次合成。只有客户明确“各出一版”才分不同版本。例如“左胸：图一图二各出一版 后背：图一图二各出一版”生成四个位置单元但只有两个版本：图1版的左胸和后背、图2版的左胸和后背，绝不能把后背编号为版本3/版本4。
 - 按“正面、正前面、左胸、右胸、后背、左袖、右袖”等位置标题切分原文；“按照图N做”只绑定同一位置段，不得影响前一个或后一个位置段。

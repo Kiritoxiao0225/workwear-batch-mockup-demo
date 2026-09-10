@@ -9,11 +9,21 @@ export function pendingWpsAnalysisRecords(records: ProductionRecord[]) {
   return records.filter((record) => canAnalyzeWpsTask(record.source) && record.unitIds.length === 0 && record.source.requirementText.trim());
 }
 
-export function orderWpsSourceRecords(previous: SourceTaskRecord[], incoming: SourceTaskRecord[]) {
-  const previousIds = new Set(previous.map((record) => record.recordId));
+/** WPS supplies source-row order, without creation timestamps. Later rows in a
+ * newly discovered batch come first; known IDs retain their persisted position,
+ * including tasks temporarily outside the active status filter. */
+export function mergeWpsSourceOrder(previous: readonly string[], incoming: readonly string[]) {
+  const previousIds = new Set(previous);
+  const added = [...new Set(incoming)].filter(id => !previousIds.has(id)).reverse();
+  return [...added, ...previousIds];
+}
+
+export function orderWpsSourceRecords(order: readonly string[], incoming: SourceTaskRecord[]) {
   const byId = new Map(incoming.map((record) => [record.recordId, record]));
-  return [...incoming.filter((record) => !previousIds.has(record.recordId)),
-    ...previous.flatMap((record) => { const current = byId.get(record.recordId); return current ? [current] : []; })];
+  return mergeWpsSourceOrder(order, incoming.map(record => record.recordId)).flatMap(id => {
+    const record = byId.get(id);
+    return record ? [record] : [];
+  });
 }
 
 // Status and row location may change without changing the artwork brief.

@@ -60,6 +60,10 @@ export function assertWpsProductionState(value: unknown): asserts value is WpsPr
   stringValue(state.batchId, 'state.batchId');
   finiteNumber(state.budgetLimitCny, 'state.budgetLimitCny', 0);
   isoDate(state.updatedAt, 'state.updatedAt');
+  if (state.sourceRecordOrder !== undefined) {
+    stringArray(state.sourceRecordOrder, 'state.sourceRecordOrder');
+    if (new Set(state.sourceRecordOrder as string[]).size !== (state.sourceRecordOrder as string[]).length) throw new Error('生产状态包含重复的 WPS 排序记录');
+  }
   if (!Array.isArray(state.records) || !Array.isArray(state.units) || !Array.isArray(state.mockupVersions)) {
     throw new Error('state.records、state.units、state.mockupVersions 必须是数组');
   }

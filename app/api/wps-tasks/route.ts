@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { productionUser } from '@/lib/server/production-storage';
 import { catalogError } from '@/lib/server/catalog-http';
+import { persistWpsSourceOrder } from '@/lib/server/wps-source-order';
 
 import {
   listWpsSourceTaskRecords,
@@ -23,6 +24,7 @@ export async function GET(request?: Request) {
   }
   try {
     const sync = await listWpsSourceTaskRecords({ activeOnly: true, downloadMaterials: false });
+    const records = await persistWpsSourceOrder(sync.records);
     return NextResponse.json({
       mode: 'live',
       scope: 'active',
@@ -31,7 +33,7 @@ export async function GET(request?: Request) {
       configured: true,
       missingEnvironment: [],
       sourceUrl: process.env.WPS_SOURCE_URL?.trim() || 'https://365.kdocs.cn/view/l/cj5Qvp0WVtjz',
-      records: sync.records,
+      records,
       reviews: null,
       syncedAt: sync.syncedAt,
       sourceFile: {

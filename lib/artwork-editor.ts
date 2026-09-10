@@ -4,7 +4,7 @@ import { DEFAULT_ARTWORK_FONT } from './artwork-text-defaults';
 export const ARTWORK_CANVAS_SIZE = 1024;
 export const ARTWORK_SNAP_SCREEN_PX = 8;
 
-export type ArtworkLayoutPreset = 'vertical' | 'horizontal' | 'horizontalReverse' | 'custom';
+export type ArtworkLayoutPreset = 'vertical' | 'verticalReverse' | 'horizontal' | 'horizontalReverse' | 'custom';
 export type ArtworkAlignment = 'left' | 'center' | 'right';
 export type ArtworkArcMode = 'none' | 'up' | 'down';
 
@@ -75,6 +75,7 @@ export type ArtworkDraft = {
     groupAlign: ArtworkAlignment;
   };
   preprocessing: {
+    referenceColor?: import('@/lib/artwork-reference-color').ArtworkReferenceColorReceipt;
     cutout?: import('@/lib/artwork-cutout').ArtworkCutoutReceipt;
     cutoutRuns?: import('@/lib/artwork-cutout').ArtworkCutoutReceipt[];
     edgeRefinement?: string;
@@ -206,8 +207,11 @@ export function requestedArtworkColor(text: string) {
   return text.match(/#[0-9a-f]{6}\b/iu)?.[0] ?? (inferredArtworkColor(text, '') || null);
 }
 
-export function inferredArtworkLayout(text: string): ArtworkLayoutPreset {
-  const normalized = text.replace(/\s+/gu, '');
+export function inferredArtworkLayout(text: string, exactText = ''): ArtworkLayoutPreset {
+  const normalized = (exactText ? text.replaceAll(exactText, '文字') : text).replace(/[\s，,]+/gu, '');
+  if (/字上图下|上字下图|(?:文字|字样)[^，。；;\n]{0,24}(?:置于|放在|位于|在)[^，。；;\n]{0,12}(?:图形|图案|logo|图[一二三四五六七八九十\d]+)(?:的)?上[方面]|(?:文字|字样)[^，。；;\n]{0,12}下[方面][^，。；;\n]{0,8}(?:图形|图案|logo|图[一二三四五六七八九十\d]+)|(?:图形|图案|logo|图[一二三四五六七八九十\d]+)(?:的)?上[方面][^，。；;\n]{0,8}(?:文字|字样)/iu.test(normalized)) {
+    return 'verticalReverse';
+  }
   if (/(?:文字|字)在左|(?:文字|字)左(?:图|图形|logo)/iu.test(normalized)) {
     return 'horizontalReverse';
   }
@@ -215,6 +219,22 @@ export function inferredArtworkLayout(text: string): ArtworkLayoutPreset {
     return 'horizontal';
   }
   return 'vertical';
+}
+
+/** Translate ordinary text geometry into the same editable parameters as the editor. */
+export function inferredArtworkTextArc(requirement: string, exactText = ''): ArtworkTextLayer['arc'] {
+  const normalized = (exactText ? requirement.replaceAll(exactText, '文字') : requirement).replace(/[ \t\r]+/gu, '');
+  let mode: ArtworkArcMode = 'none';
+  for (const clause of normalized.split(/[，,。；;\n]/u)) {
+    if (/(?:不要|不用|无需|不做|取消)[^，。；;]{0,4}(?:圆弧形|弧形|扇形|上弧|下弧)/u.test(clause)) { mode = 'none'; continue; }
+    if (/(?:直排|直线排列|水平排列)/u.test(clause) && !/(?:不要|不用|不做)[^，。；;]{0,4}(?:直排|直线排列|水平排列)/u.test(clause)) { mode = 'none'; continue; }
+    // A curved logo outline is not a request to bend its accompanying lettering.
+    const shape = '(?:圆弧形|弧形|扇形|上弧|下弧|沿弧|向上弯曲|向下弯曲)';
+    const applies = new RegExp(`(?:文字|字样|字体|字形)[^图案轮廓]{0,20}${shape}|${shape}[^图案轮廓]{0,8}(?:文字|字样|字体)|^(?:(?:排成|排为|改为|改成|呈|做成|做|使用|采用))?${shape}(?:排列|排版)?$`, 'u').test(clause);
+    if (!applies) continue;
+    mode = /下弧|向下弯曲|弧形向下|开口向上/u.test(clause) ? 'down' : 'up';
+  }
+  return { mode, bend: mode === 'none' ? 35 : 65 };
 }
 
 export function createStructuredArtworkDraft(input: {
@@ -246,9 +266,10 @@ export function createStructuredArtworkDraft(input: {
   numeric(input.graphicWidth, 'graphicWidth', 1, 20_000);
   numeric(input.graphicHeight, 'graphicHeight', 1, 20_000);
   const layoutText = `${input.instruction}\n${input.layoutNote}`;
-  const preset = inferredArtworkLayout(layoutText);
-  const maximumGraphicWidth = preset === 'vertical' ? 500 : 390;
-  const maximumGraphicHeight = preset === 'vertical' ? 500 : 520;
+  const preset = inferredArtworkLayout(layoutText, input.exactText.trim());
+  const isHorizontal = preset === 'horizontal' || preset === 'horizontalReverse';
+  const maximumGraphicWidth = isHorizontal ? 390 : 500;
+  const maximumGraphicHeight = isHorizontal ? 520 : 500;
   const graphicScale = Math.min(
     maximumGraphicWidth / input.graphicWidth,
     maximumGraphicHeight / input.graphicHeight,
@@ -261,15 +282,14 @@ export function createStructuredArtworkDraft(input: {
     ?? requestedArtworkColor(input.instruction)
     ?? '#111827';
   const gap = 64;
-  const isHorizontal = preset === 'horizontal' || preset === 'horizontalReverse';
   const graphicX = isHorizontal
     ? (preset === 'horizontal' ? 310 : 714)
     : ARTWORK_CANVAS_SIZE / 2;
-  const graphicY = isHorizontal ? ARTWORK_CANVAS_SIZE / 2 : 360;
+  const graphicY = isHorizontal ? ARTWORK_CANVAS_SIZE / 2 : preset === 'verticalReverse' ? 600 : 360;
   const textX = isHorizontal
     ? (preset === 'horizontal' ? 700 : 324)
     : ARTWORK_CANVAS_SIZE / 2;
-  const textY = isHorizontal ? ARTWORK_CANVAS_SIZE / 2 : 730;
+  const textY = isHorizontal ? ARTWORK_CANVAS_SIZE / 2 : preset === 'verticalReverse' ? 245 : 730;
 
   return {
     version: 1,
@@ -306,7 +326,7 @@ export function createStructuredArtworkDraft(input: {
       italic: false,
       underline: false,
       align: 'center',
-      arc: { mode: 'none', bend: 35 },
+      arc: inferredArtworkTextArc(layoutText, textValue),
     } : null,
     layout: { preset, gap, groupAlign: 'center' },
     preprocessing: {
@@ -556,7 +576,9 @@ export function arcGlyphTransforms(
       char,
       x,
       y: direction * amplitude * (1 - normalizedX ** 2),
-      rotation: direction * normalizedX * clamp(bend, 0, 100) * 0.32,
+      // Rotate along the baseline tangent; an upper arch tilts left glyphs
+      // counterclockwise and right glyphs clockwise in canvas coordinates.
+      rotation: Math.atan(-direction * 2 * amplitude * normalizedX / Math.max(totalWidth / 2, 1)) * 180 / Math.PI,
       advance,
       horizontalScale: 1,
     };

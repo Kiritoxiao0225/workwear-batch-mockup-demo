@@ -3,6 +3,7 @@ import { artworkPrintInstruction, artworkPrintPlacementSchema, type ArtworkPrint
 import { clarityFromStandardBlur } from '@/lib/artwork-routing-standard';
 import {
   createStructuredArtworkDraft,
+  inferredArtworkLayout,
   type ArtworkDraft,
 } from '@/lib/artwork-editor';
 import {
@@ -77,6 +78,7 @@ export type ArtworkPreparationRequest = {
   layoutNote: string;
   image: LogoStudioInputImage;
   primaryImageLabel: string;
+  primaryImageRole?: 'content' | 'reference';
   referenceImages: ArtworkReferenceImage[];
   enhancementMode: ArtworkEnhancementMode;
   sourceScope: SourceScope;
@@ -87,7 +89,7 @@ export type ArtworkPreparationRequest = {
 
 export const ARTWORK_MODEL_PROMPT_VERSION = 'task-review-artwork-v10';
 
-export type NativeArtworkCandidate = { runId: string; url: string; model: string; reason: string; promptHash: string; cutout?: import('@/lib/artwork-cutout').ArtworkCutoutResult };
+export type NativeArtworkCandidate = { runId: string; url: string; model: string; reason: string; promptHash: string; stage?: 'edit-review'; requiresEditVerification?: boolean; cutout?: import('@/lib/artwork-cutout').ArtworkCutoutResult };
 
 export type ArtworkModelImageMapping = {
   sourceLabel: string;
@@ -105,6 +107,7 @@ export type CanonicalArtworkModelPrompt = {
 };
 
 export type CanonicalArtworkModelPromptInput = {
+  primaryImageRole?: 'content' | 'reference';
   generationPrompt?: string;
   printPlacement?: ArtworkPrintPlacement;
   sourceRequirementText: string;
@@ -215,10 +218,11 @@ export function buildCanonicalArtworkModelPrompt(
   const sourceRequirementText = input.sourceRequirementText.trim();
   if (!sourceRequirementText) throw new Error('canonical artwork prompt 缺少 WPS 原文');
   const exactText = input.exactText.trim();
+  if (input.primaryImageRole === 'reference' && (!exactText || !input.generationPrompt?.trim())) throw new Error('请先填写准确文字并整理生图提示词');
   const layoutNote = input.layoutNote.trim();
   const orderedLabels = artworkModelInputLabels(input);
   const imageMapping = orderedLabels.map((sourceLabel, index): ArtworkModelImageMapping => {
-    const contentSource = sourceLabel === input.primaryImageLabel;
+    const contentSource = sourceLabel === input.primaryImageLabel && input.primaryImageRole !== 'reference';
     return {
       sourceLabel,
       modelInputLabel: `图${index + 1}`,
@@ -229,7 +233,10 @@ export function buildCanonicalArtworkModelPrompt(
     };
   });
   if (input.generationPrompt?.trim()) {
-    const prompt = compileGenerationPrompt(input.generationPrompt, imageMapping);
+    const compiled = compileGenerationPrompt(input.generationPrompt, imageMapping);
+    const prompt = input.primaryImageRole === 'reference'
+      ? `${compiled}\n\n【文字内容与参考边界】唯一允许出现的文字为 ${JSON.stringify(exactText)}，逐字准确。所有输入图片仅供字形、颜色或排版参考；不复制其原文字、标识内容、人物、服装、场景或界面。`
+      : compiled;
     return { version: ARTWORK_MODEL_PROMPT_VERSION, prompt, promptHash: stablePromptHash(prompt), targetText: exactText, imageMapping };
   }
   const mappingLines = imageMapping.map((mapping) => (
@@ -342,6 +349,8 @@ export function parseArtworkPreparationRequest(value: unknown): ArtworkPreparati
   const primaryImageLabel = input.primaryImageLabel === undefined
     ? '图1'
     : imageLabel(input.primaryImageLabel, 'primaryImageLabel');
+  if (input.primaryImageRole !== undefined && input.primaryImageRole !== 'content' && input.primaryImageRole !== 'reference') throw new Error('primaryImageRole 必须是 content 或 reference');
+  if (input.primaryImageRole === 'reference' && (!exactText.trim() || !parseGenerationPrompt(input.generationPrompt))) throw new Error('primaryImageRole 为 reference 时必须填写准确文字与生图提示词');
   if (input.referenceImages !== undefined && !Array.isArray(input.referenceImages)) {
     throw new Error('referenceImages 必须是数组');
   }
@@ -371,6 +380,7 @@ export function parseArtworkPreparationRequest(value: unknown): ArtworkPreparati
     layoutNote,
     image: parsed.images[0],
     primaryImageLabel,
+    ...(input.primaryImageRole ? { primaryImageRole: input.primaryImageRole as 'content' | 'reference' } : {}),
     referenceImages: referenceCandidates.map((candidate, index) => ({
       label: candidate.label,
       image: parsed.images[index + 1],
@@ -516,12 +526,16 @@ export function describeArtworkComposition(input: {
   referenceImageLabels: string[];
 }): ArtworkCompositionDescription {
   const textSegments = compositionTextParts(input);
-  const sequence = orderedCompositionSequence({
+  let sequence = orderedCompositionSequence({
     instruction: input.instruction,
     primaryImageLabel: input.primaryImageLabel,
     textSegments,
   });
   const requirement = `${input.instruction}\n${input.layoutNote}`;
+  const layout = inferredArtworkLayout(requirement, input.exactText);
+  if (textSegments.length === 1 && (layout === 'verticalReverse' || layout === 'horizontalReverse')) {
+    sequence = [{ kind: 'text', value: textSegments[0] }, { kind: 'graphic', label: input.primaryImageLabel }];
+  }
   const referenceRole = /字体|字形|风格|笔触|书法/iu.test(requirement)
     ? /排版|布局|位置/iu.test(requirement) ? '字体/风格与排版' : '字体/风格'
     : '排版';
@@ -582,6 +596,16 @@ export function buildArtworkComponentPlan(input: {
   route: ArtworkRouteDecision;
 }): ArtworkComponentPlan {
   const { request, route } = input;
+  if (request.primaryImageRole === 'reference') {
+    const labels = [request.primaryImageLabel, ...request.referenceImages.map(image => image.label)];
+    return {
+      graphic: { label: '生成的文字图案', method: 'model-rebuild-graphic' },
+      texts: [{ id: 'text-1', value: request.exactText, method: 'model-styled-text', referenceLabels: labels }],
+      references: labels.map(label => ({ label, method: 'reference-only', roles: ['style', 'layout'] })),
+      sequence: [{ kind: 'text', id: 'text-1' }],
+      summary: [`准确文字：${request.exactText}`, ...labels.map(label => `${label}：仅作样式参考，不复制原文字、人物或衣服`), '按准确文字与参考样式生成完整候选，再人工确认'],
+    };
+  }
   const intent = artworkIntent(request);
   const composition = describeArtworkComposition({
     instruction: request.instruction,

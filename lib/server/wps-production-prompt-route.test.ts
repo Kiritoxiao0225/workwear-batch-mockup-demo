@@ -27,6 +27,18 @@ const request = (snapshot = productionArtworkSnapshot(state.units[0], state.reco
 });
 
 describe('focused prompt endpoint', () => {
+  it('keeps reference-only text plans free of a fabricated primary content image', async () => {
+    state.units[0].textMode = 'replace';
+    state.units[0].exactText = 'XJY\n享聚源';
+    vi.mocked(planArtworkGenerationPrompt).mockResolvedValueOnce({ generationPrompt: '参考图1样式制作 XJY 与享聚源，不复制原文字。', primaryImageLabel: null, referenceImageLabels: ['图1'], ambiguities: [], model: 'test', provider: 'cliproxy', reasoningEffort: 'low' });
+    const response = await POST(request());
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result.materialId).toBeNull();
+    expect(result.referenceMaterialIds).toEqual([state.records[0].source.materials[0].id]);
+    expect(result.finalPrompt).toContain('输入图1 = WPS 图1（参考素材）');
+    expect(result.finalPrompt).not.toContain('内容素材');
+  });
   it('previews the exact body and attached image identities without modifying production state', async () => {
     const before = JSON.stringify(state);
     const response = await POST(request());

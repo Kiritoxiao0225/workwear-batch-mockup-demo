@@ -65,10 +65,11 @@ function arrangedDraft(original: ArtworkDraft, factor: number, measure: MeasureT
   const bounds = measure(text).bounds;
   const gap = 32;
   // Preserve explicit direction and letter styling. Only allocate size and spacing.
-  if (draft.layout.preset === 'vertical') {
-    draft.graphic.x = 0; draft.graphic.y = graphic.height / 2;
+  if (draft.layout.preset === 'vertical' || draft.layout.preset === 'verticalReverse') {
+    const reversed = draft.layout.preset === 'verticalReverse';
+    draft.graphic.x = 0; draft.graphic.y = (reversed ? bounds.height + gap : 0) + graphic.height / 2;
     text.x -= bounds.left + bounds.width / 2;
-    text.y += graphic.height + gap - bounds.top;
+    text.y += (reversed ? 0 : graphic.height + gap) - bounds.top;
   } else {
     const reversed = draft.layout.preset === 'horizontalReverse';
     draft.graphic.x = reversed ? bounds.width + gap + graphic.width / 2 : graphic.width / 2;

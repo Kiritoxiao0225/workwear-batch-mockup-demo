@@ -14,6 +14,10 @@ import type { NativeArtworkCandidate } from '@/lib/task-review-artwork';
 import type { ArtworkCutoutMode, ArtworkCutoutReceipt, ArtworkCutoutResult } from '@/lib/artwork-cutout';
 import { cutoutArtworkForPipeline, ArtworkCutoutPendingError } from './artwork-cutout';
 import type { ArtworkProgressEvent, ArtworkTiming } from '@/lib/artwork-progress';
+import { artworkReferenceColors, type ArtworkReferenceColorReceipt } from '@/lib/artwork-reference-color';
+import { resolveArtworkReferenceColor } from './artwork-reference-color';
+import { artworkModelEdits, type ArtworkEditVerification } from '@/lib/artwork-model-edits';
+import { verifyArtworkModelEdits } from './artwork-content-inspection';
 
 async function routedCutout(bytes: Buffer, options: { scene?: 'product' | 'general'; crop?: boolean; mode?: ArtworkCutoutMode } = {}) {
   return (await cutoutArtworkForPipeline(bytes, options.mode)).bytes;
@@ -32,6 +36,8 @@ export const standardArtworkServices = {
   saveReport: saveArtworkRoutingReport,
   saveImage: saveArtworkRunImage,
   saveGeneration: saveArtworkGenerationReceipt,
+  resolveReferenceColor: resolveArtworkReferenceColor,
+  verifyEdits: verifyArtworkModelEdits,
 };
 export type StandardArtworkServices = typeof standardArtworkServices;
 const dataUrl = (bytes: Buffer) => `data:image/png;base64,${bytes.toString('base64')}`;
@@ -89,9 +95,17 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
   if (request.expectedPromptVersion && request.expectedPromptVersion !== prompts.version) throw new Error('页面制作要求版本已过期，请刷新后重试');
   if (request.expectedPromptHash && request.expectedPromptHash !== prompts.hash) throw new Error('页面显示的制作要求与服务端不一致，已停止处理');
   const facts = artworkRequirementFacts(request);
+  const modelEdits = request.primaryImageRole === 'reference' ? [] : artworkModelEdits(request);
   let decision = decideArtworkMethod(facts);
   if (decision.state === 'review') throw new Error(`${decision.reason} ${facts.blockers.join('；')}`);
   if (decision.method === 'generate' && !request.generationPrompt?.trim()) throw new Error('请先整理生图提示词，再制作图案');
+  const colorReferences = artworkReferenceColors(request);
+  let referenceColor: ArtworkReferenceColorReceipt | undefined;
+  if (facts.intent === 'compose' && colorReferences.length) {
+    if (colorReferences.length !== 1) throw new Error('当前图案指定了多个参考色，请分别明确改色对象和色号，或选择整图生成');
+    progress(`正在从${colorReferences[0].label}的指定部位识别参考色…`);
+    referenceColor = await timed('referenceColor', () => services.resolveReferenceColor(request, colorReferences[0]));
+  }
   const intent = artworkIntent(request);
   if (facts.intent === 'compose' && (intent.hasStyleReference || intent.specialTypography)
     && (prompts.styledTexts.length > 2 || prompts.styledTexts.some(text => text.text.length > 40))) throw new Error('特殊文字单次最多 2 个组件、每个 40 字，请先拆分要求或提供字体素材');
@@ -99,6 +113,7 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
   const sourceProfile = await inspectArtworkSource(sourceBytes);
   const runId = randomUUID();
   const operations: string[] = [];
+  if (referenceColor) operations.push(`参考${referenceColor.label}取色 ${referenceColor.hex}：${referenceColor.description}`);
   const needsSubjectCutout = decision.method !== 'generate' && request.sourceScope !== 'wholeImage';
   const measuredSource = needsSubjectCutout ? await services.cutout(sourceBytes) : sourceBytes;
   if (needsSubjectCutout) {
@@ -178,11 +193,29 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
       if (error instanceof ArtworkCutoutPendingError) pendingCutout = error.result;
       cutoutFailure = `图案已生成，但抠图未完成：${error instanceof Error ? error.message : String(error)}。已保留模型原图供下载，未作为成品上衣。`;
     }
+    let editVerification: ArtworkEditVerification | undefined;
+    let editFailure = '';
+    if (!cutoutFailure && modelEdits.length) {
+      progress('正在逐项核对指定区域的改色与保留内容…');
+      try {
+        editVerification = await timed('editVerification', () => services.verifyEdits(sourceBytes, graphic,
+          [...modelEdits, '未点名修改的原有文字、字形、数字、装饰、配色及相对排版保持原样；无关来源水印与外围背景除外']));
+        const issues = editVerification.checks.filter(check => check.status !== 'passed');
+        if (issues.length) editFailure = `修改要求尚未通过核对：${issues.map(check => `${check.requirement}：${check.evidence}`).join('；')}`;
+      } catch (error) { editFailure = `修改要求核对未完成：${error instanceof Error ? error.message : String(error)}`; }
+    }
     await services.saveGeneration(runId, { runId, model: generated.model, prompt: usedPrompt, promptHash: artworkPromptHash(usedPrompt), imageMapping: prompts.imageMapping,
       sourceSha256: artworkSha256(sourceBytes), originalSha256: artworkSha256(generated.bytes), metadata: generated.generationMetadata,
       width: metadata.width, height: metadata.height, originalHasAlpha: metadata.hasAlpha, originalMask, mask, backgroundRemoval,
-      status: cutoutFailure ? 'needs-review' : 'cutout-accepted', reason: cutoutFailure, timings: [...timings] });
-    if (cutoutFailure) throw new NativeArtworkCandidateError({ runId, url: dataUrl(generated.bytes), model: generated.model, reason: cutoutFailure, promptHash: artworkPromptHash(usedPrompt), cutout: pendingCutout });
+      editVerification, status: cutoutFailure || editFailure ? 'needs-review' : 'cutout-accepted', reason: cutoutFailure || editFailure, timings: [...timings] });
+    if (cutoutFailure) throw new NativeArtworkCandidateError({ runId, url: dataUrl(generated.bytes), model: generated.model, reason: cutoutFailure,
+      promptHash: artworkPromptHash(usedPrompt), cutout: pendingCutout, requiresEditVerification: modelEdits.length > 0 });
+    if (editFailure) {
+      await services.saveImage(runId, 'edit-review-candidate', graphic);
+      throw new NativeArtworkCandidateError({ runId, url: dataUrl(graphic), model: generated.model, stage: 'edit-review',
+        reason: `${editFailure}。已保留实际候选供对比，尚未作为成品保存，不自动重新生图。`, promptHash: artworkPromptHash(usedPrompt) });
+    }
+    if (editVerification) operations.push('已逐项核对指定改色及其余图案保留要求');
     model = generated.model;
     graphicMethod = 'generate';
     graphicQuality = await services.measure(graphic);
@@ -280,7 +313,8 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
   }
   if (executedMethod === 'compose') {
     const graphicEdit = request.instruction.split(/[，。；;\n]/u).filter(clause => !/(?:文字|字体|字色)/u.test(clause)).join('\n');
-    const color = artworkEditColor(graphicEdit);
+    const color = referenceColor?.hex ?? artworkEditColor(graphicEdit);
+    if (referenceColor && !draft.graphic.recolorMaskUrl) throw new Error('已提取参考色，但主要图案的改色区域未能确定，请核对抠图结果');
     draft.graphic.recolor = color && draft.graphic.recolorMaskUrl ? { mode: 'solid', color } : { mode: 'original', color: null };
   }
   const primaryCutoutReceipt = cutoutReceipt;
@@ -300,7 +334,7 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
       model = generated.model;
       usedPrompt = [usedPrompt, text.prompt].filter(Boolean).join('\n\n');
     }
-    const vertical = draft.layout.preset === 'vertical';
+    const vertical = draft.layout.preset === 'vertical' || draft.layout.preset === 'verticalReverse';
     draft = createHybridArtworkDraft({ primaryGraphic: draft.graphic, styledTexts, sequence: componentPlan.sequence, preprocessing: draft.preprocessing });
     if (vertical) {
       const maximumHeight = 1024 / (componentPlan.sequence.length + 1) * .8;
@@ -314,7 +348,7 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
     operations.push(`C 特殊字形生成 ${styledTexts.length} 个组件，程序合成`);
   } else if (executedMethod === 'compose') {
     if (componentPlan.texts.length > 1 && draft.text) {
-      const vertical = draft.layout.preset === 'vertical';
+      const vertical = draft.layout.preset === 'vertical' || draft.layout.preset === 'verticalReverse';
       const step = 1024 / (componentPlan.sequence.length + 1);
       const textLayers = componentPlan.texts.map(text => {
         const index = componentPlan.sequence.findIndex(item => item.kind === 'text' && item.id === text.id);
@@ -333,7 +367,7 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
   await services.saveImage(runId, 'prepared-graphic', graphic);
   await services.saveReport(report);
   progress('图案处理完成，正在保存文件…', true);
-  draft.preprocessing = { ...draft.preprocessing, cutout: primaryCutoutReceipt, cutoutRuns, backgroundRemoval, edgeRefinement, routingReport: report, processingRoute: route.route, routeReasons: route.reasons, generationModel: model, resolvedPrompt: usedPrompt, promptVersion: prompts.version, promptHash: actualPromptHash, imageMapping: prompts.imageMapping };
+  draft.preprocessing = { ...draft.preprocessing, referenceColor, cutout: primaryCutoutReceipt, cutoutRuns, backgroundRemoval, edgeRefinement, routingReport: report, processingRoute: route.route, routeReasons: route.reasons, generationModel: model, resolvedPrompt: usedPrompt, promptVersion: prompts.version, promptHash: actualPromptHash, imageMapping: prompts.imageMapping };
   return { status: 'prepared', draft, preprocessing: { timings: [...timings], cutout: primaryCutoutReceipt, cutoutRuns, nativeOutput: executedMethod === 'generate' && backgroundRemoval === 'none', modelLayoutPreserved: executedMethod === 'generate', edgeRefinement, evaluation: evaluation(source), enhancement, backgroundRemoval, sourceKind: sourceProfile.kind, resolution,
     maskQuality: await alphaMaskReport(graphic), decisionRule: [...operations, ...reviewReasons].join('；'), route, generationModel: model, componentPlan, resolvedPrompt: usedPrompt, promptVersion: prompts.version, promptHash: actualPromptHash, imageMapping: prompts.imageMapping } };
 }

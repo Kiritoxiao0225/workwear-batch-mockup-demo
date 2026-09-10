@@ -4,11 +4,12 @@ import type { ProductionUnit } from '@/lib/wps-production';
 import { ARTWORK_METHODS, ARTWORK_ROUTING_STANDARD, decideArtworkMethod, type ArtworkRoutingDecision } from '@/lib/artwork-routing-standard';
 import { artworkRequirementFacts } from '@/lib/artwork-routing-request';
 import { artworkBlockingAmbiguities, artworkProcessingRoute } from '@/lib/task-review-analysis';
-import { artworkPlanIssues, isTextOnlyArtwork } from './artwork-reference';
+import { artworkInputSelection, currentArtworkAmbiguities, isReferenceTextArtwork, artworkPlanIssues, isTextOnlyArtwork } from './artwork-reference';
 
 /** Use the same request classifier as the processing endpoint; historical native scores remain unverified. */
 export function productionArtworkRouting(unit: ProductionUnit, source: SourceTaskRecord) {
-  const primaryIndex = source.materials.findIndex(material => material.id === unit.materialId);
+  const selection = artworkInputSelection(source, unit);
+  const primaryIndex = source.materials.findIndex(material => material === selection.primary);
   const actual = unit.artwork?.recipeFingerprint === unit.recipeFingerprint ? unit.artwork.draft?.preprocessing : undefined;
   const report = actual?.routingReport;
   const facts = artworkRequirementFacts({ generationPrompt: unit.generationPrompt, instruction: unit.instruction, layoutNote: unit.layoutNote,
@@ -16,14 +17,15 @@ export function productionArtworkRouting(unit: ProductionUnit, source: SourceTas
     artworkMethod: unit.artworkMethod,
     exactText: unit.textMode === 'replace' ? unit.exactText : '', sourceScope: unit.sourceScope,
     processingRoute: unit.route === 'deterministic' ? 'fidelity' : unit.route === 'blocked' || unit.route === 'gpt-image-2' ? 'auto' : unit.route,
-    primaryImageLabel: `图${primaryIndex + 1}`, referenceImages: unit.referenceMaterialIds.map(id => ({ label: `图${source.materials.findIndex(material => material.id === id) + 1}` })) });
+    primaryImageLabel: selection.primaryImageLabel, primaryImageRole: selection.primaryImageRole, referenceImages: selection.referenceMaterialIds.map(id => ({ label: `图${source.materials.findIndex(material => material.id === id) + 1}` })) });
   const sourceMaterial = source.materials[primaryIndex];
   facts.sourcePresent = Boolean(sourceMaterial && (sourceMaterial.url || sourceMaterial.previewUrl));
   if (isTextOnlyArtwork(unit)) {
     facts.intent = 'compose'; facts.sourcePresent = true; facts.blockers = artworkPlanIssues(source, unit);
     return { facts, decision: { version: ARTWORK_ROUTING_STANDARD.version, method: null, state: facts.blockers.length ? 'review' : 'ready', action: 'inspect', checks: [], reason: facts.blockers.join('；') || '直接排版准确文字，保存透明图层并放到衣服上。' } as ArtworkRoutingDecision, historicalClarity: null, report: undefined };
   }
-  facts.blockers.push(...artworkBlockingAmbiguities(unit.ambiguities),
+  if (isReferenceTextArtwork(unit)) facts.blockers.push(...artworkPlanIssues(source, unit));
+  facts.blockers.push(...artworkBlockingAmbiguities(currentArtworkAmbiguities(unit)),
     ...unit.referenceMaterialIds.filter(id => !source.materials.some(material => material.id === id && (material.url || material.previewUrl))).map(id => `缺少参考素材 ${id}`),
     ...(artworkProcessingRoute(unit) === 'blocked' ? ['制作要求尚待补充'] : []));
   if (facts.intent !== 'generate' && unit.textMode === 'replace' && !unit.exactText.trim()) { facts.intent = 'compose'; facts.editSpecification = 'incomplete'; }
@@ -45,10 +47,11 @@ export function productionArtworkRouting(unit: ProductionUnit, source: SourceTas
 export function productionRecipe(unit: ProductionUnit, source: SourceTaskRecord) {
   if (isTextOnlyArtwork(unit)) return { title: '纯文字排版', reason: '默认抖音美好体，未指定字色时从黑白红中选择与衣服色差最大的颜色。', components: [`准确文字：${unit.exactText}`], actual: unit.artwork?.draft?.preprocessing, actualLabel: unit.artwork ? '程序文字排版' : null };
   unit = { ...unit, route: artworkProcessingRoute(unit) };
-  const primaryIndex = source.materials.findIndex(material => material.id === unit.materialId);
+  const selection = artworkInputSelection(source, unit);
+  const primaryIndex = source.materials.findIndex(material => material === selection.primary);
   const input = { instruction: unit.instruction, exactText: unit.textMode === 'replace' ? unit.exactText : '', layoutNote: unit.layoutNote,
     primaryImageLabel: primaryIndex < 0 ? '待选择的主要素材' : `图${primaryIndex + 1}`,
-    referenceImageLabels: unit.referenceMaterialIds.map(id => { const index = source.materials.findIndex(material => material.id === id); return index < 0 ? `缺失参考素材 ${id}` : `图${index + 1}`; }),
+    referenceImageLabels: selection.referenceMaterialIds.map(id => { const index = source.materials.findIndex(material => material.id === id); return index < 0 ? `缺失参考素材 ${id}` : `图${index + 1}`; }),
   };
   const composition = describeArtworkComposition(input);
   const intent = artworkIntent({ ...input, referenceImages: input.referenceImageLabels.map(label => ({ label })) });
@@ -58,7 +61,7 @@ export function productionRecipe(unit: ProductionUnit, source: SourceTaskRecord)
   const completeModel = currentRouting.facts.intent === 'generate';
   const hybrid = currentRouting.facts.intent === 'compose' && textNeedsModel;
   const preservation = unit.sourceScope === 'wholeImage' ? '保留整图与原底色' : '保留 Logo 图形并去底';
-  const title = needsReview ? '先核对参考与制作要求' : unit.route === 'blocked' ? '先补充图案要求' : unit.route === 'gpt-image-2' ? 'GPT Image 2 生成完整透明 Logo'
+  const title = isReferenceTextArtwork(unit) && !needsReview ? '按参考样式生成文字标识' : needsReview ? '先核对参考与制作要求' : unit.route === 'blocked' ? '先补充图案要求' : unit.route === 'gpt-image-2' ? 'GPT Image 2 生成完整透明 Logo'
     : completeModel ? '模型生成完整图案' : hybrid ? '保真主体＋模型文字'
     : `${preservation}＋必要时增强${input.exactText ? '＋准确文字组合' : ''}`;
   const reason = needsReview ? currentRouting.facts.blockers.join('；') || currentRouting.decision.reason : unit.route === 'blocked' ? unit.ambiguities.join('；') || '请先确认主要素材和制作要求。' : unit.route === 'gpt-image-2' ? '人工指定 GPT Image 2；规格 1K / Low / 透明 PNG。'
@@ -66,7 +69,7 @@ export function productionRecipe(unit: ProductionUnit, source: SourceTaskRecord)
     : hybrid ? '主体图形保真处理，特殊字形交给模型，再组合成完整图案。'
     : `${preservation}；增强等级须检测原图后确定。${unit.route === 'deterministic' ? '已手动指定保真处理，不自动改为模型重绘。' : '最多保真修复一次，复测仍不达标且符合纯色重绘条件才转 B。'}`;
   const components = completeModel || unit.route === 'gpt-image-2'
-    ? [ `${input.primaryImageLabel}：进入成品的内容源`, ...composition.textSegments.map(text => `准确文字：${text}`),
+    ? [ `${input.primaryImageLabel}：${isReferenceTextArtwork(unit) ? '仅作样式参考' : '进入成品的内容源'}`, ...composition.textSegments.map(text => `准确文字：${text}`),
       ...input.referenceImageLabels.map(label => `${label}：仅作参考，不复制背景`), '一次生成一个完整候选，再核对文字与图形' ]
     : composition.summary;
   const actual = unit.artwork?.draft?.preprocessing;

@@ -1,3 +1,4 @@
+import { artworkInputSelection } from '@/lib/artwork-reference';
 import { ARTWORK_METHODS, ARTWORK_ROUTING_STANDARD, artworkClarityLabel, type ArtworkMethod } from '@/lib/artwork-routing-standard';
 import { productionArtworkRouting, productionRecipe } from '@/lib/production-recipe';
 import type { SourceTaskRecord } from '@/lib/batch-task-review';
@@ -9,7 +10,7 @@ export function WpsArtworkMethodSelector({ unit, source, busy, change }: { unit:
   const routing = productionArtworkRouting({ ...unit, artworkMethod: 'auto', route: 'auto' }, source);
   const selected = unit.artworkMethod ?? ({ deterministic: 'preserve', hybrid: 'compose', model: 'generate' } as const)[unit.route as 'deterministic' | 'hybrid' | 'model'] ?? 'auto';
   const recommendation = routing.decision.method ? ARTWORK_METHODS[routing.decision.method].label : null;
-  const input = { generationPrompt: unit.generationPrompt, sourceRequirementText: source.requirementText, printPlacement: unit.placement ?? undefined, instruction: unit.instruction, layoutNote: unit.layoutNote, exactText: unit.textMode === 'replace' ? unit.exactText : '', primaryImageLabel: `图${source.materials.findIndex(material => material.id === unit.materialId) + 1}`, sourceScope: unit.sourceScope, processingRoute: 'auto' as const, referenceImages: unit.referenceMaterialIds.map(id => ({ label: `图${source.materials.findIndex(material => material.id === id) + 1}` })) };
+  const input = { generationPrompt: unit.generationPrompt, sourceRequirementText: source.requirementText, printPlacement: unit.placement ?? undefined, instruction: unit.instruction, layoutNote: unit.layoutNote, exactText: unit.textMode === 'replace' ? unit.exactText : '', primaryImageLabel: artworkInputSelection(source, unit).primaryImageLabel, primaryImageRole: artworkInputSelection(source, unit).primaryImageRole, sourceScope: unit.sourceScope, processingRoute: 'auto' as const, referenceImages: artworkInputSelection(source, unit).referenceMaterialIds.map(id => ({ label: `图${source.materials.findIndex(material => material.id === id) + 1}` })) };
   return <div className="wps-method-selector"><label>处理方式<select aria-label={`${unit.id} 处理方式`} disabled={busy} value={unit.route === 'gpt-image-2' ? 'gpt-image-2' : selected} onChange={event => change(event.target.value as ArtworkMethodChoice)}>
     {ARTWORK_METHOD_OPTIONS.map(method => {
       const issue = artworkMethodIssue(input, method);
@@ -28,6 +29,7 @@ export function WpsArtworkRouting({ unit, source }: { unit: ProductionUnit; sour
   const acceptanceIssues = validation ? artworkAcceptanceIssues(validation) : [];
   const oldReport = report && report.graphic.protocol !== ARTWORK_ROUTING_STANDARD.scoreProtocol;
   const redrawFailed = report?.redraw?.status === 'failed' || (report?.graphicMethod !== 'redraw' && report?.reviewReasons.some(reason => reason.startsWith('高清重绘未完成')));
+  const referenceColor = unit.artwork?.draft?.preprocessing.referenceColor;
   return <section className="wps-artwork-routing" aria-label="图案处理方案与判断标准">
     <header><span>当前处理方案</span><span className={`wps-routing-status ${redrawFailed ? 'review' : decision.state}`}>{redrawFailed ? 'B 重绘未完成' : decision.state === 'ready' ? '条件已明确' : decision.state === 'pending' ? '待检测' : '待核对'}</span></header>
     {redrawFailed && <p className="error-banner" role="status">重绘处理失败，当前显示的是 A 保真候选，尚未完成“重绘＋净化”。{report?.redraw?.error}</p>}
@@ -36,6 +38,7 @@ export function WpsArtworkRouting({ unit, source }: { unit: ProductionUnit; sour
     {historicalClarity !== null && <p className="wps-routing-note">原图旧记录：blur 原值 {historicalClarity.toFixed(2)}，不能当作清晰度。当前图案需重新检测画质。</p>}
     {method && <div className="wps-routing-criteria"><b>本方案的判断标准</b><ul>{method.criteria.map(criterion => <li key={criterion}>{criterion}</li>)}</ul></div>}
     <div className="wps-routing-execution"><b>当前实际处理</b><p>{actual ?? (unit.artwork ? '手动上传或未记录处理服务' : '尚未制作')}</p>
+      {referenceColor && <div><b>本次制作采用的参考色</b><p><span aria-hidden="true" style={{ display: 'inline-block', width: 20, height: 20, verticalAlign: 'middle', marginRight: 8, backgroundColor: referenceColor.hex, border: '1px solid #aaa' }} />{referenceColor.hex} · 来源：{referenceColor.label}</p><p>{referenceColor.description}</p><small>按参考照片的像素近似取色。可在图案编辑器中调整颜色；编辑后的颜色以当前图案为准。</small></div>}
       {unit.artwork?.draft?.preprocessing.edgeRefinement && <><p>{unit.artwork.draft.preprocessing.edgeRefinement}</p><p className="wps-routing-note">仅完整、连续的单色圆形外框自动净边；非圆形、断边或镂空图案保持原样。</p></>}
       {(report || validation) && <dl className="wps-routing-scores">
         <div><dt>原图</dt><dd>{report ? artworkClarityLabel(report.source) : '未按新标准检测'}</dd></div>

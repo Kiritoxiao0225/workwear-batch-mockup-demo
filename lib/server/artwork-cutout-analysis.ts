@@ -3,6 +3,8 @@ import type { ArtworkCutoutDecision, ArtworkCutoutMode } from '@/lib/artwork-cut
 import { ARTWORK_CUTOUT_VERSION } from '@/lib/artwork-cutout';
 import { inspectArtworkSource, alphaMaskReport, assertUsableArtworkMask, missingArtworkForegroundRegions } from './artwork-image-processing';
 import { detectArtworkBadges } from './artwork-badge-protection';
+import type { ArtworkCutoutRegion } from '@/lib/artwork-cutout';
+import type { ArtworkWatermarkEvidence } from './artwork-content-inspection';
 
 /** Simple holes need segmentation; fine foreground details need the precision route.
  * Explicit standard mode keeps Volcano available even for detailed artwork. */
@@ -55,16 +57,32 @@ export async function analyzeArtworkCutout(bytes: Buffer, mode: ArtworkCutoutMod
     : decision('standard', ['底色均匀', '实心粗线条', '主体反差明确', ...badgeReasons]);
 }
 
-export async function validateCutoutOutput(bytes: Buffer, source?: Buffer) {
+export class ArtworkCutoutContentError extends Error {
+  constructor(public missingRegions: ArtworkCutoutRegion[]) { super('抠图结果疑似丢失文字或独立图形，请对照标记区域核对'); }
+}
+
+export async function validateCutoutOutput(bytes: Buffer, source?: Buffer, options: {
+  inspectWatermarks?: (source: Buffer, missing: ArtworkCutoutRegion[]) => Promise<ArtworkWatermarkEvidence[]>;
+} = {}) {
   const meta = await sharp(bytes).metadata();
   if (meta.format !== 'png' || !meta.hasAlpha) throw new Error('结果必须为带透明通道的 PNG');
   assertUsableArtworkMask(await alphaMaskReport(bytes));
   if (source) {
     const profile = await inspectArtworkSource(source);
     if (meta.width !== profile.width || meta.height !== profile.height) throw new Error('抠图前后画布尺寸不一致，请核对完整图案与排版');
-    if (profile.backgroundColor && profile.dominantBorderRatio >= .95 && profile.borderEdgeDensity <= .02
-      && (await missingArtworkForegroundRegions(source, bytes, profile.backgroundColor, { minimumAlpha: 64 })).length) {
-      throw new Error('抠图结果丢失了原图中的文字或独立图形，请核对原图');
+    if (profile.backgroundColor && profile.dominantBorderRatio >= .95 && profile.borderEdgeDensity <= .02) {
+      const missing = await missingArtworkForegroundRegions(source, bytes, profile.backgroundColor, { minimumAlpha: 64 });
+      if (missing.length) {
+        // No inference failure may turn missing customer content into an accepted result.
+        const watermarks = await options.inspectWatermarks?.(source, missing).catch(() => []) ?? [];
+        const unexplained = missing.filter(region => !watermarks.some(({ bounds }) => bounds.width * bounds.height <= profile.width * profile.height * .08
+          && bounds.left >= 0 && bounds.top >= 0 && bounds.width > 0 && bounds.height > 0
+          && bounds.left <= region.left && bounds.top <= region.top
+          && bounds.left + bounds.width >= region.left + region.width && bounds.top + bounds.height >= region.top + region.height));
+        if (unexplained.length) throw new ArtworkCutoutContentError(unexplained);
+        return watermarks;
+      }
     }
   }
+  return [];
 }

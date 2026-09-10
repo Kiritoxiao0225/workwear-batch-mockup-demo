@@ -133,7 +133,7 @@ export async function analyzeSourceTaskRecords(records: SourceTaskRecord[]) {
 }
 
 async function requestVisionModel(records: SourceTaskRecord[], config: ReturnType<typeof analysisConfiguration>, prompt: string) {
-  const { model, provider } = config;
+  const { provider } = config;
   const content: Array<Record<string, unknown>> = [
     { type: 'text', text: prompt },
   ];
@@ -146,6 +146,20 @@ async function requestVisionModel(records: SourceTaskRecord[], config: ReturnTyp
     ];
   })));
   content.push(...imageBlocks.flat());
+  return requestVisionContent(content, records.map(record => `${record.customerId}/${record.recordId}`).join('、'), config);
+}
+
+/** Share the configured analysis provider, credentials and error handling with focused visual inspections. */
+export async function inspectArtworkReferenceImage(dataUrl: string, prompt: string, options: { label?: string; timeoutMs?: number } = {}) {
+  const config = analysisConfiguration();
+  return analysisQueue.run(randomUUID(), () => requestVisionContent([
+    { type: 'text', text: prompt },
+    { type: 'image_url', image_url: { url: dataUrl, ...(config.provider === 'cliproxy' ? { detail: 'high' } : {}) } },
+  ], options.label ?? '图案参考色', config, options.timeoutMs));
+}
+
+async function requestVisionContent(content: Array<Record<string, unknown>>, label: string, config: ReturnType<typeof analysisConfiguration>, timeoutMs = ANALYSIS_TIMEOUT_MS) {
+  const { model, provider } = config;
   let response: Response;
   try {
     response = await fetch(config.endpoint, {
@@ -164,12 +178,12 @@ async function requestVisionModel(records: SourceTaskRecord[], config: ReturnTyp
         } : { max_tokens: 8_000, temperature: 0.1 }),
         stream: false,
       }),
-      signal: AbortSignal.timeout(ANALYSIS_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
       redirect: 'error',
     });
   } catch (error) {
     if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
-      throw new Error(`任务分析模型处理超时（${ANALYSIS_TIMEOUT_MS / 1000} 秒）：${records.map((record) => `${record.customerId}/${record.recordId}`).join('、')}；该行请求失败不会影响其他行，可重新分析`);
+      throw new Error(`任务分析模型处理超时（${timeoutMs / 1000} 秒）：${label}；该行请求失败不会影响其他行，可重新分析`);
     }
     if (provider === 'cliproxy') throw new Error('需求解析（CLIProxyAPI）连接中断，结果未确认；未自动重试或切换模型');
     throw error;
@@ -197,7 +211,7 @@ WPS 原文：${source.requirementText}
 素材：${source.materials.map((image, i) => `WPS 图${i + 1} = ${image.id}`).join('；')}
 ${GENERATION_PROMPT_WRITING_RULES}
 选择本单元真正需要的主要内容素材和参考素材；不要混入其他服装或印花位置的素材。目标单元中的 placement 是上衣位置，衣服款式和颜色不是图案配色指令。
-primaryImageLabel 只选一张主要内容图。referenceImageLabels 只列额外需要的参考图，不能重复主要图，也不能重复其他参考图；没有额外参考图时必须是空数组 []，不要填 null、空字符串或占位符“图N”。素材图号必须存在，不能为填满字段而引入另一版图案。正文出现的所有图号，包括排除性描述中的图号，都必须在已选主要图或参考图中；不选入的图片不会送给生图模型，正文不要引用其编号，需要排除时直接说明不包含哪些文字或元素。
+primaryImageLabel 只选一张主要内容图；准确文字仅借用图片样式、不提取原图内容时设为 null，所有样式图列入 referenceImageLabels，不能强行指定内容图。referenceImageLabels 只列额外需要的参考图，不能重复主要图，也不能重复其他参考图；没有额外参考图时必须是空数组 []，不要填 null、空字符串或占位符“图N”。素材图号必须存在，不能为填满字段而引入另一版图案。正文出现的所有图号，包括排除性描述中的图号，都必须在已选主要图或参考图中；不选入的图片不会送给生图模型，正文不要引用其编号，需要排除时直接说明不包含哪些文字或元素。
 仅返回 JSON 对象，示例（没有额外参考图）：{"generationPrompt":"完整提示词正文","primaryImageLabel":"图1","referenceImageLabels":[],"ambiguities":[]}`;
   const config = analysisConfiguration();
   return analysisQueue.run(randomUUID(), async () => {
@@ -208,10 +222,11 @@ primaryImageLabel 只选一张主要内容图。referenceImageLabels 只列额�
     const generationPrompt = parseGenerationPrompt(body.generationPrompt);
     if (!generationPrompt) throw new Error('提示词整理返回空内容');
     const labels = source.materials.map((_, i) => `图${i + 1}`);
-    if (typeof body.primaryImageLabel !== 'string' || !labels.includes(body.primaryImageLabel)) throw new Error('提示词整理返回了不存在的主要素材');
+    if (body.primaryImageLabel !== null && (typeof body.primaryImageLabel !== 'string' || !labels.includes(body.primaryImageLabel))) throw new Error('提示词整理返回了不存在的主要素材');
     if (!Array.isArray(body.referenceImageLabels) || body.referenceImageLabels.length > 15 || body.referenceImageLabels.some(label => typeof label !== 'string' || !labels.includes(label))
-      || new Set([body.primaryImageLabel, ...body.referenceImageLabels]).size !== body.referenceImageLabels.length + 1) throw new Error('提示词整理返回了无效或重复的参考素材');
+      || new Set([...(body.primaryImageLabel ? [body.primaryImageLabel] : []), ...body.referenceImageLabels]).size !== body.referenceImageLabels.length + (body.primaryImageLabel ? 1 : 0)) throw new Error('提示词整理返回了无效或重复的参考素材');
+    if (body.primaryImageLabel === null && (unit.textMode !== 'replace' || !unit.exactText?.trim() || !body.referenceImageLabels.length)) throw new Error('无主要内容图时需要准确文字与样式参考图');
     if (!Array.isArray(body.ambiguities) || body.ambiguities.some(issue => typeof issue !== 'string')) throw new Error('提示词整理缺少有效的待核对项');
-    return { generationPrompt, primaryImageLabel: body.primaryImageLabel, referenceImageLabels: body.referenceImageLabels as string[], ambiguities: body.ambiguities as string[], ...metadata };
+    return { generationPrompt, primaryImageLabel: body.primaryImageLabel as string | null, referenceImageLabels: body.referenceImageLabels as string[], ambiguities: body.ambiguities as string[], ...metadata };
   });
 }

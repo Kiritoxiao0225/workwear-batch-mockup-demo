@@ -1,12 +1,13 @@
 'use client';
 import { ProductionOperationLocks, productionOperation, productionOperationsOverlap, type ProductionOperation } from '@/lib/production-operation-lock';
 import { artworkPixelFingerprint } from '@/lib/artwork-save-fingerprint';
-import { artworkPlanIssues, isTextOnlyArtwork } from '@/lib/artwork-reference';
+import { artworkInputSelection, currentArtworkAmbiguities, isReferenceTextArtwork, artworkPlanIssues, isTextOnlyArtwork } from '@/lib/artwork-reference';
 import { createProductionTextDraft, productionTextColor, requestedProductionTextColor } from '@/lib/client/production-text-artwork';
 import { artworkBlockingAmbiguities, artworkProcessingRoute } from '@/lib/task-review-analysis';
 import { productionFileId } from '@/lib/production-file-url';
 
 import Image from 'next/image';
+import { WpsMaterialImage } from '@/components/wps-material-image';
 import { WpsCutoutControls, CutoutTaskStatus, cutoutInputDataUrl, cutoutRequest, type CutoutSession } from '@/components/wps-cutout-controls';
 import { useArtworkCutoutSessions } from '@/hooks/use-artwork-cutout-sessions';
 import { CUTOUT_ROUTE_LABELS, cutoutFeeLabel, type ArtworkCutoutMode, type ArtworkCutoutResult } from '@/lib/artwork-cutout';
@@ -23,6 +24,7 @@ import type { ArtworkValidation } from '@/lib/wps-production';
 import type { BrowserLogoTextVerification } from '@/lib/client/browser-logo-ocr';
 import { WPS_ANALYSIS_CONCURRENCY } from '@/lib/client/task-review-analysis-batch';
 import { useWpsAutomaticAnalysis } from '@/hooks/use-wps-automatic-analysis';
+import { WpsAnalysisStatusNotice } from '@/components/wps-analysis-status';
 import { ARTWORK_CONCURRENCY, ArtworkWorkQueue, ArtworkQueueCancelledError, type ArtworkQueueJob } from '@/lib/artwork-work-queue';
 import { productionArtworkSnapshot, assertProductionArtworkSnapshot, newerProductionState, productionActionSnapshot } from '@/lib/production-artwork-snapshot';
 import { WpsArtworkSizePreview } from '@/components/wps-artwork-size-preview';
@@ -51,7 +53,7 @@ import type { ArtworkTiming } from '@/lib/artwork-progress';
 import { WpsArtworkProgress } from '@/components/wps-artwork-progress';
 import { PLACEMENT_DEFAULTS, PLACEMENT_LABELS } from '@/lib/mockup';
 import type { ProductionUnit, WpsProductionState } from '@/lib/wps-production';
-import { canAnalyzeWpsTask, liveWpsProductionState, orderWpsSourceRecords, pendingWpsAnalysisRecords, wpsSourceEvidence } from '@/lib/wps-source';
+import { liveWpsProductionState, orderWpsSourceRecords, pendingWpsAnalysisRecords, wpsSourceEvidence } from '@/lib/wps-source';
 
 type WpsSyncResponse = {
   mode: 'live';
@@ -75,15 +77,16 @@ function artworkPrompt(unit: ProductionUnit, source: SourceTaskRecord) {
     sourceScope: unit.sourceScope, artworkMethod: unit.artworkMethod,
     processingRoute: unit.route === 'deterministic' ? 'fidelity' : unit.route === 'blocked' || unit.route === 'gpt-image-2' ? 'auto' : unit.route,
     printPlacement: artworkPrintPlacement(unit.placement),
-    primaryImageLabel: `图${source.materials.findIndex(material => material.id === unit.materialId) + 1}`,
-    referenceImages: unit.referenceMaterialIds.map(id => ({ label: `图${source.materials.findIndex(material => material.id === id) + 1}` })),
+    primaryImageLabel: artworkInputSelection(source, unit).primaryImageLabel,
+    primaryImageRole: artworkInputSelection(source, unit).primaryImageRole,
+    referenceImages: artworkInputSelection(source, unit).referenceMaterialIds.map(id => ({ label: `图${source.materials.findIndex(material => material.id === id) + 1}` })),
   });
 }
 
 function artworkPreparationIssue(unit: ProductionUnit, source: SourceTaskRecord) {
   if (isTextOnlyArtwork(unit)) return artworkPlanIssues(source, unit).join('；') || null;
-  const primary = source.materials.find(material => material.id === unit.materialId);
-  if (!primary || !(primary.url ?? primary.previewUrl)) return '缺少可读取的主要素材，请先修改要求。';
+  const primary = artworkInputSelection(source, unit).primary;
+  if (!primary || !(primary.url ?? primary.previewUrl)) return isReferenceTextArtwork(unit) ? '样式参考图没有可读取的原图，请核对参考素材。' : '尚未绑定主要内容素材，或原图地址不可用，请核对素材。';
   if (!unit.instruction.trim()) return '请先填写制作要求。';
   if (unit.textMode === 'replace' && !unit.exactText.trim() && productionArtworkRouting(unit, source).facts.intent !== 'generate') return '请先填写要添加或替换的准确文字。';
   if (unit.referenceMaterialIds.length > 15) return '图案处理最多使用 15 张额外参考图，请先修改要求。';
@@ -107,7 +110,7 @@ function WpsArtworkPreparationDetails({ unit, source, preview }: { unit: Product
     <div className="wps-production-inputs">{source.materials.filter(material => material.id === unit.materialId || unit.referenceMaterialIds.includes(material.id)).map(material => {
       const url = material.previewUrl ?? material.url;
       const label = `图${source.materials.indexOf(material) + 1} · ${material.id === unit.materialId ? '内容' : '参考'}`;
-      return <button key={material.id} disabled={!url} type="button" onClick={() => url && preview(url, label)}>{url && <Image alt={label} fill sizes="64px" src={url} unoptimized />}<span>{label}</span></button>;
+      return <WpsMaterialImage key={material.id} src={url} alt={material.description} label={label} sizes="64px" open={() => url && preview(url, label)} />;
     })}</div>
     <WpsArtworkRouting unit={unit} source={source}/>
     {canonical ? <details><summary>本路线的提示词与输入映射</summary><small>{canonical.version} / {canonical.hash}</small>
@@ -254,7 +257,10 @@ export function WpsProductionClient() {
   const acceptProductionState = useCallback((state: WpsProductionState) => {
     setProduction(current => {
       const next = reuseProductionGeometry(newerProductionState(current, state), current);
-      return sourceInitialized.current ? liveWpsProductionState(next, sourceRecords.current) : next;
+      if (sourceInitialized.current) return liveWpsProductionState(next, sourceRecords.current);
+      if (!next.sourceRecordOrder) return next;
+      const byId = new Map(next.records.map(record => [record.source.recordId, record]));
+      return { ...next, records: orderWpsSourceRecords(next.sourceRecordOrder, next.records.map(record => record.source)).map(source => byId.get(source.recordId)!) };
     });
   }, []);
   const analysis = useWpsAutomaticAnalysis(production, syncMode === 'live' && Boolean(catalogUser) && catalogUser?.role !== 'viewer', acceptProductionState);
@@ -299,7 +305,8 @@ export function WpsProductionClient() {
       if (request.signal.aborted || syncRequest.current !== request) return;
       const previousIds = new Set(sourceRecords.current.map((record) => record.recordId));
       const addedCount = previousIds.size ? sync.records.filter((record) => !previousIds.has(record.recordId)).length : 0;
-      sourceRecords.current = orderWpsSourceRecords(sourceRecords.current, sync.records);
+      // The server persists discovery order, including across page reloads.
+      sourceRecords.current = sync.records;
       sourceInitialized.current = true;
       setSourceInfo(sync);
       setSyncMode('live');
@@ -508,9 +515,9 @@ export function WpsProductionClient() {
       const result = await responseJson(await fetch('/api/wps-production/prompt', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
         body: JSON.stringify({ unitId: editingUnit.id, expectedUnitSnapshot: productionArtworkSnapshot(editingUnit, editingRecord.source) }),
-      })) as { generationPrompt: string; materialId: string; referenceMaterialIds: string[]; ambiguities: string[] };
+      })) as { generationPrompt: string; materialId: string | null; referenceMaterialIds: string[]; ambiguities: string[] };
       if (!controller.signal.aborted) setPlanForm(current => current ? { ...current, generationPrompt: result.generationPrompt,
-        materialId: result.materialId, referenceMaterialIds: result.referenceMaterialIds, ambiguities: result.ambiguities.join('\n') } : current);
+        materialId: result.materialId ?? '', referenceMaterialIds: result.referenceMaterialIds, ambiguities: result.ambiguities.join('\n') } : current);
     } catch (error) {
       if (!controller.signal.aborted) setError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -609,7 +616,8 @@ export function WpsProductionClient() {
     if (!production || unitBusyReason(unit.id)) return;
     cancelSync();
     const record = production.records.find((candidate) => candidate.source.recordId === unit.sourceRecordId);
-    const primary = record?.source.materials.find((material) => material.id === unit.materialId);
+    const selection = record ? artworkInputSelection(record.source, unit) : null;
+    const primary = selection?.primary;
     const primaryUrl = primary?.url ?? primary?.previewUrl;
     const textOnly = isTextOnlyArtwork(unit);
     if (!record || (!textOnly && (!primary || !primaryUrl))) {
@@ -656,7 +664,7 @@ export function WpsProductionClient() {
           return;
         }
         const primaryIndex = record.source.materials.findIndex((material) => material.id === primary!.id);
-        const references = unit.referenceMaterialIds.map((materialId) => {
+        const references = selection!.referenceMaterialIds.map((materialId) => {
           const material = record.source.materials.find((candidate) => candidate.id === materialId);
           if (!material) throw new Error(`${unit.id} 引用了不存在的参考素材 ${materialId}`);
           return material;
@@ -685,6 +693,7 @@ export function WpsProductionClient() {
             layoutNote: unit.layoutNote,
             image,
             primaryImageLabel: `图${primaryIndex + 1}`,
+            primaryImageRole: selection!.primaryImageRole,
             referenceImages,
             artworkMethod: unit.artworkMethod,
             cutoutMode: unit.cutoutMode ?? 'auto',
@@ -703,7 +712,7 @@ export function WpsProductionClient() {
           if (!(error instanceof ArtworkResponseError)) throw error;
           const rejected = error.failure;
           const cutout = rejected.cutout ?? rejected.candidate?.cutout;
-          if (cutout) rememberCutout(unit, cutout, expectedUnitSnapshot, rejected.candidate ? 'generated' : 'component');
+          if (cutout) rememberCutout(unit, cutout, expectedUnitSnapshot, rejected.candidate && !rejected.candidate.requiresEditVerification ? 'generated' : 'component');
           if (rejected.candidate) setNativeCandidates(current => ({ ...current, [unit.id]: rejected.candidate! }));
           throw error;
         });
@@ -952,7 +961,7 @@ export function WpsProductionClient() {
       <main className="wps-production-page">
         <header className="wps-production-heading">
           <div><span>WPS BATCH PRODUCTION</span><h1>效果图生产总表</h1><p>方案与位置、完整透明素材、正反面合成和客户确认，全部围绕同一个版本推进。</p></div>
-          <div>{analysis.errors.length > 0 && <button className="button secondary" disabled={analysis.running || syncMode !== 'live'} onClick={analysis.retryFailed} type="button">重试解析失败的任务（{analysis.errors.length}）</button>}<button className="button secondary" disabled={syncPaused || syncing} onClick={() => void load()} type="button">{syncing ? '正在同步 WPS…' : '同步 WPS 状态与素材'}</button>{approvedVersions > 0 && <a className="button primary" href="/api/wps-production/export">导出已确认 ZIP</a>}</div>
+          <div>{analysis.errors.length > 0 && <button className="button secondary" disabled={analysis.running || !analysis.enabled} onClick={() => analysis.retryFailed()} type="button">重试解析失败的任务（{analysis.errors.length}）</button>}<button className="button secondary" disabled={syncPaused || syncing} onClick={() => void load()} type="button">{syncing ? '正在同步 WPS…' : '同步 WPS 状态与素材'}</button>{approvedVersions > 0 && <a className="button primary" href="/api/wps-production/export">导出已确认 ZIP</a>}</div>
         </header>
 
         <p className="wps-production-queue" role="status" aria-live="polite">需求解析：最多同时 {WPS_ANALYSIS_CONCURRENCY} 条订单。图案制作：同时生图最多 {ARTWORK_CONCURRENCY} 张 · 制作中 {artworkJobs.filter(job => job.status === 'running').length} 张 · 后处理与保存 {artworkJobs.filter(job => job.status === 'finishing').length} 张 · 排队 {artworkJobs.filter(job => job.status === 'queued').length} 张{artworkJobs.length > 0 ? '。其他图案可继续确认、编辑或加入制作队列，请保持页面打开。' : '。点击各行“制作图案”即可加入队列。'}</p>
@@ -978,7 +987,7 @@ export function WpsProductionClient() {
           {selectedStatuses !== null && <button type="button" onClick={() => setSelectedStatuses(null)}>查看全部</button>}
         </div>}
 
-        <p className="wps-production-message" aria-live="polite">{analysis.running ? `正在自动解析需求：${analysis.completed}/${analysis.total}` : `新任务自动解析已开启${pendingAnalysisCount ? ` · ${pendingAnalysisCount} 条待处理` : ''}`}</p>
+        <p className="wps-production-message" aria-live="polite">{analysis.running ? `正在自动解析需求：${analysis.completed}/${analysis.total}` : !analysis.enabled ? '自动解析暂未启动' : `新任务自动解析已开启${pendingAnalysisCount > analysis.errors.length ? ` · ${pendingAnalysisCount - analysis.errors.length} 条等待解析` : ''}${analysis.errors.length ? ` · ${analysis.errors.length} 条失败，请在对应行重试` : ''}`}</p>
         {analysis.errors.length > 0 && <p className="wps-production-row-error" role="alert">{analysis.errors.join('；')}</p>}
         {!production?.records.length ? <section className="wps-production-empty"><strong>{syncMode ? '当前没有设计中或待领取的 WPS 任务' : '等待连接真实 WPS 表'}</strong><p>仅同步设计中和待领取任务的原文、素材图与状态。</p>{!syncMode && <a className="button secondary" href="/wps-connect">查看原表接入步骤</a>}<button className="button primary" disabled={syncPaused || syncing} onClick={() => void load()} type="button">{syncing ? '正在同步 WPS…' : '同步 WPS'}</button></section> : !filteredRecords.length ? <section className="wps-production-empty"><strong>{selectedStatuses?.length === 0 ? '尚未选择任务状态' : `当前没有“${selectedStatuses?.join('、')}”任务`}</strong><p>{selectedStatuses?.length === 0 ? '可以同时勾选多个状态，也可以恢复为设计中和待领取。' : '自动同步后，符合任一所选状态的任务会出现在这里。'}</p><button className="button secondary" onClick={() => setSelectedStatuses([...DEFAULT_WPS_STATUSES])} type="button">恢复默认筛选</button><button className="button secondary" onClick={() => setSelectedStatuses(null)} type="button">查看全部任务</button></section> : <div className="wps-production-table-wrap" onPointerDownCapture={cancelSync} onFocusCapture={cancelSync}>
           <table className="wps-production-table">
@@ -991,9 +1000,9 @@ export function WpsProductionClient() {
               const repeatedSummary = units.map(candidate => `${candidate.garmentLabel} · ${candidate.placement ? PLACEMENT_LABELS[candidate.placement.key] : '位置待确认'}：${candidate.instruction}`).join('；');
               if (!units.length) return <tbody key={record.source.recordId}><tr><td className="wps-production-source">
                 <small className="wps-technical-id">{record.source.recordId} · {record.source.revision}</small><strong>{record.source.customerId}</strong><p>{record.source.requirementText}</p><small>商品款式：{record.source.productStyleText}</small>
-                <div>{record.source.materials.map((material, index) => <button key={material.id} type="button" onClick={() => material.url && setPreview({ url: material.url, title: material.description })}>{material.previewUrl && <Image alt={material.description} fill sizes="54px" src={material.previewUrl} unoptimized />}<span>图{index + 1}</span></button>)}</div>
+                <div>{record.source.materials.map((material, index) => <WpsMaterialImage key={material.id} src={material.previewUrl ?? material.url} alt={material.description} label={`图${index + 1}`} sizes="68px" open={() => material.url && setPreview({ url: material.url, title: material.description })} />)}</div>
                 {statusEditor(record.source)}
-              </td><td/><td className="wps-requirement-cell">{record.summary}<p>{!record.source.requirementText.trim() ? '在 WPS 填写需求和上传素材后，这里会自动更新。' : canAnalyzeWpsTask(record.source) ? '需求将自动解析，无需点击；解析失败可在上方重试。' : '仅待领取和设计中的任务参与 AI 分析。'}</p></td><td/><td/></tr></tbody>;
+              </td><td/><td className="wps-requirement-cell"><WpsAnalysisStatusNotice source={record.source} status={analysis.statuses[record.source.recordId]} enabled={analysis.enabled} retry={() => analysis.retryFailed(record.source)} /></td><td/><td/></tr></tbody>;
               const groups = [...new Set(units.map(unit => versionByUnit.get(unit.id)!.id))].map(id => ({
                 version: versionByUnit.get(units.find(unit => versionByUnit.get(unit.id)!.id === id)!.id)!,
                 units: units.filter(unit => versionByUnit.get(unit.id)!.id === id),
@@ -1021,14 +1030,14 @@ export function WpsProductionClient() {
                 const stage = productionArtworkStage(unit);
                 const textOnly = isTextOnlyArtwork(unit);
                 const wholeGeneration = !textOnly && productionArtworkRouting(unit, record.source).facts.intent === 'generate';
-                const visibleAmbiguities = textOnly ? artworkPlanIssues(record.source, unit) : unit.ambiguities;
+                const visibleAmbiguities = textOnly ? artworkPlanIssues(record.source, unit) : currentArtworkAmbiguities(unit);
                 const status = issues.length ? '图案制作有待完成项' : stage === '待核对 Logo' ? '图案已制作 · 随整件效果核对' : stage === 'Logo 已确认' ? '图案已核对' : stage;
                 return <tr key={unit.id} data-version-id={version.id} data-unit-id={unit.id} className={unitIndex === 0 ? 'wps-version-start' : undefined}>
                   {groupIndex === 0 && unitIndex === 0 && <td className="wps-production-source" rowSpan={units.length}>
                     <small className="wps-technical-id">{record.source.recordId} · {record.source.revision}</small><strong>{record.source.customerId}</strong><p>{record.source.requirementText}</p><small>商品款式：{record.source.productStyleText}</small>
                     <div>{record.source.materials.map((material, index) => {
                       const url = material.previewUrl ?? material.url;
-                      return <button disabled={!url} key={material.id} onClick={() => url && setPreview({ url, title: `图${index + 1} · ${material.description}` })} type="button">{url ? <Image alt={material.description} fill sizes="54px" src={url} unoptimized /> : null}<span>图{index + 1}</span></button>;
+                      return <WpsMaterialImage key={material.id} src={url} alt={material.description} label={`图${index + 1}`} sizes="68px" open={() => url && setPreview({ url, title: `图${index + 1} · ${material.description}` })} />;
                     })}</div>
                     {statusEditor(record.source)}
                   </td>}
@@ -1047,7 +1056,7 @@ export function WpsProductionClient() {
                       {!wholeGeneration && unit.exactText && !unit.instruction.includes(unit.exactText) && <p>准确文字：{unit.exactText}</p>}
                       {!wholeGeneration && unit.layoutNote && <p>{unit.layoutNote}</p>}
                       {!textOnly && unit.generationPrompt && <details open={wholeGeneration}><summary>{wholeGeneration ? '整图生成提示词' : '已整理的模型提示词'}</summary><p style={{ whiteSpace: 'pre-wrap' }}>{unit.generationPrompt}</p></details>}
-                      <small>{textOnly ? '纯文字 · 无需图片素材' : <>主要素材：{unit.materialId ? `图${record.source.materials.findIndex(material => material.id === unit.materialId) + 1}` : '待选择'}</>}</small>
+                      <small>{textOnly ? '纯文字 · 无需图片素材' : isReferenceTextArtwork(unit) ? '文字标识 · 图片仅作样式参考' : <>主要素材：{unit.materialId ? `图${record.source.materials.findIndex(material => material.id === unit.materialId) + 1}` : '待选择'}</>}</small>
                       {unit.referenceMaterialIds.length > 0 && <small>参考：{unit.referenceMaterialIds.map(id => `图${record.source.materials.findIndex(material => material.id === id) + 1}`).join('、')}，仅按制作要求参考</small>}
                       {visibleAmbiguities.length > 0 && <details className="wps-requirement-issues" open><summary>{artworkBlockingAmbiguities(visibleAmbiguities).length ? `有 ${visibleAmbiguities.length} 项待核对` : `AI 提醒 ${visibleAmbiguities.length} 条 · 不影响图案制作`}</summary><p>{visibleAmbiguities.join('；')}</p></details>}
                       <button className="wps-text-button" type="button" disabled={Boolean(unitBlocked)} title={unitBlocked ?? undefined} onClick={editRequest}>修改要求</button>
@@ -1073,7 +1082,7 @@ export function WpsProductionClient() {
                       {cutoutSessions[unit.id].result.status === 'failed' && !cutoutSessions[unit.id].stale && ['standard', 'volcano'].includes(cutoutSessions[unit.id].result.receipt.route) && <button type="button" className="primary" disabled={Boolean(queueJob)} onClick={() => void runCutout(unit, 'meitu')}>可选：美图精细 · 预计 1 积分</button>}
                     </>}
                     {nativeCandidate && <div className="wps-production-row-error">
-                      <a href={nativeCandidate.url} target="_blank" rel="noreferrer">查看模型原图（尚未完成透明处理）</a>
+                      <a href={nativeCandidate.url} target="_blank" rel="noreferrer">{nativeCandidate.stage === 'edit-review' ? '查看实际候选（修改要求待核对）' : '查看模型原图（尚未完成透明处理）'}</a>
                       <a href={nativeCandidate.url} download={`${unit.id}-candidate.png`}>下载候选 PNG</a>
                       <small>候选未上衣。请先下载保留，再刷新页面。</small>
                     </div>}
@@ -1118,9 +1127,9 @@ export function WpsProductionClient() {
       </main>
       {editingUnit && editingRecord && planForm && <div className="wps-plan-backdrop" onMouseDown={(event) => !unitBusyReason(editingUnit.id) && event.target === event.currentTarget && setEditingUnitId(null)}><div className="wps-plan-dialog" role="dialog" aria-modal="true" aria-labelledby="wps-plan-title">
         <header><div><small>修改制作要求</small><strong id="wps-plan-title">{editingRecord.source.customerId} · {editingUnit.garmentLabel} · {editingUnit.variantLabel}</strong></div><button disabled={Boolean(unitBusyReason(editingUnit.id))} onClick={() => setEditingUnitId(null)} type="button">关闭</button></header>
-        <section className="wps-plan-evidence"><div><b>WPS 原文</b><p>{editingRecord.source.requirementText}</p></div><div><b>附件</b><div>{editingRecord.source.materials.map((material, index) => { const url = material.previewUrl ?? material.url; return <button key={material.id} onClick={() => url && setPreview({ url, title: `图${index + 1} · ${material.description}` })} type="button">{url && <Image alt={material.description} fill sizes="70px" src={url} unoptimized />}<span>图{index + 1}</span></button>; })}</div></div></section>
+        <section className="wps-plan-evidence"><div><b>WPS 原文</b><p>{editingRecord.source.requirementText}</p></div><div><b>附件</b><div>{editingRecord.source.materials.map((material, index) => { const url = material.previewUrl ?? material.url; return <WpsMaterialImage key={material.id} src={url} alt={material.description} label={`图${index + 1}`} sizes="70px" open={() => url && setPreview({ url, title: `图${index + 1} · ${material.description}` })} />; })}</div></div></section>
         <section className="wps-plan-fields">
-          <label><span>主要内容素材</span><select disabled={planningPrompt} value={planForm.materialId} onChange={(event) => setPlanForm({ ...planForm, materialId: event.target.value })}><option value="">请选择</option>{editingRecord.source.materials.map((material, index) => <option key={material.id} value={material.id}>图{index + 1} · {material.description}</option>)}</select></label>
+          <label><span>主要内容素材</span><select disabled={planningPrompt} value={planForm.materialId} onChange={(event) => setPlanForm({ ...planForm, materialId: event.target.value })}><option value="">无内容图片（文字制作）</option>{editingRecord.source.materials.map((material, index) => <option key={material.id} value={material.id}>图{index + 1} · {material.description}</option>)}</select></label>
           <label className="wide"><span>模型提示词（整理和保存不会切换处理方式）</span><textarea rows={9} maxLength={4000} disabled={planningPrompt} placeholder="根据 WPS 原文和图片整理，或直接填写完整生图要求。图片使用 WPS 图号，例如图5、图4。" value={planForm.generationPrompt ?? ''} onChange={(event) => setPlanForm({ ...planForm, generationPrompt: event.target.value })} /></label>
           {planForm.generationPrompt && <details className="wide"><summary>整图生成时使用的正文与图片对应关系</summary><pre style={{ whiteSpace: 'pre-wrap' }}>{(() => {
             try { return artworkPrompt({ ...editingUnit, ...planForm, ambiguities: editingUnit.ambiguities, materialId: planForm.materialId || null }, editingRecord.source).generate; }
@@ -1154,7 +1163,7 @@ export function WpsProductionClient() {
         return <WpsPlacementEditor key={unit.id} unit={unit} requirementText={production!.records.find(record => record.source.recordId === unit.sourceRecordId)?.source.requirementText} versionUnits={production!.units.filter(candidate => version.unitIds.includes(candidate.id))} busy={Boolean(versionBusyReason(version.id))} composing={operations.some(operation => operation.key === `compose:${version.id}`)} error={error} edit={editArtwork} close={() => setPlacingUnitId(null)} save={saveTaskPlacement} />;
       })()}
       {artworkEditor && <TaskReviewArtworkEditor title={`${artworkEditor.unit.garmentLabel} · 图案调整`} originalRequirement={production?.records.find(record => record.source.recordId === artworkEditor.unit.sourceRecordId)?.source.requirementText ?? ''} initialDraft={artworkEditor.draft} defaultTextColor={() => productionTextColor(artworkEditor.unit)} renderPreview={draft => <WpsArtworkSizePreview unit={artworkEditor.unit} draft={draft}/>} saveLabel="保存图案" saveHint="保存后返回生产台，保留图层并更新客户效果图。" saving={Boolean(unitBusyReason(artworkEditor.unit.id))} onCancel={() => setArtworkEditor(null)} onSave={saveArtworkDraft} />}
-      {preview && <div className={`wps-preview-backdrop ${preview.title.includes("图案") || preview.title.startsWith("图") ? 'artwork-preview' : 'customer-preview'}`} onMouseDown={(event) => event.target === event.currentTarget && setPreview(null)}><div role="dialog" aria-modal="true" aria-label={preview.title}><header><strong>{preview.title}</strong><button  onClick={() => setPreview(null)} type="button">关闭</button></header><section><Image alt={preview.title} fill sizes="90vw" src={preview.url} unoptimized /></section>{previewVersion?.output && <footer>{error && <p className="wps-plan-error" role="alert">{error}</p>}<span>{previewVersion.output.width} × {previewVersion.output.height} px · 用于核对整体位置与比例，小字请查看高清图案。</span><div><button  onClick={() => setPreview(null)} type="button">返回表格调整</button>{previewVersion.status === 'pendingFinalConfirmation' && <button className="primary" disabled={Boolean(versionBusyReason(previewVersion.id))} type="button" onClick={async () => { const state = await runAction(`approve:${previewVersion.id}`, { action: 'approveVersion', versionId: previewVersion.id, actor: '当前操作员' }); if (state) { setPreview(null); setMessage('客户图已确认，可以导出。'); } }}>确认客户成品</button>}</div></footer>}</div></div>}
+      {preview && <div className={`wps-preview-backdrop ${preview.title.includes("图案") || preview.title.startsWith("图") ? 'artwork-preview' : 'customer-preview'}`} onMouseDown={(event) => event.target === event.currentTarget && setPreview(null)}><div role="dialog" aria-modal="true" aria-label={preview.title}><header><strong>{preview.title}</strong><button  onClick={() => setPreview(null)} type="button">关闭</button></header><section><WpsMaterialImage src={preview.url} alt={preview.title} sizes="90vw" large /></section>{previewVersion?.output && <footer>{error && <p className="wps-plan-error" role="alert">{error}</p>}<span>{previewVersion.output.width} × {previewVersion.output.height} px · 用于核对整体位置与比例，小字请查看高清图案。</span><div><button  onClick={() => setPreview(null)} type="button">返回表格调整</button>{previewVersion.status === 'pendingFinalConfirmation' && <button className="primary" disabled={Boolean(versionBusyReason(previewVersion.id))} type="button" onClick={async () => { const state = await runAction(`approve:${previewVersion.id}`, { action: 'approveVersion', versionId: previewVersion.id, actor: '当前操作员' }); if (state) { setPreview(null); setMessage('客户图已确认，可以导出。'); } }}>确认客户成品</button>}</div></footer>}</div></div>}
     </div>
   );
 }

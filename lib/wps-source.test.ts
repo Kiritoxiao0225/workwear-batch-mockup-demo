@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { taskReviewFixture } from '@/lib/testing/task-review-fixture';
 import { confirmProductionPlan, emptyWpsProductionState, importTaskReviews, upsertTaskReviews } from '@/lib/wps-production';
-import { canAnalyzeWpsTask, liveWpsProductionState, orderWpsSourceRecords, pendingWpsAnalysisRecords, wpsSourceEvidence } from '@/lib/wps-source';
+import { canAnalyzeWpsTask, liveWpsProductionState, mergeWpsSourceOrder, orderWpsSourceRecords, pendingWpsAnalysisRecords, wpsSourceEvidence } from '@/lib/wps-source';
 
 describe('live WPS production reconciliation', () => {
   it('retains work when WPS renews a signed URL but detects changed file identity or image options', () => {
@@ -28,12 +28,23 @@ describe('live WPS production reconciliation', () => {
     const source = taskReviewFixture()[0].source;
     const old = { ...source, recordId: 'existing' };
     const added = { ...source, recordId: 'new', requirementText: '' };
-    const first = orderWpsSourceRecords([old], [old, added]);
+    const first = orderWpsSourceRecords([old.recordId], [old, added]);
     expect(first.map((record) => record.recordId)).toEqual(['new', 'existing']);
     const filled = { ...added, requirementText: '新需求' };
-    expect(orderWpsSourceRecords(first, [old, filled])).toEqual([filled, old]);
-    expect(orderWpsSourceRecords(first, [old])).toEqual([old]);
+    const order = first.map(record => record.recordId);
+    expect(orderWpsSourceRecords(order, [old, filled])).toEqual([filled, old]);
+    expect(orderWpsSourceRecords(order, [old])).toEqual([old]);
     expect(liveWpsProductionState(emptyWpsProductionState(), [added]).records[0].summary).toContain('待完善');
+  });
+  it('initializes later WPS rows first and preserves history across filtering and source reordering', () => {
+    const source = taskReviewFixture()[0].source;
+    const rows = ['001', '007', '008'].map(recordId => ({ ...source, recordId }));
+    const order = mergeWpsSourceOrder([], rows.map(row => row.recordId));
+    expect(order).toEqual(['008', '007', '001']);
+    expect(orderWpsSourceRecords(order, [rows[1], rows[0], rows[2]]).map(row => row.recordId)).toEqual(order);
+    expect(mergeWpsSourceOrder(order, ['001'])).toEqual(order);
+    expect(orderWpsSourceRecords(order, [rows[0], rows[2]]).map(row => row.recordId)).toEqual(['008', '001']);
+    expect(mergeWpsSourceOrder(order, ['001', '007', '008', '009', '010'])).toEqual(['010', '009', ...order]);
   });
   it('status changes preserve confirmations, changed evidence invalidates them', () => {
     const review = taskReviewFixture()[0];

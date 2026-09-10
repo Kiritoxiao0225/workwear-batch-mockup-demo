@@ -85,11 +85,11 @@ export function productionArtworkStage(unit: ProductionUnit) {
     || (!unit.artwork && !attempt && unit.attempts.length > 0)) return '图案要求已更新，需重新制作';
   if (!unit.artwork) {
     if (isTextOnlyArtwork(unit)) return '待制作文字';
-    if (artworkProcessingRoute(unit) === 'blocked' || artworkBlockingAmbiguities(unit.ambiguities).length || !unit.instruction.trim()) return '待补充图案要求';
-    if (!unit.materialId) return '缺少原始素材';
+    if (artworkProcessingRoute(unit) === 'blocked' || artworkBlockingAmbiguities(currentArtworkAmbiguities(unit)).length || !unit.instruction.trim()) return '待补充图案要求';
+    if (!unit.materialId && !isReferenceTextArtwork(unit)) return '缺少原始素材';
     if (attempt?.status === 'completed') return '图案文件缺失，需重新制作';
     return '待制作图案';
   }
   return unit.gateB?.fingerprint === unit.artwork.validation.sha256 ? 'Logo 已确认' : '待核对 Logo';
 }
-import { isTextOnlyArtwork } from './artwork-reference';
+import { currentArtworkAmbiguities, isReferenceTextArtwork, isTextOnlyArtwork } from './artwork-reference';

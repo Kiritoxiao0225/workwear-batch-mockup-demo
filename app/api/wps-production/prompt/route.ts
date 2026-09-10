@@ -25,10 +25,12 @@ export async function POST(request: Request) {
     const result = await planArtworkGenerationPrompt(source, { id: unit.id, garmentLabel: unit.garmentLabel, variantLabel: unit.variantLabel, placement: unit.placement, instruction: unit.instruction, layoutNote: unit.layoutNote, exactText: unit.exactText, textMode: unit.textMode, sourceScope: unit.sourceScope, artworkMethod: unit.artworkMethod });
     const compiled = buildCanonicalArtworkModelPrompt({ generationPrompt: result.generationPrompt, instruction: unit.instruction, layoutNote: '',
       sourceRequirementText: source.requirementText, exactText: unit.exactText, sourceScope: unit.sourceScope,
-      primaryImageLabel: result.primaryImageLabel, referenceImageLabels: result.referenceImageLabels });
+      primaryImageLabel: result.primaryImageLabel ?? result.referenceImageLabels[0],
+      primaryImageRole: result.primaryImageLabel ? 'content' : 'reference',
+      referenceImageLabels: result.primaryImageLabel ? result.referenceImageLabels : result.referenceImageLabels.slice(1) });
     assertProductionArtworkSnapshot(await readWpsProductionState(), body.unitId, body.expectedUnitSnapshot);
     return NextResponse.json({ ...result, finalPrompt: compiled.prompt,
-      materialId: source.materials[Number(result.primaryImageLabel.slice(1)) - 1].id,
+      materialId: result.primaryImageLabel ? source.materials[Number(result.primaryImageLabel.slice(1)) - 1].id : null,
       referenceMaterialIds: result.referenceImageLabels.map(label => source.materials[Number(label.slice(1)) - 1].id) });
   } catch (error) {
     if (error instanceof CatalogHttpError) return NextResponse.json({ error: error.message }, { status: error.status });

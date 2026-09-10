@@ -1,6 +1,6 @@
 'use client';
 import { contrastingArtworkTextColor, DEFAULT_ARTWORK_FONT } from '@/lib/artwork-text-defaults';
-import { createLegacyArtworkDraft, requestedArtworkColor, type ArtworkDraft } from '@/lib/artwork-editor';
+import { createLegacyArtworkDraft, inferredArtworkTextArc, requestedArtworkColor, type ArtworkDraft } from '@/lib/artwork-editor';
 import { addArtworkText } from '@/lib/artwork-layers';
 import { taskPlacementAnchor } from '@/lib/production-preview';
 import type { ProductionUnit } from '@/lib/wps-production';
@@ -38,7 +38,8 @@ export async function createProductionTextDraft(unit: ProductionUnit, color: str
   const draft = addArtworkText(base, { x: 512, y: 512 }, color).draft;
   draft.mode = 'structured'; draft.layout.preset = 'custom';
   draft.text = { ...draft.text!, label: '准确文字', value: unit.exactText, fontFamily: DEFAULT_ARTWORK_FONT,
-    fontSize: 96, boxWidth: 880, letterSpacing: 2, color };
+    fontSize: 96, boxWidth: 880, letterSpacing: 2, color,
+    arc: inferredArtworkTextArc(`${unit.instruction}\n${unit.layoutNote}`, unit.exactText) };
   draft.preprocessing = { qualityScore: null, blurScore: null, enhancement: 'none', backgroundRemoval: 'none',
     processingRoute: 'fidelity', componentSummary: [`程序排版准确文字：${unit.exactText}`] };
   return draft;

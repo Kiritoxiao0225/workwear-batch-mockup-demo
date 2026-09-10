@@ -38,10 +38,34 @@ export function plainSourcePlacementText(requirement: string, placement: string 
     && !/图|logo|标志|参考|按照|使用|不要|加上|写上|印上|文字|排版|字体|颜色|各出/iu.test(value) ? value : null;
 }
 
-export function isTextOnlyArtwork(plan: {
+export type ArtworkContentPlan = {
   materialId: string | null; referenceMaterialIds?: string[]; textMode?: string | null; exactText?: string;
   instruction?: string; layoutNote?: string;
-}) {
+};
+
+export function isReferenceTextArtwork(plan: ArtworkContentPlan) {
+  return !plan.materialId && Boolean(plan.referenceMaterialIds?.length) && plan.textMode === 'replace' && Boolean(plan.exactText?.trim());
+}
+
+/** Ignore only the obsolete primary-image check; all other saved checks remain. */
+export function currentArtworkAmbiguities(plan: ArtworkContentPlan & { ambiguities: string[] }) {
+  return isReferenceTextArtwork(plan) ? plan.ambiguities.filter(issue => issue !== '方案核对：主要内容素材未绑定或已不存在') : plan.ambiguities;
+}
+
+/** The first transport image may be a reference; its explicit role must travel with it. */
+export function artworkInputSelection<T extends { id: string }>(source: { materials: T[] }, plan: ArtworkContentPlan) {
+  const referenceOnly = isReferenceTextArtwork(plan);
+  const primaryId = referenceOnly ? source.materials.find(material => plan.referenceMaterialIds!.includes(material.id))?.id ?? plan.referenceMaterialIds![0] : plan.materialId;
+  const primaryIndex = source.materials.findIndex(material => material.id === primaryId);
+  return {
+    primary: source.materials[primaryIndex],
+    primaryImageLabel: `图${primaryIndex + 1}`,
+    primaryImageRole: referenceOnly ? 'reference' as const : 'content' as const,
+    referenceMaterialIds: (plan.referenceMaterialIds ?? []).filter(id => !referenceOnly || id !== primaryId),
+  };
+}
+
+export function isTextOnlyArtwork(plan: ArtworkContentPlan) {
   if (plan.materialId || plan.referenceMaterialIds?.length || plan.textMode !== 'replace' || !plan.exactText?.trim()) return false;
   const instructions = `${plan.instruction ?? ''}\n${plan.layoutNote ?? ''}`.replaceAll(plan.exactText, '');
   return !artworkImageNumbers(instructions).length && !/(?:参考|仿照).*(?:字体|字形)|(?:字体|字形).*(?:参考|仿照)|书法|手写|特殊字形/u.test(instructions);
@@ -69,16 +93,19 @@ export function artworkPlanIssues(source: { requirementText: string; materials: 
     return plan.instruction.trim() ? [] : ['缺少制作要求'];
   }
   const primaryIndex = source.materials.findIndex(material => material.id === plan.materialId);
-  const issues = primaryIndex < 0 ? ['主要内容素材未绑定或已不存在'] : [];
+  const referenceOnly = isReferenceTextArtwork(plan);
+  const issues = primaryIndex < 0 && !referenceOnly ? ['主要内容素材未绑定或已不存在'] : [];
   if (!plan.instruction.trim()) issues.push('缺少制作要求');
   for (const id of plan.referenceMaterialIds) {
     if (!source.materials.some(material => material.id === id)) issues.push(`参考素材已不存在：${id}`);
     if (id === plan.materialId) issues.push('主要内容素材不能同时作为额外参考素材');
   }
+  const selection = artworkInputSelection(source, plan);
   return [...new Set([...issues, ...artworkReferenceIssues({
     ...plan, sourceRequirementText: source.requirementText, printPlacement: plan.placement,
-    primaryImageLabel: `图${primaryIndex + 1}`,
-    referenceImages: plan.referenceMaterialIds.map(id => ({ label: `图${source.materials.findIndex(material => material.id === id) + 1}` })),
+    primaryImageRole: referenceOnly ? 'reference' : 'content',
+    primaryImageLabel: selection.primaryImageLabel,
+    referenceImages: selection.referenceMaterialIds.map(id => ({ label: `图${source.materials.findIndex(material => material.id === id) + 1}` })),
   })])];
 }
 
@@ -93,32 +120,34 @@ export function artworkReferenceCovers(actual: ArtworkReferenceEvidence, require
 /** A reference must be explicitly associated with an image, not just present in the attachments. */
 export function artworkReferenceEvidence(text: string): ArtworkReferenceEvidence[] {
   return normalizeArtworkImageNumbers(text).replace(/(排版|字体|字形|颜色|配色)[，,]\s*(?=(?:排版|字体|字形|颜色|配色))/gu, '$1、').split(/[，,。；;\n]/u).flatMap(clause => {
-    if (/(?:不要|无需|不需要|不得|禁止|不能|不再|不)\s*(?:参考|参照|按照|仿照)|不(?:作为|用作|作)参考/u.test(clause)) return [];
+    if (/(?:不要|无需|不需要|不得|禁止|不能|不再|不)\s*(?:参考|参照|按照|仿照|采用|取用|使用|用|跟随)|不(?:作为|用作|作)参考/u.test(clause)) return [];
     const images = [...clause.matchAll(/图(\d+)/gu)];
     return images.flatMap((match, index) => {
       const before = clause.slice(index ? images[index - 1].index! + images[index - 1][0].length : 0, match.index);
       const after = clause.slice(match.index! + match[0].length, images[index + 1]?.index ?? clause.length);
-      const forward = /(?:参考|参照|按照|仿照|依照|按)\s*$/u.test(before);
+      const forward = /(?:参考|参照|按照|仿照|依照|按)\s*(?:WPS\s*)?$/iu.test(before);
       const backward = /^[^图]{0,24}(?:参考|参照)(?!\s*$)/u.test(after)
         || /^[^图]{0,24}(?:参考|参照)\s*$/u.test(after) && index === images.length - 1;
-      if (!forward && !backward) return [];
       const context = `${before}\n${after}`;
-      const role = /(?:排版|版式|布局|构图|层级|比例|位置关系)/u.test(context) ? 'layout'
-        : /(?:字体|字形|笔触|书法|风格|颜色|配色)/u.test(context) ? 'style' : 'unknown';
+      const hasColor = /(?:颜色|配色|字色|色彩|深蓝|藏青|浅蓝|深红|墨绿|[红黄蓝绿紫黑白灰橙粉金银]色)/u.test(context);
+      const directColor = /(?:改为|改成|换成|换为|取自|采用|要|(?<!使)用)\s*(?:WPS\s*)?$/iu.test(before) && hasColor;
+      if (!forward && !backward && !directColor) return [];
+      const role = directColor ? 'style' : /(?:排版|版式|布局|构图|层级|比例|位置关系)/u.test(context) ? 'layout'
+        : hasColor || /(?:字体|字形|笔触|书法|风格)/u.test(context) ? 'style' : 'unknown';
       const attributes: ArtworkReferenceEvidence['attributes'] = [];
-      if (/(?:排版|版式|布局|构图|层级|比例|位置关系)/u.test(context)) attributes.push('layout');
-      if (/(?:字体|字形|笔触|书法)/u.test(context)) attributes.push('font');
-      if (/(?:颜色|配色|字色)/u.test(context)) attributes.push('color');
+      if (!directColor && /(?:排版|版式|布局|构图|层级|比例|位置关系)/u.test(context)) attributes.push('layout');
+      if (!directColor && /(?:字体|字形|笔触|书法)/u.test(context)) attributes.push('font');
+      if (hasColor) attributes.push('color');
       return [{ number: Number(match[1]), role, attributes, clause: clause.trim() } satisfies ArtworkReferenceEvidence];
     });
   });
 }
 
-export function artworkReferenceIssues(input: { generationPrompt?: string; instruction: string; layoutNote: string; primaryImageLabel: string; referenceImages: Array<{ label: string }>; sourceRequirementText?: string; printPlacement?: { key: string } | null; sourceScope?: string }) {
+export function artworkReferenceIssues(input: { generationPrompt?: string; instruction: string; layoutNote: string; primaryImageLabel: string; primaryImageRole?: 'content' | 'reference'; referenceImages: Array<{ label: string }>; sourceRequirementText?: string; printPlacement?: { key: string } | null; sourceScope?: string }) {
   if (input.generationPrompt?.trim()) {
     try {
       compileGenerationPrompt(input.generationPrompt, [
-        { sourceLabel: input.primaryImageLabel, modelInputLabel: '图1', role: 'content' },
+        ...(/^图[1-9][0-9]*$/u.test(input.primaryImageLabel) ? [{ sourceLabel: input.primaryImageLabel, modelInputLabel: '图1', role: input.primaryImageRole ?? 'content' as const }] : []),
         ...input.referenceImages.map((image, index) => ({ sourceLabel: image.label, modelInputLabel: `图${index + 2}`, role: 'reference' as const })),
       ]);
       const primaryNumber = artworkImageNumbers(input.primaryImageLabel)[0] ?? 0;
@@ -126,7 +155,7 @@ export function artworkReferenceIssues(input: { generationPrompt?: string; instr
       const bound = new Set(input.referenceImages.map(image => normalizeArtworkImageNumbers(image.label)));
       const issues = artworkReferenceEvidence(scoped).filter(reference => reference.number !== primaryNumber && !bound.has(`图${reference.number}`))
         .map(reference => `原文要求参考图${reference.number}，当前方案未绑定该素材`);
-      if (artworkSourceSelections(scoped, primaryNumber).length && input.sourceScope && input.sourceScope !== 'custom') issues.push('原文限定局部取材，请将素材取用设为“按描述取用”');
+      if (input.primaryImageRole !== 'reference' && artworkSourceSelections(scoped, primaryNumber).length && input.sourceScope && input.sourceScope !== 'custom') issues.push('原文限定局部取材，请将素材取用设为“按描述取用”');
       return [...new Set(issues)];
     } catch (error) { return [error instanceof Error ? error.message : String(error)]; }
   }

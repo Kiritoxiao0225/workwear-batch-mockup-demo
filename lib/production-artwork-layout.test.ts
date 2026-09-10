@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createStructuredArtworkDraft, type ArtworkTextLayer } from './artwork-editor';
+import { artworkTextGlyphLayout, createStructuredArtworkDraft, type ArtworkTextLayer } from './artwork-editor';
 import { artworkPrintInstruction, artworkPrintPlacementSchema, fitArtworkForPrint } from './production-artwork-layout';
 import type { ProductionPlacement } from './wps-production';
 
@@ -14,6 +14,32 @@ function measure(text: ArtworkTextLayer) {
   return { letters, bounds: { left: text.x - width / 2, top: text.y - height / 2, width, height } };
 }
 describe('first-draft physical text layout', () => {
+  it('keeps the dentist lettering curved and above its graphic through print fitting and serialization', () => {
+    const initial = createStructuredArtworkDraft({ graphicSourceUrl: '/tooth.png', graphicWidth: 480, graphicHeight: 440,
+      exactText: '小景是牙医', instruction: '左胸制作圆弧形文字“小景是牙医”，文字下面组合WPS图1',
+      layoutNote: '文字“小景是牙医”排成圆弧形，置于牙齿图形上方', enhancement: 'none', backgroundRemoval: 'general' });
+    // Include the deformed glyph bounds so a straight-line estimate cannot hide overlaps.
+    const curvedMeasure = (text: ArtworkTextLayer) => {
+      const base = measure(text), glyphs = artworkTextGlyphLayout(text);
+      const top = Math.min(...glyphs.map(g => text.y + g.y - text.fontSize));
+      const bottom = Math.max(...glyphs.map(g => text.y + g.y + text.fontSize));
+      return { ...base, bounds: { ...base.bounds, top, height: bottom - top } };
+    };
+    const first = fitArtworkForPrint(initial, placement, curvedMeasure);
+    expect(first.needsReview).toBe(false);
+    const second = fitArtworkForPrint(JSON.parse(JSON.stringify(first.draft)), first.placement, curvedMeasure);
+    for (const d of [initial, first.draft, second.draft]) {
+      expect(d.layout.preset).toBe('verticalReverse');
+      expect(d.text!.arc).toEqual({ mode: 'up', bend: 65 });
+      expect(d.text!.value).toBe('小景是牙医');
+      expect(d.graphic.sourceUrl).toBe('/tooth.png');
+      const textBounds = curvedMeasure(d.text!).bounds;
+      expect(textBounds.top + textBounds.height).toBeLessThan(d.graphic.y - d.graphic.height / 2);
+      const glyphs = artworkTextGlyphLayout(d.text!);
+      expect(glyphs[2].y).toBeLessThan(glyphs[0].y);
+    }
+  });
+
   it('automatically arranges the real mixed-language chest logo and persists a suitable size without rewriting words or colors', () => {
     const initial = draft();
     const before = structuredClone(initial);
