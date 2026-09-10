@@ -1,4 +1,5 @@
 'use client';
+import { readApiBlob, assertApiResponse, fetchApi, readApiJson } from '@/lib/client/api-response';
 import { useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import type { ArtworkCutoutDecision, ArtworkCutoutMode, ArtworkCutoutResult } from '@/lib/artwork-cutout';
@@ -14,18 +15,20 @@ export function CutoutRules() {
 }
 const decisions = new Map<string, Promise<ArtworkCutoutDecision>>();
 export async function cutoutInputDataUrl(url: string) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error('无法读取抠图前原图');
-  const blob = await response.blob();
+  const response = await fetchApi(url);
+  await assertApiResponse(response, '读取抠图前原图失败');
+  const blob = await readApiBlob(response);
   if (blob.size > 12_000_000) throw new Error('原图超过 12MB，请先缩小输入');
   return new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error('原图读取失败')); reader.readAsDataURL(blob); });
 }
 export async function cutoutRequest(body: Record<string, unknown>): Promise<ArtworkCutoutResult> {
-  const response = await fetch('/api/wps-production/cutout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  const result = await response.json(); if (!response.ok) throw new Error(result.error || '抠图请求失败'); return result;
+  const response = await fetchApi('/api/wps-production/cutout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  return readApiJson(response, '抠图请求失败');
 }
 export function WpsCutoutControls({ mode, sourceUrl, generated, busy, change, compact = false }: { mode: ArtworkCutoutMode; sourceUrl?: string | null; generated?: boolean; busy: boolean; change: (mode: ArtworkCutoutMode) => void; compact?: boolean }) {
   const [inspection, setInspection] = useState<{ key: string; value: ArtworkCutoutDecision } | null>(null);
+  const [inspectionFailure, setInspectionFailure] = useState<{ key: string; message: string } | null>(null);
+  const [retry, setRetry] = useState(0);
   const decisionKey = JSON.stringify([ARTWORK_CUTOUT_VERSION, sourceUrl, mode]);
   const decision = !generated && inspection?.key === decisionKey ? inspection.value : null;
   const root = useRef<HTMLDivElement>(null);
@@ -37,14 +40,19 @@ export function WpsCutoutControls({ mode, sourceUrl, generated, busy, change, co
       observer.disconnect();
       if (!decisions.has(decisionKey)) decisions.set(decisionKey, (async () => {
         const image = await cutoutInputDataUrl(sourceUrl);
-        const response = await fetch('/api/wps-production/cutout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'inspect', image, mode }) });
-        if (!response.ok) throw new Error('分流预检暂不可用'); return response.json();
+        const response = await fetchApi('/api/wps-production/cutout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'inspect', image, mode }) });
+        return readApiJson(response, '抠图预检失败');
       })());
-      void decisions.get(decisionKey)!.then(result => { if (!cancelled) setInspection({ key: decisionKey, value: result }); }).catch(() => { decisions.delete(decisionKey); });
+      void decisions.get(decisionKey)!.then(result => { if (!cancelled) { setInspection({ key: decisionKey, value: result }); setInspectionFailure(null); } }).catch(error => {
+        decisions.delete(decisionKey);
+        if (!cancelled) setInspectionFailure({ key: decisionKey, message: error instanceof Error ? error.message : String(error) });
+      });
     });
     if (root.current) observer.observe(root.current);
     return () => { cancelled = true; observer.disconnect(); };
-  }, [sourceUrl, generated, mode, decisionKey]);
+  }, [sourceUrl, generated, mode, decisionKey, retry]);
+  const failure = !generated && inspectionFailure?.key === decisionKey ? inspectionFailure : null;
+  const failureNotice = failure && <div role="alert"><p>抠图预检失败：{failure.message}</p><button type="button" disabled={busy} onClick={() => { setInspectionFailure(null); setRetry(value => value + 1); }}>重新预检</button></div>;
   const route = decision?.route === 'reuse' ? 'reuse' : mode === 'meitu' ? 'meitu' : decision?.route;
   const explanation = <><div className="wps-cutout-recommendation"><b>{route ? `${mode === 'auto' ? '自动采用' : '本次采用'} · ${CUTOUT_ROUTE_LABELS[route]}` : generated ? '生成后按实际图案判断' : '制作时检查背景与细节'}</b>
       <span>{route === 'volcano' ? '按火山服务账单计费' : route === 'meitu' ? '预计 1 积分' : route ? '本地处理 0 积分；需火山时另计' : '本地免费；火山按账单计费；美图预计 1 积分'}</span>
@@ -54,9 +62,9 @@ export function WpsCutoutControls({ mode, sourceUrl, generated, busy, change, co
     <label><span>抠图方式</span><select aria-label="抠图方式" value={route === 'reuse' ? 'auto' : mode} disabled={busy || route === 'reuse'} onChange={event => change(event.target.value as ArtworkCutoutMode)}>
       <option value="auto">{route === 'reuse' ? '复用透明图' : '自动选择'}</option><option value="standard">标准抠图</option><option value="meitu">美图精细 · 预计 1 积分</option>
     </select></label>
-    <details className="wps-cutout-explanation"><summary>{route === 'meitu' ? '美图精细 · 预计 1 积分' : route ? `${CUTOUT_ROUTE_LABELS[route]} · 费用说明` : '选择依据与费用'}</summary>{explanation}</details>
+    {failureNotice}<details className="wps-cutout-explanation"><summary>{route === 'meitu' ? '美图精细 · 预计 1 积分' : route ? `${CUTOUT_ROUTE_LABELS[route]} · 费用说明` : '选择依据与费用'}</summary>{explanation}</details>
   </div>;
-  return <div className="wps-cutout-settings" ref={root}><strong>抠图方式</strong>{route !== 'reuse' && <CutoutModes value={mode} disabled={busy} change={change} />}{explanation}</div>;
+  return <div className="wps-cutout-settings" ref={root}><strong>抠图方式</strong>{route !== 'reuse' && <CutoutModes value={mode} disabled={busy} change={change} />}{failureNotice}{explanation}</div>;
 }
 export function CutoutTaskStatus({ session, busy, query, retry, apply, discard, hasArtwork = true }: { session: CutoutSession; busy: boolean; query: () => void; retry: () => void; apply?: () => void; discard: () => void; hasArtwork?: boolean }) {
   const { result } = session;

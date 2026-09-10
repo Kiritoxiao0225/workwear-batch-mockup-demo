@@ -16,9 +16,11 @@ export function artworkModelEdits(input: { instruction: string; exactText: strin
   return requiresModel ? edits : [];
 }
 
-export const ARTWORK_EDIT_INSPECTION_VERSION = 'artwork-edit-inspection-v2';
+export const ARTWORK_EDIT_INSPECTION_VERSION = 'artwork-edit-inspection-v3';
 export const ARTWORK_TEXT_INSPECTION_VERSION = 'artwork-text-inspection-v2';
 export type ArtworkEditCheck = { requirement: string; status: 'passed' | 'failed' | 'uncertain'; evidence: string;
+  category?: import('./artwork-review-policy').ArtworkReviewCategory;
+  impact?: import('./artwork-review-policy').ArtworkReviewImpact;
   sourceObservation?: string | null; resultObservation?: string | null };
 type ArtworkInspectionReceipt = { inspectionVersion?: string; promptSha256?: string; inputSha256?: string[]; requestAttempts?: number };
 export type ArtworkEditVerification = {
@@ -27,6 +29,7 @@ export type ArtworkEditVerification = {
   outputSha256: string;
   model: string;
   checks: ArtworkEditCheck[];
+  flatnessEvidence?: import('./server/artwork-flatness-evidence').ArtworkFlatnessEvidence;
 } & ArtworkInspectionReceipt;
 
 export type ArtworkTextComponentVerification = {

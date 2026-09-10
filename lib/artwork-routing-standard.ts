@@ -70,6 +70,8 @@ export function artworkClarityLabel(quality: ArtworkClarityMeasurement | null | 
 }
 
 export type ArtworkRoutingReport = {
+  contentReview?: { verification?: import('./artwork-model-edits').ArtworkEditVerification; warnings: string[] };
+  sourceSelection?: import('./server/artwork-source-selection').ArtworkSourceSelectionReceipt;
   timings?: import('./artwork-progress').ArtworkTiming[];
   version: typeof ARTWORK_ROUTING_STANDARD.version | 'artwork-routing-v2';
   runId: string;

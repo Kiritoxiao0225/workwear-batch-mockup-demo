@@ -1,4 +1,5 @@
 'use client';
+import { fetchApi, readApiJson } from '@/lib/client/api-response';
 
 import Image from 'next/image';
 import Link from 'next/link';
@@ -15,10 +16,8 @@ type PreviewDetail = CatalogDetail & { placementPreview: CatalogPlacementPreview
 
 type CatalogPage = { items: CatalogStyle[]; total: number; totalColors: number; matchingColors: number; page: number; pageSize: number; importIssues: { filename: string; status: string; error: string }[] };
 async function requestJson<T>(url: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(url, { ...options, cache: 'no-store' });
-  const body = await response.json();
-  if (!response.ok) throw new Error(body.error ?? `请求失败：${response.status}`);
-  return body as T;
+  const response = await fetchApi(url, { ...options, cache: 'no-store' });
+  return readApiJson(response, '素材库请求失败') as Promise<T>;
 }
 function StyleCard({ style, priority, viewer, open, preview }: { style: CatalogStyle; priority: boolean; viewer: boolean; open: (id: string) => void; preview: (id: string) => void }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);

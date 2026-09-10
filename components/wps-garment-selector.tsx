@@ -1,5 +1,6 @@
 'use client';
-import { useState, useId } from 'react';
+import { useState, useId, useEffect } from 'react';
+import { imageFailureReason } from '@/lib/client/api-response';
 import type { CatalogStyle } from '@/lib/catalog';
 import type { ProductionUnit } from '@/lib/wps-production';
 import { productionPositionLabel } from '@/lib/production-garment';
@@ -10,12 +11,20 @@ export function WpsGarmentPreview({ unit, units = [unit], open }: { unit: Produc
   const session = useProjectSession();
   const previewId = useId();
   const [failedImage, setFailedImage] = useState<string | null>(null);
+  const [failure, setFailure] = useState<{ key: string; message: string } | null>(null);
   const garment = unit.garment;
+  const imageUrl = garment?.imageUrl;
+  useEffect(() => {
+    if (!failedImage || !imageUrl) return;
+    const abort = new AbortController();
+    void imageFailureReason(imageUrl, abort.signal).then(message => { if (!abort.signal.aborted) setFailure({ key: failedImage, message }); }).catch(() => { /* An obsolete image was cancelled. */ });
+    return () => abort.abort();
+  }, [failedImage, imageUrl]);
   if (!garment) return <div className="wps-garment-empty">选好款式和颜色后，选择印花位置</div>;
   if (!session.initialized) return <div className="wps-image-notice" role="status">正在读取服装底图…</div>;
   if (!session.user) return <div className="wps-image-notice"><button type="button" onClick={() => void session.refresh()}>重新连接工作台</button></div>;
   const imageKey = `${garment.imageUrl}:${session.user.id}`;
-  if (failedImage === imageKey) return <div className="wps-image-notice" role="alert"><strong>服装底图暂时无法读取</strong><button type="button" onClick={() => setFailedImage(null)}>重新读取</button></div>;
+  if (failedImage === imageKey) return <div className="wps-image-notice" role="alert"><strong>服装底图读取失败</strong><p>{failure?.key === imageKey ? failure.message : '正在读取失败原因…'}</p><button type="button" onClick={() => { setFailedImage(null); setFailure(null); }}>重新读取</button></div>;
   return <button className="wps-garment-open" type="button" onClick={open} disabled={!open} aria-label={`批量调整${garment.styleCode} ${garment.colorName} ${unit.variantLabel}的印花位置`}>
     <span className="wps-garment-faces">{(['front', 'back'] as const).map(face => {
       const view = garment.views.find(view => view.face === face);

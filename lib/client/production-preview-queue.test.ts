@@ -45,4 +45,32 @@ describe('production preview downloads', () => {
     await expect(readProductionPreview('/cancelled', AbortSignal.abort())).rejects.toThrow();
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it.each([
+    [500, '无法确定衣身宽度，请在素材库核对左右腋点后更新位置标准'],
+    [409, '效果图内容已更新，请读取最新制作状态'],
+  ])('preserves the server reason for HTTP %i without retrying', async (status, error) => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ error }, { status }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(readProductionPreview('/preview', new AbortController().signal)).rejects.toThrow(error);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('explains an HTML gateway timeout instead of displaying markup or a JSON parser error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html>Gateway Timeout</html>', { status: 504 })));
+    await expect(readProductionPreview('/preview', new AbortController().signal)).rejects.toThrow('预览读取失败：服务器响应超时（HTTP 504）');
+  });
+
+  it.each([{ error: '  ' }, { error: { detail: 'internal' } }, null])('falls back to the HTTP status when the error payload is unusable: %j', async payload => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(payload, { status: 502 })));
+    await expect(readProductionPreview('/preview', new AbortController().signal)).rejects.toThrow('预览读取失败：服务器返回异常（HTTP 502）');
+  });
+
+  it('distinguishes a connection failure from a failed image download', async () => {
+    const fetchMock = vi.fn().mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce({ ok: true, blob: async () => { throw new TypeError('terminated'); } });
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(readProductionPreview('/preview', new AbortController().signal)).rejects.toThrow('无法连接预览服务');
+    await expect(readProductionPreview('/preview', new AbortController().signal)).rejects.toThrow('预览图片下载中断');
+  });
 });

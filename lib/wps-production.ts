@@ -78,6 +78,7 @@ export type ProductionPlacement = {
 };
 
 export type ArtworkValidation = {
+  contentWarnings?: string[];
   contentIssues?: string[];
   quality?: ArtworkQualityMeasurement;
   qualityError?: string;

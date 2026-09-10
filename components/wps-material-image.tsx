@@ -3,6 +3,7 @@
 import Image from 'next/image';
 import { productionThumbnailUrl } from '@/lib/production-file-url';
 import { useEffect, useState } from 'react';
+import { imageFailureReason } from '@/lib/client/api-response';
 
 const RETRY_DELAYS = [1000, 2000, 4000];
 
@@ -23,6 +24,14 @@ export function WpsMaterialImage(props: Props) {
 function MaterialImageAttempt({ src, alt, label, sizes, large = false, open }: Props) {
   const [status, setStatus] = useState<'loading' | 'loaded' | 'waiting' | 'failed'>('loading');
   const [attempt, setAttempt] = useState({ count: 0, nonce: '' });
+  const [failure, setFailure] = useState('');
+  const sourceUrl = src && !large ? productionThumbnailUrl(src) : src;
+  useEffect(() => {
+    if (status !== 'failed' || !sourceUrl) return;
+    const abort = new AbortController();
+    void imageFailureReason(sourceUrl, abort.signal).then(message => { if (!abort.signal.aborted) setFailure(message); }).catch(() => { /* An obsolete image was cancelled. */ });
+    return () => abort.abort();
+  }, [status, sourceUrl]);
 
   useEffect(() => {
     if (status !== 'waiting') return;
@@ -34,6 +43,7 @@ function MaterialImageAttempt({ src, alt, label, sizes, large = false, open }: P
   }, [status, attempt.count]);
 
   const retry = () => {
+    setFailure('');
     setAttempt({ count: 0, nonce: String(Date.now()) });
     setStatus('loading');
   };
@@ -42,12 +52,12 @@ function MaterialImageAttempt({ src, alt, label, sizes, large = false, open }: P
   const imageSrc = src && attempt.nonce && src.startsWith('/api/production-files/')
     ? `${src}${src.includes('?') ? '&' : '?'}_imageRetry=${attempt.nonce}-${attempt.count}`
     : src;
-  const message = !src ? '暂无图片' : status === 'failed' ? '加载失败，点击重试'
+  const message = !src ? '暂无图片' : status === 'failed' ? `${failure || '图片加载失败，正在读取原因…'} 点击重试`
     : status === 'waiting' ? `准备重试 ${attempt.count + 1}/3`
       : status === 'loading' ? (attempt.count ? `重试 ${attempt.count}/3` : '加载中…') : '';
 
   return <button type="button" className={`wps-material-image${large ? ' wps-material-image-large' : ''}`}
-    disabled={!src} aria-label={status === 'failed' ? `${alt}，加载失败，点击重试` : alt}
+    disabled={!src} aria-label={status === 'failed' ? `${alt}，${message}` : alt}
     title={message || alt} data-load-state={src ? status : 'missing'}
     onClick={() => status === 'failed' ? retry() : open?.()}>
     {imageSrc && <Image key={`${attempt.nonce}:${attempt.count}`} src={imageSrc} alt={alt} fill sizes={sizes} unoptimized

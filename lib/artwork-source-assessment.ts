@@ -1,6 +1,15 @@
 import { z } from 'zod';
 import { artworkSolidColor, type ArtworkColorRequirements } from './artwork-solid-color';
 
+export const artworkSourceSelectionSchema = z.discriminatedUnion('scope', [
+  z.object({ scope: z.literal('full-image') }),
+  z.object({ scope: z.literal('region'), bounds: z.object({
+    left: z.number().min(0).max(1000), top: z.number().min(0).max(1000),
+    right: z.number().min(0).max(1000), bottom: z.number().min(0).max(1000),
+  }).refine(b => b.right > b.left && b.bottom > b.top, '目标图案框必须有有效宽高') }),
+  z.object({ scope: z.literal('unknown') }),
+]);
+
 /** Visual evidence about the selected content, never inferred from garment keywords. */
 export const artworkSourceAssessmentSchema = z.object({
   version: z.literal('artwork-source-v1'),
@@ -9,6 +18,8 @@ export const artworkSourceAssessmentSchema = z.object({
   needsReconstruction: z.boolean().nullable(),
   evidence: z.array(z.string().trim().min(1).max(500)).min(1).max(12),
   uncertainDetails: z.array(z.string().trim().min(1).max(500)).max(12),
+  // Optional only for old stored analyses; flat-artwork execution resolves it first.
+  selection: artworkSourceSelectionSchema.optional(),
   materialId: z.string().min(1).optional(),
 });
 export type ArtworkSourceAssessment = z.infer<typeof artworkSourceAssessmentSchema>;
@@ -21,6 +32,7 @@ export const ARTWORK_SOURCE_ASSESSMENT_RULES = `直接观察选定主要素材�
 {"version":"artwork-source-v1","kind":"flat-artwork|artwork-on-object|photo-content|unknown","targetDescription":"目标图案的区域、可辨内容与结构","needsReconstruction":true,"evidence":["实际可见依据"],"uncertainDetails":[]}。
 flat-artwork：目标已是独立平面图稿；扫描或截图本身不代表需要重建。photo-content：照片中的人物或景物本身就是客户要印制的内容，不需要还原另一层图案。artwork-on-object：客户要的是衣服、包装、招牌等实物表面的一处图案，载体本身不进入成品。unknown：无法从图片确定目标与载体的关系。
 needsReconstruction：图案尚需从实物表面还原为独立图稿，或存在透视、褶皱、曲面、刺绣质感造成的变形时为 true；独立图稿仅低清或需要去底时为 false；不能判断为 null。判断目标图案而非整张图片，不凭文件名、衣服颜色或提示词中的关键词分类。
+必须同时返回 selection。独立平面图稿且整张图片只包含本次要用的完整图案和背景，返回 {"scope":"full-image"}；截图、拼图或同页有多个版本时，返回 {"scope":"region","bounds":{"left":0,"top":0,"right":1000,"bottom":1000}}，四边坐标按整张图片左上角为 (0,0)、右下角为 (1000,1000) 归一化。框必须只包住本单元所需版本的全部图形与文字，四周留少量安全空白，排除手机界面、其他版本和无关图形；不要把横版与竖版合并取用。不能用一个矩形完整隔离所需内容或无法确定选区时返回 {"scope":"unknown"}，不要猜框。判断完整图稿与局部选区独立于 needsReconstruction，平面截图只需裁剪时仍为 false。
 targetDescription 只描述选定的原图案，不混入要求新增的文字或其他附件；不确定的字、瓣数与负形写入 uncertainDetails，不猜测。图像观察不是客户逐字要求。客户明确使用整张照片时保留整图，不强制提取图案。`;
 
 export function needsArtworkReconstruction(input: {

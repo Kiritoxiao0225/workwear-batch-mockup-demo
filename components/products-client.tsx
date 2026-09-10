@@ -1,4 +1,5 @@
 'use client';
+import { fetchApi, readApiJson } from '@/lib/client/api-response';
 
 /* eslint-disable @next/next/no-img-element */
 import { useCallback, useEffect, useState } from 'react';
@@ -13,9 +14,7 @@ import type { MockupTask } from '@/lib/types';
 
 type ProductsClientProps = { mode: 'append' | 'replace'; taskId: string | null };
 async function jsonResponse(response: Response) {
-  const body = await response.json();
-  if (!response.ok) throw new Error(body.error || `读取素材库失败：HTTP ${response.status}`);
-  return body;
+  return readApiJson(response, '读取素材库失败');
 }
 
 export function ProductsClient({ mode, taskId }: ProductsClientProps) {
@@ -32,7 +31,7 @@ export function ProductsClient({ mode, taskId }: ProductsClientProps) {
   const task = replacing ? state?.tasks.find(candidate => candidate.id === taskId) : null;
   const load = useCallback(async () => {
     setLoading(true); setActionError(null);
-    try { setStyles((await jsonResponse(await fetch('/api/catalog/production-garments', { cache: 'no-store' }))).styles); }
+    try { setStyles((await jsonResponse(await fetchApi('/api/catalog/production-garments', { cache: 'no-store' }))).styles); }
     catch (error) { setActionError(error instanceof Error ? error.message : String(error)); }
     finally { setLoading(false); }
   }, []);
@@ -59,7 +58,7 @@ export function ProductsClient({ mode, taskId }: ProductsClientProps) {
         const item = colors.find(item => item.id === id);
         if (!item) { failures.push('所选颜色已不在列表，请重新读取'); continue; }
         try {
-          const { garment, placementDefaults } = simpleCatalogBindingSchema.parse(await jsonResponse(await fetch(`/api/catalog/simple-garment?variantId=${item.id}&assetVersionId=${item.assetVersionId}`, { cache: 'no-store' })));
+          const { garment, placementDefaults } = simpleCatalogBindingSchema.parse(await jsonResponse(await fetchApi(`/api/catalog/simple-garment?variantId=${item.id}&assetVersionId=${item.assetVersionId}`, { cache: 'no-store' })));
           const next = { ...createTask(item.styleCode), garment, placementDefaults };
           // Keep the uploaded artwork and dimensions, but start from this garment's own anchors.
           if (task) prepared.push({ ...task, garment, placementDefaults, productCode: item.styleCode, updatedAt: next.updatedAt, exportedAt: null,

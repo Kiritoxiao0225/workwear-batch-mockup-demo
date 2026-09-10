@@ -32,6 +32,7 @@ export async function processArtworkJob(job: ArtworkJob) {
     // Saving is idempotent even if a worker dies after committing the production state.
     const receipt = { id: job.id, hash: artworkStepHash({ unitId: job.unit_id, snapshot: job.snapshot,
       ...(job.input.sharedSnapshot ? { sharedSnapshot: job.input.sharedSnapshot } : {}) }) };
+    let result: ArtworkPreparationResponse | null = null;
     try {
       if (await completedProductionSave(receipt)) { await updateArtworkJob(job, 'completed', '图案已保存，请核对'); return; }
       const current = await readWpsProductionState();
@@ -42,7 +43,6 @@ export async function processArtworkJob(job: ArtworkJob) {
       const issue = artworkPlanIssues(source, unit).join('；');
       if (issue) throw new Error(issue);
       const selection = artworkInputSelection(source, unit);
-      let result: ArtworkPreparationResponse | null = null;
       let inputImageUrls: string[] = [];
       if (!textOnly) {
         if (!selection.primary) throw new Error('缺少主要素材');
@@ -100,13 +100,18 @@ export async function processArtworkJob(job: ArtworkJob) {
             if (job.input.sharedSnapshot) assertProductionSharedSnapshot(state, unit.id, job.input.sharedSnapshot);
           }, receipt);
       });
-      await updateArtworkJob(job, 'completed', '图案已保存，请核对');
+      await updateArtworkJob(job, 'completed', result?.draft.preprocessing.routingReport?.contentReview?.warnings.length
+        ? '图案已保存，有核对提醒，可查看和编辑' : '图案已保存，请核对');
       // Customer preview failure must never turn a saved artwork back into a failed paid job.
       await finishProductionSave({ action: 'submitArtwork', unitId: job.unit_id }).catch(error => console.error('[artwork-worker] preview update failed', error instanceof Error ? error.name : 'Error'));
     } catch (error) {
       const steps = (await catalogDatabase().query('SELECT status FROM artwork_job_steps WHERE job_id=$1', [job.id])).rows;
       const unknown = steps.some(step => step.status === 'unknown');
-      const candidate = error instanceof NativeArtworkCandidateError ? await persistProductionReferences(error.candidate) : null;
+      const report = result?.draft.preprocessing.routingReport;
+      const candidate = error instanceof NativeArtworkCandidateError ? await persistProductionReferences(error.candidate)
+        : result && report ? await persistProductionReferences({ runId: report.runId, url: result.draft.graphic.sourceUrl,
+          model: report.model ?? 'unknown', promptHash: report.promptHash, stage: 'processing', retryable: true,
+          requiresEditVerification: true, reason: '图案已生成，但保存到当前任务未完成；可先查看或下载图片。' }) : null;
       const failed = candidate?.retryable ?? steps.some(step => step.status === 'failed');
       const message = error instanceof Error ? error.message : String(error);
       await updateArtworkJob(job, unknown ? 'unknown' : candidate && !failed ? 'review' : 'failed',

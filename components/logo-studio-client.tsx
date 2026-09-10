@@ -1,4 +1,5 @@
 'use client';
+import { fetchApi, readApiJson } from '@/lib/client/api-response';
 
 import { useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
@@ -26,12 +27,6 @@ function fileAsDataUrl(file: File) {
   });
 }
 
-function responseError(body: unknown, status: number) {
-  if (body && typeof body === 'object' && typeof (body as Record<string, unknown>).error === 'string') {
-    return (body as Record<string, string>).error;
-  }
-  return `Logo 处理失败：HTTP ${status}`;
-}
 
 export function LogoStudioClient() {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -101,13 +96,12 @@ export function LogoStudioClient() {
           dataUrl: await fileAsDataUrl(image.file),
         }))),
       };
-      const response = await fetch('/api/logo-studio', {
+      const response = await fetchApi('/api/logo-studio', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const body: unknown = await response.json();
-      if (!response.ok) throw new Error(responseError(body, response.status));
+      const body: unknown = await readApiJson(response, 'Logo 处理失败');
       setResult(body as LogoStudioResponse);
     } catch (processingError) {
       setError(processingError instanceof Error ? processingError.message : String(processingError));

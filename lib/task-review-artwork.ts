@@ -92,7 +92,7 @@ export type ArtworkPreparationRequest = {
 
 export const ARTWORK_MODEL_PROMPT_VERSION = 'task-review-artwork-v11';
 
-export type NativeArtworkCandidate = { runId: string; url: string; model: string; reason: string; promptHash: string; stage?: 'edit-review' | 'original-save'; requiresEditVerification?: boolean; retryable?: boolean; cutout?: import('@/lib/artwork-cutout').ArtworkCutoutResult };
+export type NativeArtworkCandidate = { runId: string; url: string; model: string; reason: string; promptHash: string; stage?: 'edit-review' | 'original-save' | 'processing'; requiresEditVerification?: boolean; retryable?: boolean; cutout?: import('@/lib/artwork-cutout').ArtworkCutoutResult };
 
 export type ArtworkModelImageMapping = {
   sourceLabel: string;

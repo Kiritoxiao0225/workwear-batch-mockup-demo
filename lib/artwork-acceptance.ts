@@ -16,6 +16,7 @@ export function artworkQualityAdvice(validation: ArtworkValidation): string[] {
     else if (quality.requiredScale > ARTWORK_ROUTING_STANDARD.directScaleMaximum) measurementIssues.push(`有效像素不足：放大到 ${ARTWORK_ROUTING_STANDARD.targetLongEdge}px 需 ${quality.requiredScale.toFixed(2)} 倍，超过 ${ARTWORK_ROUTING_STANDARD.directScaleMaximum} 倍`);
   }
   return [
+    ...(validation.contentWarnings ?? []),
     ...(!validation.valid ? validation.issues : []),
     ...measurementIssues,
     // Old text was derived from the reversed metric. Preserve it in storage, but request a fresh check.
@@ -31,5 +32,5 @@ export function artworkAcceptanceIssues(validation: ArtworkValidation): string[]
 
 /** Refreshing alpha/OCR/placement must not discard a score bound to the same file. */
 export function retainArtworkQuality(previous: ArtworkValidation, fresh: ArtworkValidation): ArtworkValidation {
-  return previous.sha256 === fresh.sha256 ? { ...fresh, quality: previous.quality, qualityError: previous.qualityError, qualityIssues: previous.qualityIssues, componentQuality: previous.componentQuality, contentIssues: previous.contentIssues } : fresh;
+  return previous.sha256 === fresh.sha256 ? { ...fresh, quality: previous.quality, qualityError: previous.qualityError, qualityIssues: previous.qualityIssues, componentQuality: previous.componentQuality, contentIssues: previous.contentIssues, contentWarnings: previous.contentWarnings } : fresh;
 }

@@ -6,6 +6,7 @@ import type { SourceTaskRecord } from '@/lib/batch-task-review';
 import type { ArtworkJobsResponse, ArtworkJobStatus } from '@/lib/artwork-jobs';
 import { assertProductionArtworkSnapshot, assertProductionSharedSnapshot } from '@/lib/production-artwork-snapshot';
 import { artworkInspectionFailure } from './artwork-network-error';
+import { ARTWORK_EDIT_INSPECTION_VERSION } from '@/lib/artwork-model-edits';
 
 export const artworkJobsEnabled = () => usesProductionCloud() && process.env.ARTWORK_DURABLE_JOBS === '1';
 export type ArtworkJobInput = { unit: ProductionUnit; source: SourceTaskRecord; sharedSnapshot?: string };
@@ -39,19 +40,24 @@ export async function readArtworkJobs(): Promise<ArtworkJobsResponse> {
   if (!artworkJobsEnabled()) return { enabled: false, workerOnline: false, jobs: [] };
   const [jobs, workers] = await Promise.all([
     catalogDatabase().query(`SELECT j.id,j.unit_id,j.status,j.message,j.error,j.candidate,j.created_at,j.updated_at,
+      (j.status='review' AND j.candidate->>'stage'='edit-review'
+       AND EXISTS(SELECT 1 FROM artwork_run_records r WHERE r.state_key=j.state_key AND r.run_id::text=j.candidate->>'runId'
+         AND r.kind='generation' AND NOT (r.record_json ? 'component'))
+       AND NOT EXISTS(SELECT 1 FROM artwork_job_steps s WHERE s.job_id=j.id AND s.stage='inspection' AND s.status='completed'
+         AND s.result->>'inspectionVersion'=$2)) AS recheck_available,
       COALESCE((SELECT jsonb_agg(jsonb_build_object('stage',s.stage,'status',s.status,'error',s.error,'durationMs',
        CASE WHEN s.finished_at IS NULL THEN NULL ELSE ROUND(EXTRACT(EPOCH FROM(s.finished_at-s.started_at))*1000) END) ORDER BY s.started_at)
        FROM artwork_job_steps s WHERE s.job_id=j.id),'[]'::jsonb) AS steps
       FROM artwork_jobs j WHERE j.state_key=$1 AND (j.status IN ('queued','running','unknown') OR
         (j.created_at>now()-interval '7 days' AND j.id IN (SELECT DISTINCT ON(unit_id) id FROM artwork_jobs WHERE state_key=$1 ORDER BY unit_id,created_at DESC)))
-      ORDER BY j.created_at DESC`, [productionStateKey()]),
+      ORDER BY j.created_at DESC`, [productionStateKey(), ARTWORK_EDIT_INSPECTION_VERSION]),
     catalogDatabase().query("SELECT 1 FROM artwork_workers WHERE state_key=$1 AND heartbeat_at>now()-interval '35 seconds' LIMIT 1", [productionStateKey()]),
   ]);
   return { enabled: true, workerOnline: !!workers.rowCount, jobs: jobs.rows.map(row => {
     const steps = (row.steps as ArtworkJobsResponse['jobs'][number]['steps']).map(step => ({ ...step,
       error: step.stage === 'inspection' && step.error ? artworkInspectionFailure(new Error(step.error)) : null }));
     const inspectionError = steps.find(step => step.stage === 'inspection' && step.status === 'failed' && step.error)?.error;
-    return { id: row.id, unitId: row.unit_id, status: row.status, message: row.message,
+    return { id: row.id, unitId: row.unit_id, status: row.status, message: row.message, recheckAvailable: Boolean(row.recheck_available),
       error: row.status === 'failed' && row.candidate?.stage === 'edit-review' && inspectionError
         ? `图案已生成，${inspectionError}这张图还没保存成品，可复用已生成图片继续核对。` : row.error,
       candidate: row.candidate, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString(), steps };
@@ -99,7 +105,11 @@ export async function changeArtworkJob(id: string, action: 'cancel' | 'retry') {
       if (job.status !== 'queued') throw new Error('只可取消尚未开始的任务');
       await client.query("UPDATE artwork_jobs SET status='cancelled',message='已取消排队',updated_at=now() WHERE id=$1", [id]);
     } else {
-      if (job.status !== 'failed') throw new Error('仅处理失败的任务可从已保存步骤继续；内容不合格需要先修改要求');
+      if (job.status === 'review' && job.candidate?.stage === 'edit-review') {
+        const receipt = (await client.query("SELECT record_json FROM artwork_run_records WHERE state_key=$1 AND run_id::text=$2 AND kind='generation'", [productionStateKey(), job.candidate.runId])).rows[0]?.record_json;
+        const inspected = await client.query("SELECT 1 FROM artwork_job_steps WHERE job_id=$1 AND stage='inspection' AND status='completed' AND result->>'inspectionVersion'=$2", [id, ARTWORK_EDIT_INSPECTION_VERSION]);
+        if (!receipt || receipt.component || inspected.rowCount) throw new Error('当前规则已核对或这张图不是完整图案，请查看具体差异后修改要求；无需重复核对');
+      } else if (job.status !== 'failed') throw new Error('仅处理失败或尚未按新规则核对的任务可继续');
       const unknown = await client.query("SELECT 1 FROM artwork_job_steps WHERE job_id=$1 AND status IN ('unknown','running') AND stage='generation'", [id]);
       if (unknown.rowCount) throw new Error('生图结果不确定，不能自动再次提交');
       await client.query("UPDATE artwork_jobs SET status='queued',message='已排队，从未完成步骤继续',error=NULL,updated_at=now() WHERE id=$1", [id]);

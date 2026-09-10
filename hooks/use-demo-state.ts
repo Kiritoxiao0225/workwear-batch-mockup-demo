@@ -1,4 +1,5 @@
 'use client';
+import { fetchApi, readApiJson } from '@/lib/client/api-response';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -14,26 +15,19 @@ type SaveStatus = 'loading' | 'saved' | 'saving' | 'error';
 let pendingDemoSave: Promise<void> = Promise.resolve();
 
 async function stateResponse(response: Response) {
-  const body: unknown = await response.json();
-  if (!response.ok) {
-    const message = body && typeof body === 'object' && 'error' in body
-      ? String(body.error)
-      : `请求失败：HTTP ${response.status}`;
-    throw new Error(message);
-  }
-  return body as DemoState;
+  return readApiJson(response, '读写批次状态失败') as Promise<DemoState>;
 }
 
 async function fetchDemoState() {
   await pendingDemoSave;
   if (usesBrowserStorage()) return readBrowserDemoState();
-  const response = await fetch('/api/state', { cache: 'no-store' });
+  const response = await fetchApi('/api/state', { cache: 'no-store' });
   return stateResponse(response);
 }
 
 async function saveDemoState(state: DemoState) {
   if (usesBrowserStorage()) return writeBrowserDemoState(state);
-  const response = await fetch('/api/state', {
+  const response = await fetchApi('/api/state', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(state),

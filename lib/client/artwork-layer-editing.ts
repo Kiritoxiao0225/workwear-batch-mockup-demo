@@ -1,4 +1,5 @@
 'use client';
+import { fetchApi, readApiBlob } from './api-response';
 import { artworkGraphicLayers, assertArtworkDraft, type ArtworkDraft, type ArtworkGraphicLayer } from '@/lib/artwork-editor';
 import { artworkLayers, croppedGraphicGeometry, padArtworkPiece, splitArtworkPixels, updateArtworkLayer, wholeGraphicGeometry, type ArtworkSelection, type PixelPiece } from '@/lib/artwork-layers';
 import { loadArtworkImage } from './render-artwork';
@@ -58,9 +59,8 @@ export async function persistArtworkLayerAssets(draft: ArtworkDraft, upload = up
   const persist = (url: string) => {
     if (!/^(?:data:|blob:)/i.test(url)) return Promise.resolve(url);
     if (!uploads.has(url)) uploads.set(url, (async () => {
-      const response = await fetch(url);
-      if (!response.ok) throw new Error('无法读取待保存的图层');
-      const blob = await response.blob();
+      const response = await fetchApi(url);
+      const blob = await readApiBlob(response, '读取待保存图层失败');
       if (blob.type !== 'image/png') throw new Error('拆分图层必须保存为透明 PNG');
       return (await upload(new File([blob], `artwork-layer-${uploads.size + 1}.png`, { type: 'image/png' }))).url;
     })());

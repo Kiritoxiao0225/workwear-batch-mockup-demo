@@ -55,8 +55,10 @@ export async function validateProductionArtworkDraft(url: string, draft?: Artwor
   const persistedReport = previousDraft?.preprocessing?.routingReport;
   const report = claimedRunId ? (persistedReport?.runId === claimedRunId ? persistedReport
     : await readArtworkRoutingReport(claimedRunId)) : null;
+  validation.contentWarnings = [];
   if (report && report.graphic.sha256 === hashes.get(graphics[0]?.sourceUrl) && verifiedDraft.preprocessing) {
     verifiedDraft.preprocessing.routingReport = report;
+    validation.contentWarnings = report.contentReview?.warnings ?? [];
     validation.contentIssues = report.reviewReasons.filter(reason => /(?:重绘未完成|特殊字形尚未生成|文字仅为.*占位|缺少|文件.*变化)/u.test(reason));
   }
   return { validation, draft: verifiedDraft };
@@ -90,6 +92,7 @@ export async function validateProductionArtworkQuality(url: string, draft?: Artw
       if (!artworkQualityPassed(quality, sha256)) validation.qualityIssues.push(`图案组件 ${index + 1}：${quality.score < ARTWORK_ROUTING_STANDARD.clarityMinimum ? `模糊检查未通过（换算清晰度 ${quality.score.toFixed(2)}）` : `有效像素不足（目标放大 ${quality.requiredScale.toFixed(2)} 倍）`}`);
       if (matchingReport && verifiedDraft?.preprocessing) {
         verifiedDraft.preprocessing.routingReport = matchingReport;
+        validation.contentWarnings = matchingReport.contentReview?.warnings ?? [];
         if (recorded) validation.qualityIssues.push(...matchingReport.reviewReasons);
         else validation.qualityIssues.push(...matchingReport.reviewReasons.filter(reason => !/^(?:主体清晰度|净边后主体清晰度|文字“.+”清晰度)/u.test(reason)));
       }

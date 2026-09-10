@@ -10,7 +10,9 @@ export function durableArtworkServices(): StandardArtworkServices {
     measure: bytes => artworkJobStep('measure', 'quality', bytes, () => s.measure(bytes)),
     generate: (...args) => artworkJobStep('generate', 'generation', args, () => s.generate(...args)),
     inspect: (...args) => artworkJobStep('inspect', 'inspection', args, () => s.inspect(...args)),
-    inspectSource: (...args) => artworkJobStep('inspectSource', 'inspection', args, () => s.inspectSource(...args)),
+    // Old successful inspections lack a target region. Re-inspect only this
+    // step; generation and other paid checkpoints keep their existing keys.
+    inspectSource: (...args) => artworkJobStep('inspectSource', 'inspection', { version: 'artwork-source-selection-v1', args }, () => s.inspectSource(...args)),
     resolveReferenceColor: (...args) => artworkJobStep('referenceColor', 'inspection', args, () => s.resolveReferenceColor(...args)),
     verifyEdits: (...args) => artworkJobStep('verifyEdits', 'inspection', { version: ARTWORK_EDIT_INSPECTION_VERSION, args }, () => s.verifyEdits(...args)),
     verifyText: (...args) => artworkJobStep('verifyText', 'inspection', { version: ARTWORK_TEXT_INSPECTION_VERSION, args }, () => s.verifyText(...args)),

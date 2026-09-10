@@ -1,4 +1,5 @@
 'use client';
+import { fetchApi, readApiJson } from '@/lib/client/api-response';
 import { useWpsDurableAnalysis } from './use-wps-durable-analysis';
 import { useEffect, useRef, useState } from 'react';
 import type { SourceTaskRecord } from '@/lib/batch-task-review';
@@ -18,9 +19,7 @@ export type WpsAnalysisStatus = {
 };
 
 async function json<T>(response: Response): Promise<T> {
-  const body = await response.json();
-  if (!response.ok) throw Object.assign(new Error(body.error || `HTTP ${response.status}`), { status: response.status });
-  return body as T;
+  return readApiJson(response, '解析请求失败') as Promise<T>;
 }
 
 /** A source revision is attempted once per page session; failed entries require explicit retry. */
@@ -52,7 +51,7 @@ function useLegacyWpsAutomaticAnalysis(state: WpsProductionState | null, enabled
         return parsed.current.get(key)!;
       }
       setStatuses(current => ({ ...current, [key]: { phase: 'analyzing' } }));
-      const result = await readWpsAnalysisResponse(await fetch('/api/wps-production/analyze', {
+      const result = await readWpsAnalysisResponse(await fetchApi('/api/wps-production/analyze', {
         method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' }, body: JSON.stringify({ records: [source] }), signal: AbortSignal.timeout(WPS_ANALYSIS_CLIENT_TIMEOUT_MS),
       }), event => setStatuses(current => ({ ...current, [key]: { ...current[key], phase: 'analyzing',
         ...(event.type === 'stage' ? { stage: event.stage } : { timings: [...(current[key]?.timings ?? []), event.timing] }),
@@ -68,11 +67,11 @@ function useLegacyWpsAutomaticAnalysis(state: WpsProductionState | null, enabled
       // Other rows may save while the model runs. Retry only the commit, never the model.
       for (let attempt = 0; attempt < 3; attempt++) {
         assertCurrentSource(source);
-        const latest = await json<WpsProductionState>(await fetch('/api/wps-production', { cache: 'no-store', signal: AbortSignal.timeout(60_000) }));
+        const latest = await json<WpsProductionState>(await fetchApi('/api/wps-production', { cache: 'no-store', signal: AbortSignal.timeout(60_000) }));
         const alreadySaved = latest.records.find(record => record.source.recordId === source.recordId && wpsSourceEvidence(record.source) === wpsSourceEvidence(source) && record.unitIds.length);
         if (alreadySaved) { accept(latest); savedTiming(); return; }
         try {
-          const saved = await json<WpsProductionState>(await fetch('/api/wps-production', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(60_000),
+          const saved = await json<WpsProductionState>(await fetchApi('/api/wps-production', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(60_000),
             body: JSON.stringify({ action: 'upsertReviews', expectedRevision: latest.revision, reviews: result.reviews, targetSnapshots: result.targetSnapshots }) }));
           accept(saved); savedTiming(); return;
         } catch (error) {

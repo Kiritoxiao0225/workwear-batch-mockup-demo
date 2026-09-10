@@ -1,3 +1,4 @@
+import { fetchApi } from '@/lib/client/api-response';
 type Saved = { body: string; etag: string | null; status: number };
 /** Per-consumer cache, with request coalescing and a fence for mutations. */
 export class ConditionalJsonReader {
@@ -11,7 +12,7 @@ export class ConditionalJsonReader {
     if (!this.flight || this.flight.generation !== generation || this.flight.signal !== signal) {
       const saved = this.saved;
       const work = (async () => {
-        const response = await fetch(this.url, { cache: 'no-store', signal, headers: saved?.etag ? { 'If-None-Match': saved.etag } : {} });
+        const response = await fetchApi(this.url, { cache: 'no-store', signal, headers: saved?.etag ? { 'If-None-Match': saved.etag } : {} });
         if (response.status === 304) {
           if (!saved) throw new Error('状态缓存丢失，请重试读取');
           return saved;

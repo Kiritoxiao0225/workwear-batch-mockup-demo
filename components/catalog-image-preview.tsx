@@ -3,12 +3,20 @@
 import Image from 'next/image';
 import { useEffect, useRef, useState } from 'react';
 import type { CatalogItem } from '@/lib/catalog';
+import { imageFailureReason } from '@/lib/client/api-response';
 
 function GarmentImage({ item, zoomed, framed }: { item: CatalogItem; zoomed: boolean; framed: boolean }) {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const [failure, setFailure] = useState('');
   const imageUrl = framed ? `/api/catalog/products/${item.id}/framed-preview?assetVersionId=${item.assetVersionId}` : item.imageUrl;
+  useEffect(() => {
+    if (!failed) return;
+    const abort = new AbortController();
+    void imageFailureReason(imageUrl, abort.signal).then(message => { if (!abort.signal.aborted) setFailure(message); }).catch(() => { /* An obsolete image was cancelled. */ });
+    return () => abort.abort();
+  }, [failed, imageUrl]);
   return <>
     <div className={`catalog-preview-scroll ${zoomed ? 'is-zoomed' : ''}`}>
       <div className="catalog-preview-picture">
@@ -16,7 +24,7 @@ function GarmentImage({ item, zoomed, framed }: { item: CatalogItem; zoomed: boo
         <Image key={attempt} src={imageUrl} alt={`${item.styleCode} · ${item.colorName} · ${item.layout === 'front_back' ? '正面与背面' : '正面'}`} fill unoptimized sizes="90vw" style={{ opacity: loaded ? 1 : 0 }} onLoad={() => { setLoaded(true); setFailed(false); }} onError={() => setFailed(true)} />
       </div>
     </div>
-    <div className="catalog-preview-status" role="status">{failed ? <>{framed ? '带框预览读取失败。' : '高清图读取失败，当前显示缩略图。'}<button className="button" type="button" onClick={() => { setFailed(false); setAttempt(n => n + 1); }}>重新加载</button></> : loaded ? (framed ? '带框试排 · 使用现有底框截图；高清模板待补充' : '高清图已加载') : framed ? '正在排版衣服与底框…' : '正在加载高清图，先显示缩略图…'}</div>
+    <div className="catalog-preview-status" role="status">{failed ? <>{framed ? '带框预览读取失败。' : '高清图读取失败，当前显示缩略图。'} {failure || '正在读取失败原因…'}<button className="button" type="button" onClick={() => { setFailed(false); setFailure(''); setAttempt(n => n + 1); }}>重新加载</button></> : loaded ? (framed ? '带框试排 · 使用现有底框截图；高清模板待补充' : '高清图已加载') : framed ? '正在排版衣服与底框…' : '正在加载高清图，先显示缩略图…'}</div>
   </>;
 }
 

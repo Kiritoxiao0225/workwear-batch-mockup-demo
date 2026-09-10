@@ -27,7 +27,7 @@ export function WpsMockupPreview({ version, units, open, adjust, disabled, pause
   const scope = `${version.id}:${session.user?.id ?? 'signed-out'}`;
   const previewKey = `${scope}:${url}`;
   const [displayed, setDisplayed] = useState<{ key: string; scope: string; objectUrl: string } | null>(null);
-  const [failedKey, setFailedKey] = useState<string | null>(null);
+  const [failure, setFailure] = useState<{ key: string; message: string } | null>(null);
   const canLoad = Boolean(version.garment && session.initialized && session.user);
   useEffect(() => {
     if (paused || !canLoad) return;
@@ -40,12 +40,13 @@ export function WpsMockupPreview({ version, units, open, adjust, disabled, pause
         pendingUrl = URL.createObjectURL(blob);
         const image = new window.Image();
         image.src = pendingUrl;
-        await image.decode();
+        try { await image.decode(); }
+        catch { throw new Error('收到的预览图片无法显示，请重新读取。'); }
         if (controller.signal.aborted) return;
         setDisplayed({ key: previewKey, scope, objectUrl: pendingUrl });
         pendingUrl = null;
-      } catch {
-        if (!controller.signal.aborted) setFailedKey(previewKey);
+      } catch (error) {
+        if (!controller.signal.aborted) setFailure({ key: previewKey, message: error instanceof Error ? error.message : '预览读取失败，请重新读取。' });
       } finally {
         if (pendingUrl) URL.revokeObjectURL(pendingUrl);
       }
@@ -56,8 +57,8 @@ export function WpsMockupPreview({ version, units, open, adjust, disabled, pause
   if (!version.garment) return <div className="wps-garment-empty">选择款式和颜色后显示带框效果图</div>;
   const visible = displayed?.scope === scope && session.user ? displayed : null;
   const current = visible?.key === previewKey;
-  const failed = failedKey === previewKey && !current;
-  const notice = paused ? '位置调整完成后更新预览' : failed ? '新预览暂未读取，已保留上一版' : !current
+  const failed = failure?.key === previewKey && !current ? failure : null;
+  const notice = paused ? '位置调整完成后更新预览' : failed ? visible ? '预览更新失败 · 当前显示上一版' : '预览读取失败' : !current
     ? visible ? '正在更新 · 当前显示上一版' : '效果图更新中…' : composing ? '预览已更新，高清客户图保存中…' : null;
   const previewed = units.filter(unit => unit.artwork && unit.placement).length;
   const missingPosition = units.some(unit => unit.artwork && !unit.placement);
@@ -69,7 +70,7 @@ export function WpsMockupPreview({ version, units, open, adjust, disabled, pause
           {visible && <Image alt={title} fill sizes="400px" src={visible.objectUrl} unoptimized />}
           {notice && <span className="wps-preview-status" role="status">{notice}</span>}
         </button>
-        {failed && <div role="alert"><p>新预览暂时无法读取，制作状态已保留。</p><button type="button" onClick={() => setRetry(value => value + 1)}>重新读取</button></div>}
+        {failed && <div role="alert"><p>{failed.message}</p><p>已保存的图案和制作状态仍保留。</p><button type="button" onClick={() => setRetry(value => value + 1)}>重新读取预览</button></div>}
       </>}
     <small>点击图片放大查看</small>
     <button className="wps-position-adjust" type="button" disabled={disabled} onClick={adjust}>调整位置</button>

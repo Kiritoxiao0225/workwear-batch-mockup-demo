@@ -428,7 +428,7 @@ export function assertUsableArtworkMask(report: ArtworkAlphaMaskReport) {
     throw new Error(`抠图结果画布边缘透明度不足：仅 ${(report.transparentBorderRatio * 100).toFixed(1)}%`);
   }
   if (report.coreOpaqueAmongVisible < 0.25) {
-    throw new Error(`抠图结果完全不透明主体不足：仅占可见区域 ${(report.coreOpaqueAmongVisible * 100).toFixed(1)}%`);
+    throw new Error(`抠图后图案主体过于透明，贴到衣服上可能发虚或缺失（接近不透明的部分仅占可见区域 ${(report.coreOpaqueAmongVisible * 100).toFixed(1)}%，要求至少 25%）`);
   }
   if (report.softAlphaAmongVisible > 0.75) {
     throw new Error(`抠图结果半透明区域过多：占可见区域 ${(report.softAlphaAmongVisible * 100).toFixed(1)}%`);

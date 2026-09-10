@@ -48,7 +48,7 @@ async function setup(width = 782, score = 90) {
     return removeFlatArtworkBackground(bytes, profile.backgroundColor!);
   });
   const services = { ...standardArtworkServices, measure, cutout,
-    inspectSource: vi.fn<typeof standardArtworkServices.inspectSource>(async () => ({ version: 'artwork-source-v1', kind: 'flat-artwork', targetDescription: '独立平面图案', needsReconstruction: false, evidence: ['测试输入为独立平面图稿'], uncertainDetails: [] })), saveImage: vi.fn(), saveReport: vi.fn(),
+    inspectSource: vi.fn<typeof standardArtworkServices.inspectSource>(async () => ({ version: 'artwork-source-v1', kind: 'flat-artwork', targetDescription: '独立平面图案', needsReconstruction: false, selection: { scope: 'full-image' }, evidence: ['测试输入为独立平面图稿'], uncertainDetails: [] })), saveImage: vi.fn(), saveReport: vi.fn(),
     generate: vi.fn(async () => { throw new Error('Unexpected generation'); }),
     inspect: vi.fn(async () => { throw new Error('Unexpected redraw inspection'); }) };
   return { source, request, services, measure, cutout, events, fetcher };

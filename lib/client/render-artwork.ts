@@ -1,4 +1,5 @@
 'use client';
+import { imageFailureReason } from './api-response';
 
 import {
   artworkCanvasBounds,
@@ -51,7 +52,7 @@ export function loadArtworkImage(sourceUrl: string) {
     };
     image.onerror = () => {
       if (artworkImages.get(sourceUrl) === entry) artworkImages.delete(sourceUrl);
-      reject(new Error(`图形图层加载失败：${sourceUrl.slice(0, 120)}`));
+      void imageFailureReason(sourceUrl).then(message => reject(new Error(`图形图层加载失败：${message}`)), reject);
     };
     image.src = sourceUrl;
   });

@@ -6,6 +6,7 @@ import { artworkReferenceColors } from '@/lib/artwork-reference-color';
 import { artworkModelEdits } from '@/lib/artwork-model-edits';
 import { needsArtworkReconstruction, artworkReconstructionPrompt } from './artwork-source-assessment';
 import { artworkTextOperation, artworkTextRemovalPrompt, artworkTextStyle } from './artwork-text-contract';
+import { artworkSeparationPrompt } from './artwork-generation-background';
 
 export type ArtworkRequirementInput = Pick<ArtworkPreparationRequest, 'sourceAssessment' | 'primaryImageRole' | 'artworkMethod' | 'instruction' | 'layoutNote' | 'exactText' | 'primaryImageLabel' | 'sourceScope' | 'processingRoute'> & Partial<Pick<ArtworkPreparationRequest, 'sourceRequirementText' | 'printPlacement' | 'generationPrompt'>> & { referenceImages: Array<{ label: string }> };
 
@@ -63,8 +64,8 @@ export function artworkRequirementFacts(input: ArtworkRequirementInput): Artwork
   if (strictPreservation && generate) blockers.push('严格保真与整图生成要求冲突，请先明确制作方式');
   if (strictPreservation && (intent.hasStyleReference || intent.specialTypography) && input.exactText.trim()) blockers.push('严格保真不能生成特殊字形，请提供可直接使用的文字素材');
   if (strictPreservation && artworkTextOperation(input) === 'replace') blockers.push('严格保真要求禁止模型改图，请先提供已清除指定旧字的主体素材，再新增准确文字');
-  // Arbitrary crop instructions cannot be implemented by sending the entire logo to a generator.
-  const needsCrop = intent.selectiveComposition && !generate;
+  // A crop requirement is executable only after a real target region is known.
+  const needsCrop = intent.selectiveComposition && !generate && input.sourceAssessment?.selection?.scope !== 'region';
   const knownColor = artworkEditColor(requirement);
   for (const reference of colorReferences) {
     if (!(referenceText && normalizeArtworkImageNumbers(input.primaryImageLabel) === reference.label) && !input.referenceImages.some(image => normalizeArtworkImageNumbers(image.label) === reference.label)) blockers.push(`颜色参考${reference.label}尚未绑定，请补充该素材`);
@@ -81,7 +82,8 @@ export function artworkRequirementFacts(input: ArtworkRequirementInput): Artwork
     reconstructSource: !generate && needsArtworkReconstruction(input),
     sourceClarity: null, requiredScale: null,
     repair: { attempts: 0, clarity: null, requiredScale: null }, redrawEligibility: 'unknown',
-    editSpecification: blockers.length || needsCrop ? 'incomplete' : generate || input.exactText.trim() || knownColor || colorReferences.length ? 'complete' : compose ? 'unknown' : 'complete',
+    editSpecification: blockers.length || needsCrop ? 'incomplete' : generate || input.exactText.trim() || knownColor || colorReferences.length
+      || (intent.selectiveComposition && input.sourceAssessment?.selection?.scope === 'region') ? 'complete' : compose ? 'unknown' : 'complete',
     strictPreservation,
   };
 }
@@ -124,8 +126,11 @@ export function standardArtworkPrompts(input: Omit<ArtworkPreparationRequest, 'i
   const textOperation = artworkTextOperation(input);
   const removeText = textOperation === 'replace' ? artworkTextRemovalPrompt(input) : null;
   const reconstruct = input.sourceAssessment ? artworkReconstructionPrompt(input.sourceAssessment, input.primaryImageLabel, input) : null;
-  const hash = artworkPromptHash(JSON.stringify({ version: STANDARD_ARTWORK_PROMPT_VERSION, route: input.processingRoute, ...(input.artworkMethod ? { artworkMethod: input.artworkMethod } : {}), canonical: generate, redraw, reconstruct, textOperation, removeText, styledTexts, imageMapping: canonical.imageMapping }));
-  return { version: STANDARD_ARTWORK_PROMPT_VERSION, hash, redraw, reconstruct, generate, textOperation, removeText, styledTexts, imageMapping: canonical.imageMapping };
+  const resolved = { generate: artworkSeparationPrompt(generate), redraw: artworkSeparationPrompt(redraw),
+    reconstruct: reconstruct ? artworkSeparationPrompt(reconstruct) : null,
+    styledTexts: styledTexts.map(text => ({ ...text, prompt: artworkSeparationPrompt(text.prompt) })) };
+  const hash = artworkPromptHash(JSON.stringify({ version: STANDARD_ARTWORK_PROMPT_VERSION, route: input.processingRoute, ...(input.artworkMethod ? { artworkMethod: input.artworkMethod } : {}), sourceSelection: input.sourceAssessment?.selection, ...resolved, textOperation, removeText, imageMapping: canonical.imageMapping }));
+  return { version: STANDARD_ARTWORK_PROMPT_VERSION, hash, ...resolved, textOperation, removeText, imageMapping: canonical.imageMapping };
 }
 
 export function resolvedFlatLogoRedrawPrompt(base: string, facts: { palette: Array<[number, number, number]>; recognizedText: string; structureDescription?: string }) {

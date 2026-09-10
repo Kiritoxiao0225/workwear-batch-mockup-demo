@@ -1,4 +1,5 @@
 'use client';
+import { fetchApi, readApiJson } from '@/lib/client/api-response';
 import { useEffect, useState } from 'react';
 import type { ArtworkDraft } from '@/lib/artwork-editor';
 import { renderArtworkPreview } from '@/lib/client/render-artwork';
@@ -20,9 +21,8 @@ export function WpsArtworkSizePreview({ unit, draft }: { unit: ProductionUnit; d
     if (!session.user || !unit.garment || unit.garment.views.every(view => view.bodyScale)) return;
     const abort = new AbortController();
     void (async () => {
-      const response = await fetch(`/api/wps-production/artwork-inspection?unitId=${encodeURIComponent(unit.id)}&sizing=true`, { cache: 'no-store', signal: abort.signal });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || '衣服尺寸读取失败');
+      const response = await fetchApi(`/api/wps-production/artwork-inspection?unitId=${encodeURIComponent(unit.id)}&sizing=true`, { cache: 'no-store', signal: abort.signal });
+      const result = await readApiJson(response, '衣服尺寸读取失败');
       const checked = garmentBindingSchema.parse(result.garment);
       if (checked.assetVersionId !== unit.garment?.assetVersionId) throw new Error('衣服底图已变化，请重新打开编辑器');
       setGarment(checked);

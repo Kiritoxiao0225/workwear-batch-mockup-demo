@@ -47,4 +47,13 @@ describe('final artwork acceptance', () => {
     expect(retainArtworkQuality(previous, validation).quality).toEqual(previous.quality);
     expect(retainArtworkQuality(previous, { ...validation, sha256: 'changed' }).quality).toBeUndefined();
   });
+  it('shows content reminders without blocking human confirmation or carrying them to a different image', () => {
+    const advisory = { ...validation, contentWarnings: ['原图细节看不清，可能缺少一处细笔画'] };
+    expect(artworkQualityAdvice(advisory)).toContain(advisory.contentWarnings[0]);
+    expect(artworkAcceptanceIssues(advisory)).toEqual([]);
+    const state = stateWithArtwork(advisory);
+    expect(confirmProductionArtwork(state, state.units[0].id, '测试员').units[0].gateB).not.toBeNull();
+    expect(retainArtworkQuality(advisory, validation).contentWarnings).toEqual(advisory.contentWarnings);
+    expect(retainArtworkQuality(advisory, { ...validation, sha256: 'different' }).contentWarnings).toBeUndefined();
+  });
 });

@@ -244,7 +244,7 @@ describe('MediaKit mask quality gate', () => {
     const report = await alphaMaskReport(fuzzy);
 
     expect(report.transparentRatio).toBeGreaterThan(0.5);
-    expect(() => assertUsableArtworkMask(report)).toThrow('完全不透明主体不足');
+    expect(() => assertUsableArtworkMask(report)).toThrow('图案主体过于透明');
   });
 
   it('rejects an almost opaque canvas with only a thin transparent strip', async () => {

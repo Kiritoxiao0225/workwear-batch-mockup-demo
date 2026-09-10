@@ -1,4 +1,5 @@
 'use client';
+import { readApiPayload, readApiBlob, fetchApi, readApiJson, assertApiResponse } from '@/lib/client/api-response';
 
 /* eslint-disable react-hooks/refs -- async MediaKit responses must compare against the latest recipe before committing; refs are read only inside event handlers */
 
@@ -145,14 +146,7 @@ const PROCESSING_ROUTE_OPTIONS: Array<{
 ];
 
 async function jsonResponse<T>(response: Response): Promise<T> {
-  const body: unknown = await response.json();
-  if (!response.ok) {
-    const message = body && typeof body === 'object' && 'error' in body
-      ? String(body.error)
-      : `请求失败：HTTP ${response.status}`;
-    throw new Error(message);
-  }
-  return body as T;
+  return readApiJson(response, '任务请求失败') as Promise<T>;
 }
 
 function unitLabel(unit: GenerationUnit) {
@@ -293,9 +287,9 @@ function dataUrlMimeType(dataUrl: string) {
 async function logoInputImage(url: string, fileName: string): Promise<LogoStudioInputImage> {
   const dataMimeType = dataUrlMimeType(url);
   if (dataMimeType) return { fileName, mimeType: dataMimeType, dataUrl: url };
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`${fileName} 下载失败：HTTP ${response.status}`);
-  const blob = await response.blob();
+  const response = await fetchApi(url);
+  await assertApiResponse(response, `${fileName} 下载失败`);
+  const blob = await readApiBlob(response);
   if (!['image/png', 'image/jpeg', 'image/webp'].includes(blob.type)) {
     throw new Error(`${fileName} 不是可用的 PNG、JPG 或 WebP 图片`);
   }
@@ -322,9 +316,9 @@ function routeLabel(unit: GenerationUnit) {
 }
 
 async function dataUrlFile(dataUrl: string, fileName: string) {
-  const response = await fetch(dataUrl);
-  if (!response.ok) throw new Error(`${fileName} 转换失败：HTTP ${response.status}`);
-  const blob = await response.blob();
+  const response = await fetchApi(dataUrl);
+  await assertApiResponse(response, `${fileName} 转换失败`);
+  const blob = await readApiBlob(response);
   if (blob.type !== 'image/png') throw new Error(`${fileName} 必须是透明 PNG，实际为 ${blob.type || '未知类型'}`);
   return new File([blob], fileName, { type: 'image/png' });
 }
@@ -452,7 +446,7 @@ export function TaskReviewClient() {
         const record = recordsToAnalyze[nextRecordIndex];
         nextRecordIndex += 1;
         try {
-          const result = await jsonResponse<{ reviews: TaskReview[]; model: string }>(await fetch('/api/wps-production/analyze', {
+          const result = await jsonResponse<{ reviews: TaskReview[]; model: string }>(await fetchApi('/api/wps-production/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ records: [record] }),
@@ -513,9 +507,9 @@ export function TaskReviewClient() {
     setBusy('sync');
     setError(null);
     try {
-      const response = await fetch('/api/wps-tasks', { cache: 'no-store' });
+      const response = await fetchApi('/api/wps-tasks', { cache: 'no-store' });
       if (response.status === 401) {
-        const body = await response.json() as Partial<WpsAuthorizationRequiredResponse>;
+        const body = await readApiPayload(response, '读取 WPS 授权状态失败') as Partial<WpsAuthorizationRequiredResponse>;
         setSync(null);
         replaceReviews([]);
         setWpsAuthorizeUrl(typeof body.authorizeUrl === 'string' ? body.authorizeUrl : '/api/wps/oauth/start');
@@ -713,7 +707,7 @@ export function TaskReviewClient() {
         primaryImageLabel: `图${primaryMaterialIndex + 1}`,
         referenceImageLabels: referenceImages.map((reference) => reference.label),
       });
-      const result = await jsonResponse<ArtworkPreparationResponse>(await fetch('/api/task-review/artwork', {
+      const result = await jsonResponse<ArtworkPreparationResponse>(await fetchApi('/api/task-review/artwork', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -840,8 +834,8 @@ export function TaskReviewClient() {
     setBusy('create');
     setError(null);
     try {
-      let production = await jsonResponse<WpsProductionState>(await fetch('/api/wps-production', { cache: 'no-store' }));
-      production = await jsonResponse<WpsProductionState>(await fetch('/api/wps-production', {
+      let production = await jsonResponse<WpsProductionState>(await fetchApi('/api/wps-production', { cache: 'no-store' }));
+      production = await jsonResponse<WpsProductionState>(await fetchApi('/api/wps-production', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'importReviews', expectedRevision: production.revision, reviews }),
@@ -852,7 +846,7 @@ export function TaskReviewClient() {
         let productionUnit = production.units.find((candidate) => candidate.id === unit.id);
         if (!productionUnit || productionUnit.route === 'blocked') throw new Error(`${unitLabel(unit)} 的生产路线仍未确定`);
         if (!productionUnit.gateA) {
-          production = await jsonResponse<WpsProductionState>(await fetch('/api/wps-production', {
+          production = await jsonResponse<WpsProductionState>(await fetchApi('/api/wps-production', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'confirmPlan', expectedRevision: production.revision, unitId: unit.id, actor: '当前操作员' }),
@@ -860,7 +854,7 @@ export function TaskReviewClient() {
           productionUnit = production.units.find((candidate) => candidate.id === unit.id)!;
         }
         if (!productionUnit.artwork) {
-          production = await jsonResponse<WpsProductionState>(await fetch('/api/wps-production', {
+          production = await jsonResponse<WpsProductionState>(await fetchApi('/api/wps-production', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -877,7 +871,7 @@ export function TaskReviewClient() {
           productionUnit = production.units.find((candidate) => candidate.id === unit.id)!;
         }
         if (!productionUnit.gateB) {
-          production = await jsonResponse<WpsProductionState>(await fetch('/api/wps-production', {
+          production = await jsonResponse<WpsProductionState>(await fetchApi('/api/wps-production', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'confirmArtwork', expectedRevision: production.revision, unitId: unit.id, actor: '当前操作员' }),

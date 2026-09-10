@@ -1,4 +1,5 @@
 'use client';
+import { fetchApi, readApiJson } from '@/lib/client/api-response';
 
 import Link from 'next/link';
 import Image from 'next/image';
@@ -58,9 +59,8 @@ export function WorkbenchClient({ requestedTaskId }: WorkbenchClientProps) {
     let disposed = false;
     void (async () => {
       const results = await Promise.allSettled(inputs.map(async input => {
-        const response = await fetch(`/api/catalog/simple-garment?variantId=${input.variantId}&assetVersionId=${input.assetVersionId}`, { cache: 'no-store' });
-        const body = await response.json();
-        if (!response.ok) throw new Error(body.error || '默认位置读取失败');
+        const response = await fetchApi(`/api/catalog/simple-garment?variantId=${input.variantId}&assetVersionId=${input.assetVersionId}`, { cache: 'no-store' });
+        const body = await readApiJson(response, '默认位置读取失败');
         return [input.assetVersionId, simpleCatalogBindingSchema.parse(body).placementDefaults] as const;
       }));
       if (disposed) return;
@@ -182,9 +182,8 @@ export function WorkbenchClient({ requestedTaskId }: WorkbenchClientProps) {
     const target = activeTask;
     setBusy(true); setActionError(null);
     try {
-      const response = await fetch(`/api/catalog/simple-garment?variantId=${target.garment!.variantId}&assetVersionId=${target.garment!.assetVersionId}`, { cache: 'no-store' });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error || '位置标准读取失败');
+      const response = await fetchApi(`/api/catalog/simple-garment?variantId=${target.garment!.variantId}&assetVersionId=${target.garment!.assetVersionId}`, { cache: 'no-store' });
+      const body = await readApiJson(response, '位置标准读取失败');
       const { garment, placementDefaults } = simpleCatalogBindingSchema.parse(body);
       await updateTask(target.id, task => changedTask(task, { garment, placementDefaults }), true);
       setDefaultsError(null);

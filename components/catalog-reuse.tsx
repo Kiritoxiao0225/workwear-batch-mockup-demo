@@ -1,4 +1,5 @@
 'use client';
+import { fetchApi, readApiJson } from '@/lib/client/api-response';
 
 import { useEffect, useState } from 'react';
 import { POSITION_LABELS, type CatalogItem, type CatalogView, type PlacementStandard, type ReusePreview } from '@/lib/catalog';
@@ -25,8 +26,8 @@ export function CatalogReuse({ variantId, close, saved }: { variantId: string; c
   const [result, setResult] = useState('');
   useEffect(() => {
     const abort = new AbortController();
-    void fetch('/api/catalog/reuse', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ variantId }), signal: abort.signal }).then(async response => {
-      const next = await response.json(); if (!response.ok) throw new Error(next.error);
+    void fetchApi('/api/catalog/reuse', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ variantId }), signal: abort.signal }).then(async response => {
+      const next = await readApiJson(response, '读取位置复用方案失败');
       if (abort.signal.aborted) return;
       const ready = next as ReusePreview; setPreview(ready);
       setSelected(new Set(ready.colors.flatMap(color => {
@@ -39,8 +40,8 @@ export function CatalogReuse({ variantId, close, saved }: { variantId: string; c
   async function apply() {
     setBusy(true); setError('');
     try {
-      const response = await fetch('/api/catalog/reuse', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sourceVariantId: variantId, checkIds: [...selected], reviewed }) });
-      const responseBody = await response.json(); if (!response.ok) throw new Error(responseBody.error);
+      const response = await fetchApi('/api/catalog/reuse', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sourceVariantId: variantId, checkIds: [...selected], reviewed }) });
+      const responseBody = await readApiJson(response, '应用位置到其他颜色失败');
       setResult(`已保存 ${responseBody.colors} 个颜色、${responseBody.faces} 个面的共用标准。`); await saved();
     } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
     finally { setBusy(false); }

@@ -40,6 +40,8 @@
 .wps-cutout-compact .wps-cutout-recommendation { padding: 8px; gap: 4px; background: #f1f5f1; }
 .wps-artwork-cell .wps-artwork-current:has(.wps-artwork-caption) { grid-template-columns: minmax(80px, 112px) minmax(0, 1fr); align-items: center; gap: 10px; }
 .wps-artwork-cell .wps-artwork-current .wps-artwork-preview { width: 100%; height: 100px; border-color: #e0e7e0; }
+.wps-artwork-candidate { display: grid; gap: 6px; margin: 8px 0; }
+.wps-artwork-cell .wps-artwork-candidate .wps-material-image { width: 100%; height: 160px; background: repeating-conic-gradient(#e2e5e2 0% 25%, #f7f8f7 0% 50%) 50% / 16px 16px; }
 .wps-artwork-caption { display: grid; gap: 4px; min-width: 0; }
 .wps-artwork-caption > small { color: #64766b; font-size: 11px; line-height: 1.5; }
 .wps-production-table .wps-artwork-caption > .wps-text-button { margin: 0; min-height: 28px; padding: 0; font-size: 12px; }
@@ -77,6 +79,19 @@
 .wps-shared-thumbnail img { display: block; width: 100%; height: 124px; object-fit: contain; background-color: #eef0ec; background-image: conic-gradient(#fff 25%, transparent 0 50%, #fff 0 75%, transparent 0); background-size: 14px 14px; }
 .wps-shared-thumbnail small { display: block; margin-top: 5px; color: #66786b; font-size: 11px; }
 .wps-shared-design-state { margin: 10px 0 8px; color: #657768; font-size: 12px; }
+.wps-shared-design-state > :is(strong, span) { display: block; line-height: 1.7; }
+.wps-shared-design-state > strong { color: #203d2c; font-size: 14px; }
+.wps-shared-workbench .complete { color: #267048; }
+.wps-shared-applications { list-style: none; margin: 10px 0 14px; padding: 0; border-block: 1px solid #e1e8e2; }
+.wps-shared-applications li { padding: 9px 0; }
+.wps-shared-applications li + li { border-top: 1px solid #edf0ed; }
+.wps-shared-applications li > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 10px; font-size: 12px; line-height: 1.6; }
+.wps-shared-applications strong { font-weight: 500; color: #86601e; }
+.wps-shared-applications li > p { margin: 3px 0 6px; font-size: 12px; color: #965516; }
+.wps-shared-operation { padding: 8px 10px; margin: 10px 0; border-radius: 5px; background: #f1f6f2; color: #31573f; }
+.wps-shared-operation:is(.error, .unknown) { background: #fff6e9; color: #8d5014; border: 1px solid #ecd2af; }
+.wps-shared-operation p { margin: 0 0 6px; font-size: 12px; }
+.wps-shared-workbench .wps-shared-next { color: #596b60; font-size: 12px; }
 .wps-shared-primary-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 .wps-shared-workbench button:not(.wps-shared-thumbnail), .wps-garment-application button { min-height: 32px; padding: 5px 9px; border: 1px solid #b9cabe; border-radius: 5px; background: #fff; color: #31573f; font: inherit; font-size: 12px; cursor: pointer; }
 .wps-shared-workbench button.wps-shared-edit { background: #295c41; color: #fff; border-color: #295c41; }

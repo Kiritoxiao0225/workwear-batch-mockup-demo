@@ -1,4 +1,5 @@
 'use client';
+import { fetchApi, readApiJson } from '@/lib/client/api-response';
 
 import { usesBrowserStorage } from '@/lib/client/browser-demo-store';
 import { cleanLogoWhiteBackground } from '@/lib/client/logo-background';
@@ -43,9 +44,8 @@ export async function uploadLogo(file: File, serverStorage = false): Promise<Upl
   const sha256 = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer())), b => b.toString(16).padStart(2, '0')).join('');
   const operationId = crypto.randomUUID();
   const prepare = async () => {
-    const response = await fetch('/api/logos/prepare', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sha256, operationId }) });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || '无法查询图片上传状态');
+    const response = await fetchApi('/api/logos/prepare', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sha256, operationId }) });
+    const result = await readApiJson(response, '查询图片上传状态失败');
     return result as { status: 'local' | 'ready' | 'upload' | 'pending'; url?: string };
   };
   let claim = await prepare();
@@ -61,13 +61,13 @@ export async function uploadLogo(file: File, serverStorage = false): Promise<Upl
   formData.set('sha256', sha256);
   formData.set('operationId', operationId);
   let response: Response;
-  try { response = await fetch('/api/logos', { method: 'POST', body: formData }); }
+  try { response = await fetchApi('/api/logos', { method: 'POST', body: formData }); }
   catch (error) {
     const recovered = await prepare();
     if (recovered.status === 'ready') return { url: recovered.url!, originalName: file.name };
     throw error;
   }
-  const body: unknown = await response.json();
+  const body: unknown = await readApiJson(response, '上传 Logo 失败');
   if (!response.ok || !body || typeof body !== 'object' || !('url' in body)) {
     const message = body && typeof body === 'object' && 'error' in body
       ? String(body.error)

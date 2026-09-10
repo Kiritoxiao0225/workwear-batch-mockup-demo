@@ -1,4 +1,5 @@
 'use client';
+import { fetchApi, readApiJson } from '@/lib/client/api-response';
 
 import { useEffect, useRef, useState } from 'react';
 import { allowedPositions, POSITION_LABELS, STRUCTURE_LABELS, type Box, type CatalogStyle, type CatalogDetail, type CatalogUser, type CatalogView, type PlacementStandard, type Point, type PositionKey, type StructureType } from '@/lib/catalog';
@@ -144,9 +145,8 @@ export function CatalogCalibration({ detail, preview, style, user, close, saved,
     async function recognize() {
       setRecognizing(true); setError('');
       try {
-        const response = await fetch(`/api/catalog/products/${detail.id}/recognize-placement`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ assetVersionId: detail.assetVersionId }), signal: controller.signal });
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error || `识别失败：HTTP ${response.status}`);
+        const response = await fetchApi(`/api/catalog/products/${detail.id}/recognize-placement`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ assetVersionId: detail.assetVersionId }), signal: controller.signal });
+        const result = await readApiJson(response, '识别位置失败');
         const recognized = catalogApronRecognitionResponseSchema.parse(result);
         if (!active) return;
         if (recognized.assetVersionId !== detail.assetVersionId || recognized.viewId !== recognitionViewId) throw new Error('识别结果与当前底图不一致，请重新打开');
@@ -199,9 +199,8 @@ export function CatalogCalibration({ detail, preview, style, user, close, saved,
   async function save(confirm: boolean) {
     setBusy(true); setError('');
     try {
-      const response = await fetch('/api/catalog/standards', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ viewId: view.id, assetVersionId: detail.assetVersionId, expectedRevision: view.revision, specification: spec, confirm }) });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error);
+      const response = await fetchApi('/api/catalog/standards', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ viewId: view.id, assetVersionId: detail.assetVersionId, expectedRevision: view.revision, specification: spec, confirm }) });
+      await readApiJson(response, '保存位置失败');
       dirtyRef.current.delete(activeId); setDirtyViews(new Set(dirtyRef.current)); await saved(detail.id);
     } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
     finally { setBusy(false); }

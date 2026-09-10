@@ -35,3 +35,8 @@ it('supports the existing JSON contract and rejects malformed completed frames',
   await expect(readArtworkResponse(Response.json({ error: '请先整理生图提示词' }, { status: 400 }), () => {})).rejects.toThrow('请先整理');
   await expect(readArtworkResponse(new Response('{"type":"complete","result":{"status":"prepared"}}\n', { headers: { 'Content-Type': 'application/x-ndjson' } }), () => {})).rejects.toThrow('不完整');
 });
+
+it('reports gateway and malformed progress failures without a false prepared result', async () => {
+  await expect(readArtworkResponse(new Response('<html>bad gateway</html>', { status: 502 }), () => {})).rejects.toThrow('HTTP 502');
+  await expect(readArtworkResponse(new Response('{broken}\n', { headers: { 'Content-Type': 'application/x-ndjson' } }), () => {})).rejects.toThrow('图案进度响应格式不正确');
+});

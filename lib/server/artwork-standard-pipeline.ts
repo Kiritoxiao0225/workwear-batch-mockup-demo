@@ -24,6 +24,9 @@ import { artworkReconstructionRequirements } from '@/lib/artwork-source-assessme
 import { artworkSolidColor } from '@/lib/artwork-solid-color';
 import { flattenArtworkSolidColor } from './artwork-solid-color';
 import { artworkInspectionFailure } from './artwork-network-error';
+import { selectArtworkSource } from './artwork-source-selection';
+import { artworkSeparationPrompt } from '@/lib/artwork-generation-background';
+import { artworkReviewDecision, reconstructionReviewRequirements } from '@/lib/artwork-review-policy';
 
 async function routedCutout(bytes: Buffer, options: { scene?: 'product' | 'general'; crop?: boolean; mode?: ArtworkCutoutMode } = {}) {
   return (await cutoutArtworkForPipeline(bytes, options.mode)).bytes;
@@ -106,10 +109,14 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
   if (request.expectedPromptHash && request.expectedPromptHash !== prompts.hash) throw new Error('页面显示的制作要求与服务端不一致，已停止处理');
   const initialFacts = artworkRequirementFacts(request);
   const initialDecision = decideArtworkMethod(initialFacts);
-  if (initialDecision.state === 'review') throw new Error(`${initialDecision.reason} ${initialFacts.blockers.join('；')}`);
+  const inspectSelectionFirst = initialFacts.sourceAssessmentRequired && initialFacts.intent === 'compose'
+    && initialFacts.editSpecification === 'incomplete' && !initialFacts.blockers.length && artworkIntent(request).selectiveComposition;
+  if (initialDecision.state === 'review' && !inspectSelectionFirst) throw new Error(`${initialDecision.reason} ${initialFacts.blockers.join('；')}`);
   if (initialFacts.sourceAssessmentRequired && (!request.sourceAssessment || request.sourceAssessment.kind === 'unknown'
-    || request.sourceAssessment.needsReconstruction === null)) {
-    progress('正在识别目标图案与实物载体，选择制作方式…');
+    || request.sourceAssessment.needsReconstruction === null
+    || (request.sourceAssessment.kind === 'flat-artwork' && !request.sourceAssessment.needsReconstruction && !request.sourceAssessment.selection)
+    || inspectSelectionFirst)) {
+    progress('正在识别本次要用的图案及其范围，选择制作方式…');
     const sourceAssessment = await timed('inspection', () => services.inspectSource(request.image.dataUrl,
       `${request.instruction}\n${request.layoutNote}`));
     request = { ...request, sourceAssessment };
@@ -126,7 +133,7 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
   if (decision.method === 'generate' && !request.generationPrompt?.trim()) throw new Error('请先整理生图提示词，再制作图案');
   const reconstructSource = Boolean(facts.reconstructSource);
   const modelPreparation = decision.method === 'generate' || reconstructSource;
-  let modelPrompt = decision.method === 'generate' ? prompts.generate : prompts.reconstruct;
+  let modelPrompt = artworkSeparationPrompt((decision.method === 'generate' ? prompts.generate : prompts.reconstruct) ?? '');
   if (reconstructSource && decision.method !== 'generate') prompts = { ...prompts,
     imageMapping: prompts.imageMapping.filter(mapping => mapping.sourceLabel === request.primaryImageLabel)
       .map(mapping => ({ ...mapping, modelInputLabel: '图1' })) };
@@ -140,10 +147,23 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
   const intent = artworkIntent(request);
   if (facts.intent === 'compose' && (intent.hasStyleReference || intent.specialTypography)
     && (prompts.styledTexts.length > 2 || prompts.styledTexts.some(text => text.text.length > 40))) throw new Error('特殊文字单次最多 2 个组件、每个 40 字，请先拆分要求或提供字体素材');
-  const sourceBytes = bytesFromDataUrl(request.image.dataUrl);
+  const originalSourceBytes = bytesFromDataUrl(request.image.dataUrl);
+  const selectedSource = !modelPreparation && facts.sourceAssessmentRequired && request.sourceAssessment?.kind === 'flat-artwork'
+    ? await selectArtworkSource(originalSourceBytes, request.sourceAssessment.selection)
+    : { bytes: originalSourceBytes };
+  const sourceBytes = selectedSource.bytes;
+  if (selectedSource.receipt) request = { ...request, image: { ...request.image, dataUrl: dataUrl(sourceBytes), mimeType: 'image/png' } };
   const sourceProfile = await inspectArtworkSource(sourceBytes);
   const runId = randomUUID();
+  let availableCandidate: NativeArtworkCandidate | undefined;
+  try {
   const operations: string[] = [];
+  if (selectedSource.receipt) {
+    const { bounds } = selectedSource.receipt;
+    operations.push(`先从原素材定位并裁出本次图案 ${bounds.width}×${bounds.height}px，再评分、增强与抠图`);
+    await services.saveImage(runId, 'selected-source', sourceBytes);
+    await preview(sourceBytes, '已取出本次图案，正在处理');
+  }
   const textComposition: NonNullable<ArtworkRoutingReport['textComposition']> = { operation: prompts.textOperation, components: [] };
   // Generated components are never standalone finished artwork. Preserve a paid
   // result on any failure, but do not permit a cutout retry to bypass its checks.
@@ -191,6 +211,8 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
         const images = reconstructSource && decision.method !== 'generate' ? [request.image.dataUrl] : prompts.imageMapping.map(mapping => mapping.sourceLabel === request.primaryImageLabel ? request.image.dataUrl : request.referenceImages.find(reference => reference.label === mapping.sourceLabel)!.image.dataUrl);
         if (services.resumeGenerationPrompt) modelPrompt = await services.resumeGenerationPrompt(modelPrompt!, images, { background: 'auto' });
         const generated = await services.generate(modelPrompt!, images, { background: 'auto' });
+        availableCandidate = { runId, url: dataUrl(generated.bytes), model: generated.model,
+          stage: 'processing', promptHash: artworkPromptHash(modelPrompt!), reason: '', requiresEditVerification: true, retryable: true };
         progress('图案已生成，正在保存原图…', true);
         await preview(generated.bytes, '刚生成的图 · 还要去背景和检查，尚未保存成品');
         try { await services.saveImage(runId, 'generated-original', generated.bytes); }
@@ -226,6 +248,8 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
   decision = decideArtworkMethod(facts);
   operations.push('原图统一口径评分');
   const reviewReasons: string[] = [];
+  const reviewWarnings: string[] = [];
+  let editVerification: ArtworkEditVerification | undefined;
   let repair: ArtworkQualityMeasurement | null = null;
   let graphic: Buffer;
   let graphicQuality: ArtworkQualityMeasurement;
@@ -266,6 +290,7 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
         operations.push(`整组图案统一填色 ${solidColor.color}，保持原透明度、轮廓与镂空`);
       }
       backgroundRemoval = 'product';
+      if (availableCandidate) availableCandidate = { ...availableCandidate, url: dataUrl(graphic) };
       progress('透明背景已处理，正在检查成品清晰度…');
       await preview(graphic, '去背景后的图 · 还在检查，尚未保存成品');
       operations.push('整图生成后按抠图方式分流；保留模型字体、颜色与排版，不重新排字');
@@ -273,11 +298,9 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
       if (error instanceof ArtworkCutoutPendingError) pendingCutout = error.result;
       cutoutFailure = `图案已生成，但抠图未完成：${error instanceof Error ? error.message : String(error)}。已保留模型原图供下载，未作为成品上衣。`;
     }
-    let editVerification: ArtworkEditVerification | undefined;
-    let editFailure = '';
-    let editFailureMessage = '';
     const verificationRequirements = reconstructSource
-      ? artworkReconstructionRequirements(request.sourceAssessment!, request)
+      ? reconstructionReviewRequirements(request.sourceAssessment!.targetDescription,
+        artworkReconstructionRequirements(request.sourceAssessment!, request).join('\n'))
       : modelEdits.length ? [...modelEdits, '未点名修改的原有文字、字形、数字、装饰、配色及相对排版保持原样；无关来源水印与外围背景除外'] : [];
     if (decision.method === 'generate' && prompts.textOperation === 'replace') verificationRequirements.push(
       `指定旧字已按要求替换为 ${JSON.stringify(request.exactText)}，新字只出现要求的次数，旧字不再残留：${request.instruction}`,
@@ -288,30 +311,24 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
       try {
         editVerification = await timed('editVerification', () => services.verifyEdits(sourceBytes, graphic,
           verificationRequirements));
-        const issues = editVerification.checks.filter(check => check.status !== 'passed');
-        if (issues.length) {
-          editFailure = `修改要求尚未通过核对：${issues.map(check => `${check.requirement}：${check.evidence}`).join('；')}`;
-          const details = [...new Set(issues.map(check => check.evidence.trim()
-            .replace(/\bSOURCE\b/giu, '原图').replace(/\bRESULT\b/giu, '修改后的图').replace(/[。；;\s]+$/u, '')))];
-          editFailureMessage = `${issues.some(check => check.status === 'failed') ? '检查发现，有地方没按要求改好' : '检查还不能确定是否已按要求改好'}：${details.join('；')}。`;
+        if (editVerification.sourceSha256 !== artworkSha256(sourceBytes) || editVerification.outputSha256 !== artworkSha256(graphic)) {
+          throw new Error('核对记录与当前图片不一致，本次核对结论不可使用');
         }
+        const review = artworkReviewDecision(editVerification);
+        reviewWarnings.push(...review.warningMessages);
       } catch (error) {
-        editFailure = `修改要求核对未完成：${error instanceof Error ? error.message : String(error)}`;
-        editFailureMessage = `图案已生成，${artworkInspectionFailure(error)}`;
+        editVerification = undefined;
+        reviewWarnings.push(`自动核对暂未完成：${artworkInspectionFailure(error)}请对照原图查看，当前图案仍可保存和编辑。`);
       }
     }
     await services.saveGeneration(runId, { runId, model: generated.model, prompt: usedPrompt, promptHash: artworkPromptHash(usedPrompt), imageMapping: prompts.imageMapping,
       sourceSha256: artworkSha256(sourceBytes), originalSha256: artworkSha256(generated.bytes), metadata: generated.generationMetadata,
       width: metadata.width, height: metadata.height, originalHasAlpha: metadata.hasAlpha, originalMask, mask, backgroundRemoval,
-      sourceAssessment: request.sourceAssessment, editVerification, solidColor, status: cutoutFailure || editFailure ? 'needs-review' : 'cutout-accepted', reason: cutoutFailure || editFailure, timings: [...timings] });
+      sourceAssessment: request.sourceAssessment, editVerification, reviewWarnings, solidColor,
+      status: cutoutFailure ? 'needs-review' : reviewWarnings.length ? 'prepared-with-warnings' : 'cutout-accepted', reason: cutoutFailure, timings: [...timings] });
     if (cutoutFailure) throw new NativeArtworkCandidateError({ runId, url: dataUrl(generated.bytes), model: generated.model, reason: cutoutFailure,
       promptHash: artworkPromptHash(usedPrompt), cutout: pendingCutout, requiresEditVerification: verificationRequirements.length > 0 });
-    if (editFailure) {
-      await services.saveImage(runId, 'edit-review-candidate', graphic);
-      throw new NativeArtworkCandidateError({ runId, url: dataUrl(graphic), model: generated.model, stage: 'edit-review',
-        reason: `${editFailureMessage}这张图还没保存成品。${editVerification ? '请先查看下方图片并核对要求。' : '可复用已生成图片继续核对。'}`, promptHash: artworkPromptHash(usedPrompt), requiresEditVerification: true, retryable: !editVerification });
-    }
-    if (editVerification) operations.push(reconstructSource ? '已核对目标文字、标志、排版与载体残留' : '已逐项核对指定改色及其余图案保留要求');
+    if (editVerification) operations.push(reviewWarnings.length ? '自动核对有提醒，图案可继续保存和查看' : reconstructSource ? '已核对目标文字、标志、排版与载体残留' : '已逐项核对指定改色及其余图案保留要求');
     model = generated.model;
     graphicMethod = reconstructSource && decision.method !== 'generate' ? 'redraw' : 'generate';
     graphicQuality = await services.measure(graphic);
@@ -492,13 +509,19 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
     operations.push('C 程序生成准确文字与组合排版');
   }
   const actualPromptHash = usedPrompt ? artworkPromptHash(usedPrompt) : prompts.hash;
-  const report: ArtworkRoutingReport = { version: ARTWORK_ROUTING_STANDARD.version, runId, requestHash: prompts.hash, sourceSha256: artworkSha256(sourceBytes), decision, graphicDecision, executedMethod, graphicMethod,
+  const report: ArtworkRoutingReport = { version: ARTWORK_ROUTING_STANDARD.version, runId, requestHash: prompts.hash, sourceSha256: artworkSha256(originalSourceBytes), sourceSelection: selectedSource.receipt, decision, graphicDecision, executedMethod, graphicMethod,
     facts, source, repair, graphic: graphicQuality, reviewReasons, operations, model, prompt: usedPrompt, promptHash: actualPromptHash, timings: [...timings], ...(redraw ? { redraw } : {}),
-    ...(executedMethod === 'compose' ? { textComposition } : {}) };
+    ...(executedMethod === 'compose' ? { textComposition } : {}),
+    ...((editVerification || reviewWarnings.length) ? { contentReview: { verification: editVerification, warnings: reviewWarnings } } : {}) };
   await services.saveImage(runId, 'prepared-graphic', graphic);
   await services.saveReport(report);
   progress('图案处理完成，正在保存文件…', true);
   draft.preprocessing = { ...draft.preprocessing, referenceColor, cutout: primaryCutoutReceipt, cutoutRuns, backgroundRemoval, edgeRefinement, routingReport: report, processingRoute: route.route, routeReasons: route.reasons, generationModel: model, resolvedPrompt: usedPrompt, promptVersion: prompts.version, promptHash: actualPromptHash, imageMapping: prompts.imageMapping };
   return { status: 'prepared', draft, preprocessing: { timings: [...timings], cutout: primaryCutoutReceipt, cutoutRuns, nativeOutput: executedMethod === 'generate' && backgroundRemoval === 'none', modelLayoutPreserved: modelPreparation && executedMethod !== 'compose', edgeRefinement, evaluation: evaluation(source), enhancement, backgroundRemoval, sourceKind: sourceProfile.kind, resolution,
-    maskQuality: await alphaMaskReport(graphic), decisionRule: [...operations, ...reviewReasons].join('；'), route, generationModel: model, componentPlan, resolvedPrompt: usedPrompt, promptVersion: prompts.version, promptHash: actualPromptHash, imageMapping: prompts.imageMapping } };
+    maskQuality: await alphaMaskReport(graphic), decisionRule: [...operations, ...reviewReasons, ...reviewWarnings].join('；'), route, generationModel: model, componentPlan, resolvedPrompt: usedPrompt, promptVersion: prompts.version, promptHash: actualPromptHash, imageMapping: prompts.imageMapping } };
+  } catch (error) {
+    if (error instanceof NativeArtworkCandidateError || !availableCandidate) throw error;
+    throw new NativeArtworkCandidateError({ ...availableCandidate,
+      reason: `图案已生成，但后续处理未完成：${error instanceof Error ? error.message : String(error)}。图片已保留，可放大查看或下载。` });
+  }
 }

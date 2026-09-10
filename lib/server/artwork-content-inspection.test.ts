@@ -53,7 +53,7 @@ it('sends separate full frames without squashing small details into a comparison
   expect(await sharp(previews[0]).metadata()).toMatchObject({ width: 1500, height: 700 });
   expect(await sharp(previews[1]).metadata()).toMatchObject({ width: 700, height: 1500 });
   expect((await sharp(previews[0]).raw().toBuffer()).equals(await sharp(before).raw().toBuffer())).toBe(true);
-  expect(result).toMatchObject({ inspectionVersion: 'artwork-edit-inspection-v2', promptSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+  expect(result).toMatchObject({ inspectionVersion: 'artwork-edit-inspection-v3', promptSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
     inputSha256: previews.map(artworkSha256), sourceSha256: artworkSha256(before), outputSha256: artworkSha256(after) });
   expect(inspectArtworkReferenceImage).toHaveBeenCalledOnce();
 });
@@ -70,6 +70,17 @@ it('rejects duplicated checks instead of leaving another requirement unchecked',
 it('does not silently pass a missing customer requirement', async () => {
   reply({ checks: [{ index: 0, status: 'passed', confidence: 'high', evidence: '蓝色描边' }] });
   await expect(verifyArtworkModelEdits(await source(), await source(), ['描边改蓝', '底形调浅'])).rejects.toThrow('逐项');
+});
+it('uses interior pixels to downgrade an unsupported gradient claim without approving a wrong color', async () => {
+  const bytes = await sharp(Buffer.from('<svg width="400" height="300"><rect x="20" y="20" width="360" height="260" fill="#cc1830"/></svg>')).png().toBuffer();
+  reply({ checks: [
+    { index: 0, status: 'failed', confidence: 'high', category: 'flatness', impact: 'material', sourceObservation: '原渐变', resultObservation: '仍有渐变', evidence: '仍有大片渐变' },
+    { index: 1, status: 'failed', confidence: 'high', category: 'color', impact: 'material', sourceObservation: '蓝色', resultObservation: '红色', evidence: '蓝色变成红色' },
+  ] });
+  const result = await verifyArtworkModelEdits(bytes, bytes, ['渐变改纯色', '保留蓝色']);
+  expect(result.flatnessEvidence?.status).toBe('within-tolerance');
+  expect(result.checks[0]).toMatchObject({ status: 'uncertain', impact: 'minor' });
+  expect(result.checks[1]).toMatchObject({ status: 'failed', impact: 'material' });
 });
 it('preserves transport causes for persisted step errors and allows 120 seconds for visual verification', async () => {
   vi.mocked(inspectArtworkReferenceImage).mockRejectedValue(new TypeError('fetch failed', { cause: Object.assign(new Error('socket'), { code: 'ECONNRESET' }) }));

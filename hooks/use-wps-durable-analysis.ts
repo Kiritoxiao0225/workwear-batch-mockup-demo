@@ -1,4 +1,5 @@
 'use client';
+import { fetchApi, readApiJson } from '@/lib/client/api-response';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { WpsProductionState } from '@/lib/wps-production';
 import type { SourceTaskRecord } from '@/lib/batch-task-review';
@@ -12,6 +13,7 @@ type Queue = Awaited<ReturnType<typeof readWpsAnalysisJobs>>;
 export function useWpsDurableAnalysis(state: WpsProductionState | null, enabled: boolean, accept: (state: WpsProductionState) => void) {
   const reader = useRef(new ConditionalJsonReader('/api/wps-production/analysis-jobs'));
   const [data, setData] = useState<Queue | null>(null), [error, setError] = useState('');
+  const [submissionErrors, setSubmissionErrors] = useState<Record<string, { evidence: string; error: string }>>({});
   const receiver = useRef(accept), latestData = useRef<Queue | null>(null);
   const attempted = useRef(new Set<string>()), completed = useRef(''), mounted = useRef(false);
   const flight = useRef<Promise<void> | null>(null);
@@ -21,15 +23,13 @@ export function useWpsDurableAnalysis(state: WpsProductionState | null, enabled:
     const work = (async () => {
       try {
         const response = await reader.current.read(AbortSignal.timeout(30_000));
-        const payload: Queue = await response.json();
-        if (!response.ok) throw new Error((payload as unknown as { error: string }).error || '读取后台解析失败');
+        const payload: Queue = await readApiJson(response, '读取后台解析失败');
         if (!mounted.current) return;
         latestData.current = payload; setData(payload); setError('');
         const saved = payload.jobs.filter(job => job.status === 'completed').map(job => job.id).sort().join(',');
         if (saved && saved !== completed.current) {
-          const response = await fetch('/api/wps-production', { cache: 'no-store', signal: AbortSignal.timeout(60_000) });
-          if (!response.ok) throw new Error('解析已完成，读取保存结果失败，将自动重试');
-          const state = await response.json();
+          const response = await fetchApi('/api/wps-production', { cache: 'no-store', signal: AbortSignal.timeout(60_000) });
+          const state = await readApiJson(response, '解析已完成，读取保存结果失败');
           if (mounted.current) { receiver.current(state); completed.current = saved; }
         }
       } catch (error) { if (mounted.current) setError(error instanceof Error ? error.message : String(error)); }
@@ -49,16 +49,33 @@ export function useWpsDurableAnalysis(state: WpsProductionState | null, enabled:
   }, [enabled, refresh, active]);
   const submit = useCallback(async (sources: SourceTaskRecord[], retry = false) => {
     if (!sources.length) return;
+    const unresolved = new Set(sources.map(source => source.recordId));
     try {
       for (let offset = 0; offset < sources.length; offset += 30) {
         const records = sources.slice(offset, offset + 30).map(source => ({ recordId: source.recordId, evidence: wpsSourceEvidence(source) }));
-        const response = await fetch('/api/wps-production/analysis-jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ records, retry }), signal: AbortSignal.timeout(60_000) });
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || '提交后台解析失败');
-        if (mounted.current) { latestData.current = payload; setData(payload); setError(payload.results?.filter((result: { error?: string }) => result.error).map((result: { error: string }) => result.error).join('；') || ''); }
+        const response = await fetchApi('/api/wps-production/analysis-jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ records, retry }), signal: AbortSignal.timeout(60_000) });
+        const payload = await readApiJson(response, '提交后台解析失败');
+        const results: { recordId: string; error?: string }[] = payload.results ?? [];
+        for (const result of results) unresolved.delete(result.recordId);
+        if (mounted.current) {
+          latestData.current = payload; setData(payload);
+          setSubmissionErrors(current => {
+            const next = { ...current };
+            for (const result of results) {
+              const source = sources.find(source => source.recordId === result.recordId);
+              if (!source) continue;
+              if (result.error) next[result.recordId] = { evidence: wpsSourceEvidence(source), error: result.error };
+              else delete next[result.recordId];
+            }
+            return next;
+          });
+        }
       }
       reader.current.invalidate(); await refresh();
-    } catch (error) { if (mounted.current) setError(error instanceof Error ? error.message : String(error)); }
+    } catch (error) {
+      if (mounted.current) setSubmissionErrors(current => ({ ...current, ...Object.fromEntries(sources.filter(source => unresolved.has(source.recordId))
+        .map(source => [source.recordId, { evidence: wpsSourceEvidence(source), error: `本批解析提交未完成：${error instanceof Error ? error.message : String(error)}` }])) }));
+    }
   }, [refresh]);
   useEffect(() => {
     if (!enabled || !data?.enabled || !state) return;
@@ -67,8 +84,10 @@ export function useWpsDurableAnalysis(state: WpsProductionState | null, enabled:
     void submit(sources);
   }, [enabled, data?.enabled, state, submit]);
   const pending = pendingWpsAnalysisRecords(state?.records ?? []).map(record => record.source);
+  const submissionFailures = pending.filter(source => submissionErrors[source.recordId]?.evidence === wpsSourceEvidence(source));
   const jobs = (data?.jobs ?? []).filter(job => pending.some(source => source.recordId === job.recordId && wpsSourceEvidence(source) === job.evidence));
   const statuses: Record<string, WpsAnalysisStatus> = {};
+  for (const source of submissionFailures) statuses[source.recordId] = { phase: 'failed', error: submissionErrors[source.recordId].error };
   for (const job of jobs) if (job.status !== 'completed') statuses[job.recordId] = {
     phase: job.status === 'queued' ? 'queued' : job.status === 'running' ? 'analyzing' : job.status === 'saving' ? 'saving' : 'failed',
     error: job.error ?? undefined, parsed: job.parsed, stage: job.stage ?? undefined, timings: job.timings,
@@ -78,7 +97,7 @@ export function useWpsDurableAnalysis(state: WpsProductionState | null, enabled:
     available: data?.enabled ?? null, enabled, statuses,
     running: jobs.some(job => ['queued', 'running', 'saving'].includes(job.status)),
     total: jobs.length, completed: jobs.filter(job => job.status === 'completed').length,
-    errors: [...(error ? [error] : []), ...(data?.enabled && !data.workerOnline ? ['后台解析服务暂未连接，已提交任务保留在队列中'] : []), ...failures.map(job => job.error || '解析失败')],
-    retryFailed: (source?: SourceTaskRecord) => { void submit(source ? [source] : pending.filter(source => failures.some(job => job.recordId === source.recordId) || error), true); },
+    errors: [...(error ? [error] : []), ...submissionFailures.map(source => `${source.customerId || source.recordId}：${submissionErrors[source.recordId].error}`), ...(data?.enabled && !data.workerOnline ? ['后台解析服务暂未连接，已提交任务保留在队列中'] : []), ...failures.map(job => job.error || '解析失败')],
+    retryFailed: (source?: SourceTaskRecord) => { void submit(source ? [source] : pending.filter(source => failures.some(job => job.recordId === source.recordId) || submissionFailures.includes(source) || error), true); },
   };
 }

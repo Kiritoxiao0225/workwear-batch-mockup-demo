@@ -1,4 +1,5 @@
 'use client';
+import { fetchApi, readApiJson } from '@/lib/client/api-response';
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
@@ -20,11 +21,7 @@ const SessionContext = createContext<ProjectSession | null>(null);
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 async function readSessionResponse(response: Response) {
-  const body: unknown = await response.json();
-  if (!response.ok) {
-    const parsed = z.object({ error: z.string() }).parse(body);
-    throw new Error(parsed.error);
-  }
+  const body: unknown = await readApiJson(response, '读取工作台登录状态失败');
   return sessionSchema.parse(body);
 }
 
@@ -40,7 +37,7 @@ export function ProjectSessionProvider({ children }: { children: React.ReactNode
     refreshing.current = true;
     setBusy(true);
     try {
-      const response = await fetch('/api/catalog/session', { cache: 'no-store' });
+      const response = await fetchApi('/api/catalog/session', { cache: 'no-store' });
       const next = await readSessionResponse(response);
       setSession(current => JSON.stringify(current) === JSON.stringify(next) ? current : next);
       setError('');
