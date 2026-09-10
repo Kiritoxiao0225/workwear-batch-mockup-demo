@@ -1,0 +1,58 @@
+/* Keep each position's requirements beside its artwork, with secondary detail on demand. */
+.wps-production-table .wps-requirement-cell,
+.wps-production-table .wps-artwork-cell { padding: 12px; }
+.wps-production-table .wps-requirement-cell { border-right-color: #e8ede8; }
+.wps-requirement-cell .wps-requirement-title {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 0; border: 0; font-size: 14px; line-height: 1.5;
+}
+.wps-requirement-title > strong { min-width: 0; }
+.wps-production-table .wps-requirement-title > .wps-text-button {
+  flex-shrink: 0; min-height: 28px; margin: 0; padding: 2px 0; font-size: 12px;
+}
+.wps-requirement-cell .wps-requirements p { margin: 6px 0; line-height: 1.6; }
+.wps-requirement-cell .wps-requirement-exact-text { font-weight: 550; }
+.wps-requirement-exact-text > span { margin-right: 8px; color: #64786c; font-size: 12px; font-weight: 400; }
+.wps-requirement-materials { display: flex; flex-wrap: wrap; gap: 2px 12px; margin: 8px 0 4px; color: #64786c; font-size: 12px; line-height: 1.6; }
+.wps-requirement-details { display: flex; flex-wrap: wrap; gap: 0 12px; }
+.wps-requirement-details > details { min-width: 0; font-size: 12px; color: #587363; }
+.wps-requirement-details > details[open] { flex-basis: 100%; }
+.wps-requirement-details > details > p { max-height: 280px; overflow: auto; padding-right: 4px; }
+.wps-requirement-cell summary, .wps-cutout-compact summary { cursor: pointer; padding: 4px 0; }
+.wps-requirement-cell .wps-requirement-issues { margin: 4px 0 0; }
+.wps-requirement-issues[open] { padding: 4px 8px; border-radius: 6px; background: #fff6e7; }
+.wps-artwork-settings { display: grid; gap: 6px; margin-bottom: 8px; }
+.wps-artwork-settings .wps-method-selector { margin: 0; }
+.wps-artwork-settings .wps-method-selector label,
+.wps-artwork-settings .wps-cutout-compact > label {
+  display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: center; gap: 6px;
+  color: #617367; font-size: 12px; font-weight: 400;
+}
+.wps-artwork-settings .wps-method-selector select,
+.wps-artwork-settings .wps-cutout-compact select {
+  width: 100%; min-width: 0; min-height: 32px; padding: 4px 6px; border: 1px solid #d6e0d8;
+  border-radius: 6px; background: #fff; color: #294e39; font: inherit; font-size: 12px;
+  text-overflow: ellipsis;
+}
+.wps-artwork-settings .wps-cutout-compact { display: grid; gap: 2px; margin: 0; padding: 0; border: 0; }
+.wps-cutout-compact .wps-cutout-explanation { color: #64786c; font-size: 12px; }
+.wps-cutout-compact .wps-cutout-explanation > summary { font-size: 11px; }
+.wps-cutout-compact .wps-cutout-recommendation { padding: 8px; gap: 4px; background: #f1f5f1; }
+.wps-artwork-cell .wps-artwork-current:has(.wps-artwork-caption) { grid-template-columns: minmax(80px, 112px) minmax(0, 1fr); align-items: center; gap: 10px; }
+.wps-artwork-cell .wps-artwork-current .wps-artwork-preview { width: 100%; height: 100px; border-color: #e0e7e0; }
+.wps-artwork-caption { display: grid; gap: 4px; min-width: 0; }
+.wps-artwork-caption > small { color: #64766b; font-size: 11px; line-height: 1.5; }
+.wps-production-table .wps-artwork-caption > .wps-text-button { margin: 0; min-height: 28px; padding: 0; font-size: 12px; }
+.wps-artwork-caption .wps-artwork-redo { justify-self: start; min-height: 30px; padding: 4px 9px; border: 1px solid #c6d8ca; border-radius: 6px; background: #f1f6f1; color: #2c6343; font: inherit; font-size: 12px; cursor: pointer; }
+.wps-artwork-caption .wps-artwork-redo:hover:not(:disabled) { background: #e6f0e7; border-color: #8dab95; }
+.wps-artwork-cell .wps-artwork-current .wps-artwork-placeholder { min-height: 46px; padding: 8px; font-size: 12px; border-radius: 6px; background: #f4f7f3; }
+.wps-artwork-cell > .wps-text-artwork-hint { font-size: 12px; }
+.wps-artwork-cell > p.wps-artwork-status { margin: 8px 0 2px; font-size: 12px; line-height: 1.5; }
+.wps-production-table .wps-artwork-cell > button { min-height: 32px; margin-top: 6px; padding: 6px 10px; font-size: 13px; }
+.wps-artwork-cell .wps-artwork-options { gap: 2px 12px; margin-top: 6px; }
+.wps-artwork-options > details > summary { font-size: 12px; }
+.wps-production-table .wps-artwork-cell > .wps-production-cost { margin-top: 6px; font-size: 11px; }
+.wps-requirement-cell :is(button, summary):focus-visible,
+.wps-artwork-cell :is(button, select, summary, a):focus-visible { outline: 2px solid #22734f; outline-offset: 3px; }
+.wps-production-table :is(.wps-requirement-cell, .wps-artwork-cell) button:disabled,
+.wps-artwork-settings select:disabled { opacity: .5; cursor: not-allowed; }

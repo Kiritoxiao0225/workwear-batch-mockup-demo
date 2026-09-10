@@ -13,6 +13,7 @@ import { useArtworkCutoutSessions } from '@/hooks/use-artwork-cutout-sessions';
 import { CUTOUT_ROUTE_LABELS, cutoutFeeLabel, type ArtworkCutoutMode, type ArtworkCutoutResult } from '@/lib/artwork-cutout';
 import { WpsArtworkReview } from '@/components/wps-artwork-review';
 import { WpsArtworkRouting, WpsArtworkMethodSelector } from '@/components/wps-artwork-routing';
+import '@/components/wps-production-compact.css';
 import { WpsPlacementEditor, type PlacementUpdate } from '@/components/wps-placement-editor';
 import { WpsMockupPreview } from '@/components/wps-mockup-preview';
 import { reuseProductionGeometry } from '@/lib/production-preview';
@@ -1031,7 +1032,7 @@ export function WpsProductionClient() {
                 const textOnly = isTextOnlyArtwork(unit);
                 const wholeGeneration = !textOnly && productionArtworkRouting(unit, record.source).facts.intent === 'generate';
                 const visibleAmbiguities = textOnly ? artworkPlanIssues(record.source, unit) : currentArtworkAmbiguities(unit);
-                const status = issues.length ? '图案制作有待完成项' : stage === '待核对 Logo' ? '图案已制作 · 随整件效果核对' : stage === 'Logo 已确认' ? '图案已核对' : stage;
+                const status = issues.length ? '图案有待完成项' : stage === '待核对 Logo' ? '已制作 · 待核对' : stage === 'Logo 已确认' ? '图案已核对' : stage;
                 return <tr key={unit.id} data-version-id={version.id} data-unit-id={unit.id} className={unitIndex === 0 ? 'wps-version-start' : undefined}>
                   {groupIndex === 0 && unitIndex === 0 && <td className="wps-production-source" rowSpan={units.length}>
                     <small className="wps-technical-id">{record.source.recordId} · {record.source.revision}</small><strong>{record.source.customerId}</strong><p>{record.source.requirementText}</p><small>商品款式：{record.source.productStyleText}</small>
@@ -1048,29 +1049,29 @@ export function WpsProductionClient() {
                     <small>本方案的 {group.units.length} 个位置共用款式与颜色</small>{versionBlocked && <small role="status">暂不可更换衣服或调整位置：{versionBlocked}</small>}
                   </td>}
                   <td className="wps-requirement-cell">
-                    {groupIndex === 0 && unitIndex === 0 && record.summary && record.summary !== repeatedSummary && <p className="wps-ai-overview">{record.summary}</p>}
-                    <small>{unit.garmentLabel} · {version.variantLabel}</small>
                     <div className="wps-requirements"><section>
-                      <div className="wps-requirement-title"><strong>{placement ? `${placement.key === 'back' ? '背面' : '正面'} · ${positionLabel}` : '位置待定'}</strong></div>
-                      {!wholeGeneration && <p>{unit.instruction}</p>}
-                      {!wholeGeneration && unit.exactText && !unit.instruction.includes(unit.exactText) && <p>准确文字：{unit.exactText}</p>}
-                      {!wholeGeneration && unit.layoutNote && <p>{unit.layoutNote}</p>}
-                      {!textOnly && unit.generationPrompt && <details open={wholeGeneration}><summary>{wholeGeneration ? '整图生成提示词' : '已整理的模型提示词'}</summary><p style={{ whiteSpace: 'pre-wrap' }}>{unit.generationPrompt}</p></details>}
-                      <small>{textOnly ? '纯文字 · 无需图片素材' : isReferenceTextArtwork(unit) ? '文字标识 · 图片仅作样式参考' : <>主要素材：{unit.materialId ? `图${record.source.materials.findIndex(material => material.id === unit.materialId) + 1}` : '待选择'}</>}</small>
-                      {unit.referenceMaterialIds.length > 0 && <small>参考：{unit.referenceMaterialIds.map(id => `图${record.source.materials.findIndex(material => material.id === id) + 1}`).join('、')}，仅按制作要求参考</small>}
-                      {visibleAmbiguities.length > 0 && <details className="wps-requirement-issues" open><summary>{artworkBlockingAmbiguities(visibleAmbiguities).length ? `有 ${visibleAmbiguities.length} 项待核对` : `AI 提醒 ${visibleAmbiguities.length} 条 · 不影响图案制作`}</summary><p>{visibleAmbiguities.join('；')}</p></details>}
-                      <button className="wps-text-button" type="button" disabled={Boolean(unitBlocked)} title={unitBlocked ?? undefined} onClick={editRequest}>修改要求</button>
+                      <div className="wps-requirement-title"><strong>{positionLabel}</strong><button className="wps-text-button" type="button" disabled={Boolean(unitBlocked)} title={unitBlocked ?? undefined} onClick={editRequest}>修改要求</button></div>
+                      <p className="wps-requirement-instruction">{unit.instruction}</p>
+                      {unit.exactText && !unit.instruction.includes(unit.exactText) && <p className="wps-requirement-exact-text"><span>文字</span>{unit.exactText}</p>}
+                      <div className="wps-requirement-materials"><span>{textOnly ? '纯文字 · 无需素材' : isReferenceTextArtwork(unit) ? '文字标识 · 图片作样式参考' : <>素材 {unit.materialId ? `图${record.source.materials.findIndex(material => material.id === unit.materialId) + 1}` : '待选择'}</>}</span>
+                      {unit.referenceMaterialIds.length > 0 && <span>仅作参考 {unit.referenceMaterialIds.map(id => `图${record.source.materials.findIndex(material => material.id === id) + 1}`).join('、')}</span>}</div>
+                      <div className="wps-requirement-details">
+                        {!wholeGeneration && unit.layoutNote && <details><summary>排版要求</summary><p>{unit.layoutNote}</p></details>}
+                        {!textOnly && unit.generationPrompt && <details><summary>{wholeGeneration ? '完整生图提示词' : '模型提示词'}</summary><p>{unit.generationPrompt}</p></details>}
+                        {groupIndex === 0 && unitIndex === 0 && record.summary && record.summary !== repeatedSummary && <details><summary>整单理解</summary><p>{record.summary}</p></details>}
+                      </div>
+                      {visibleAmbiguities.length > 0 && <details className="wps-requirement-issues" open={artworkBlockingAmbiguities(visibleAmbiguities).length > 0}><summary>{artworkBlockingAmbiguities(visibleAmbiguities).length ? `有 ${visibleAmbiguities.length} 项待核对` : `AI 提醒 ${visibleAmbiguities.length} 条 · 可继续制作`}</summary><p>{visibleAmbiguities.join('；')}</p></details>}
                     </section></div>
                   </td>
                   <td className="wps-artwork-cell" aria-label={`${positionLabel}图案制作`} aria-busy={producingHere}>
-                    {textOnly && !unit.artwork && <p>纯文字排版 · 抖音美好体<br/><small>字色从黑、白、红中自动选择，可继续编辑。</small></p>}
-                    {!textOnly && (!unit.artwork || cutoutSettings[unit.id]) && <>
+                    {textOnly && !unit.artwork && <p className="wps-text-artwork-hint">纯文字排版 · 抖音美好体</p>}
+                    {!textOnly && (!unit.artwork || cutoutSettings[unit.id]) && <div className="wps-artwork-settings">
                     <WpsArtworkMethodSelector unit={unit} source={record.source} busy={Boolean(unitBlocked)} change={method => { void runAction(`method:${unit.id}`, { action: 'updatePlan', unitId: unit.id, patch: { artworkMethod: method } }); }} />
-                    {unit.route !== 'gpt-image-2' && unit.sourceScope !== 'wholeImage' && <WpsCutoutControls key={`${unit.id}:${unit.materialId}`} mode={unit.cutoutMode ?? 'auto'} sourceUrl={record.source.materials.find(material => material.id === unit.materialId)?.url ?? record.source.materials.find(material => material.id === unit.materialId)?.previewUrl} generated={productionArtworkRouting(unit, record.source).decision.method === 'generate'} busy={Boolean(unitBlocked)} change={mode => { void runAction(`cutoutMode:${unit.id}`, { action: 'updatePlan', unitId: unit.id, patch: { cutoutMode: mode } }); }} />}
-                    </>}
+                    {unit.route !== 'gpt-image-2' && unit.sourceScope !== 'wholeImage' && <WpsCutoutControls compact key={`${unit.id}:${unit.materialId}`} mode={unit.cutoutMode ?? 'auto'} sourceUrl={record.source.materials.find(material => material.id === unit.materialId)?.url ?? record.source.materials.find(material => material.id === unit.materialId)?.previewUrl} generated={productionArtworkRouting(unit, record.source).decision.method === 'generate'} busy={Boolean(unitBlocked)} change={mode => { void runAction(`cutoutMode:${unit.id}`, { action: 'updatePlan', unitId: unit.id, patch: { cutoutMode: mode } }); }} />}
+                    </div>}
                     <div className="wps-artwork-current">
                       {unit.artwork ? <button className="wps-artwork-preview" aria-label={`编辑${unit.garmentLabel} ${placement ? productionPositionLabel(placement) : ''}图案`} disabled={Boolean(unitBlocked)} title={unitBlocked ?? undefined} onPointerEnter={() => { if (unit.artwork?.draft) preloadArtworkDraft(unit.artwork.draft); }} onFocus={() => { if (unit.artwork?.draft) preloadArtworkDraft(unit.artwork.draft); }} onClick={() => editArtwork(unit)} type="button"><Image alt={unit.artwork.name} fill sizes="200px" src={unit.artwork.url} unoptimized onLoad={() => { if (unit.artwork?.draft) preloadArtworkDraft(unit.artwork.draft); }}/></button> : !artworkProgress[unit.id]?.preview && <div className="wps-artwork-placeholder">{positionLabel}图案将在这里显示</div>}
-                      {unit.artwork && <><small>点击 Logo，修改颜色与排版</small>{unit.artwork.draft?.preprocessing.cutout && <p className="wps-cutout-actual">{CUTOUT_ROUTE_LABELS[unit.artwork.draft.preprocessing.cutout.route]} · {cutoutFeeLabel(unit.artwork.draft.preprocessing.cutout)}</p>}<button type="button" className="primary" disabled={inspectingId === unit.id} onClick={() => void openArtworkReview(unit)}>{textOnly ? '查看文字图案' : '查看原图与抠图结果'}</button><button className="wps-text-button" type="button" onClick={() => setCutoutSettings(current => ({ ...current, [unit.id]: !current[unit.id] }))}>{cutoutSettings[unit.id] ? '收起制作设置' : '调整制作设置'}</button></>}
+                      {unit.artwork && <div className="wps-artwork-caption"><small>点击图案编辑</small><button type="button" className="wps-text-button" disabled={inspectingId === unit.id} onClick={() => void openArtworkReview(unit)}>{textOnly ? '查看文字图案' : '原图与抠图结果'}</button>{unit.route !== 'gpt-image-2' && issues.length === 0 && <button type="button" className="wps-artwork-redo" disabled={preparationDisabled || Boolean(activeAttempt)} title={unitBlocked ?? preparationIssue ?? '按当前要求重新制作，可能产生费用；上次图案保留供对照。'} onClick={prepare}>{queueJob ? queueJob.status === 'queued' ? '已加入队列' : '正在重做…' : '重做图案'}</button>}{unit.artwork.draft?.preprocessing.cutout && <small>{CUTOUT_ROUTE_LABELS[unit.artwork.draft.preprocessing.cutout.route]} · {cutoutFeeLabel(unit.artwork.draft.preprocessing.cutout)}</small>}</div>}
                     </div>
                     {unitBlocked && !queueJob && !activeAttempt && <small role="status">{unitBlocked}</small>}
                     <p role="status" aria-live="polite" className={`wps-artwork-status ${issues.length || unit.error || rowError ? 'needs-attention' : unit.gateB ? 'complete' : ''}`}>{queueJob ? queueJob.status === 'queued' ? `排队中 · 第 ${queuePosition} 张` : queueJob.progress : activeAttempt ? '正在制作，请查询进度' : rowError ? '本次操作未完成' : status}</p>
@@ -1101,8 +1102,8 @@ export function WpsProductionClient() {
 
                     {activeAttempt?.providerTaskId && <button disabled={Boolean(operationReason({ action: 'pollGptImage2', unitId: unit.id }, { ignoreAttempt: unit.id }))} onClick={() => void runAction(`poll:${unit.id}`, { action: 'pollGptImage2', unitId: unit.id, attemptId: activeAttempt.id })} type="button">查询制作进度</button>}
                     <div className="wps-artwork-options"><details className="wps-artwork-more"><summary>更多操作</summary><div>
-                      {unit.artwork && <><button disabled={inspectingId === unit.id} type="button" onClick={() => void openArtworkReview(unit)}>查看原图与处理记录</button><button disabled={Boolean(unitBlocked)} title={unitBlocked ?? undefined} type="button" onClick={() => void runAction(`quality:${unit.id}`, { action: 'checkArtworkQuality', unitId: unit.id })}>画质参考（可选）</button></>}
-                      {unit.artwork && unit.route !== 'gpt-image-2' && <><button disabled={preparationDisabled || Boolean(activeAttempt)} type="button" onClick={prepare}>重新制作{positionLabel}图案</button><small>重新制作可能产生费用；保存后撤销原确认，上次图案保留供对照。</small>{preparationIssue && <p>{preparationIssue}</p>}</>}
+                      {unit.artwork && <>{!textOnly && <button type="button" onClick={() => setCutoutSettings(current => ({ ...current, [unit.id]: !current[unit.id] }))}>{cutoutSettings[unit.id] ? '收起制作设置' : '调整制作设置'}</button>}<button disabled={Boolean(unitBlocked)} title={unitBlocked ?? undefined} type="button" onClick={() => void runAction(`quality:${unit.id}`, { action: 'checkArtworkQuality', unitId: unit.id })}>画质参考（可选）</button></>}
+                      {unit.artwork && unit.route !== 'gpt-image-2' && <><small>重新制作可能产生费用；保存后撤销原确认，上次图案保留供对照。</small>{preparationIssue && <p>{preparationIssue}</p>}</>}
                       {canReflow && <button disabled={Boolean(unitBlocked)} title={unitBlocked ?? undefined} type="button" onClick={() => void reflowArtwork(unit)}>自动调整图文比例</button>}
                       <label className="wps-upload">上传完成的 PNG<input accept="image/png" disabled={Boolean(unitBlocked)} title={unitBlocked ?? undefined} type="file" onChange={event => { const file = event.target.files?.[0]; if (file) void uploadArtwork(unit, file); }}/></label>
                     </div></details>

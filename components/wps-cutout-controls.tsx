@@ -24,7 +24,7 @@ export async function cutoutRequest(body: Record<string, unknown>): Promise<Artw
   const response = await fetch('/api/wps-production/cutout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const result = await response.json(); if (!response.ok) throw new Error(result.error || '抠图请求失败'); return result;
 }
-export function WpsCutoutControls({ mode, sourceUrl, generated, busy, change }: { mode: ArtworkCutoutMode; sourceUrl?: string | null; generated?: boolean; busy: boolean; change: (mode: ArtworkCutoutMode) => void }) {
+export function WpsCutoutControls({ mode, sourceUrl, generated, busy, change, compact = false }: { mode: ArtworkCutoutMode; sourceUrl?: string | null; generated?: boolean; busy: boolean; change: (mode: ArtworkCutoutMode) => void; compact?: boolean }) {
   const [inspection, setInspection] = useState<{ key: string; value: ArtworkCutoutDecision } | null>(null);
   const decisionKey = JSON.stringify([ARTWORK_CUTOUT_VERSION, sourceUrl, mode]);
   const decision = !generated && inspection?.key === decisionKey ? inspection.value : null;
@@ -46,11 +46,17 @@ export function WpsCutoutControls({ mode, sourceUrl, generated, busy, change }: 
     return () => { cancelled = true; observer.disconnect(); };
   }, [sourceUrl, generated, mode, decisionKey]);
   const route = decision?.route === 'reuse' ? 'reuse' : mode === 'meitu' ? 'meitu' : decision?.route;
-  return <div className="wps-cutout-settings" ref={root}><strong>抠图方式</strong>{route !== 'reuse' && <CutoutModes value={mode} disabled={busy} change={change} />}
-    <div className="wps-cutout-recommendation"><b>{route ? `${mode === 'auto' ? '自动采用' : '本次采用'} · ${CUTOUT_ROUTE_LABELS[route]}` : generated ? '生成后按实际图案判断' : '制作时检查背景与细节'}</b>
+  const explanation = <><div className="wps-cutout-recommendation"><b>{route ? `${mode === 'auto' ? '自动采用' : '本次采用'} · ${CUTOUT_ROUTE_LABELS[route]}` : generated ? '生成后按实际图案判断' : '制作时检查背景与细节'}</b>
       <span>{route === 'volcano' ? '按火山服务账单计费' : route === 'meitu' ? '预计 1 积分' : route ? '本地处理 0 积分；需火山时另计' : '本地免费；火山按账单计费；美图预计 1 积分'}</span>
       <p>{route === 'reuse' ? '已有透明背景，避免重复抠图。' : mode === 'standard' ? '简单底色本地处理，其余使用火山模型；不自动切换美图。' : mode === 'meitu' ? '使用美图抠图并核对结果；已识别的完整圆形徽章保留原图底色。' : decision?.reasons.join(' · ') || '简单图本地处理，普通镂空或复杂背景用火山，小字、细笔画等精细风险用美图。'}</p>
-    </div><small>仅抠图费用；增强、生图另计，实际扣费以账单回执为准。</small><CutoutRules /></div>;
+    </div><small>仅抠图费用；增强、生图另计，实际扣费以账单回执为准。</small><CutoutRules /></>;
+  if (compact) return <div className="wps-cutout-settings wps-cutout-compact" ref={root}>
+    <label><span>抠图方式</span><select aria-label="抠图方式" value={route === 'reuse' ? 'auto' : mode} disabled={busy || route === 'reuse'} onChange={event => change(event.target.value as ArtworkCutoutMode)}>
+      <option value="auto">{route === 'reuse' ? '复用透明图' : '自动选择'}</option><option value="standard">标准抠图</option><option value="meitu">美图精细 · 预计 1 积分</option>
+    </select></label>
+    <details className="wps-cutout-explanation"><summary>{route === 'meitu' ? '美图精细 · 预计 1 积分' : route ? `${CUTOUT_ROUTE_LABELS[route]} · 费用说明` : '选择依据与费用'}</summary>{explanation}</details>
+  </div>;
+  return <div className="wps-cutout-settings" ref={root}><strong>抠图方式</strong>{route !== 'reuse' && <CutoutModes value={mode} disabled={busy} change={change} />}{explanation}</div>;
 }
 export function CutoutTaskStatus({ session, busy, query, retry, apply, discard, hasArtwork = true }: { session: CutoutSession; busy: boolean; query: () => void; retry: () => void; apply?: () => void; discard: () => void; hasArtwork?: boolean }) {
   const { result } = session;
