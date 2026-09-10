@@ -1,0 +1,12 @@
+FROM node:24-bookworm-slim
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --include=dev && npm cache clean --force
+COPY tsconfig.json ./
+COPY lib ./lib
+COPY scripts/artwork-worker.ts ./scripts/artwork-worker.ts
+COPY public/fonts ./public/fonts
+COPY public/brand ./public/brand
+ENV NODE_ENV=production PORT=8080
+EXPOSE 8080
+CMD ["npm", "run", "artwork:worker"]

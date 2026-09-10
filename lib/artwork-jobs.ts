@@ -1,0 +1,10 @@
+import type { NativeArtworkCandidate } from './task-review-artwork';
+export const ARTWORK_STAGE_LIMITS = { generation: 6, cutout: 2, quality: 1, inspection: 2, processing: 2 } as const;
+export type ArtworkStage = keyof typeof ARTWORK_STAGE_LIMITS;
+export const ARTWORK_STAGE_LABELS: Record<ArtworkStage, string> = { generation: '生图', cutout: '抠图', quality: '评分', inspection: '内容核对', processing: '排版与保存' };
+export type ArtworkJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'review' | 'unknown' | 'cancelled';
+export type ArtworkJobView = { id: string; unitId: string; status: ArtworkJobStatus; message: string; error: string | null;
+  candidate: NativeArtworkCandidate | null; createdAt: string; updatedAt: string;
+  steps: { stage: string; status: string; durationMs: number | null }[] };
+export type ArtworkJobsResponse = { enabled: boolean; workerOnline: boolean; jobs: ArtworkJobView[] };
+export const activeArtworkJob = (job: Pick<ArtworkJobView, 'status'>) => ['queued', 'running', 'unknown'].includes(job.status);

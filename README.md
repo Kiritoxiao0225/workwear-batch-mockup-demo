@@ -108,11 +108,26 @@ npm run dev
 - 云端 WPS 生产状态：PostgreSQL `garment_catalog.production_states`，关联图层与文件引用在 `production_file_refs`。设置 `WPS_PRODUCTION_STORAGE=cloud` 后不再写本地 JSON。
 - 云端 WPS 图片：私有 OSS `oss-bucket-mockfits/workwear-mockup/prod/production/objects/<SHA 前两位>/<SHA>`；相同内容复用文件身份，新效果图替换数据库中的当前引用。图层参数留在数据库，透明 PNG 与客户效果 PNG 都在 OSS。
 - 本地迁移回滚副本：`data/wps-production-state.json` 与原 `public/uploads/` 文件保留，不再决定云端当前制作状态；旧 Demo 上传和任务仍使用上述本地位置。
-- `npm run production:dev` 只启动 Web。保存提交成功后，用 Next.js `after()` 更新效果图；新图就绪才切换当前入口，再删除没有任何当前引用的旧制作图。不需要常驻 worker、Cron 或固定 24 小时等待。
+- `npm run production:dev` 只启动 Web。保存提交成功后，用 Next.js `after()` 更新效果图；新图就绪才切换当前入口，再删除没有任何当前引用的旧制作图。普通编辑保存不需要常驻 worker 或 Cron。开启云端制作队列后，生图任务由独立后台执行，见下方配置。
 - 删除失败保留补删记录，后续保存、打开生产台或预览时重试，不阻塞保存。隐藏图层、蒙版、其他任务与商品素材引用受保护；同图继续复用。
 - 服务端配置 `PRODUCTION_DELETE_ACCESS_KEY_ID` / `PRODUCTION_DELETE_ACCESS_KEY_SECRET`，复用原来已授权的独立账号。权限范围见 `docs/production-delete-policy.json`，仅限新制作目录。
 - 保存、上传、预览、下载和人工确认不调用也不要求画质评分；只有主动点击“画质参考”才评分。文件损坏、素材缺失和确定的制作未完成项仍会提示。
 - 迁移与验证详情：`docs/production-cloud-storage-design.md`。本机已切换云端存储；这不代表另一个托管 Web 环境也已部署。
+
+
+## 云端图案制作队列
+
+设置 `ARTWORK_DURABLE_JOBS=1` 后，`/wps-production` 将制作请求提交到 `/api/wps-production/jobs`。任务、失败图片及步骤回执保存在数据库和 OSS，切页、关闭网页或另一电脑打开同一工作台均可恢复。批量按钮只提交当前筛选内尚无图案、要求完整的图案位置，单次 API 最多 100 项，更多项目分批提交。
+
+常驻后台运行 `npm run artwork:worker`，部署文件为 `Dockerfile.artwork-worker`。同库后台共享生图 6、抠图 2、评分 1 的空位；评分每次结束后至少间隔 1 秒。内容核对与其他处理各 2。已完成步骤复用原始字节；源评分不阻塞已生成图片进入抠图。后台负责最终排版、PNG 校验和带任务快照的保存，内容不合格保留候选，已变更要求禁止覆盖。
+
+发布顺序：
+1. 用现有迁移账号执行 `010_artwork_jobs.sql`（`npm run catalog:migrate`）；普通运行账号不授予建表权限。
+2. 独立后台沿用当前 Web 的 `WPS_PRODUCTION_STORAGE=cloud`、`WPS_PRODUCTION_STATE_KEY`、数据库 TLS、OSS 读写与图像服务配置，另设 `ARTWORK_DURABLE_JOBS=1`。不注入迁移账号；`VERCEL` 不设为 `1`。后台可设为 1 个实例，增加实例不会扩大生图并发上限。
+3. 确认数据库 `artwork_workers.heartbeat_at` 持续更新，再发布 Web 并开启相同开关。网页明确显示后台离线状态；离线时已提交任务仍保留，恢复后继续。
+4. 验收独立测试任务的批量入队、离开页面后保存、另一客户端读取相同任务及失败续做。`npm run test:artwork-jobs` 使用临时 PostgreSQL 和本地对象目录，禁止真实网络调用；不以模拟调度数据宣称供应商实际提速。
+
+生图提交后断线且没有确定回执时标记“结果不确定”，不会自动重复扣费；需要先核对原供应商任务。明确处理失败可从未完成步骤继续；内容不合格需修改要求后重新制作。后台收到停止信号会停止取新任务并等待正在处理的任务。回退前先排空队列，再关闭开关，保留数据库表与对象以便恢复。
 
 ## GPT Image 2（可选）
 

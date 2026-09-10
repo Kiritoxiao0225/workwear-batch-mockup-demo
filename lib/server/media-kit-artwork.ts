@@ -1,3 +1,4 @@
+import { artworkJobStep, withArtworkStage } from './artwork-job-runtime';
 import { artworkPrintInstruction } from '@/lib/production-artwork-layout';
 import sharp from 'sharp';
 import { refineCircularArtworkEdge } from '@/lib/server/circular-artwork-edge';
@@ -75,7 +76,14 @@ function mediaKitFailure(label: string, status: number, body: unknown) {
   return new Error(`${label}失败：${code} · ${message}${requestId ? ` · request_id=${requestId}` : ''}`);
 }
 
-async function mediaKitPost(path: string, body: Record<string, unknown>, label: string) {
+async function mediaKitPost(path: string, body: Record<string, unknown>, label: string): Promise<Record<string, unknown>> {
+  // Upload tickets are unique per input; never memoize their empty request body.
+  if (path.includes('request-media-upload-url')) return rawMediaKitPost(path, body, label);
+  if (path.includes('remove-image-background')) return withArtworkStage('cutout', () => rawMediaKitPost(path, body, label));
+  if (path.includes('evaluate-image-quality')) return withArtworkStage('quality', () => rawMediaKitPost(path, body, label));
+  return artworkJobStep(`mediakit:${path}`, 'processing', body, () => rawMediaKitPost(path, body, label));
+}
+async function rawMediaKitPost(path: string, body: Record<string, unknown>, label: string) {
   const response = await fetch(`${MEDIA_KIT_ORIGIN}${path}`, {
     method: 'POST',
     headers: {
@@ -135,7 +143,11 @@ function uploadHeaders(value: unknown) {
   }));
 }
 
-async function uploadImage(bytes: Buffer, mimeType: string) {
+async function uploadImage(bytes: Buffer, mimeType: string): Promise<string> {
+  // Upload I/O must not hold a processing slot while another stage waits for it.
+  return artworkJobStep('mediakit-upload', 'processing', { bytes, mimeType }, () => rawUploadImage(bytes, mimeType), false);
+}
+async function rawUploadImage(bytes: Buffer, mimeType: string) {
   const uploadRequest = await mediaKitPost(
     '/api/v1/tools-sync/request-media-upload-url',
     {},

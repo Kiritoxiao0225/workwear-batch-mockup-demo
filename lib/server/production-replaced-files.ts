@@ -6,6 +6,7 @@ import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './
 import { catalogObjectPrefix, catalogStorageConfig } from './catalog-files';
 
 const unreferenced = `NOT EXISTS(SELECT 1 FROM production_file_refs r WHERE r.file_id=f.id)
+  AND NOT EXISTS(SELECT 1 FROM artwork_job_files j WHERE j.file_id=f.id)
   AND NOT EXISTS(SELECT 1 FROM production_renders r WHERE r.file_id=f.id)
   AND NOT EXISTS(SELECT 1 FROM garment_asset_versions v WHERE v.file_id=f.id OR v.thumbnail_file_id=f.id)
   AND NOT EXISTS(SELECT 1 FROM asset_sources s WHERE s.file_id=f.id)

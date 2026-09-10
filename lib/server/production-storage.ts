@@ -1,3 +1,4 @@
+import type { CatalogQueryClient } from './catalog-database';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { NextRequest } from 'next/server';
@@ -20,8 +21,8 @@ export async function readProductionFile(url: string) {
   if (usesProductionCloud()) throw new Error(`云端状态仍引用本地文件，请完成迁移：${url}`);
   return readFile(path.join(process.cwd(), 'public', 'uploads', match[1], match[2]));
 }
-export async function saveProductionFile(bytes: Buffer, name: string) {
-  const file = await saveCatalogFile(bytes, name, 'production');
+export async function saveProductionFile(bytes: Buffer, name: string, retain?: (client: CatalogQueryClient, id: string) => Promise<void>) {
+  const file = await saveCatalogFile(bytes, name, 'production', retain);
   return { ...file, url: productionFileUrl(file.id), originalName: name };
 }
 /** Used at import/cutover and for server-generated data URLs; existing cloud IDs are untouched. */

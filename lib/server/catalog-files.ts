@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import OSS from 'ali-oss';
 import sharp from 'sharp';
-import { catalogDatabase, catalogTransaction } from './catalog-database';
+import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './catalog-database';
 
 export function fileSha256(bytes: Buffer | string) { return createHash('sha256').update(bytes).digest('hex'); }
 export function catalogObjectPrefix(value = process.env.CATALOG_OSS_PREFIX) {
@@ -48,7 +48,8 @@ export async function inspectCatalogImage(bytes: Buffer) {
   await sharp(bytes, { failOn: 'error', limitInputPixels: 80_000_000 }).stats();
   return { sha256: fileSha256(bytes), width: metadata.width, height: metadata.height, hasAlpha: metadata.hasAlpha ?? false, byteLength: bytes.length, mimeType: `image/${metadata.format === 'jpeg' ? 'jpeg' : metadata.format}` };
 }
-export async function saveCatalogFile(bytes: Buffer, originalName: string, purpose: 'catalog' | 'production' = 'catalog') {
+export async function saveCatalogFile(bytes: Buffer, originalName: string, purpose: 'catalog' | 'production' = 'catalog',
+  retain?: (client: CatalogQueryClient, id: string) => Promise<void>) {
   const config = catalogStorageConfig();
   const hash = fileSha256(bytes);
   const existing = await catalogDatabase().query('SELECT id FROM files WHERE backend=$1 AND bucket=$2 AND sha256=$3', [config.backend, config.bucket, hash]);
@@ -65,7 +66,9 @@ export async function saveCatalogFile(bytes: Buffer, originalName: string, purpo
   return catalogTransaction(async client => {
     // Use this connection for all SQL while holding the lock; never wait for another pool slot.
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`file:${config.backend}:${config.bucket}:${hash}`]);
-    return saveLocked(client);
+    const saved = await saveLocked(client);
+    if (retain) await retain(client, saved.id);
+    return saved;
   });
   async function saveLocked(client: ReturnType<typeof catalogDatabase>) {
   const config = catalogStorageConfig();

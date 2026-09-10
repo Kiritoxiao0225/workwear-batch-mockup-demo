@@ -140,6 +140,7 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
   if (referenceColor) operations.push(`参考${referenceColor.label}取色 ${referenceColor.hex}：${referenceColor.description}`);
   const needsSubjectCutout = !modelPreparation && request.sourceScope !== 'wholeImage';
   let earlyGenerated: Awaited<ReturnType<StandardArtworkServices['generate']>> | undefined;
+  let earlyCutout: PromiseSettledResult<Buffer> | undefined;
   let source: ArtworkQualityMeasurement;
   if (modelPreparation) {
     // Full generation and object-artwork reconstruction do not depend on source clarity.
@@ -153,6 +154,8 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
         await services.saveImage(runId, 'generated-original', generated.bytes);
         progress('图案已生成，正在处理透明背景…', true);
         await preview(generated.bytes, '刚生成的图 · 还要去背景和检查，尚未保存成品');
+        // Source scoring is independent: start cutout as soon as the generated original is saved.
+        [earlyCutout] = await Promise.allSettled([services.cutout(generated.bytes, { scene: 'product', crop: false })]);
         return generated;
       })(),
     ]);
@@ -198,7 +201,8 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
     let pendingCutout: ArtworkCutoutResult | undefined;
     try {
       // Keep the full model layout, including detached lettering, on its original canvas.
-      graphic = await services.cutout(generated.bytes, { scene: 'product', crop: false });
+      if (earlyCutout?.status === 'rejected') throw earlyCutout.reason;
+      graphic = earlyCutout?.status === 'fulfilled' ? earlyCutout.value : await services.cutout(generated.bytes, { scene: 'product', crop: false });
       const preparedMetadata = await sharp(graphic).metadata();
       if (preparedMetadata.format !== 'png' || !preparedMetadata.hasAlpha) throw new Error('抠图结果不是带透明通道的 PNG');
       mask = await alphaMaskReport(graphic);

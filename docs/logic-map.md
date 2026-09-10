@@ -732,7 +732,7 @@
 
 - Type: Private OSS content-addressed image files
 - Source: `oss-bucket-mockfits/workwear-mockup/prod/production/objects/<prefix>/<SHA>`；图层、蒙版、透明 PNG 和客户效果图使用稳定 `/api/production-files/<fileId>` 登录代理读取。原 `public/uploads/` 仅保留旧开发模式与迁移回滚副本。
-- Replacement: 保存成功后通过 Next.js `after()` 更新成品，新图就绪才替换当前引用并删除无引用旧图，无常驻 worker / Cron / 24 小时等待。失败留补删记录，后续请求重试；锁定并排除隐藏层、蒙版、共享任务和商品素材引用。复用已授权的目录限定删除账号，删除后回读验证。
+- Replacement: 保存成功后通过 Next.js `after()` 更新成品，新图就绪才替换当前引用并删除无引用旧图，普通编辑保存无需常驻 worker；开启云端制作队列后由 `API-ARTWORK-JOBS` 后台负责制作和最终保存。失败留补删记录，后续请求重试；锁定并排除隐藏层、蒙版、共享任务和商品素材引用。复用已授权的目录限定删除账号，删除后回读验证。
 - Written by: `API-002`, EvoLink 结果回收, 2208 服务端合成器
 - Invariants: 透明素材登记前重读字节并保存 SHA-256；合成前再次核对素材文件哈希；成品写入后重新读取并核对 SHA-256
 
@@ -992,3 +992,14 @@
 - 保留停用账号检查、viewer 写入限制、同源校验，以及原有 revision/CAS 与历史确认人；不修改 WPS 附件保存流程。
 
 - Vercel 数据库每个实例最多 1 条连接，查询与事务计数保护并发操作；通过 Next.js `after()` 在响应后关闭空闲池，避免实例暂停后驱动 idle timer 无法执行。常驻本地进程保持原有连接复用。此调整不释放旧部署已经遗留的数据库连接。
+
+
+### `API-ARTWORK-JOBS` 云端图案制作与阶段调度
+
+- Entry: `PAGE-WPS-PRODUCTION` 每行制作按钮、当前筛选批量制作 → `POST /api/wps-production/jobs`；`GET` 读取后台心跳、队列、阶段耗时及已保存失败候选。开关 `ARTWORK_DURABLE_JOBS=1`，旧入口在开关关闭时保留。
+- Flow: 提交单元与原始需求快照 → 数据库同位置防重 → `scripts/artwork-worker.ts` 抢占任务并续租 → 独立生图 6 / 抠图 2 / 评分 1 → 内容核对 → 服务端排版与透明 PNG 验证 → CAS 保存 → 更新客户预览。源评分与生图后的抠图可重叠，阶段结束立即让出空位。
+- Stores: `010_artwork_jobs.sql` 的 `artwork_jobs`、`artwork_job_steps`、`artwork_job_files`、`artwork_stage_slots`、`artwork_workers`；结果字节存既有 OSS，文件引用受回收锁保护，均纳入备份。
+- Rules: 队列跨浏览器及后台实例共享；同单元在途任务唯一；只有未开始任务可取消。完成步骤按输入摘要复用，失败续做保留此前已生成 PNG。付费生图提交结果未知时停止并锁定原任务，禁止自动重生。单元或源材料快照变化时禁止覆盖；保存操作 ID 与后台任务 ID 相同，提交后中断可幂等回读。
+- Rendering: `lib/server/render-artwork.ts` 使用打包的抖音字体和共享字形几何，服务器输出完整透明图及可编辑图层；保留模型排版的路线直接保存抠图结果。保存不冒充人工内容确认。
+- Tests: `scripts/artwork-jobs-integration.ts` 的重复提交、双后台抢占、断线复用、未知提交锁定、12 项并发 6/2/1、取消、文件保护、真实文字 PNG 保存及过期快照拒绝；`artwork-standard-pipeline.test.ts` 证明源评分未结束即可抠图。
+- Deployment: 需要先执行迁移，再启动独立持续运行的 `Dockerfile.artwork-worker` 服务并确认心跳，最后开启 Web 入口；仅 Vercel 请求生命周期不足以保证关闭浏览器后的持续执行。当前变更是否已发布应以部署回执和正式页面验证为准。

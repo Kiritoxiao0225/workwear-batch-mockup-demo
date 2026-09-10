@@ -1,3 +1,4 @@
+import { hasArtworkJobContext } from './artwork-job-runtime';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { artworkGenerationQueue } from '@/lib/server/artwork-generation-queue';
@@ -21,6 +22,7 @@ async function post(path: string, body: Record<string, unknown>) {
 }
 
 export async function generateStandardArtwork(prompt: string, images: string[], settings: { background?: 'auto' | 'transparent' } = {}): Promise<{ bytes: Buffer; model: string; generationNote?: string; generationMetadata?: Record<string, unknown> }> {
+  if (hasArtworkJobContext()) return generateWithProvider(prompt, images, settings);
   const queued = performance.now();
   return artworkGenerationQueue.run(randomUUID(), async () => {
     const started = performance.now();

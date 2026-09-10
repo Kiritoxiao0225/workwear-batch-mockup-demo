@@ -1,0 +1,65 @@
+import { NextResponse } from 'next/server';
+import { z } from 'zod';
+import { productionUser } from '@/lib/server/production-storage';
+import { CatalogHttpError } from '@/lib/server/catalog-auth';
+import { updateProductionPlan } from '@/lib/wps-production';
+import { readWpsProductionState, mutateWpsProductionState } from '@/lib/server/wps-production-store';
+import { assertProductionArtworkSnapshot, productionArtworkSnapshot, ProductionArtworkConflictError } from '@/lib/production-artwork-snapshot';
+import { artworkJobsEnabled, readArtworkJobs, enqueueArtworkJob, changeArtworkJob } from '@/lib/server/artwork-job-store';
+import { artworkPlanIssues, isTextOnlyArtwork } from '@/lib/artwork-reference';
+import { productionArtworkRouting } from '@/lib/production-recipe';
+
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+export const maxDuration = 60;
+const inputSchema = z.union([
+  z.object({ action: z.literal('enqueue'), units: z.array(z.object({ unitId: z.string().min(1), snapshot: z.string().min(1).max(100_000) })).min(1).max(100) }),
+  z.object({ action: z.enum(['cancel', 'retry']), id: z.string().uuid() }),
+]);
+function failure(error: unknown) {
+  return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: error instanceof CatalogHttpError ? error.status : error instanceof ProductionArtworkConflictError ? 409 : 400 });
+}
+export async function GET(request: Request) {
+  try { await productionUser(request); return NextResponse.json(await readArtworkJobs(), { headers: { 'Cache-Control': 'no-store' } }); }
+  catch (error) { return failure(error); }
+}
+export async function POST(request: Request) {
+  try {
+    await productionUser(request, true);
+    if (!artworkJobsEnabled()) return NextResponse.json({ error: '云端制作队列尚未启用' }, { status: 503 });
+    const body = inputSchema.parse(await request.json());
+    if (body.action !== 'enqueue') {
+      // A retry preserves the original snapshot, input and all completed steps.
+      if (body.action === 'retry') {
+        const jobs = await readArtworkJobs();
+        if (!jobs.jobs.some(job => job.id === body.id)) throw new Error('找不到后台任务');
+      }
+      await changeArtworkJob(body.id, body.action);
+      return NextResponse.json(await readArtworkJobs());
+    }
+    let state = await readWpsProductionState();
+    const results = [];
+    for (const requested of body.units) {
+      try {
+        assertProductionArtworkSnapshot(state, requested.unitId, requested.snapshot);
+        let unit = state.units.find(unit => unit.id === requested.unitId)!;
+        if (isTextOnlyArtwork(unit) && (unit.route !== 'deterministic' || unit.generationPrompt)) {
+          const unitId = unit.id, exactText = unit.exactText;
+          state = await mutateWpsProductionState(state.revision, current => updateProductionPlan(current, unitId, {
+            textMode: 'replace', exactText, generationPrompt: '', route: 'deterministic',
+          }), current => assertProductionArtworkSnapshot(current, unitId, requested.snapshot));
+          unit = state.units.find(candidate => candidate.id === unitId)!;
+        }
+        const source = state.records.find(record => record.source.recordId === unit.sourceRecordId)!.source;
+        const issues = artworkPlanIssues(source, unit);
+        if (issues.length) throw new Error(issues.join('；'));
+        if (unit.attempts.some(attempt => ['submitted', 'processing', 'unknownSubmission'].includes(attempt.status))) throw new Error('已有制作任务未结束');
+        const routing = productionArtworkRouting({ ...unit, artwork: null }, source);
+        if (!isTextOnlyArtwork(unit) && routing.decision.state === 'review') throw new Error(routing.facts.blockers.join('；') || routing.decision.reason);
+        const queued = await enqueueArtworkJob({ unit, source }, productionArtworkSnapshot(unit, source));
+        results.push({ unitId: unit.id, ...queued });
+      } catch (error) { results.push({ unitId: requested.unitId, error: error instanceof Error ? error.message : String(error) }); }
+    }
+    return NextResponse.json({ results, ...await readArtworkJobs() }, { status: 202 });
+  } catch (error) { return failure(error); }
+}

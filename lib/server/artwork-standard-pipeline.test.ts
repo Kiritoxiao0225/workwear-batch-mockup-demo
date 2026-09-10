@@ -112,9 +112,10 @@ describe('executed artwork standard', () => {
     expect(t.generate).toHaveBeenCalledOnce();
     expect(t.measure).toHaveBeenCalledOnce();
     expect(complete).not.toHaveBeenCalled();
-    releaseSource();
+    // The cutout starts while source scoring is still blocked.
     await vi.waitFor(() => expect(t.services.cutout).toHaveBeenCalledOnce());
     releaseCutout();
+    releaseSource();
     await vi.waitFor(() => expect(events.filter(event => event.type === 'preview')).toHaveLength(2));
     expect(complete).not.toHaveBeenCalled();
     releaseFinal();
@@ -130,7 +131,7 @@ describe('executed artwork standard', () => {
     const rejected = await prepareStandardArtwork({ ...t.request, artworkMethod: 'generate', generationPrompt: '保留图1，整图生成，纯白背景。' }, t.services).catch(error => error);
     expect(rejected.candidate.url).toBe(url(t.source));
     expect(t.generate).toHaveBeenCalledOnce();
-    expect(t.services.cutout).not.toHaveBeenCalled();
+    expect(t.services.cutout).toHaveBeenCalledOnce();
     expect(t.services.saveGeneration).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ status: 'needs-review' }));
     expect(t.services.saveReport).not.toHaveBeenCalled();
   });
