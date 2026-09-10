@@ -41,7 +41,8 @@
 .wps-artwork-cell .wps-artwork-current:has(.wps-artwork-caption) { grid-template-columns: minmax(80px, 112px) minmax(0, 1fr); align-items: center; gap: 10px; }
 .wps-artwork-cell .wps-artwork-current .wps-artwork-preview { width: 100%; height: 100px; border-color: #e0e7e0; }
 .wps-artwork-candidate { display: grid; gap: 6px; margin: 8px 0; }
-.wps-artwork-cell .wps-artwork-candidate .wps-material-image { width: 100%; height: 160px; background: repeating-conic-gradient(#e2e5e2 0% 25%, #f7f8f7 0% 50%) 50% / 16px 16px; }
+.wps-artwork-cell .wps-artwork-candidate .wps-material-image { position: relative; overflow: hidden; width: 100%; height: 160px; background: repeating-conic-gradient(#e2e5e2 0% 25%, #f7f8f7 0% 50%) 50% / 16px 16px; }
+.wps-artwork-cell .wps-artwork-candidate .wps-material-image img { object-fit: contain; }
 .wps-artwork-caption { display: grid; gap: 4px; min-width: 0; }
 .wps-artwork-caption > small { color: #64766b; font-size: 11px; line-height: 1.5; }
 .wps-production-table .wps-artwork-caption > .wps-text-button { margin: 0; min-height: 28px; padding: 0; font-size: 12px; }
