@@ -52,3 +52,18 @@ it('treats a server failure after enqueue as unknown', async () => {
   expect(error).toBeInstanceOf(ArtworkJobsSubmissionUnknownError);
   expect(error.message).toContain('读取队列失败');
 });
+
+it('clears only submission warnings confirmed by a fresh queue receipt', async () => {
+  const { unresolvedArtworkSubmissions, artworkSubmissionUnits } = await import('./artwork-jobs-response');
+  const old = { id: 'old', unitId: 'unit-1', status: 'failed' as const, updatedAt: 'before', createdAt: 'before',
+    error: 'old failure', message: '', candidate: null, steps: [] };
+  const pending = { 'unit-1': { message: '提交等待超时', previous: old }, 'unit-2': { message: '等待核实', previous: null } };
+  expect(unresolvedArtworkSubmissions(pending, [old])).toEqual(pending);
+  expect(unresolvedArtworkSubmissions(pending, [])).toEqual(pending);
+  for (const status of ['queued', 'running', 'completed', 'failed'] as const) {
+    expect(unresolvedArtworkSubmissions(pending, [{ ...old, id: 'new', status }])).toEqual({ 'unit-2': pending['unit-2'] });
+  }
+  expect(unresolvedArtworkSubmissions(pending, [{ ...old, updatedAt: 'after' }])).toEqual({ 'unit-2': pending['unit-2'] });
+  expect(artworkSubmissionUnits({ action: 'retry', id: old.id }, [old])).toEqual(['unit-1']);
+  expect(artworkSubmissionUnits(request, [old])).toEqual(['unit-1']);
+});

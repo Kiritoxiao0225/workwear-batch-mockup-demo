@@ -2,6 +2,7 @@
 import { readApiBlob, fetchApi, readApiJson, assertApiResponse } from '@/lib/client/api-response';
 
 import { useArtworkJobs } from '@/hooks/use-artwork-jobs';
+import { ArtworkJobsSubmissionUnknownError } from '@/lib/client/artwork-jobs-response';
 import { activeArtworkJob, ARTWORK_STAGE_LABELS, type ArtworkStage } from '@/lib/artwork-jobs';
 import { artworkReconstructionPrompt } from '@/lib/artwork-source-assessment';
 import { ProductionOperationLocks, productionOperation, productionOperationsOverlap, type ProductionOperation } from '@/lib/production-operation-lock';
@@ -258,7 +259,8 @@ export function WpsProductionClient() {
     const active = [...operationLocks.entries];
     for (const unit of production.units) {
       const job = artworkJobs.find(job => job.id === unit.id);
-      const reason = actionFeedback[unit.id]?.status === 'unknown' ? '上次操作结果待核实，请先重新检查状态'
+      const reason = cloudQueue.uncertainSubmissions[unit.id] ? '制作提交结果待核实，请先查询后台状态'
+        : actionFeedback[unit.id]?.status === 'unknown' ? '上次操作结果待核实，请先重新检查状态'
         : job ? job.progress || '正在制作图案'
         : unsavedArtworks.current.has(unit.id) && options.ignorePending !== unit.id ? '图案等待保存，请先重试保存'
         : ['pending', 'unknown'].includes(cutoutSessions[unit.id]?.result.status) && options.ignoreCutout !== unit.id ? '抠图任务已提交，请继续查询本次结果'
@@ -707,7 +709,11 @@ export function WpsProductionClient() {
         if (failure) throw new Error(failure.error);
         setArtworkErrors(current => ({ ...current, [unit.id]: '' }));
         setMessage('已加入云端队列，可以切换页面；完成后会自动保存。');
-      } catch (error) { setArtworkErrors(current => ({ ...current, [unit.id]: error instanceof Error ? error.message : String(error) })); }
+      } catch (error) {
+        // The queue hook reconciles unknown submissions with fresh server receipts.
+        // A local error string must not outlive that reconciliation.
+        if (!(error instanceof ArtworkJobsSubmissionUnknownError)) setArtworkErrors(current => ({ ...current, [unit.id]: error instanceof Error ? error.message : String(error) }));
+      }
       finally { release(); }
       return;
     }
@@ -1139,7 +1145,7 @@ export function WpsProductionClient() {
                 const preparationDisabled = Boolean(unitBlocked || preparationIssue);
                 const submittingArtwork = operations.some(operation => operation.key.startsWith('enqueueArtwork:') && operation.unitIds.includes(unit.id));
                 const cloudJob = cloudJobs.find(job => job.unitId === unit.id);
-                const rowError = submittingArtwork ? null : artworkErrors[unit.id] || (cloudJob && !['queued', 'running', 'completed', 'cancelled'].includes(cloudJob.status) ? cloudJob.error : null);
+                const rowError = submittingArtwork ? null : cloudQueue.uncertainSubmissions[unit.id]?.message || artworkErrors[unit.id] || (cloudJob && !['queued', 'running', 'completed', 'cancelled'].includes(cloudJob.status) ? cloudJob.error : null);
                 const nativeCandidate = cloudJob?.candidate ?? nativeCandidates[unit.id];
                 const activeAttempt = [...unit.attempts].reverse().find(attempt => ['submitted', 'processing', 'unknownSubmission'].includes(attempt.status));
                 const reusableDraft = unit.artwork?.draft;
@@ -1193,6 +1199,7 @@ export function WpsProductionClient() {
                       <a href={nativeCandidate.url} download={`${unit.id}-candidate.png`}>下载这张图</a>
                       <small>{cloudJob ? '这张图已保留在后台，还没用到衣服上。' : '这张图还没用到衣服上。需要保留的话，请先下载，再刷新页面。'}</small>
                     </div>}
+                    {cloudQueue.uncertainSubmissions[unit.id] && <button type="button" onClick={() => void cloudQueue.refresh()}>重新查询本次提交状态</button>}
                     {queueJob?.status === 'queued' && <button className="wps-text-button" type="button" onClick={() => cloudJob ? void changeCloudJob(cloudJob.id, 'cancel') : artworkQueue.cancel(unit.id)}>取消排队</button>}
                     {cloudJob && <details className="wps-inline-records"><summary>后台处理记录</summary><p>{cloudJob.message} · 任务 {cloudJob.id.slice(0, 8)}</p><small>按处理顺序显示，包含重试记录；某一步完成不代表整个任务已保存。</small>{cloudJob.steps.length > 0 && <ul>{cloudJob.steps.map((step, index) => <li key={index}>{ARTWORK_STAGE_LABELS[step.stage as ArtworkStage] ?? step.stage}：{step.status === 'completed' ? '已完成' : step.status === 'running' ? '处理中' : step.status === 'unknown' ? '结果不确定' : '未完成'}{step.durationMs !== null ? ` · ${(step.durationMs / 1000).toFixed(1)} 秒` : ''}{step.error && <span> · {step.error}</span>}</li>)}</ul>}</details>}
                     {cloudJob?.status === 'failed' && <button type="button" disabled={cloudQueue.submitting} onClick={() => void changeCloudJob(cloudJob.id, 'retry')}>{cloudJob.candidate?.stage === 'edit-review' && cloudJob.steps.some(step => step.stage === 'inspection' && step.status === 'failed') ? '继续核对（复用已生成图片）' : '继续未完成步骤（复用已生成图片）'}</button>}

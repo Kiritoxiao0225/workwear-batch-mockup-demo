@@ -7,6 +7,7 @@ import { canAnalyzeWpsTask, wpsSourceEvidence } from '@/lib/wps-source';
 import { catalogDatabase, catalogTransaction } from './catalog-database';
 import { fileSha256 } from './catalog-files';
 import { productionFileReferences, productionStateKey, usesProductionCloud } from './production-storage';
+import { readCloudProductionState } from './production-cloud-state';
 
 export const wpsAnalysisJobsEnabled = () => usesProductionCloud() && process.env.WPS_DURABLE_ANALYSIS === '1';
 export type AnalysisJob = {
@@ -18,46 +19,53 @@ export type AnalysisJob = {
 };
 export async function enqueueWpsAnalysis(source: SourceTaskRecord, retry = false) {
   if (!canAnalyzeWpsTask(source) || !source.requirementText.trim()) throw new Error('只解析待领取或设计中且需求非空的任务');
-  return catalogTransaction(async client => {
-    // Same lock ordering as production edits; take snapshots from stored state, not the live browser overlay.
-    const row = (await client.query('SELECT state_jsonb FROM production_states WHERE state_key=$1 FOR SHARE', [productionStateKey()])).rows[0];
-    if (!row) throw new Error('生产状态尚未初始化');
-    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`analysis:${productionStateKey()}:${source.recordId}`]);
-    const state = row.state_jsonb;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    // Never transfer the production JSON while holding the row lock. A slow
+    // client used to block every artwork save, including on no-op discovery.
+    const state = await readCloudProductionState();
     const hash = fileSha256(wpsSourceEvidence(source));
-    const saved = state.records.find((record: { source: SourceTaskRecord; unitIds: string[] }) => record.source.recordId === source.recordId && record.unitIds.length && wpsSourceEvidence(record.source) === wpsSourceEvidence(source));
+    const saved = state.records.find(record => record.source.recordId === source.recordId && record.unitIds.length && wpsSourceEvidence(record.source) === wpsSourceEvidence(source));
     // A new model/prompt version never silently reinterprets already parsed or manually edited orders.
     if (saved) return { id: null, status: 'completed' as const };
-    const active = (await client.query("SELECT * FROM wps_analysis_jobs WHERE state_key=$1 AND record_id=$2 AND status IN ('queued','running','saving','unknown') FOR UPDATE", [productionStateKey(), source.recordId])).rows[0] as AnalysisJob | undefined;
-    if (active && active.source_hash !== hash) {
-      if (active.status === 'queued' || active.status === 'unknown') await client.query("UPDATE wps_analysis_jobs SET status='stale',error='WPS 需求已变化',updated_at=now() WHERE id=$1", [active.id]);
-      else return { id: active.id, status: active.status };
-    }
-    const existing = (await client.query('SELECT * FROM wps_analysis_jobs WHERE state_key=$1 AND record_id=$2 AND source_hash=$3 AND analysis_version=$4 FOR UPDATE', [productionStateKey(), source.recordId, hash, TASK_REVIEW_ANALYSIS_VERSION])).rows[0] as AnalysisJob | undefined;
-    if (existing) {
-      if (existing.status === 'completed') {
-        // A reverted WPS requirement can reuse its parsed response, but is a new
-        // save operation against the newly frozen production target.
-        await client.query("UPDATE wps_analysis_jobs SET status='queued',save_id=$2,target_snapshot=$3,source_json=$4,error=NULL,updated_at=now() WHERE id=$1", [existing.id, randomUUID(), wpsAnalysisSnapshot(state, source.recordId), source]);
-        return { id: existing.id, status: 'queued' as const };
+    const result = await catalogTransaction(async client => {
+      // Keep the original state -> job lock order, and fence the unlocked read.
+      const row = (await client.query('SELECT revision FROM production_states WHERE state_key=$1 FOR SHARE', [productionStateKey()])).rows[0];
+      if (!row) throw new Error('生产状态尚未初始化');
+      if (Number(row.revision) !== state.revision) return null;
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`analysis:${productionStateKey()}:${source.recordId}`]);
+      const active = (await client.query("SELECT * FROM wps_analysis_jobs WHERE state_key=$1 AND record_id=$2 AND status IN ('queued','running','saving','unknown') FOR UPDATE", [productionStateKey(), source.recordId])).rows[0] as AnalysisJob | undefined;
+      if (active && active.source_hash !== hash) {
+        if (active.status === 'queued' || active.status === 'unknown') await client.query("UPDATE wps_analysis_jobs SET status='stale',error='WPS 需求已变化',updated_at=now() WHERE id=$1", [active.id]);
+        else return { id: active.id, status: active.status };
       }
-      if (retry && ['failed', 'stale', 'unknown'].includes(existing.status)) {
-        // Keep parsed responses only if their original target is still current.
-        const target = wpsAnalysisSnapshot(state, source.recordId);
-        if (existing.result_json && existing.target_snapshot !== target) throw new Error('解析结果对应的订单已修改，请同步后核对，不能覆盖当前图稿');
-        await client.query("UPDATE wps_analysis_jobs SET status='queued',error=NULL,owner=NULL,lease_until=NULL,target_snapshot=$2,source_json=$3,updated_at=now() WHERE id=$1", [existing.id, target, source]);
-        return { id: existing.id, status: 'queued' as const };
+      const existing = (await client.query('SELECT * FROM wps_analysis_jobs WHERE state_key=$1 AND record_id=$2 AND source_hash=$3 AND analysis_version=$4 FOR UPDATE', [productionStateKey(), source.recordId, hash, TASK_REVIEW_ANALYSIS_VERSION])).rows[0] as AnalysisJob | undefined;
+      if (existing) {
+        if (existing.status === 'completed') {
+          // A reverted WPS requirement can reuse its parsed response, but is a new
+          // save operation against the newly frozen production target.
+          await client.query("UPDATE wps_analysis_jobs SET status='queued',save_id=$2,target_snapshot=$3,source_json=$4,error=NULL,updated_at=now() WHERE id=$1", [existing.id, randomUUID(), wpsAnalysisSnapshot(state, source.recordId), source]);
+          return { id: existing.id, status: 'queued' as const };
+        }
+        if (retry && ['failed', 'stale', 'unknown'].includes(existing.status)) {
+          // Keep parsed responses only if their original target is still current.
+          const target = wpsAnalysisSnapshot(state, source.recordId);
+          if (existing.result_json && existing.target_snapshot !== target) throw new Error('解析结果对应的订单已修改，请同步后核对，不能覆盖当前图稿');
+          await client.query("UPDATE wps_analysis_jobs SET status='queued',error=NULL,owner=NULL,lease_until=NULL,target_snapshot=$2,source_json=$3,updated_at=now() WHERE id=$1", [existing.id, target, source]);
+          return { id: existing.id, status: 'queued' as const };
+        }
+        return { id: existing.id, status: existing.status };
       }
-      return { id: existing.id, status: existing.status };
-    }
-    if (active && active.source_hash === hash) return { id: active.id, status: active.status };
-    const id = randomUUID();
-    await client.query('INSERT INTO wps_analysis_jobs(id,state_key,record_id,source_hash,analysis_version,source_json,target_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7)',
-      [id, productionStateKey(), source.recordId, hash, TASK_REVIEW_ANALYSIS_VERSION, source, wpsAnalysisSnapshot(state, source.recordId)]);
-    const ids = [...new Set(productionFileReferences(source).map(ref => ref.id))].sort();
-    if (ids.length) await client.query('INSERT INTO wps_analysis_files(job_id,file_id) SELECT $1,unnest($2::uuid[]) ON CONFLICT DO NOTHING', [id, ids]);
-    return { id, status: 'queued' as const };
-  });
+      if (active && active.source_hash === hash) return { id: active.id, status: active.status };
+      const id = randomUUID();
+      await client.query('INSERT INTO wps_analysis_jobs(id,state_key,record_id,source_hash,analysis_version,source_json,target_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7)',
+        [id, productionStateKey(), source.recordId, hash, TASK_REVIEW_ANALYSIS_VERSION, source, wpsAnalysisSnapshot(state, source.recordId)]);
+      const ids = [...new Set(productionFileReferences(source).map(ref => ref.id))].sort();
+      if (ids.length) await client.query('INSERT INTO wps_analysis_files(job_id,file_id) SELECT $1,unnest($2::uuid[]) ON CONFLICT DO NOTHING', [id, ids]);
+      return { id, status: 'queued' as const };
+    });
+    if (result) return result;
+  }
+  throw new Error('订单正在更新，尚未提交解析，请稍后重试');
 }
 export async function readWpsAnalysisJobs() {
   if (!wpsAnalysisJobsEnabled()) return { enabled: false, workerOnline: false, jobs: [] };

@@ -4,12 +4,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ConditionalJsonReader } from '@/lib/client/conditional-json';
 import { artworkPollDelay } from '@/lib/artwork-polling';
 import type { ArtworkJobsResponse } from '@/lib/artwork-jobs';
-import { ArtworkJobsSubmissionUnknownError, submitArtworkJobs } from '@/lib/client/artwork-jobs-response';
+import { ArtworkJobsSubmissionUnknownError, submitArtworkJobs, artworkSubmissionUnits, unresolvedArtworkSubmissions, type UncertainArtworkSubmission } from '@/lib/client/artwork-jobs-response';
 
 export function useArtworkJobs(enabled: boolean) {
   const [data, setData] = useState<ArtworkJobsResponse | null>(null);
   const [error, setError] = useState('');
   const [pendingSubmissions, setPendingSubmissions] = useState(0);
+  const [uncertainSubmissions, setUncertainSubmissions] = useState<Record<string, UncertainArtworkSubmission>>({});
+  const uncertain = useRef<Record<string, UncertainArtworkSubmission>>({});
   const reader = useRef(new ConditionalJsonReader('/api/wps-production/jobs'));
   const lastData = useRef<ArtworkJobsResponse | null>(null);
   const inFlight = useRef<Promise<void> | null>(null);
@@ -22,7 +24,11 @@ export function useArtworkJobs(enabled: boolean) {
       try {
         const response = await reader.current.read(signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000));
         const payload = await readApiJson(response, '读取后台制作队列失败');
-        if (id === requestId.current && mounted.current) { lastData.current = payload; setData(payload); setError(''); }
+        if (id === requestId.current && mounted.current) {
+          lastData.current = payload; setData(payload); setError('');
+          uncertain.current = unresolvedArtworkSubmissions(uncertain.current, payload.jobs);
+          setUncertainSubmissions(uncertain.current);
+        }
       } catch (error) { if (!signal?.aborted && id === requestId.current && mounted.current) setError(error instanceof Error ? error.message : String(error)); }
     })().finally(() => { if (inFlight.current === work) inFlight.current = null; });
     inFlight.current = work;
@@ -40,6 +46,9 @@ export function useArtworkJobs(enabled: boolean) {
     return () => { mounted.current = false; ++epoch; abort.abort(); inFlight.current = null; clearTimeout(timer); window.removeEventListener('focus', focus); document.removeEventListener('visibilitychange', focus); };
   }, [enabled, refresh, active]);
   const submit = async (body: unknown) => {
+    const unitIds = artworkSubmissionUnits(body, lastData.current?.jobs ?? []);
+    if (unitIds.some(id => uncertain.current[id])) throw new ArtworkJobsSubmissionUnknownError('上次提交仍待核实');
+    const previous = Object.fromEntries(unitIds.map(id => [id, lastData.current?.jobs.find(job => job.unitId === id) ?? null]));
     setPendingSubmissions(count => count + 1);
     // Invalidate a GET started before this mutation; it cannot erase the newly queued jobs.
     ++requestId.current;
@@ -52,6 +61,8 @@ export function useArtworkJobs(enabled: boolean) {
       return payload;
     } catch (error) {
       if (error instanceof ArtworkJobsSubmissionUnknownError) {
+        uncertain.current = { ...uncertain.current, ...Object.fromEntries(unitIds.map(id => [id, { message: error.message, previous: previous[id] }])) };
+        if (mounted.current) setUncertainSubmissions(uncertain.current);
         // Read back after a lost response; a second POST could create paid work.
         ++requestId.current;
         reader.current.invalidate(); inFlight.current = null;
@@ -60,5 +71,5 @@ export function useArtworkJobs(enabled: boolean) {
       throw error;
     } finally { if (mounted.current) setPendingSubmissions(count => count - 1); }
   };
-  return { data, error, submitting: pendingSubmissions > 0, refresh, submit };
+  return { data, error, uncertainSubmissions, submitting: pendingSubmissions > 0, refresh, submit };
 }

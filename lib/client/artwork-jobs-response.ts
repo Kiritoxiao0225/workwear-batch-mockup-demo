@@ -1,7 +1,23 @@
-import type { ArtworkJobsResponse } from '@/lib/artwork-jobs';
+import type { ArtworkJobsResponse, ArtworkJobView } from '@/lib/artwork-jobs';
 import { apiResponseError, readApiPayload } from './api-response';
 
 export type ArtworkJobsSubmission = ArtworkJobsResponse & { results?: { unitId: string; error?: string }[] };
+export type UncertainArtworkSubmission = { message: string; previous: Pick<ArtworkJobView, 'id' | 'updatedAt' | 'status'> | null };
+
+/** Only a new/changed receipt confirms this submission; an old failed job cannot. */
+export function unresolvedArtworkSubmissions(pending: Record<string, UncertainArtworkSubmission>, jobs: ArtworkJobView[]) {
+  return Object.fromEntries(Object.entries(pending).filter(([unitId, entry]) => {
+    const job = jobs.find(job => job.unitId === unitId);
+    return !job || Boolean(entry.previous && job.id === entry.previous.id && job.updatedAt === entry.previous.updatedAt
+      && job.status === entry.previous.status && !['queued', 'running'].includes(job.status));
+  }));
+}
+export function artworkSubmissionUnits(body: unknown, jobs: ArtworkJobView[]) {
+  if (!body || typeof body !== 'object') return [];
+  if ('units' in body && Array.isArray(body.units)) return body.units.flatMap(unit =>
+    unit && typeof unit.unitId === 'string' ? [unit.unitId as string] : []);
+  return 'id' in body ? jobs.filter(job => job.id === body.id).map(job => job.unitId) : [];
+}
 
 export class ArtworkJobsSubmissionUnknownError extends Error {
   constructor(reason: string) {

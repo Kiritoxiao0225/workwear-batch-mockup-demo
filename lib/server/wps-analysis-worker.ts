@@ -72,8 +72,14 @@ export async function discoverWpsAnalysis(owner: string) {
   try {
     const sync = await listWpsSourceTaskRecords({ activeOnly: true, downloadMaterials: false });
     const records = await persistWpsSourceOrder(sync.records);
-    await reconcileAutomaticSharedArtworks(records);
-    for (const source of records.filter(source => canAnalyzeWpsTask(source) && source.requirementText.trim())) await enqueueWpsAnalysis(source);
+    const state = await reconcileAutomaticSharedArtworks(records);
+    for (const source of records.filter(source => canAnalyzeWpsTask(source) && source.requirementText.trim())) {
+      // Already parsed orders require no queue transaction. Reuse this discovery
+      // snapshot; a newly changed source is rechecked inside enqueueWpsAnalysis.
+      if (state.records.some(record => record.source.recordId === source.recordId && record.unitIds.length
+        && wpsSourceEvidence(record.source) === wpsSourceEvidence(source))) continue;
+      await enqueueWpsAnalysis(source);
+    }
   } finally {
     await catalogDatabase().query("UPDATE production_operations SET lease_until=now()+interval '30 seconds' WHERE operation_key=$1 AND owner=$2", [`analysis-discovery:${productionStateKey()}`, owner]);
   }

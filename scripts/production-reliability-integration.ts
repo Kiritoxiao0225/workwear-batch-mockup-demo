@@ -116,6 +116,23 @@ try {
   let state = await readWpsProductionState(); assert.ok(state.units.some(unit => unit.sourceRecordId === 'recover'));
   assert.ok(state.sharedArtworks?.some(group => group.sourceRecordId === 'recover'));
   assert.equal((await enqueueWpsAnalysis(review.source)).id, null);
+  // Discovery of an unchanged order must finish even while an unrelated save
+  // holds the state row. The former SELECT state_jsonb FOR SHARE blocked here.
+  let unlock!: () => void, locked!: () => void;
+  const held = new Promise<void>(resolve => { locked = resolve; });
+  const releaseLock = new Promise<void>(resolve => { unlock = resolve; });
+  const writer = catalogTransaction(async client => {
+    await client.query('SELECT revision FROM production_states WHERE state_key=$1 FOR UPDATE', ['reliability']);
+    locked(); await releaseLock;
+  });
+  await held;
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+  try {
+    assert.equal((await Promise.race([enqueueWpsAnalysis(review.source), new Promise<never>((_resolve, reject) => {
+      watchdog = setTimeout(() => reject(new Error('unchanged discovery waited for a production writer')), 1500);
+    })])).status, 'completed');
+  } finally { clearTimeout(watchdog); unlock(); await writer; }
+  pass('unchanged discovery does not contend with a real production row lock');
   // Simulate the worker stopping immediately after the production transaction committed.
   await catalogDatabase().query("UPDATE wps_analysis_jobs SET status='saving',owner=$2,lease_until=now()-interval '1 second' WHERE id=$1", [recovered!.id, owner]);
   const receiptReplay = await claimWpsAnalysis(owner); await processWpsAnalysis(receiptReplay!, services); assert.equal(modelCalls, 1);

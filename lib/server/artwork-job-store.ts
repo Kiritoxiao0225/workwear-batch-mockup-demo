@@ -7,6 +7,7 @@ import type { ArtworkJobsResponse, ArtworkJobStatus } from '@/lib/artwork-jobs';
 import { assertProductionArtworkSnapshot, assertProductionSharedSnapshot } from '@/lib/production-artwork-snapshot';
 import { artworkInspectionFailure } from './artwork-network-error';
 import { ARTWORK_EDIT_INSPECTION_VERSION } from '@/lib/artwork-model-edits';
+import { readCloudProductionState } from './production-cloud-state';
 
 export const artworkJobsEnabled = () => usesProductionCloud() && process.env.ARTWORK_DURABLE_JOBS === '1';
 export type ArtworkJobInput = { unit: ProductionUnit; source: SourceTaskRecord; sharedSnapshot?: string };
@@ -16,25 +17,31 @@ export async function retainJobFiles(client: CatalogQueryClient, id: string, val
   if (ids.length) await client.query('INSERT INTO artwork_job_files(job_id,file_id) SELECT $1,unnest($2::uuid[]) ON CONFLICT DO NOTHING', [id, ids]);
 }
 export async function enqueueArtworkJob(input: ArtworkJobInput, snapshot: string) {
-  return catalogTransaction(async client => {
-    const stored = (await client.query(`SELECT ${input.sharedSnapshot ? 'state_jsonb' : 'revision'} FROM production_states WHERE state_key=$1 FOR SHARE`, [productionStateKey()])).rows[0];
-    if (input.sharedSnapshot && !stored) throw new Error('共用图稿生产状态不存在');
-    if (stored && input.sharedSnapshot) {
-      assertProductionArtworkSnapshot(stored.state_jsonb, input.unit.id, snapshot);
-      if (input.sharedSnapshot) assertProductionSharedSnapshot(stored.state_jsonb, input.unit.id, input.sharedSnapshot);
-    }
-    // Serialize same-unit submissions from separate browsers and workers.
-    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`artwork:${productionStateKey()}:${input.unit.id}`]);
-    const existing = (await client.query("SELECT * FROM artwork_jobs WHERE state_key=$1 AND unit_id=$2 AND status IN ('queued','running','unknown')", [productionStateKey(), input.unit.id])).rows[0];
-    if (existing) {
-      if (existing.snapshot !== snapshot || existing.input.sharedSnapshot !== input.sharedSnapshot) throw new Error('该图案已有后台任务，要求发生变化，请等待原任务结束后再制作');
-      return { id: existing.id as string, existing: true };
-    }
-    const id = randomUUID();
-    await client.query("INSERT INTO artwork_jobs(id,state_key,unit_id,snapshot,input,status) VALUES($1,$2,$3,$4,$5,'queued')", [id, productionStateKey(), input.unit.id, snapshot, input]);
-    await retainJobFiles(client, id, input);
-    return { id, existing: false };
-  });
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const state = input.sharedSnapshot ? await readCloudProductionState() : null;
+    const result = await catalogTransaction(async client => {
+      const stored = (await client.query('SELECT revision FROM production_states WHERE state_key=$1 FOR SHARE', [productionStateKey()])).rows[0];
+      if (input.sharedSnapshot && !stored) throw new Error('共用图稿生产状态不存在');
+      if (state && stored && input.sharedSnapshot) {
+        if (Number(stored.revision) !== state.revision) return null;
+        assertProductionArtworkSnapshot(state, input.unit.id, snapshot);
+        assertProductionSharedSnapshot(state, input.unit.id, input.sharedSnapshot);
+      }
+      // Serialize same-unit submissions from separate browsers and workers.
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`artwork:${productionStateKey()}:${input.unit.id}`]);
+      const existing = (await client.query("SELECT * FROM artwork_jobs WHERE state_key=$1 AND unit_id=$2 AND status IN ('queued','running','unknown')", [productionStateKey(), input.unit.id])).rows[0];
+      if (existing) {
+        if (existing.snapshot !== snapshot || existing.input.sharedSnapshot !== input.sharedSnapshot) throw new Error('该图案已有后台任务，要求发生变化，请等待原任务结束后再制作');
+        return { id: existing.id as string, existing: true };
+      }
+      const id = randomUUID();
+      await client.query("INSERT INTO artwork_jobs(id,state_key,unit_id,snapshot,input,status) VALUES($1,$2,$3,$4,$5,'queued')", [id, productionStateKey(), input.unit.id, snapshot, input]);
+      await retainJobFiles(client, id, input);
+      return { id, existing: false };
+    });
+    if (result) return result;
+  }
+  throw new Error('图案正在更新，尚未加入制作队列，请稍后重试');
 }
 export async function readArtworkJobs(): Promise<ArtworkJobsResponse> {
   if (!artworkJobsEnabled()) return { enabled: false, workerOnline: false, jobs: [] };
