@@ -31,8 +31,8 @@ export function WpsSharedArtworks({ state, recordId, busy, make, edit, preview, 
       const source = units.find(unit => unit.id === chosen[key]) ?? units.find(unit => unit.artwork) ?? units[0];
       const blocked = units.map(unit => busy(unit.id)).find(Boolean);
       return <details className="wps-shared-suggestion" key={key}>
-        <summary><span>{units.length} 处图案可共用</span><span>核对并合并 →</span></summary>
-        <p>选择一份源稿，空白位置直接应用；已有不同图案与定稿会保留。</p>
+        <summary><span>{units.length} 处相似图案</span><span>手动共用选项 →</span></summary>
+        <p>相同要求的未制作图案会自动共用。这些位置存在不同要求或已有制作记录，保留独立；需要共用时可选择源稿。</p>
         <label>源稿<select aria-label={`选择${key}的共用源稿`} value={source.id} onChange={event => setChosen(current => ({ ...current, [key]: event.target.value }))}>{units.map(unit => <option key={unit.id} value={unit.id}>{label(unit)}{unit.artwork ? ' · 已有图案' : ''}</option>)}</select></label>
         {units.map(unit => <p key={unit.id}><strong>{label(unit)}</strong><br/>{unit.instruction}</p>)}
         <button type="button" disabled={Boolean(blocked)} onClick={() => void action({ action: 'linkSharedArtwork', unitId: source.id, targetUnitIds: units.filter(unit => unit.id !== source.id).map(unit => unit.id) })}>{blocked || '共用这份图稿'}</button>
@@ -56,7 +56,7 @@ export function WpsSharedArtworks({ state, recordId, busy, make, edit, preview, 
       const content = renderUnit(unit, true);
       return <article className="wps-shared-design" key={group.id} data-shared-artwork-id={group.id}>
         <div className="wps-shared-requirement">
-          <div className="wps-shared-title"><strong>{unit.placement ? productionPositionLabel(unit.placement) : '图稿'}</strong><span>{group.derivedFrom ? '独立版式' : `${members.length} 处共用`}</span></div>
+          <div className="wps-shared-title"><strong>{unit.placement ? productionPositionLabel(unit.placement) : '图稿'}</strong><span>{group.derivedFrom ? '独立版式' : `${members.length} 处${group.automatic ? '自动' : ''}共用`}</span></div>
           <p className="wps-shared-instruction">{unit.instruction}</p>
           {unit.exactText && !unit.instruction.includes(unit.exactText) && <p>{unit.exactText}</p>}
           <details className="wps-shared-scope"><summary>应用到 {names.length} 件衣服</summary><ul>{members.map(member => <li key={member.id}>{label(member)}</li>)}</ul></details>

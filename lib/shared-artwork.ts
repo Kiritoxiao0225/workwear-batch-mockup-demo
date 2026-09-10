@@ -8,9 +8,10 @@ export type SharedArtwork = {
   unitIds: string[];
   versions: SharedArtworkVersion[];
   derivedFrom?: { id: string; version: number };
+  automatic?: boolean;
 };
 
-/** Explicit analysis references survive expansion. Old rows are suggestions only. */
+/** Explicit analysis references and persisted automatic groups survive expansion. */
 export function sharedArtworkGroups(state: WpsProductionState): SharedArtwork[] {
   const groups = new Map((state.sharedArtworks ?? []).map(group => [group.id, { ...group, unitIds: [] as string[] }]));
   for (const unit of state.units) {
@@ -50,12 +51,46 @@ export function sharedArtworkCandidateKey(unit: ProductionUnit) {
 }
 export function sharedArtworkSuggestions(state: WpsProductionState, recordId: string) {
   const groups = new Map<string, ProductionUnit[]>();
-  for (const unit of state.units.filter(unit => unit.sourceRecordId === recordId && !unit.sharedArtworkId)) {
+  for (const unit of state.units.filter(unit => unit.sourceRecordId === recordId && !unit.sharedArtworkId && !unit.sharedArtworkDetached)) {
     if (!unit.materialId && !unit.exactText.trim()) continue;
     const key = sharedArtworkCandidateKey(unit);
     groups.set(key, [...(groups.get(key) ?? []), unit]);
   }
   return [...groups.values()].filter(units => units.length > 1);
+}
+
+/** Full content contract; garment, coordinates and print size remain per application. */
+export function automaticSharedArtworkKey(unit: ProductionUnit) {
+  return JSON.stringify([sharedArtworkCandidateKey(unit), unit.instruction, unit.generationPrompt ?? '',
+    unit.placement?.key ?? null, unit.referenceMaterialIds, unit.sourceAssessment ?? null]);
+}
+
+/** Link only untouched, unambiguous artwork. Never choose between existing drafts. */
+export function autoLinkSharedArtworks(state: WpsProductionState, options: {
+  recordIds?: ReadonlySet<string>; blockedUnitIds?: ReadonlySet<string>; now?: Date;
+} = {}): WpsProductionState {
+  const candidates = new Map<string, ProductionUnit[]>();
+  for (const unit of state.units) {
+    if (options.recordIds && !options.recordIds.has(unit.sourceRecordId)) continue;
+    if (unit.sharedArtworkId || unit.sharedArtworkDetached || unit.artwork || unit.previousArtwork || unit.gateB
+      || unit.attempts.length || unit.returnReason || unit.error || unit.route === 'blocked' || unit.ambiguities.length
+      || sharedArtworkFixed(state, unit.id) || (!unit.materialId && !unit.exactText.trim())) continue;
+    const key = automaticSharedArtworkKey(unit);
+    candidates.set(key, [...(candidates.get(key) ?? []), unit]);
+  }
+  const now = (options.now ?? new Date()).toISOString();
+  let next = state;
+  for (const units of candidates.values()) {
+    if (units.length < 2 || units.length > 100 || units.some(unit => options.blockedUnitIds?.has(unit.id))) continue;
+    const id = `auto:${units[0].id}`;
+    if (id.length > 500 || sharedArtworkGroups(next).some(group => group.id === id)) continue;
+    const ids = new Set(units.map(unit => unit.id));
+    next = { ...next, units: next.units.map(unit => ids.has(unit.id)
+      ? { ...unit, sharedArtworkId: id, sharedArtworkVersion: 0, updatedAt: now } : unit),
+    sharedArtworks: [...(next.sharedArtworks ?? []), { id, sourceRecordId: units[0].sourceRecordId,
+      sourceUnitId: units[0].id, unitIds: [...ids], versions: [], automatic: true }] };
+  }
+  return next === state ? state : { ...next, revision: state.revision + 1, updatedAt: now };
 }
 
 export function bindSharedArtwork(state: WpsProductionState, sourceUnitId: string, targetUnitIds: string[], id: string): WpsProductionState {
