@@ -3,11 +3,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ConditionalJsonReader } from '@/lib/client/conditional-json';
 import { artworkPollDelay } from '@/lib/artwork-polling';
 import type { ArtworkJobsResponse } from '@/lib/artwork-jobs';
+import { ArtworkJobsSubmissionUnknownError, submitArtworkJobs } from '@/lib/client/artwork-jobs-response';
 
 export function useArtworkJobs(enabled: boolean) {
   const [data, setData] = useState<ArtworkJobsResponse | null>(null);
   const [error, setError] = useState('');
-  const [submitting, setSubmitting] = useState(false);
+  const [pendingSubmissions, setPendingSubmissions] = useState(0);
   const reader = useRef(new ConditionalJsonReader('/api/wps-production/jobs'));
   const lastData = useRef<ArtworkJobsResponse | null>(null);
   const inFlight = useRef<Promise<void> | null>(null);
@@ -39,19 +40,25 @@ export function useArtworkJobs(enabled: boolean) {
     return () => { mounted.current = false; ++epoch; abort.abort(); inFlight.current = null; clearTimeout(timer); window.removeEventListener('focus', focus); document.removeEventListener('visibilitychange', focus); };
   }, [enabled, refresh, active]);
   const submit = async (body: unknown) => {
-    setSubmitting(true);
+    setPendingSubmissions(count => count + 1);
     // Invalidate a GET started before this mutation; it cannot erase the newly queued jobs.
     ++requestId.current;
     reader.current.invalidate(); inFlight.current = null;
     try {
-      const response = await fetch('/api/wps-production/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(60_000) });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || '提交后台制作任务失败');
+      const payload = await submitArtworkJobs(body);
       ++requestId.current;
       reader.current.invalidate();
       if (mounted.current) { lastData.current = payload; setData(payload); setError(''); }
-      return payload as ArtworkJobsResponse & { results?: { unitId: string; error?: string }[] };
-    } finally { if (mounted.current) setSubmitting(false); }
+      return payload;
+    } catch (error) {
+      if (error instanceof ArtworkJobsSubmissionUnknownError) {
+        // Read back after a lost response; a second POST could create paid work.
+        ++requestId.current;
+        reader.current.invalidate(); inFlight.current = null;
+        void refresh();
+      }
+      throw error;
+    } finally { if (mounted.current) setPendingSubmissions(count => count - 1); }
   };
-  return { data, error, submitting, refresh, submit };
+  return { data, error, submitting: pendingSubmissions > 0, refresh, submit };
 }

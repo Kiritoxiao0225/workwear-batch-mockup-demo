@@ -662,6 +662,9 @@ export function WpsProductionClient() {
     const expectedUnitSnapshot = productionArtworkSnapshot(unit, record.source);
     const expectedSharedSnapshot = sharedArtworkForUnit(activeProduction, unit.id) ? productionSharedSnapshot(activeProduction, unit.id) : undefined;
     if (cloudQueue.data?.enabled) {
+      const release = beginOperation(`enqueueArtwork:${unit.id}`, { action: 'submitArtwork', unitId: unit.id }, '正在提交制作任务…');
+      if (!release) return;
+      setArtworkErrors(current => ({ ...current, [unit.id]: '' }));
       try {
         const queued = await cloudQueue.submit({ action: 'enqueue', units: [{ unitId: unit.id, snapshot: expectedUnitSnapshot, sharedSnapshot: expectedSharedSnapshot }] });
         const failure = queued.results?.find(result => result.error);
@@ -669,6 +672,7 @@ export function WpsProductionClient() {
         setArtworkErrors(current => ({ ...current, [unit.id]: '' }));
         setMessage('已加入云端队列，可以切换页面；完成后会自动保存。');
       } catch (error) { setArtworkErrors(current => ({ ...current, [unit.id]: error instanceof Error ? error.message : String(error) })); }
+      finally { release(); }
       return;
     }
     if (cloudQueue.error || !cloudQueue.data) {
@@ -1093,8 +1097,9 @@ export function WpsProductionClient() {
                 const pendingSave = unsavedArtworks.current.get(unit.id);
                 const unitBlocked = unitBusyReason(unit.id);
                 const preparationDisabled = Boolean(unitBlocked || preparationIssue);
+                const submittingArtwork = operations.some(operation => operation.key.startsWith('enqueueArtwork:') && operation.unitIds.includes(unit.id));
                 const cloudJob = cloudJobs.find(job => job.unitId === unit.id);
-                const rowError = artworkErrors[unit.id] || (cloudJob && !['queued', 'running', 'completed', 'cancelled'].includes(cloudJob.status) ? cloudJob.error : null);
+                const rowError = submittingArtwork ? null : artworkErrors[unit.id] || (cloudJob && !['queued', 'running', 'completed', 'cancelled'].includes(cloudJob.status) ? cloudJob.error : null);
                 const nativeCandidate = cloudJob?.candidate ?? nativeCandidates[unit.id];
                 const activeAttempt = [...unit.attempts].reverse().find(attempt => ['submitted', 'processing', 'unknownSubmission'].includes(attempt.status));
                 const reusableDraft = unit.artwork?.draft;
@@ -1128,10 +1133,10 @@ export function WpsProductionClient() {
                     </div>}
                     <div className="wps-artwork-current">
                       {unit.artwork ? <button className="wps-artwork-preview" aria-label={`编辑${unit.garmentLabel} ${placement ? productionPositionLabel(placement) : ''}图案`} disabled={Boolean(unitBlocked)} title={unitBlocked ?? undefined} onPointerEnter={() => { if (unit.artwork?.draft) preloadArtworkDraft(unit.artwork.draft); }} onFocus={() => { if (unit.artwork?.draft) preloadArtworkDraft(unit.artwork.draft); }} onClick={() => editArtwork(unit)} type="button"><Image alt={unit.artwork.name} fill sizes="200px" src={productionThumbnailUrl(unit.artwork.url)} unoptimized/></button> : !artworkProgress[unit.id]?.preview && <div className="wps-artwork-placeholder">{positionLabel}图案将在这里显示</div>}
-                      {unit.artwork && <div className="wps-artwork-caption"><small>点击图案编辑</small><button type="button" className="wps-text-button" disabled={inspectingId === unit.id} onClick={() => void openArtworkReview(unit)}>{textOnly ? '查看文字图案' : '原图与抠图结果'}</button>{unit.route !== 'gpt-image-2' && issues.length === 0 && <button type="button" className="wps-artwork-redo" disabled={preparationDisabled || Boolean(activeAttempt)} title={unitBlocked ?? preparationIssue ?? '按当前要求重新制作，可能产生费用；上次图案保留供对照。'} onClick={prepare}>{queueJob ? queueJob.status === 'queued' ? '已加入队列' : '正在重做…' : '重做图案'}</button>}{unit.artwork.draft?.preprocessing.cutout && <small>{CUTOUT_ROUTE_LABELS[unit.artwork.draft.preprocessing.cutout.route]} · {cutoutFeeLabel(unit.artwork.draft.preprocessing.cutout)}</small>}</div>}
+                      {unit.artwork && <div className="wps-artwork-caption"><small>点击图案编辑</small><button type="button" className="wps-text-button" disabled={inspectingId === unit.id} onClick={() => void openArtworkReview(unit)}>{textOnly ? '查看文字图案' : '原图与抠图结果'}</button>{unit.route !== 'gpt-image-2' && issues.length === 0 && <button type="button" className="wps-artwork-redo" disabled={preparationDisabled || Boolean(activeAttempt)} title={unitBlocked ?? preparationIssue ?? '按当前要求重新制作，可能产生费用；上次图案保留供对照。'} onClick={prepare}>{submittingArtwork ? '正在提交…' : queueJob ? queueJob.status === 'queued' ? '已加入队列' : '正在重做…' : '重做图案'}</button>}{unit.artwork.draft?.preprocessing.cutout && <small>{CUTOUT_ROUTE_LABELS[unit.artwork.draft.preprocessing.cutout.route]} · {cutoutFeeLabel(unit.artwork.draft.preprocessing.cutout)}</small>}</div>}
                     </div>
                     {unitBlocked && !queueJob && !activeAttempt && <small role="status">{unitBlocked}</small>}
-                    <p role="status" aria-live="polite" className={`wps-artwork-status ${issues.length || unit.error || rowError ? 'needs-attention' : unit.gateB ? 'complete' : ''}`}>{queueJob ? queueJob.status === 'queued' ? `排队中 · 第 ${queuePosition} 张` : queueJob.progress : activeAttempt ? '正在制作，请查询进度' : rowError ? '这次没做完，请看下方原因' : status}</p>
+                    <p role="status" aria-live="polite" className={`wps-artwork-status ${issues.length || unit.error || rowError ? 'needs-attention' : unit.gateB ? 'complete' : ''}`}>{submittingArtwork ? '正在提交制作任务，请稍候…' : queueJob ? queueJob.status === 'queued' ? `排队中 · 第 ${queuePosition} 张` : queueJob.progress : activeAttempt ? '正在制作，请查询进度' : rowError ? '这次没做完，请看下方原因' : status}</p>
                     {rowError && <p className="wps-production-row-error" role="alert">{rowError}</p>}
                     {artworkProgress[unit.id] && <WpsArtworkProgress {...artworkProgress[unit.id]} failed={Boolean(rowError) && !queueJob} open={(url, title) => setPreview({ url, title })} />}
                     {cutoutSessions[unit.id] && <>
@@ -1150,7 +1155,7 @@ export function WpsProductionClient() {
                     {cloudJob?.status === 'unknown' && <p role="alert">生图返回结果不确定，已锁定原任务，避免重复扣费。任务号：{cloudJob.id}</p>}
                     {pendingSave && !queueJob && <div className="wps-production-row-error"><button type="button" disabled={Boolean(operationReason({ action: 'submitArtwork', unitId: unit.id }, { ignorePending: unit.id }))} onClick={() => void retryArtworkSave(unit)}>重试保存图案</button><a href={String(pendingSave.url)} download>下载已生成图案</a><small>保存重试不会重新生图；请先保存或下载，再刷新页面。</small></div>}
                     {preparationIssue && (!unit.artwork || issues.length > 0) && <div className="wps-production-row-error"><p>{preparationIssue}</p><button className="wps-text-button" disabled={Boolean(unitBlocked)} title={unitBlocked ?? undefined} type="button" onClick={editRequest}>核对素材与参考要求</button></div>}
-                    {unit.route !== 'gpt-image-2' && (!unit.artwork || issues.length > 0) && <button className="primary" disabled={preparationDisabled || Boolean(activeAttempt)} onClick={prepare} type="button">{queueJob ? queueJob.status === 'queued' ? '已加入队列' : '正在制作…' : `${unit.artwork ? '重新制作' : '制作'}${positionLabel}图案`}</button>}
+                    {unit.route !== 'gpt-image-2' && (!unit.artwork || issues.length > 0) && <button className="primary" disabled={preparationDisabled || Boolean(activeAttempt)} aria-busy={submittingArtwork} title={unitBlocked ?? preparationIssue ?? undefined} onClick={prepare} type="button">{submittingArtwork ? '正在提交…' : queueJob ? queueJob.status === 'queued' ? '已加入队列' : '正在制作…' : `${unit.artwork ? '重新制作' : '制作'}${positionLabel}图案`}</button>}
                     {(unit.error || issues.length > 0) && <details className="wps-inline-records"><summary>查看原因</summary><ul>{[...new Set([unit.error, ...issues].filter((issue): issue is string => Boolean(issue)))].map(issue => <li key={issue}>{issue}</li>)}</ul></details>}
                     {!unit.artwork && unit.previousArtwork && <button className="wps-text-button" type="button" onClick={() => setPreview({ url: unit.previousArtwork!.url, title: '上次图案 · 制作要求已变化，仅供对照' })}>查看上次图案</button>}
                     {!unit.artwork && unit.route === 'gpt-image-2' && !activeAttempt && <form className="wps-gpt-cost" onSubmit={event => {
