@@ -91,6 +91,7 @@ export type ArtworkRoutingReport = {
   textComposition?: {
     operation: import('./artwork-text-contract').ArtworkTextOperation;
     removal?: import('./artwork-model-edits').ArtworkEditVerification;
+    graphicRemoval?: import('./artwork-model-edits').ArtworkEditVerification;
     components: import('./artwork-model-edits').ArtworkTextComponentVerification[];
   };
   redraw?: {

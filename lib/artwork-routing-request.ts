@@ -3,7 +3,7 @@ import { inferredArtworkColor } from '@/lib/artwork-editor';
 import type { ArtworkRoutingFacts } from '@/lib/artwork-routing-standard';
 import { artworkReferenceEvidence, artworkReferenceIssues, normalizeArtworkImageNumbers } from '@/lib/artwork-reference';
 import { artworkReferenceColors } from '@/lib/artwork-reference-color';
-import { artworkModelEdits } from '@/lib/artwork-model-edits';
+import { artworkModelEdits, artworkGraphicRemovals } from '@/lib/artwork-model-edits';
 import { needsArtworkReconstruction, artworkReconstructionPrompt } from './artwork-source-assessment';
 import { artworkTextOperation, artworkTextRemovalPrompt, artworkTextStyle } from './artwork-text-contract';
 
@@ -52,7 +52,8 @@ export function artworkRequirementFacts(input: ArtworkRequirementInput): Artwork
   const colorReferences = artworkReferenceColors(input);
   const modelEdits = input.primaryImageRole === 'reference' ? [] : artworkModelEdits(input);
   const colorEdit = colorReferences.length > 0 || /(?:换色|改(?:成|为)?|换(?:成|为)?|颜色[:：]).{0,8}(?:色|#[0-9a-f]{6})/iu.test(requirement);
-  const localEdit = Boolean(input.exactText.trim()) || intent.selectiveComposition || colorEdit || /(?:换成|改成|改为|换色|替换|新增|加上|加字|添加文字|调整.{0,6}(?:排版|间距|对齐))/u.test(requirement);
+  const graphicRemovals = artworkGraphicRemovals(input);
+  const localEdit = Boolean(input.exactText.trim()) || graphicRemovals.length > 0 || intent.selectiveComposition || colorEdit || /(?:换成|改成|改为|换色|替换|新增|加上|加字|添加文字|调整.{0,6}(?:排版|间距|对齐))/u.test(requirement);
   const referenceText = input.primaryImageRole === 'reference';
   const generate = referenceText || input.processingRoute === 'model' || redesign || wholeReference || modelEdits.length > 0;
   const compose = input.processingRoute === 'hybrid' || localEdit;
@@ -63,6 +64,7 @@ export function artworkRequirementFacts(input: ArtworkRequirementInput): Artwork
   if (strictPreservation && generate) blockers.push('严格保真与整图生成要求冲突，请先明确制作方式');
   if (strictPreservation && (intent.hasStyleReference || intent.specialTypography) && input.exactText.trim()) blockers.push('严格保真不能生成特殊字形，请提供可直接使用的文字素材');
   if (strictPreservation && artworkTextOperation(input) === 'replace') blockers.push('严格保真要求禁止模型改图，请先提供已清除指定旧字的主体素材，再新增准确文字');
+  if (strictPreservation && graphicRemovals.length) blockers.push('严格保真要求禁止模型改图，请先提供已删除指定内部元素的主体素材');
   // Arbitrary crop instructions cannot be implemented by sending the entire logo to a generator.
   const needsCrop = intent.selectiveComposition && !generate;
   const knownColor = artworkEditColor(requirement);

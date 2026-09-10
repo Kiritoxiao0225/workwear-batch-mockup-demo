@@ -18,6 +18,7 @@ import { CUTOUT_ROUTE_LABELS, cutoutFeeLabel, type ArtworkCutoutMode, type Artwo
 import { productionThumbnailUrl } from '@/lib/production-file-url';
 import { ConditionalJsonReader } from '@/lib/client/conditional-json';
 import { WpsSharedArtworks } from '@/components/wps-shared-artworks';
+import { sharedActionCompleted, sharedArtworkStatus, productionActionError, type ProductionActionFeedback } from '@/lib/shared-artwork-status';
 import { sharedArtworkForUnit, sharedArtworkLeader, sharedArtworkUnit, sharedArtworkSuggestions, latestSharedArtwork, sharedArtworkFixed } from '@/lib/shared-artwork';
 import { productionSharedSnapshot, assertProductionSharedSnapshot } from '@/lib/production-artwork-snapshot';
 import { WpsArtworkReview } from '@/components/wps-artwork-review';
@@ -217,7 +218,15 @@ export function WpsProductionClient() {
   const [syncAuthorizeUrl, setSyncAuthorizeUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ url: string; title: string } | null>(null);
+  useEffect(() => {
+    if (!preview) return;
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setPreview(null); };
+    window.addEventListener('keydown', close);
+    return () => window.removeEventListener('keydown', close);
+  }, [preview]);
   const [artworkErrors, setArtworkErrors] = useState<Record<string, string>>({});
+  const [actionFeedback, setActionFeedback] = useState<Record<string, ProductionActionFeedback>>({});
+  const actionStateReads = useRef(new Set<string>());
   const { sessions: cutoutSessions, store: cutoutStore } = useArtworkCutoutSessions(production, Boolean(catalogUser));
   const [cutoutSettings, setCutoutSettings] = useState<Record<string, boolean>>({});
   const [nativeCandidates, setNativeCandidates] = useState<Record<string, NativeArtworkCandidate>>({});
@@ -253,7 +262,8 @@ export function WpsProductionClient() {
     const active = [...operationLocks.entries];
     for (const unit of production.units) {
       const job = artworkJobs.find(job => job.id === unit.id);
-      const reason = job ? job.progress || '正在制作图案'
+      const reason = actionFeedback[unit.id]?.status === 'unknown' ? '上次操作结果待核实，请先重新检查状态'
+        : job ? job.progress || '正在制作图案'
         : unsavedArtworks.current.has(unit.id) && options.ignorePending !== unit.id ? '图案等待保存，请先重试保存'
         : ['pending', 'unknown'].includes(cutoutSessions[unit.id]?.result.status) && options.ignoreCutout !== unit.id ? '抠图任务已提交，请继续查询本次结果'
         : activeAttemptFor(unit) && options.ignoreAttempt !== unit.id ? '正在制作，请查询进度' : null;
@@ -404,9 +414,12 @@ export function WpsProductionClient() {
     if (!production) return null;
     cancelSync();
     const targetUnitId = typeof input.unitId === 'string' ? input.unitId : null;
-    if (targetUnitId) setArtworkErrors(current => ({ ...current, [targetUnitId]: '' }));
-    const release = beginOperation(key, input, input.action === 'composeVersion' ? '本版本正在合成客户图' : '正在保存本项修改');
+    const saving = input.action === 'confirmSharedArtwork' ? '正在确认各位置图案…' : input.action === 'applySharedArtwork' ? '正在应用已有共用稿…'
+      : input.action === 'linkSharedArtwork' ? '正在关联并应用共用稿…' : '正在保存本项修改…';
+    const release = beginOperation(key, input, input.action === 'composeVersion' ? '本版本正在合成客户图' : saving);
     if (!release) return null;
+    const feedback = (value: ProductionActionFeedback) => { if (targetUnitId) setActionFeedback(current => ({ ...current, [targetUnitId]: value })); };
+    feedback({ status: 'saving', message: saving });
     setError(null);
     try {
       const body = await responseJson(await fetch(input.action === 'selectGarment' ? '/api/catalog/production-garments' : '/api/wps-production', {
@@ -417,23 +430,50 @@ export function WpsProductionClient() {
       const state = responseState(body);
       acceptProductionState(state);
       const checkedArtwork = input.action === 'checkArtworkQuality' ? state.units.find(unit => unit.id === input.unitId)?.artwork : null;
+      const shared = targetUnitId && sharedArtworkForUnit(state, targetUnitId);
+      feedback({ status: 'saved', message: shared ? `${input.action === 'confirmSharedArtwork' ? '本次确认已保存。' : '本次修改已保存。'}${sharedArtworkStatus(state, shared).summary}` : '本次修改已保存。' });
       setMessage(checkedArtwork ? '画质参考结果已保存，不影响人工确认；请对照原图核对图形、文字和颜色。'
         : input.action === 'composeVersion' ? '已合成同一件衣服的完整客户图，请核对后确认。' : input.action === 'confirmArtwork' ? 'Logo 已确认，下一步放到衣服上。' : '修改已保存。');
       return state;
     } catch (actionError) {
-      let reason = actionError instanceof Error ? actionError.message : String(actionError);
+      let reason = `${productionActionError(actionError)}。本次操作未确认完成。`;
+      let detail = actionError instanceof Error ? actionError.message : String(actionError);
+      let readback = false;
+      feedback({ status: 'saving', message: `${reason}正在核实已保存状态…` });
       // Failed composition can still persist a failure record and revision.
       // Read that revision before allowing a retry.
       try {
-        const state = responseState(await responseJson(await fetch('/api/wps-production', { cache: 'no-store' })));
+        const state = responseState(await responseJson(await fetch('/api/wps-production', { cache: 'no-store', signal: AbortSignal.timeout(20_000) })));
         acceptProductionState(state);
-      } catch (refreshError) { reason += `；状态刷新失败：${refreshError instanceof Error ? refreshError.message : String(refreshError)}`; }
+        readback = true;
+        if (sharedActionCompleted(production, state, input)) {
+          feedback({ status: 'saved', message: '响应曾中断，已重新读取并核实：本次操作已完成。' });
+          setMessage('已重新读取并核实，本次操作已完成。');
+          return state;
+        }
+        reason += '已重新读取，请按最新状态重试本次操作。';
+      } catch (refreshError) { reason += '最新状态也未读到，请先重新检查状态。'; detail += `；状态刷新失败：${refreshError instanceof Error ? refreshError.message : String(refreshError)}`; }
       setError(reason);
-      if (targetUnitId) setArtworkErrors(current => ({ ...current, [targetUnitId]: reason }));
+      feedback({ status: readback ? 'error' : 'unknown', message: reason, detail });
       return null;
     } finally {
       release();
     }
+  };
+
+  const refreshActionState = async (unitId: string) => {
+    if (actionStateReads.current.has(unitId)) return;
+    actionStateReads.current.add(unitId);
+    setActionFeedback(current => ({ ...current, [unitId]: { status: 'unknown', message: '正在重新读取已保存状态…' } }));
+    try {
+      const state = responseState(await responseJson(await fetch('/api/wps-production', { cache: 'no-store', signal: AbortSignal.timeout(20_000) })));
+      acceptProductionState(state);
+      const group = sharedArtworkForUnit(state, unitId);
+      setActionFeedback(current => ({ ...current, [unitId]: { status: 'saved', message: `已重新读取。${group ? sharedArtworkStatus(state, group).summary : '请按当前状态继续操作。'}` } }));
+      setError(null);
+    } catch (error) {
+      setActionFeedback(current => ({ ...current, [unitId]: { status: 'unknown', message: `${productionActionError(error)}。仍无法核实本次结果，请稍后重新检查状态。` } }));
+    } finally { actionStateReads.current.delete(unitId); }
   };
 
   const openArtworkReview = async (unit: ProductionUnit) => {
@@ -932,6 +972,7 @@ export function WpsProductionClient() {
       const currentUnit = production.units.find(candidate => candidate.id === unit.id);
       if (!currentUnit || currentUnit.recipeFingerprint !== unit.recipeFingerprint) throw new Error('图案要求已变化，请关闭编辑器后重新处理');
       if (unit.artwork?.draft && JSON.stringify(draft) === JSON.stringify(unit.artwork.draft)) {
+        setActionFeedback(current => ({ ...current, [unit.id]: { status: 'saved', message: '没有修改，已保留现有图稿。' } }));
         setArtworkEditor(null); setMessage('没有修改，已保留现有图层与 PNG。'); return;
       }
       const samePixels = unit.artwork?.draft && artworkPixelFingerprint(draft) === artworkPixelFingerprint(unit.artwork.draft);
@@ -950,6 +991,8 @@ export function WpsProductionClient() {
       setArtworkEditor(null);
       setArtworkReviewId(null);
       setMessage('图层与 PNG 已保存，效果图预览正在更新。');
+      const shared = sharedArtworkForUnit(state, unit.id);
+      setActionFeedback(current => ({ ...current, [unit.id]: { status: 'saved', message: shared ? `共用稿已保存。${sharedArtworkStatus(state, shared).summary}；请核对后确认。` : '图层与 PNG 已保存。' } }));
     } catch (error) { setError(error instanceof Error ? error.message : String(error)); throw error; }
     finally { release(); }
   };
@@ -1047,10 +1090,11 @@ export function WpsProductionClient() {
         <section className="wps-production-stats">
           <div><span>WPS 记录</span><strong>{production?.records.length ?? 0}</strong></div>
           <div><span>印花位置总数</span><strong>{production?.units.length ?? 0}</strong></div>
-          <div><span>未完成的位置</span><strong>{pendingUnits}</strong></div>
+          <div><span>图案尚未确认的位置</span><strong>{pendingUnits}</strong></div>
           <div><span>已确认客户图</span><strong>{approvedVersions}</strong></div>
           <div><span>已记录费用 / 上限</span><strong>¥{actualCost.toFixed(2)} / ¥{(production?.budgetLimitCny ?? 0).toFixed(2)}</strong></div>
         </section>
+        <small>待制作数量按可提交的图稿计算；共用图稿只制作一次。费用仅汇总已记录的人民币金额，积分和未回传费用以服务商账单为准。</small>
 
         <p className="wps-production-message" aria-live="polite">{syncing ? sourceInfo ? '正在后台同步 WPS，可继续操作。' : '正在同步设计中和待领取任务；已显示的制作记录为上次保存内容…' : syncMessage}{sourceInfo && <> · <a href={sourceInfo.sourceUrl} target="_blank" rel="noreferrer">{sourceInfo.sourceFile.fileName}</a> · 最近同步 {new Date(sourceInfo.syncedAt).toLocaleTimeString('zh-CN')}</>}{!syncMode && sourceInfo ? ' · 连接异常，显示上次同步数据' : ''}</p>
         {message && <p className="wps-production-message" role="status">{message}</p>}
@@ -1085,7 +1129,7 @@ export function WpsProductionClient() {
                 version: versionByUnit.get(units.find(unit => versionByUnit.get(unit.id)!.id === id)!.id)!,
                 units: units.filter(unit => versionByUnit.get(unit.id)!.id === id),
               }));
-              const renderUnitContent = (unit: ProductionUnit) => {
+              const renderUnitContent = (unit: ProductionUnit, sharedView = false) => {
                 const placement = unit.placement;
                 const shared = sharedArtworkForUnit(production, unit.id);
                 const editRequest = () => { planSnapshot.current = productionActionSnapshot(production, { action: 'updatePlan', unitId: unit.id }); setError(null); setEditingUnitId(unit.id); setPlanForm(formForUnit(unit)); };
@@ -1131,13 +1175,15 @@ export function WpsProductionClient() {
                     <WpsArtworkMethodSelector unit={unit} source={record.source} busy={Boolean(unitBlocked)} change={method => { void runAction(`method:${unit.id}`, { action: 'updatePlan', unitId: unit.id, patch: { artworkMethod: method } }); }} />
                     {unit.route !== 'gpt-image-2' && unit.sourceScope !== 'wholeImage' && <WpsCutoutControls compact key={`${unit.id}:${unit.materialId}`} mode={unit.cutoutMode ?? 'auto'} sourceUrl={record.source.materials.find(material => material.id === unit.materialId)?.url ?? record.source.materials.find(material => material.id === unit.materialId)?.previewUrl} generated={Boolean(productionArtworkRouting(unit, record.source).facts.reconstructSource) || productionArtworkRouting(unit, record.source).decision.method === 'generate'} busy={Boolean(unitBlocked)} change={mode => { void runAction(`cutoutMode:${unit.id}`, { action: 'updatePlan', unitId: unit.id, patch: { cutoutMode: mode } }); }} />}
                     </div>}
-                    <div className="wps-artwork-current">
+                    {!sharedView && <div className="wps-artwork-current">
                       {unit.artwork ? <button className="wps-artwork-preview" aria-label={`编辑${unit.garmentLabel} ${placement ? productionPositionLabel(placement) : ''}图案`} disabled={Boolean(unitBlocked)} title={unitBlocked ?? undefined} onPointerEnter={() => { if (unit.artwork?.draft) preloadArtworkDraft(unit.artwork.draft); }} onFocus={() => { if (unit.artwork?.draft) preloadArtworkDraft(unit.artwork.draft); }} onClick={() => editArtwork(unit)} type="button"><Image alt={unit.artwork.name} fill sizes="200px" src={productionThumbnailUrl(unit.artwork.url)} unoptimized/></button> : !artworkProgress[unit.id]?.preview && <div className="wps-artwork-placeholder">{positionLabel}图案将在这里显示</div>}
                       {unit.artwork && <div className="wps-artwork-caption"><small>点击图案编辑</small><button type="button" className="wps-text-button" disabled={inspectingId === unit.id} onClick={() => void openArtworkReview(unit)}>{textOnly ? '查看文字图案' : '原图与抠图结果'}</button>{unit.route !== 'gpt-image-2' && issues.length === 0 && <button type="button" className="wps-artwork-redo" disabled={preparationDisabled || Boolean(activeAttempt)} title={unitBlocked ?? preparationIssue ?? '按当前要求重新制作，可能产生费用；上次图案保留供对照。'} onClick={prepare}>{submittingArtwork ? '正在提交…' : queueJob ? queueJob.status === 'queued' ? '已加入队列' : '正在重做…' : '重做图案'}</button>}{unit.artwork.draft?.preprocessing.cutout && <small>{CUTOUT_ROUTE_LABELS[unit.artwork.draft.preprocessing.cutout.route]} · {cutoutFeeLabel(unit.artwork.draft.preprocessing.cutout)}</small>}</div>}
-                    </div>
-                    {unitBlocked && !queueJob && !activeAttempt && <small role="status">{unitBlocked}</small>}
-                    <p role="status" aria-live="polite" className={`wps-artwork-status ${issues.length || unit.error || rowError ? 'needs-attention' : unit.gateB ? 'complete' : ''}`}>{submittingArtwork ? '正在提交制作任务，请稍候…' : queueJob ? queueJob.status === 'queued' ? `排队中 · 第 ${queuePosition} 张` : queueJob.progress : activeAttempt ? '正在制作，请查询进度' : rowError ? '这次没做完，请看下方原因' : status}</p>
-                    {rowError && <p className="wps-production-row-error" role="alert">{rowError}</p>}
+                    </div>}
+                    {sharedView && unit.artwork && unit.route !== 'gpt-image-2' && <button type="button" disabled={preparationDisabled || Boolean(activeAttempt)} onClick={prepare} title="按当前要求重新制作，可能产生费用">重新制作共用稿</button>}
+                    {!sharedView && unitBlocked && !queueJob && !activeAttempt && <small role="status">{unitBlocked}</small>}
+                    {!sharedView && <p role="status" aria-live="polite" className={`wps-artwork-status ${issues.length || unit.error || rowError ? 'needs-attention' : unit.gateB ? 'complete' : ''}`}>{submittingArtwork ? '正在提交制作任务，请稍候…' : queueJob ? queueJob.status === 'queued' ? `排队中 · 第 ${queuePosition} 张` : queueJob.progress : activeAttempt ? '正在制作，请查询进度' : rowError ? '这次没做完，请看下方原因' : status}</p>}
+                    {!sharedView && actionFeedback[unit.id] && <div className="wps-shared-operation" role="status"><p>{actionFeedback[unit.id].message}</p>{['error', 'unknown'].includes(actionFeedback[unit.id].status) && <button type="button" onClick={() => void refreshActionState(unit.id)}>重新检查状态</button>}</div>}
+                    {rowError && <div className="wps-production-row-error" role="alert"><p>{productionActionError(rowError)}</p>{unit.artwork && <small>当前保存的图案仍保留；这里显示的是最近一次制作的问题。</small>}{productionActionError(rowError) !== rowError && <details><summary>查看错误详情</summary><p>{rowError}</p></details>}</div>}
                     {artworkProgress[unit.id] && <WpsArtworkProgress {...artworkProgress[unit.id]} failed={Boolean(rowError) && !queueJob} open={(url, title) => setPreview({ url, title })} />}
                     {cutoutSessions[unit.id] && <>
                       <CutoutTaskStatus session={cutoutSessions[unit.id]} hasArtwork={Boolean(unit.artwork)} busy={Boolean(queueJob)} query={() => void runCutout(unit, cutoutSessions[unit.id].result.receipt.mode, true)} retry={() => void runCutout(unit, cutoutSessions[unit.id].result.receipt.mode)} discard={() => discardCutout(unit.id)} apply={!unit.artwork ? () => void applyCutout(unit) : undefined} />
@@ -1150,12 +1196,12 @@ export function WpsProductionClient() {
                       <small>{cloudJob ? '这张图已保留在后台，还没用到衣服上。' : '这张图还没用到衣服上。需要保留的话，请先下载，再刷新页面。'}</small>
                     </div>}
                     {queueJob?.status === 'queued' && <button className="wps-text-button" type="button" onClick={() => cloudJob ? void changeCloudJob(cloudJob.id, 'cancel') : artworkQueue.cancel(unit.id)}>取消排队</button>}
-                    {cloudJob && <details className="wps-inline-records"><summary>后台处理记录</summary><p>{cloudJob.message} · 任务 {cloudJob.id.slice(0, 8)}</p>{cloudJob.steps.length > 0 && <ul>{cloudJob.steps.map((step, index) => <li key={index}>{ARTWORK_STAGE_LABELS[step.stage as ArtworkStage] ?? step.stage}：{step.status === 'completed' ? '已完成' : step.status === 'running' ? '处理中' : step.status === 'unknown' ? '结果不确定' : '未完成'}{step.durationMs !== null ? ` · ${(step.durationMs / 1000).toFixed(1)} 秒` : ''}{step.error && <span> · {step.error}</span>}</li>)}</ul>}</details>}
+                    {cloudJob && <details className="wps-inline-records"><summary>后台处理记录</summary><p>{cloudJob.message} · 任务 {cloudJob.id.slice(0, 8)}</p><small>按处理顺序显示，包含重试记录；某一步完成不代表整个任务已保存。</small>{cloudJob.steps.length > 0 && <ul>{cloudJob.steps.map((step, index) => <li key={index}>{ARTWORK_STAGE_LABELS[step.stage as ArtworkStage] ?? step.stage}：{step.status === 'completed' ? '已完成' : step.status === 'running' ? '处理中' : step.status === 'unknown' ? '结果不确定' : '未完成'}{step.durationMs !== null ? ` · ${(step.durationMs / 1000).toFixed(1)} 秒` : ''}{step.error && <span> · {step.error}</span>}</li>)}</ul>}</details>}
                     {cloudJob?.status === 'failed' && <button type="button" disabled={cloudQueue.submitting} onClick={() => void changeCloudJob(cloudJob.id, 'retry')}>{cloudJob.candidate?.stage === 'edit-review' && cloudJob.steps.some(step => step.stage === 'inspection' && step.status === 'failed') ? '继续核对（复用已生成图片）' : '继续未完成步骤（复用已生成图片）'}</button>}
                     {cloudJob?.status === 'unknown' && <p role="alert">生图返回结果不确定，已锁定原任务，避免重复扣费。任务号：{cloudJob.id}</p>}
                     {pendingSave && !queueJob && <div className="wps-production-row-error"><button type="button" disabled={Boolean(operationReason({ action: 'submitArtwork', unitId: unit.id }, { ignorePending: unit.id }))} onClick={() => void retryArtworkSave(unit)}>重试保存图案</button><a href={String(pendingSave.url)} download>下载已生成图案</a><small>保存重试不会重新生图；请先保存或下载，再刷新页面。</small></div>}
                     {preparationIssue && (!unit.artwork || issues.length > 0) && <div className="wps-production-row-error"><p>{preparationIssue}</p><button className="wps-text-button" disabled={Boolean(unitBlocked)} title={unitBlocked ?? undefined} type="button" onClick={editRequest}>核对素材与参考要求</button></div>}
-                    {unit.route !== 'gpt-image-2' && (!unit.artwork || issues.length > 0) && <button className="primary" disabled={preparationDisabled || Boolean(activeAttempt)} aria-busy={submittingArtwork} title={unitBlocked ?? preparationIssue ?? undefined} onClick={prepare} type="button">{submittingArtwork ? '正在提交…' : queueJob ? queueJob.status === 'queued' ? '已加入队列' : '正在制作…' : `${unit.artwork ? '重新制作' : '制作'}${positionLabel}图案`}</button>}
+                    {!sharedView && unit.route !== 'gpt-image-2' && (!unit.artwork || issues.length > 0) && <button className="primary" disabled={preparationDisabled || Boolean(activeAttempt)} aria-busy={submittingArtwork} title={unitBlocked ?? preparationIssue ?? undefined} onClick={prepare} type="button">{submittingArtwork ? '正在提交…' : queueJob ? queueJob.status === 'queued' ? '已加入队列' : '正在制作…' : `${unit.artwork ? '重新制作' : '制作'}${positionLabel}图案`}</button>}
                     {(unit.error || issues.length > 0) && <details className="wps-inline-records"><summary>查看原因</summary><ul>{[...new Set([unit.error, ...issues].filter((issue): issue is string => Boolean(issue)))].map(issue => <li key={issue}>{issue}</li>)}</ul></details>}
                     {!unit.artwork && unit.previousArtwork && <button className="wps-text-button" type="button" onClick={() => setPreview({ url: unit.previousArtwork!.url, title: '上次图案 · 制作要求已变化，仅供对照' })}>查看上次图案</button>}
                     {!unit.artwork && unit.route === 'gpt-image-2' && !activeAttempt && <form className="wps-gpt-cost" onSubmit={event => {
@@ -1213,8 +1259,11 @@ export function WpsProductionClient() {
                   </td>}
                   {sharedPanel ? groupIndex === 0 && unitIndex === 0 && <td className="wps-shared-production-cell" colSpan={2} rowSpan={units.length}>
                     <WpsSharedArtworks state={production} recordId={record.source.recordId} busy={unitBusyReason} make={unit => void produceArtwork(unit)} edit={editArtwork}
+                      preview={(url, title) => setPreview({ url, title })}
                       action={input => runAction(`shared:${input.unitId}`, input)} renderUnit={renderUnitContent}
-                      progress={id => artworkErrors[id] || cloudJobs.find(job => job.unitId === id)?.error || artworkJobs.find(job => job.id === id)?.progress || ''} />
+                      feedback={id => actionFeedback[id]} refresh={refreshActionState}
+                      error={id => artworkErrors[id] || cloudJobs.find(job => job.unitId === id && !['queued', 'running', 'completed', 'cancelled'].includes(job.status))?.error || ''}
+                      progress={id => artworkJobs.find(job => job.id === id)?.progress || ''} />
                   </td> : <><td className="wps-requirement-cell">{renderUnitContent(unit).requirements}</td><td className="wps-artwork-cell" aria-label={`${positionLabel}图案制作`} aria-busy={producingHere}>{renderUnitContent(unit).artwork}</td></>}
                   {unitIndex === 0 && <td className="wps-version-cell" rowSpan={group.units.length}>
                     <strong>{version.garmentLabel} · {version.variantLabel}</strong>

@@ -4,10 +4,24 @@ import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './
 import { productionFileReferences, productionStateKey } from './production-storage';
 import { queueReplacedFiles } from './production-replaced-files';
 
+// A cache hit still reads the database row. Checking revision and updated_at in
+// the same SELECT avoids both stale reads and retransferring an unchanged JSON.
+const snapshots = new Map<string, { revision: string; stamp: string; state: WpsProductionState }>();
 export async function readCloudProductionState(): Promise<WpsProductionState> {
-  const row = (await catalogDatabase().query('SELECT state_jsonb FROM production_states WHERE state_key=$1', [productionStateKey()])).rows[0];
-  if (!row) throw new Error('云端生产状态尚未初始化；请先完成迁移');
-  return row.state_jsonb;
+  const key = productionStateKey();
+  const cacheKey = `${process.env.CATALOG_DATABASE_URL}\n${key}`;
+  const previous = snapshots.get(cacheKey);
+  const row = (await catalogDatabase().query(`SELECT revision::text AS revision, updated_at::text AS stamp,
+    CASE WHEN revision::text=$2 AND updated_at::text=$3 THEN NULL ELSE state_jsonb END AS state_jsonb
+    FROM production_states WHERE state_key=$1`, [key, previous?.revision ?? null, previous?.stamp ?? null])).rows[0];
+  if (!row) { snapshots.delete(cacheKey); throw new Error('云端生产状态尚未初始化；请先完成迁移'); }
+  const state = row.state_jsonb ?? (previous && previous.revision === row.revision && previous.stamp === row.stamp ? previous.state : null);
+  if (!state) throw new Error('生产状态版本未能核实，请重新读取');
+  snapshots.delete(cacheKey);
+  snapshots.set(cacheKey, { revision: row.revision, stamp: row.stamp, state });
+  if (snapshots.size > 4) snapshots.delete(snapshots.keys().next().value!);
+  // Geometry hydration and callers may edit their own copy, never the cache.
+  return structuredClone(state);
 }
 
 /** Preview requests arrive in parallel. Transfer only this version and its units,

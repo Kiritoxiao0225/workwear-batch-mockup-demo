@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { artworkModelEdits } from './artwork-model-edits';
+import { artworkModelEdits, artworkGraphicRemovals } from './artwork-model-edits';
 import { artworkRequirementFacts, artworkMethodIssue, standardArtworkPrompts } from './artwork-routing-request';
 import { parseArtworkPreparationRequest } from './task-review-artwork';
 
@@ -11,6 +11,20 @@ const input = (requirement = instruction, exactText = '') => parseArtworkPrepara
 });
 
 describe('existing bitmap edits versus simple composition', () => {
+  it('keeps internal deletion and ordinary arc text in composition', () => {
+    const request = input('去掉牙齿内部的眼睛和嘴巴，只保留牙齿外轮廓，上方添加圆弧文字“小景是牙医”', '小景是牙医');
+    expect(artworkGraphicRemovals(request)).toEqual(['去掉牙齿内部的眼睛和嘴巴', '只保留牙齿外轮廓']);
+    expect(artworkRequirementFacts(request)).toMatchObject({ intent: 'compose', blockers: [] });
+    expect(artworkRequirementFacts({ ...request, instruction: request.instruction + '，禁止重绘' }).blockers).toContain('严格保真要求禁止模型改图，请先提供已删除指定内部元素的主体素材');
+  });
+  it.each(['去掉白色背景', '清除中间的旧文字', '删除图案下方文字', '不要把眼睛去掉', '无需删除内部图案', '不保留背景', '删除这条提示'])(
+    'does not purchase foreground editing for %s', instruction => {
+      expect(artworkGraphicRemovals(input(instruction))).toEqual([]);
+    });
+  it('never treats reference-only graphics or the supplied new text as deletion instructions', () => {
+    expect(artworkGraphicRemovals({ ...input('删除内部眼睛'), primaryImageRole: 'reference' })).toEqual([]);
+    expect(artworkGraphicRemovals(input('添加文字“去掉眼睛”', '去掉眼睛'))).toEqual([]);
+  });
   it('routes the anniversary outline and backing edits together, keeping every instruction in the model request', () => {
     const request = input();
     expect(artworkRequirementFacts(request)).toMatchObject({ intent: 'generate', blockers: [], editSpecification: 'complete' });

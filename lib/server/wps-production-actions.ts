@@ -5,6 +5,7 @@ import { bindSharedArtwork, detachSharedArtwork, latestSharedArtwork, sharedArtw
 import { prepareSharedArtwork, commitSharedArtwork, existingSharedAttachment, type ArtworkAttachment } from './shared-artwork';
 import { assertProductionSharedSnapshot } from '@/lib/production-artwork-snapshot';
 import { readArtworkJobs } from './artwork-job-store';
+import { sharedArtworkStatus } from '@/lib/shared-artwork-status';
 import { artworkProcessingRoute } from '@/lib/task-review-analysis';
 import { fileSha256 } from '@/lib/server/catalog-files';
 import { productionUser, usesProductionCloud, persistProductionReferences } from '@/lib/server/production-storage';
@@ -209,11 +210,10 @@ export async function POST(request: Request) {
         const shared = sharedArtworkForUnit(state, unitId);
         if (!shared) throw new Error('找不到共用图稿');
         let next = state;
-        for (const id of shared.unitIds) {
-          const unit = next.units.find(unit => unit.id === id)!;
-          if (!sharedArtworkFixed(state, id) && unit.artwork && unit.sharedArtworkVersion === latestSharedArtwork(shared)?.number)
-            next = confirmProductionArtwork(next, id, textValue(body.actor, 'actor'));
-        }
+        const status = sharedArtworkStatus(state, shared);
+        if (!status.confirmable && !status.confirmed) throw new ProductionTransitionError('当前没有可确认的共用图案，请先处理待应用或待修正的位置');
+        for (const application of status.applications.filter(item => item.canConfirm))
+          next = confirmProductionArtwork(next, application.unit.id, textValue(body.actor, 'actor'));
         return { ...next, revision: state.revision + 1 };
       }));
       if (action === 'linkSharedArtwork') {

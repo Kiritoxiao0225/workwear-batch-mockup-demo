@@ -28,6 +28,45 @@ async function setup(scores: number[] = [90, 90]) {
 }
 
 describe('executed artwork standard', () => {
+  it('verifies internal deletion before composing arc text and retains the deletion receipt', async () => {
+    const t = await setup();
+    const cleared = await sharp(Buffer.from('<svg width="1200" height="900"><path fill="#b41230" d="M100 100h900v300H100z"/></svg>')).png().toBuffer();
+    t.generate.mockResolvedValue({ bytes: cleared, model: 'test-editor' });
+    t.services.cutout = vi.fn(async () => cleared);
+    t.services.verifyEdits = vi.fn<StandardArtworkServices['verifyEdits']>(async (source, output, requirements) => ({
+      version: 'artwork-edit-check-v1', sourceSha256: artworkSha256(source), outputSha256: artworkSha256(output), model: 'test',
+      checks: requirements.map(requirement => ({ requirement, status: 'passed', evidence: '内部元素删除，其余保留' })),
+    }));
+    const result = await prepareStandardArtwork({ ...t.request, instruction: '去掉牙齿内部的眼睛和嘴巴，上方添加圆弧文字“小景是牙医”',
+      layoutNote: '文字排成圆弧形，置于牙齿图形上方', exactText: '小景是牙医' }, t.services);
+    expect(t.generate).toHaveBeenCalledOnce();
+    expect(result.draft.graphic.sourceUrl).toBe(url(cleared));
+    expect(result.draft.text).toMatchObject({ value: '小景是牙医', arc: { mode: 'up' } });
+    expect(result.draft.extraGraphics ?? []).toHaveLength(0);
+    expect(result.draft.preprocessing.routingReport).toMatchObject({ executedMethod: 'compose',
+      textComposition: { graphicRemoval: { outputSha256: artworkSha256(cleared) } } });
+    expect(result.draft.preprocessing.routingReport?.prompt).toContain('局部删除步骤');
+    expect(t.services.verifyText).not.toHaveBeenCalled();
+  });
+  it.each(['failed', 'uncertain', 'unavailable', 'wrong-hash', 'missing-check'] as const)(
+    'retains the paid component and does not save completed artwork when internal deletion is %s', async status => {
+      const t = await setup();
+      t.services.verifyEdits = vi.fn<StandardArtworkServices['verifyEdits']>(async (source, output, requirements) => {
+        if (status === 'unavailable') throw new Error('检查超时');
+        return { version: 'artwork-edit-check-v1', sourceSha256: artworkSha256(source),
+          outputSha256: status === 'wrong-hash' ? 'old-image' : artworkSha256(output), model: 'test',
+          checks: (status === 'missing-check' ? requirements.slice(1) : requirements).map(requirement => ({
+            requirement, status: status === 'failed' || status === 'uncertain' ? status : 'passed', evidence: '未删除或无法确认',
+          })) };
+      });
+      const error = await prepareStandardArtwork({ ...t.request, instruction: '去掉眼睛，新增书法文字“小景是牙医”', exactText: '小景是牙医' }, t.services).catch(error => error);
+      expect(error.candidate).toMatchObject({ stage: 'edit-review', requiresEditVerification: true });
+      expect(error.candidate.reason).toContain('不会自动再次生图');
+      expect(t.generate).toHaveBeenCalledOnce();
+      expect(t.services.verifyText).not.toHaveBeenCalled();
+      expect(t.services.saveReport).not.toHaveBeenCalled();
+      expect(t.services.saveGeneration).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ status: 'needs-review', component: 'graphic-removal' }));
+    });
   it('clears the old lettering before adding replacement text, keeping one graphic layer', async () => {
     const t = await setup();
     const cleared = await sharp(Buffer.from('<svg width="1200" height="900"><path fill="#b41230" d="M100 100h900v300H100z"/></svg>')).png().toBuffer();
