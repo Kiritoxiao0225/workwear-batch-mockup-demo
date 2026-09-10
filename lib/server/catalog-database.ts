@@ -7,6 +7,9 @@ import type { QueryResultRow } from 'pg';
 import postgres from 'postgres';
 import { after } from 'next/server';
 
+const SERVERLESS_IDLE_SECONDS = 5;
+const POOL_RECLAIM_DELAY_MS = (SERVERLESS_IDLE_SECONDS + 1) * 1000;
+
 export function catalogDatabaseConfig(environment: Record<string, string | undefined> = process.env) {
   const connectionString = environment.CATALOG_DATABASE_URL;
   if (!connectionString) throw new Error('尚未配置 CATALOG_DATABASE_URL，请先配置 PostgreSQL 并执行 catalog:migrate');
@@ -20,8 +23,12 @@ export function catalogDatabaseConfig(environment: Record<string, string | undef
   const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
   if (!local && !certificate && url.searchParams.get('sslmode') !== 'verify-full') throw new Error(`远程数据库 ${url.hostname} 必须配置 CA 证书或 sslmode=verify-full`);
   return {
-    connectionString, max: 5, connect_timeout: 10, idle_timeout: environment.VERCEL === '1' ? 5 : 30,
-    connection: { application_name: 'workwear-mockup', search_path: 'garment_catalog,public', statement_timeout: 30000 },
+    connectionString, max: 5, connect_timeout: 10, idle_timeout: environment.VERCEL === '1' ? SERVERLESS_IDLE_SECONDS : 30,
+    connection: { application_name: 'workwear-mockup', search_path: 'garment_catalog,public', statement_timeout: 30000,
+      // A database-side fallback also runs when a serverless instance is suspended.
+      // This only expires sessions outside transactions; uploads may hold a transaction.
+      ...(environment.VERCEL === '1' ? { idle_session_timeout: 60000 } : {}),
+    },
     ...(!local ? { socket: () => new Promise<Socket>((resolve, reject) => {
       const port = Number(url.port || 5432);
       const socket = createConnection({ host: url.hostname, port, family: 4, timeout: 10000 });
@@ -44,13 +51,28 @@ export function catalogDatabaseConfig(environment: Record<string, string | undef
 
 type CatalogConnection = ReturnType<typeof postgres>;
 export type CatalogQueryClient = { query: (sql: string, values?: unknown[]) => Promise<{ rows: QueryResultRow[]; rowCount: number }> };
-let connection: CatalogConnection | undefined;
+type CatalogPool = { sql: CatalogConnection; active: number; releasedAt: number; reclaiming?: Promise<void> };
+// Route bundles and dev reloads in one process must share the same connection cap.
+const shared = globalThis as typeof globalThis & { workwearCatalogDatabasePool?: CatalogPool };
 function connectedDatabase() {
-  if (!connection) {
+  if (!shared.workwearCatalogDatabasePool) {
     const { connectionString, ...options } = catalogDatabaseConfig();
-    connection = postgres(connectionString, options);
+    shared.workwearCatalogDatabasePool = { sql: postgres(connectionString, options), active: 0, releasedAt: Date.now() };
   }
-  return connection;
+  return shared.workwearCatalogDatabasePool;
+}
+function reclaimIdlePool(pool: CatalogPool): Promise<void> {
+  // All response callbacks share one cleanup. New work extends the idle deadline.
+  return pool.reclaiming ??= (async () => {
+    while (shared.workwearCatalogDatabasePool === pool && pool.active === 0) {
+      const remaining = pool.releasedAt + POOL_RECLAIM_DELAY_MS - Date.now();
+      if (remaining > 0) { await new Promise(resolve => setTimeout(resolve, remaining)); continue; }
+      // Detach synchronously before closing: new/background work gets a fresh pool,
+      // and a delayed callback can never close that replacement pool.
+      shared.workwearCatalogDatabasePool = undefined;
+      await pool.sql.end({ timeout: 5 });
+    }
+  })().finally(() => { pool.reclaiming = undefined; });
 }
 function queryClient(client: Pick<CatalogConnection, 'unsafe'>): CatalogQueryClient {
   return { query: async (sql, values = []) => {
@@ -63,14 +85,13 @@ export function catalogDatabase() {
 }
 async function withDatabase<T>(operation: (client: CatalogConnection) => Promise<T>): Promise<T> {
   const pool = connectedDatabase();
-  try { return await operation(pool); }
+  pool.active++;
+  try { return await operation(pool.sql); }
   finally {
+    pool.active--;
+    pool.releasedAt = Date.now();
     if (process.env.VERCEL === '1') {
-      // Let postgres.js close only idle sockets before Vercel suspends the
-      // instance. Ending the whole pool races with other after() callbacks and
-      // discards connections that the next foreground request could reuse.
-      // Register after completion so even slow/failed operations get the grace.
-      after(() => new Promise<void>(resolve => setTimeout(resolve, 6_000)));
+      after(() => reclaimIdlePool(pool));
     }
   }
 }
@@ -83,7 +104,11 @@ export async function catalogTransaction<T>(operation: (client: CatalogQueryClie
     finally { reserved.release(); }
   });
 }
-export async function closeCatalogDatabase() { const pool = connection; connection = undefined; if (pool) await pool.end(); }
+export async function closeCatalogDatabase() {
+  const pool = shared.workwearCatalogDatabasePool;
+  shared.workwearCatalogDatabasePool = undefined;
+  if (pool) await pool.sql.end();
+}
 export async function migrateCatalog() {
   return catalogTransaction(async client => {
     await client.query("SELECT pg_advisory_xact_lock(hashtext('garment_catalog_migrations'))");

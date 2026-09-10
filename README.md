@@ -7,7 +7,7 @@
 - `/products`：需要内部账号的真实素材库。一款一张卡片，卡片内切换颜色，每页 24 款；颜色搜索保留整款并标出匹配数量。支持上传及换版、正反面同屏校准、草稿/人工确认和历史版本查看。
 - `/products?mode=append`：保留旧版 10 款商品选款入口，兼容既有任务；旧商品与新目录尚未做身份合并。
 - PostgreSQL 使用 Zeabur 现有服务内的独立 `mockup` 数据库、`garment_catalog` schema，与 CatalogHub 的 `zeabur` 库分离。运行账号 `mockup_app` 只有业务表读写权限，`mockup_owner` 负责迁移。`npm run catalog:migrate` 执行带内容 hash 校验的迁移；管理连接只放在 `.env.catalog-admin.local`，普通 Web 进程不加载它。
-- `.env.local` 保存 `CATALOG_DATABASE_URL`、`CATALOG_DATABASE_CA_CERT` 和 `CATALOG_OSS_*`。数据库采用 postgres.js、已连接的 IPv4 socket 与最多 5 个连接，事务固定同一连接；远程连接必须验证 TLS 证书和主机身份。私有 CA 的 PEM 可用转义换行保存；连接字符串不能再指定会覆盖 CA 的 SSL 参数。
+- `.env.local` 保存 `CATALOG_DATABASE_URL`、`CATALOG_DATABASE_CA_CERT` 和 `CATALOG_OSS_*`。数据库采用 postgres.js、已连接的 IPv4 socket，同一进程共用最多 5 个连接，事务固定同一连接；Vercel 下驱动 5 秒回收空闲连接，连续空闲 6 秒且无活跃操作时安全关闭旧池，数据库侧 60 秒事务外空闲超时兜底。应用账号连接额度为 100，整库仍为 100 并保留 3 条管理员连接，额度不是每个实例的连接池大小。远程连接必须验证 TLS 证书和主机身份。私有 CA 的 PEM 可用转义换行保存；连接字符串不能再指定会覆盖 CA 的 SSL 参数。
 - OSS 使用 `oss-bucket-mockfits` 的 `workwear-mockup/prod/objects/` 内容哈希路径，由 `CATALOG_OSS_PREFIX` 限定项目范围。独立 RAM 账号 `workwear-mockup` 绑定 `WorkwearMockupStorage` 策略，只能列举、读取及写入 `workwear-mockup/prod/`，没有删除对象、管理 Bucket 或读取 CatalogHub 目录的权限。上传显式设置私有权限、禁止覆盖，重试已有对象须读回验证哈希；文件访问生成 15 分钟签名地址。本次未配置 Bucket 版本控制，换图依靠不可覆盖的新哈希对象保留历史。
 - 工作台使用 `CATALOG_AUTH_MODE=open` 免密码访问，打开链接即可查看和操作。`CATALOG_LOGIN_EMAIL` 指定已有工作台账号，所有访问者共用该账号的角色和操作记录；停用账号或设为 viewer 仍会阻止相应操作。
 - 页面不再显示登录弹窗或退出按钮，也不依赖浏览器 cookie。现有账号和历史素材、任务、确认记录保持不变。新环境需先用 `CATALOG_USER_PASSWORD` 与 `npm run catalog:user -- <邮箱> <姓名>` 创建真实账号；初始化密码不用于页面访问。

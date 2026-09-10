@@ -6,6 +6,7 @@ import type { ProductionMockupVersion, ProductionUnit } from '@/lib/wps-producti
 import { WPS_COMPOSITOR_VERSION } from '@/lib/confirmation-frame';
 import { useProjectSession } from '@/components/project-session';
 import { productionPreviewRevision } from '@/lib/production-preview';
+import { readProductionPreview } from '@/lib/client/production-preview-queue';
 
 export function WpsMockupPreview({ version, units, open, adjust, disabled, paused, composing }: {
   version: ProductionMockupVersion; units: ProductionUnit[];
@@ -34,9 +35,7 @@ export function WpsMockupPreview({ version, units, open, adjust, disabled, pause
     let pendingUrl: string | null = null;
     void (async () => {
       try {
-        const response = await fetch(url, { signal: controller.signal });
-        if (!response.ok) throw new Error(`Preview HTTP ${response.status}`);
-        const blob = await response.blob();
+        const blob = await readProductionPreview(url, controller.signal);
         if (controller.signal.aborted) return;
         pendingUrl = URL.createObjectURL(blob);
         const image = new window.Image();
