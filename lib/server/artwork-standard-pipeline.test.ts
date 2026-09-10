@@ -60,10 +60,19 @@ describe('executed artwork standard', () => {
     t.services.verifyEdits = vi.fn<StandardArtworkServices['verifyEdits']>(async (source, output, requirements) => {
       if (status === 'unavailable') throw new Error('inspection timeout');
       return { version: 'artwork-edit-check-v1', sourceSha256: artworkSha256(source), outputSha256: artworkSha256(output), model: 'test',
-        checks: requirements.map(requirement => ({ requirement, status, evidence: '描边仍然是红色' })) };
+        checks: requirements.map(requirement => ({ requirement, status, evidence: status === 'failed'
+          ? 'SOURCE 是红色描边，RESULT 的描边仍然是红色。' : '无法确定 RESULT 的描边是否已改成深蓝色。' })) };
     });
     const error = await prepareStandardArtwork({ ...t.request, instruction: '红色描边改为深蓝色，深蓝色底形调浅', generationPrompt: '编辑图1' }, t.services).catch(error => error);
     expect(error.candidate).toMatchObject({ stage: 'edit-review', url: url(await sample(true)) });
+    expect(error.candidate.reason).toContain(status === 'failed' ? '有地方没按要求改好'
+      : status === 'uncertain' ? '还不能确定是否已按要求改好' : '这次没能检查修改结果');
+    expect(error.candidate.reason).toContain('还没保存成品');
+    expect(error.candidate.reason).not.toMatch(/SOURCE|RESULT|inspection timeout|未点名修改|候选/u);
+    if (status !== 'unavailable') expect(error.candidate.reason.match(/描边/gu)).toHaveLength(status === 'failed' ? 2 : 1);
+    expect(t.services.saveGeneration).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      reason: expect.stringContaining(status === 'unavailable' ? 'inspection timeout' : '修改要求尚未通过核对'),
+    }));
     expect(error.candidate.cutout).toBeUndefined();
     expect(t.services.saveReport).not.toHaveBeenCalled();
     expect(t.services.saveImage).toHaveBeenCalledWith(expect.any(String), 'edit-review-candidate', await sample(true));

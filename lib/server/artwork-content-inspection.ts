@@ -29,6 +29,7 @@ export async function verifyArtworkModelEdits(source: Buffer, result: Buffer, re
 逐项检查下面列出的客户要求，不能仅凭清晰度、整体相似或“颜色变了”判通过。描边、字面、底形是不同区域，必须分别检查。调浅/调深比较对应区域；其余保留要求以 SOURCE 实际字形、文字、装饰、配色与相对排版为准。来源平台水印和外围画布背景不属于要保留的图案。不要把透明预览的灰底当成图案底色。
 待核对要求：${JSON.stringify(requirements.map((requirement, index) => ({ index, requirement })))}
 每一项都返回一次；看不到足够证据必须填 uncertain。颜色或内容未按要求改变填 failed。只有可明确指出符合要求的可见证据才填 passed 与 high。不要猜测色号或文字。
+evidence 会直接展示给用户，请用简短、日常的中文说明哪个地方发生了什么变化，每项尽量不超过 80 字。称左图为“原图”、右图为“修改后的图”，不要使用 SOURCE、RESULT、候选、底形等检查术语，不要复述整条要求。保留所有影响判断的问题；不确定时明确说“看不清”或“无法确定”，不要说成已经改错。
 只返回 JSON：{"checks":[{"index":0,"status":"passed|failed|uncertain","confidence":"high|low","evidence":"具体区域和前后变化或未完成之处"}]}。`;
   const response = await inspectArtworkReferenceImage(inline(await artworkComparisonSheet(source, result)), prompt, { label: '图案修改逐项核对', timeoutMs: 60_000 });
   const parsed = editCheckSchema.parse(json(response.content));

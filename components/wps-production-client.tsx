@@ -1074,7 +1074,7 @@ export function WpsProductionClient() {
                       {unit.artwork && <div className="wps-artwork-caption"><small>点击图案编辑</small><button type="button" className="wps-text-button" disabled={inspectingId === unit.id} onClick={() => void openArtworkReview(unit)}>{textOnly ? '查看文字图案' : '原图与抠图结果'}</button>{unit.route !== 'gpt-image-2' && issues.length === 0 && <button type="button" className="wps-artwork-redo" disabled={preparationDisabled || Boolean(activeAttempt)} title={unitBlocked ?? preparationIssue ?? '按当前要求重新制作，可能产生费用；上次图案保留供对照。'} onClick={prepare}>{queueJob ? queueJob.status === 'queued' ? '已加入队列' : '正在重做…' : '重做图案'}</button>}{unit.artwork.draft?.preprocessing.cutout && <small>{CUTOUT_ROUTE_LABELS[unit.artwork.draft.preprocessing.cutout.route]} · {cutoutFeeLabel(unit.artwork.draft.preprocessing.cutout)}</small>}</div>}
                     </div>
                     {unitBlocked && !queueJob && !activeAttempt && <small role="status">{unitBlocked}</small>}
-                    <p role="status" aria-live="polite" className={`wps-artwork-status ${issues.length || unit.error || rowError ? 'needs-attention' : unit.gateB ? 'complete' : ''}`}>{queueJob ? queueJob.status === 'queued' ? `排队中 · 第 ${queuePosition} 张` : queueJob.progress : activeAttempt ? '正在制作，请查询进度' : rowError ? '本次操作未完成' : status}</p>
+                    <p role="status" aria-live="polite" className={`wps-artwork-status ${issues.length || unit.error || rowError ? 'needs-attention' : unit.gateB ? 'complete' : ''}`}>{queueJob ? queueJob.status === 'queued' ? `排队中 · 第 ${queuePosition} 张` : queueJob.progress : activeAttempt ? '正在制作，请查询进度' : rowError ? '这次没做完，请看下方原因' : status}</p>
                     {rowError && <p className="wps-production-row-error" role="alert">{rowError}</p>}
                     {artworkProgress[unit.id] && <WpsArtworkProgress {...artworkProgress[unit.id]} failed={Boolean(rowError) && !queueJob} open={(url, title) => setPreview({ url, title })} />}
                     {cutoutSessions[unit.id] && <>
@@ -1083,9 +1083,9 @@ export function WpsProductionClient() {
                       {cutoutSessions[unit.id].result.status === 'failed' && !cutoutSessions[unit.id].stale && ['standard', 'volcano'].includes(cutoutSessions[unit.id].result.receipt.route) && <button type="button" className="primary" disabled={Boolean(queueJob)} onClick={() => void runCutout(unit, 'meitu')}>可选：美图精细 · 预计 1 积分</button>}
                     </>}
                     {nativeCandidate && <div className="wps-production-row-error">
-                      <a href={nativeCandidate.url} target="_blank" rel="noreferrer">{nativeCandidate.stage === 'edit-review' ? '查看实际候选（修改要求待核对）' : '查看模型原图（尚未完成透明处理）'}</a>
-                      <a href={nativeCandidate.url} download={`${unit.id}-candidate.png`}>下载候选 PNG</a>
-                      <small>候选未上衣。请先下载保留，再刷新页面。</small>
+                      <a href={nativeCandidate.url} target="_blank" rel="noreferrer">{nativeCandidate.stage === 'edit-review' ? '查看这次做出的图（尚未保存成品）' : '查看刚生成的图（背景还没去好）'}</a>
+                      <a href={nativeCandidate.url} download={`${unit.id}-candidate.png`}>下载这张图</a>
+                      <small>这张图还没用到衣服上。需要保留的话，请先下载，再刷新页面。</small>
                     </div>}
                     {queueJob?.status === 'queued' && <button className="wps-text-button" type="button" onClick={() => artworkQueue.cancel(unit.id)}>取消排队</button>}
                     {pendingSave && !queueJob && <div className="wps-production-row-error"><button type="button" disabled={Boolean(operationReason({ action: 'submitArtwork', unitId: unit.id }, { ignorePending: unit.id }))} onClick={() => void retryArtworkSave(unit)}>重试保存图案</button><a href={String(pendingSave.url)} download>下载已生成图案</a><small>保存重试不会重新生图；请先保存或下载，再刷新页面。</small></div>}

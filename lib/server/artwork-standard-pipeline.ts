@@ -134,7 +134,7 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
         const generated = await services.generate(prompts.generate, images, { background: 'auto' });
         await services.saveImage(runId, 'generated-original', generated.bytes);
         progress('图案已生成，正在处理透明背景…', true);
-        await preview(generated.bytes, '模型候选预览 · 待抠图与检查，尚未保存');
+        await preview(generated.bytes, '刚生成的图 · 还要去背景和检查，尚未保存成品');
         return generated;
       })(),
     ]);
@@ -187,7 +187,7 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
       assertUsableArtworkMask(mask);
       backgroundRemoval = 'product';
       progress('透明背景已处理，正在检查成品清晰度…');
-      await preview(graphic, '透明图案预览 · 待质量检查，尚未保存');
+      await preview(graphic, '去背景后的图 · 还在检查，尚未保存成品');
       operations.push('整图生成后按抠图方式分流；保留模型字体、颜色与排版，不重新排字');
     } catch (error) {
       if (error instanceof ArtworkCutoutPendingError) pendingCutout = error.result;
@@ -195,14 +195,23 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
     }
     let editVerification: ArtworkEditVerification | undefined;
     let editFailure = '';
+    let editFailureMessage = '';
     if (!cutoutFailure && modelEdits.length) {
-      progress('正在逐项核对指定区域的改色与保留内容…');
+      progress('正在检查颜色是否改对、其他地方有没有被误改…');
       try {
         editVerification = await timed('editVerification', () => services.verifyEdits(sourceBytes, graphic,
           [...modelEdits, '未点名修改的原有文字、字形、数字、装饰、配色及相对排版保持原样；无关来源水印与外围背景除外']));
         const issues = editVerification.checks.filter(check => check.status !== 'passed');
-        if (issues.length) editFailure = `修改要求尚未通过核对：${issues.map(check => `${check.requirement}：${check.evidence}`).join('；')}`;
-      } catch (error) { editFailure = `修改要求核对未完成：${error instanceof Error ? error.message : String(error)}`; }
+        if (issues.length) {
+          editFailure = `修改要求尚未通过核对：${issues.map(check => `${check.requirement}：${check.evidence}`).join('；')}`;
+          const details = [...new Set(issues.map(check => check.evidence.trim()
+            .replace(/\bSOURCE\b/giu, '原图').replace(/\bRESULT\b/giu, '修改后的图').replace(/[。；;\s]+$/u, '')))];
+          editFailureMessage = `${issues.some(check => check.status === 'failed') ? '检查发现，有地方没按要求改好' : '检查还不能确定是否已按要求改好'}：${details.join('；')}。`;
+        }
+      } catch (error) {
+        editFailure = `修改要求核对未完成：${error instanceof Error ? error.message : String(error)}`;
+        editFailureMessage = '图案已生成，但这次没能检查修改结果。';
+      }
     }
     await services.saveGeneration(runId, { runId, model: generated.model, prompt: usedPrompt, promptHash: artworkPromptHash(usedPrompt), imageMapping: prompts.imageMapping,
       sourceSha256: artworkSha256(sourceBytes), originalSha256: artworkSha256(generated.bytes), metadata: generated.generationMetadata,
@@ -213,7 +222,7 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
     if (editFailure) {
       await services.saveImage(runId, 'edit-review-candidate', graphic);
       throw new NativeArtworkCandidateError({ runId, url: dataUrl(graphic), model: generated.model, stage: 'edit-review',
-        reason: `${editFailure}。已保留实际候选供对比，尚未作为成品保存，不自动重新生图。`, promptHash: artworkPromptHash(usedPrompt) });
+        reason: `${editFailureMessage}这张图还没保存成品。请先查看下方图片，需要重做时再点本行的制作按钮。`, promptHash: artworkPromptHash(usedPrompt) });
     }
     if (editVerification) operations.push('已逐项核对指定改色及其余图案保留要求');
     model = generated.model;
