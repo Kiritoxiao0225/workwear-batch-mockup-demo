@@ -5,6 +5,7 @@ import { ARTWORK_STAGE_LABELS, type ArtworkStage } from '@/lib/artwork-jobs';
 import { catalogDatabase, catalogTransaction } from './catalog-database';
 import { readProductionFile, saveProductionFile, persistProductionReferences } from './production-storage';
 import { assertArtworkJobOwner, retainJobFiles, type ArtworkJob } from './artwork-job-store';
+import type { InspectionRetryNotice } from './artwork-inspection-retry';
 
 const context = new AsyncLocalStorage<{ job: ArtworkJob; pending: Map<string, Promise<unknown>>; held?: ArtworkStage }>();
 export const hasArtworkJobContext = () => !!context.getStore();
@@ -12,6 +13,32 @@ export function inArtworkJob<T>(job: ArtworkJob, task: () => Promise<T>) { retur
 export const artworkStepHash = (value: unknown): string => createHash('sha256').update(JSON.stringify(value, (_key, item) =>
   item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item) ?? 'null').digest('hex');
 export class ArtworkGenerationUnknownError extends Error {}
+
+export async function reportArtworkInspectionRetry(notice: InspectionRetryNotice) {
+  const current = context.getStore();
+  if (!current) return;
+  await catalogTransaction(async client => {
+    await assertArtworkJobOwner(client, current.job);
+    await client.query("UPDATE artwork_jobs SET message=$3,updated_at=now() WHERE id=$1 AND owner=$2", [current.job.id, current.job.owner,
+      `核对服务暂时未响应，正在自动恢复（第 ${notice.attempt}/${notice.maxAttempts} 次），无需重复制作`]);
+  });
+}
+
+/** A resumed full-image job keeps its paid prompt even after a code/template upgrade. */
+export async function resumeArtworkGenerationPrompt(prompt: string, images: string[], settings: { background?: 'auto' | 'transparent' }) {
+  const current = context.getStore();
+  if (!current) return prompt;
+  const db = catalogDatabase();
+  const steps = (await db.query("SELECT step_key,status FROM artwork_job_steps WHERE job_id=$1 AND stage='generation'", [current.job.id])).rows;
+  const key = (text: string) => `generate:${artworkStepHash([text, images, settings])}`;
+  if (steps.some(step => step.step_key === key(prompt) && step.status !== 'failed') || !steps.some(step => step.status !== 'failed')) return prompt;
+  const receipt = (await db.query(`SELECT r.record_json FROM artwork_run_records r JOIN artwork_jobs j
+    ON r.state_key=j.state_key AND r.run_id::text=j.candidate->>'runId'
+    WHERE j.id=$1 AND r.kind='generation'`, [current.job.id])).rows[0]?.record_json;
+  if (!receipt?.component && typeof receipt?.prompt === 'string'
+    && steps.some(step => step.step_key === key(receipt.prompt) && step.status === 'completed')) return receipt.prompt as string;
+  throw new Error('已保留原生图步骤，但无法匹配原提示词与素材；已停止重复生图，请查看或下载原任务图片');
+}
 
 export async function saveArtworkJobFile(bytes: Buffer, name: string) {
   const current = context.getStore();

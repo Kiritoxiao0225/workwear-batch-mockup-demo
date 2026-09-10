@@ -1,3 +1,4 @@
+import { boundedModelImage } from './model-image-input';
 import { productionCatalogStyles } from '@/lib/server/wps-production-garments';
 import { readFile } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
@@ -15,11 +16,13 @@ import { isTextOnlyArtwork } from '@/lib/artwork-reference';
 import { formatArkErrorMessage } from '@/lib/server/ark-logo-studio';
 import { WPS_ANALYSIS_MODEL_TIMEOUT_MS, WPS_ANALYSIS_REQUEST_TIMEOUT_MS, type WpsAnalysisStage } from '@/lib/wps-analysis-progress';
 import { WpsAnalysisTrace } from './wps-analysis-trace';
+import { retryArtworkInspection } from './artwork-inspection-retry';
+import { reportArtworkInspectionRetry } from './artwork-job-runtime';
+import { artworkNetworkFailure } from './artwork-network-error';
 
 const ARK_CHAT_ENDPOINT = 'https://ark.cn-beijing.volces.com/api/v3/chat/completions';
 const DEFAULT_ANALYSIS_MODEL = 'doubao-seed-2-0-lite-260215';
 const DEFAULT_CLIPROXY_ANALYSIS_MODEL = 'gpt-5.6-sol';
-const MAX_ANALYSIS_IMAGE_BYTES = 8 * 1024 * 1024;
 const ANALYSIS_TIMEOUT_MS = 120_000;
 const shared = globalThis as typeof globalThis & { wpsAnalysisQueue?: ArtworkWorkQueue };
 const analysisQueue = shared.wpsAnalysisQueue ??= new ArtworkWorkQueue(WPS_ANALYSIS_CONCURRENCY);
@@ -64,22 +67,30 @@ function analysisConfiguration() {
   };
 }
 
-async function responseBody(response: Response, provider: string) {
+function visionHttpError(response: Response, message: string) {
+  const header = response.headers.get('retry-after');
+  const seconds = header && /^\d+(?:\.\d+)?$/u.test(header) ? Number(header) : null;
+  const retryAfterMs = seconds !== null ? seconds * 1000 : header ? Math.max(0, Date.parse(header) - Date.now()) : 0;
+  return Object.assign(new Error(message), { httpStatus: response.status, retryAfterMs: Number.isFinite(retryAfterMs) ? retryAfterMs : 0 });
+}
+
+async function responseBody(response: Response, provider: string, inspection = false) {
   if (!response.ok && provider === 'cliproxy') {
     await response.body?.cancel();
     const reason = response.status === 401 || response.status === 403 ? '请检查代理 API Key 和 Codex 授权'
       : response.status === 429 ? '额度或并发受限，请检查代理服务状态' : '请检查代理服务记录';
     // Upstream error bodies can include credentials or OAuth details.
-    throw new Error(`需求解析（CLIProxyAPI）HTTP ${response.status}：${reason}；未自动重试或切换模型`);
+    throw visionHttpError(response, `${inspection ? '内容核对' : '需求解析'}（CLIProxyAPI）HTTP ${response.status}：${reason}${inspection ? '' : '；未自动重试或切换模型'}`);
   }
   let body: unknown;
   try {
     body = await response.json();
   } catch (error) {
     if (error instanceof Error && ['AbortError', 'TimeoutError'].includes(error.name)) throw error;
-    throw new Error(`任务分析模型返回了无效 JSON：HTTP ${response.status}`);
+    if (artworkNetworkFailure(error)) throw error;
+    throw visionHttpError(response, `任务分析模型返回了无效 JSON：HTTP ${response.status}`);
   }
-  if (!response.ok) throw new Error(formatArkErrorMessage('任务分析模型', response.status, body));
+  if (!response.ok) throw visionHttpError(response, formatArkErrorMessage('任务分析模型', response.status, body));
   return body;
 }
 
@@ -101,12 +112,9 @@ function responseContent(body: unknown) {
 async function analysisImageUrl(sourceUrl: string) {
   if (productionFileId(sourceUrl)) {
     const bytes = await readProductionFile(sourceUrl);
-    if (!bytes.length || bytes.length > MAX_ANALYSIS_IMAGE_BYTES) throw new Error('任务分析素材大小必须为 1B–8MB');
-    const metadata = await (await import('sharp')).default(bytes).metadata();
-    if (!['png', 'jpeg', 'webp'].includes(metadata.format ?? '')) throw new Error('任务分析素材格式不支持');
-    return `data:image/${metadata.format};base64,${bytes.toString('base64')}`;
+    return (await boundedModelImage(bytes)).dataUrl;
   }
-  if (/^data:image\/(?:png|jpeg|webp);base64,/u.test(sourceUrl)) return sourceUrl;
+  if (/^data:image\/(?:png|jpeg|webp);base64,/u.test(sourceUrl)) return (await boundedModelImage(Buffer.from(sourceUrl.split(',')[1], 'base64'))).dataUrl;
   if (/^https:\/\//u.test(sourceUrl)) return sourceUrl;
   if (!sourceUrl.startsWith('/')) {
     throw new Error(`任务分析素材地址必须是 HTTPS、图片 Data URL 或 public 绝对路径，实际为 ${sourceUrl}`);
@@ -119,13 +127,10 @@ async function analysisImageUrl(sourceUrl: string) {
   const mimeType = IMAGE_MIME_BY_EXTENSION[extname(filePath).toLowerCase()];
   if (!mimeType) throw new Error(`任务分析素材格式不支持：${sourceUrl}`);
   const bytes = await readFile(filePath);
-  if (bytes.length < 1 || bytes.length > MAX_ANALYSIS_IMAGE_BYTES) {
-    throw new Error(`任务分析素材大小必须为 1B–8MB，${sourceUrl} 实际为 ${bytes.length}B`);
-  }
-  return `data:${mimeType};base64,${bytes.toString('base64')}`;
+  return (await boundedModelImage(bytes)).dataUrl;
 }
 
-type AnalysisOptions = { trace?: WpsAnalysisTrace; signal?: AbortSignal; timeoutMs?: number };
+type AnalysisOptions = { trace?: WpsAnalysisTrace; signal?: AbortSignal; timeoutMs?: number; inspection?: boolean };
 async function measure<T>(options: AnalysisOptions, stage: WpsAnalysisStage, work: () => Promise<T> | T): Promise<T> {
   options.signal?.throwIfAborted();
   const result = options.trace ? await options.trace.measure(stage, work) : await work();
@@ -178,12 +183,20 @@ async function requestVisionModel(records: SourceTaskRecord[], config: ReturnTyp
 }
 
 /** Share the configured analysis provider, credentials and error handling with focused visual inspections. */
-export async function inspectArtworkReferenceImage(dataUrl: string, prompt: string, options: { label?: string; timeoutMs?: number } = {}) {
+export async function inspectArtworkReferenceImage(input: string | ReadonlyArray<{ label: string; dataUrl: string }>, prompt: string, options: { label?: string; timeoutMs?: number } = {}): Promise<Awaited<ReturnType<typeof requestVisionContent>> & { inspectionAttempts?: number }> {
   const config = analysisConfiguration();
-  return analysisQueue.run(randomUUID(), () => requestVisionContent([
-    { type: 'text', text: prompt },
-    { type: 'image_url', image_url: { url: dataUrl, ...(config.provider === 'cliproxy' ? { detail: 'high' } : {}) } },
-  ], options.label ?? '图案参考色', config, options.timeoutMs));
+  const images = typeof input === 'string' ? [{ label: '', dataUrl: input }] : input;
+  if (!images.length || images.length > 4) throw new Error('内容核对需要 1–4 张图片');
+  const content: Array<Record<string, unknown>> = [{ type: 'text', text: prompt }];
+  for (const image of images) {
+    if (image.label) content.push({ type: 'text', text: image.label });
+    content.push({ type: 'image_url', image_url: { url: image.dataUrl, ...(config.provider === 'cliproxy' ? { detail: 'high' } : {}) } });
+  }
+  return analysisQueue.run(randomUUID(), async () => {
+    const result = await retryArtworkInspection(timeoutMs => requestVisionContent(content,
+      options.label ?? '图案参考色', config, timeoutMs, { inspection: true }), { timeoutMs: options.timeoutMs, onRetry: reportArtworkInspectionRetry });
+    return { ...result.value, inspectionAttempts: result.attempts };
+  });
 }
 
 async function requestVisionContent(content: Array<Record<string, unknown>>, label: string, config: ReturnType<typeof analysisConfiguration>, timeoutMs = ANALYSIS_TIMEOUT_MS, options: AnalysisOptions = {}) {
@@ -212,16 +225,19 @@ async function requestVisionContent(content: Array<Record<string, unknown>>, lab
   } catch (error) {
     options.signal?.throwIfAborted();
     if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
-      throw new Error(`任务分析模型处理超时（${timeoutMs / 1000} 秒）：${label}；该行请求失败不会影响其他行，可重新分析`);
+      throw Object.assign(new Error(options.inspection ? `内容核对请求超时（${Math.ceil(timeoutMs / 1000)} 秒），未取得核对结论`
+        : `任务分析模型处理超时（${Math.ceil(timeoutMs / 1000)} 秒）：${label}；该行请求失败不会影响其他行，可重新分析`, { cause: error }), { name: 'TimeoutError' });
     }
-    if (provider === 'cliproxy') throw new Error('需求解析（CLIProxyAPI）连接中断，结果未确认；未自动重试或切换模型');
+    if (provider === 'cliproxy') throw new Error(options.inspection ? '内容核对（CLIProxyAPI）连接中断，未取得核对结论' : '需求解析（CLIProxyAPI）连接中断，结果未确认；未自动重试或切换模型', { cause: error });
     throw error;
   }
   let body: unknown;
-  try { body = await measure(options, 'response', () => responseBody(response, provider)); }
+  try { body = await measure(options, 'response', () => responseBody(response, provider, options.inspection)); }
   catch (error) {
     options.signal?.throwIfAborted();
-    if (error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name)) throw new Error(`任务分析模型返回内容超时（${timeoutMs / 1000} 秒）：${label}；请重试解析`);
+    if (error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name)) throw Object.assign(new Error(options.inspection
+      ? `内容核对返回超时（${Math.ceil(timeoutMs / 1000)} 秒），未取得完整结论`
+      : `任务分析模型返回内容超时（${Math.ceil(timeoutMs / 1000)} 秒）：${label}；请重试解析`, { cause: error }), { name: 'TimeoutError' });
     throw error;
   }
   return {

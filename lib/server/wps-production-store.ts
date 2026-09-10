@@ -1,4 +1,5 @@
 import { usesProductionCloud } from './production-storage';
+import { assertSharedArtworks } from '@/lib/shared-artwork';
 import { printSizeRequestSchema } from '@/lib/print-size-request';
 import { readCloudProductionState, commitCloudProductionState, completedProductionSave } from './production-cloud-state';
 import { assertArtworkDraft } from '@/lib/artwork-editor';
@@ -165,6 +166,12 @@ export function assertWpsProductionState(value: unknown): asserts value is WpsPr
     if (versionIds.has(version.id as string)) throw new Error(`生产状态包含重复效果图版本：${version.id}`);
     versionIds.add(version.id as string);
   });
+  assertSharedArtworks(value as WpsProductionState);
+  for (const group of (value as WpsProductionState).sharedArtworks ?? []) for (const version of group.versions) {
+    if (version.artwork.draft) assertArtworkDraft(version.artwork.draft);
+    stringValue(version.artwork.url, 'sharedArtwork.url');
+    stringValue(version.artwork.validation?.sha256, 'sharedArtwork.sha256');
+  }
 }
 
 async function readStateFile() {

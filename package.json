@@ -24,7 +24,10 @@
     "test:production-storage": "tsx scripts/production-storage-integration.ts",
     "production:dev": "node scripts/start-production-local.mjs",
     "artwork:worker": "tsx scripts/artwork-worker.ts",
-    "test:artwork-jobs": "tsx scripts/artwork-jobs-integration.ts"
+    "test:artwork-jobs": "tsx scripts/artwork-jobs-integration.ts",
+    "test:shared-artwork": "tsx scripts/shared-artwork-integration.ts",
+    "test:reliability": "tsx scripts/production-reliability-integration.ts",
+    "production:migrate-cutout": "tsx scripts/migrate-cutout-images.ts"
   },
   "dependencies": {
     "@napi-rs/canvas": "1.0.9",

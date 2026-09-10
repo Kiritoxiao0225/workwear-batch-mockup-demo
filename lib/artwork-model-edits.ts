@@ -16,14 +16,18 @@ export function artworkModelEdits(input: { instruction: string; exactText: strin
   return requiresModel ? edits : [];
 }
 
-export type ArtworkEditCheck = { requirement: string; status: 'passed' | 'failed' | 'uncertain'; evidence: string };
+export const ARTWORK_EDIT_INSPECTION_VERSION = 'artwork-edit-inspection-v2';
+export const ARTWORK_TEXT_INSPECTION_VERSION = 'artwork-text-inspection-v2';
+export type ArtworkEditCheck = { requirement: string; status: 'passed' | 'failed' | 'uncertain'; evidence: string;
+  sourceObservation?: string | null; resultObservation?: string | null };
+type ArtworkInspectionReceipt = { inspectionVersion?: string; promptSha256?: string; inputSha256?: string[]; requestAttempts?: number };
 export type ArtworkEditVerification = {
   version: 'artwork-edit-check-v1';
   sourceSha256: string;
   outputSha256: string;
   model: string;
   checks: ArtworkEditCheck[];
-};
+} & ArtworkInspectionReceipt;
 
 export type ArtworkTextComponentVerification = {
   version: 'artwork-text-component-v1';
@@ -33,4 +37,4 @@ export type ArtworkTextComponentVerification = {
   model: string;
   status: 'passed' | 'failed' | 'uncertain';
   evidence: string;
-};
+} & ArtworkInspectionReceipt;

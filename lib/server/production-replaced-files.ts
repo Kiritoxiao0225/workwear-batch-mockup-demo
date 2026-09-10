@@ -5,8 +5,10 @@ import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './
 import { catalogObjectPrefix, catalogStorageConfig } from './catalog-files';
 import { catalogOssBucketControl, catalogOssObjects } from './catalog-oss';
 
-const unreferenced = `NOT EXISTS(SELECT 1 FROM production_file_refs r WHERE r.file_id=f.id)
+const unreferenced = `f.status='ready' AND NOT EXISTS(SELECT 1 FROM production_file_refs r WHERE r.file_id=f.id)
   AND NOT EXISTS(SELECT 1 FROM artwork_job_files j WHERE j.file_id=f.id)
+  AND NOT EXISTS(SELECT 1 FROM artwork_cutout_files c WHERE c.file_id=f.id)
+  AND NOT EXISTS(SELECT 1 FROM wps_analysis_files a WHERE a.file_id=f.id)
   AND NOT EXISTS(SELECT 1 FROM production_renders r WHERE r.file_id=f.id)
   AND NOT EXISTS(SELECT 1 FROM garment_asset_versions v WHERE v.file_id=f.id OR v.thumbnail_file_id=f.id)
   AND NOT EXISTS(SELECT 1 FROM asset_sources s WHERE s.file_id=f.id)

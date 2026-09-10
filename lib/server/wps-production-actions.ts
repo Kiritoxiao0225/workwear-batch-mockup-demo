@@ -1,4 +1,10 @@
+import { conditionalJson } from './conditional-json';
+import { saveWpsAnalysis } from './wps-analysis-save';
 import { completedProductionSave } from '@/lib/server/production-cloud-state';
+import { bindSharedArtwork, detachSharedArtwork, latestSharedArtwork, sharedArtworkForUnit, sharedArtworkFixed } from '@/lib/shared-artwork';
+import { prepareSharedArtwork, commitSharedArtwork, existingSharedAttachment, type ArtworkAttachment } from './shared-artwork';
+import { assertProductionSharedSnapshot } from '@/lib/production-artwork-snapshot';
+import { readArtworkJobs } from './artwork-job-store';
 import { artworkProcessingRoute } from '@/lib/task-review-analysis';
 import { fileSha256 } from '@/lib/server/catalog-files';
 import { productionUser, usesProductionCloud, persistProductionReferences } from '@/lib/server/production-storage';
@@ -30,6 +36,7 @@ import {
   confirmProductionPlan,
   failVersionComposition,
   importTaskReviews,
+  normalizeProductionTextPlan,
   markVersionComposing,
   returnProductionUnit,
   setProductionBudget,
@@ -39,7 +46,6 @@ import {
   placeProductionArtwork,
   updateProductionPlan,
   updateProductionAttempt,
-  upsertTaskReviews,
   type ProductionAttempt,
   type ProductionPlanPatch,
 } from '@/lib/wps-production';
@@ -161,9 +167,7 @@ function errorResponse(error: unknown) {
 export async function GET(request?: Request) {
   try {
     await productionUser(request);
-    return NextResponse.json(await withProductionPreviewGeometry(await readWpsProductionState()), {
-      headers: { 'Cache-Control': 'no-store' },
-    });
+    return conditionalJson(await withProductionPreviewGeometry(await readWpsProductionState()), request);
   } catch (error) {
     if (error instanceof CatalogHttpError) return errorResponse(error);
     const message = error instanceof Error ? error.message : String(error);
@@ -188,16 +192,55 @@ export async function POST(request: Request) {
       if (guard) guard(state);
       else if (state.revision !== revision) throw new ProductionRevisionConflictError(revision, state.revision);
     };
+    if (['linkSharedArtwork', 'detachSharedArtwork', 'branchSharedArtwork', 'applySharedArtwork', 'confirmSharedArtwork'].includes(action)) {
+      const unitId = textValue(body.unitId, 'unitId');
+      const current = await readWpsProductionState();
+      const targetIds = body.targetUnitIds === undefined ? [] : stringArray(body.targetUnitIds, 'targetUnitIds');
+      assertProductionSharedSnapshot(current, unitId, textValue(body.expectedSharedSnapshot, 'expectedSharedSnapshot'), targetIds);
+      assertCurrent(current);
+      const group = sharedArtworkForUnit(current, unitId);
+      const affected = new Set([unitId, ...targetIds, ...(group?.unitIds ?? [])]);
+      if (current.units.some(unit => affected.has(unit.id) && unit.attempts.some(attempt => ['submitted', 'processing', 'unknownSubmission'].includes(attempt.status)))) throw new ProductionTransitionError('共用图稿仍在制作，请等待当前任务结束');
+      const jobs = await readArtworkJobs();
+      if (jobs.jobs.some(job => affected.has(job.unitId) && ['queued', 'running', 'unknown'].includes(job.status))) throw new ProductionTransitionError('共用图稿仍在制作，请等待当前任务结束');
+      if (action === 'detachSharedArtwork' || action === 'branchSharedArtwork') return NextResponse.json(await mutate(revision,
+        state => detachSharedArtwork(state, unitId, action === 'branchSharedArtwork' ? randomUUID() : undefined)));
+      if (action === 'confirmSharedArtwork') return NextResponse.json(await mutate(revision, state => {
+        const shared = sharedArtworkForUnit(state, unitId);
+        if (!shared) throw new Error('找不到共用图稿');
+        let next = state;
+        for (const id of shared.unitIds) {
+          const unit = next.units.find(unit => unit.id === id)!;
+          if (!sharedArtworkFixed(state, id) && unit.artwork && unit.sharedArtworkVersion === latestSharedArtwork(shared)?.number)
+            next = confirmProductionArtwork(next, id, textValue(body.actor, 'actor'));
+        }
+        return { ...next, revision: state.revision + 1 };
+      }));
+      if (action === 'linkSharedArtwork') {
+        if (group && group.sourceUnitId !== unitId) throw new Error('请从共用图稿入口添加应用');
+        const linked = bindSharedArtwork(current, unitId, targetIds, randomUUID());
+        const existingVersion = group && latestSharedArtwork(group);
+        const source = existingVersion?.artwork ?? current.units.find(unit => unit.id === unitId)?.artwork;
+        const prepared = source ? await prepareSharedArtwork(linked, unitId, existingSharedAttachment(source), {
+          preserveExisting: true, ...(existingVersion ? { applyUnitIds: targetIds } : {}),
+        }) : null;
+        return NextResponse.json(await mutate(revision, state => {
+          const next = bindSharedArtwork(state, unitId, targetIds, linked.units.find(unit => unit.id === unitId)!.sharedArtworkId!);
+          return { ...(prepared ? commitSharedArtwork(next, prepared) : next), revision: state.revision + 1 };
+        }));
+      }
+      if (!group || !latestSharedArtwork(group)) throw new Error('共用图稿尚未制作');
+      if (sharedArtworkFixed(current, unitId)) throw new Error('此服装方案已定稿，请先退回后再更新图案');
+      const prepared = await prepareSharedArtwork(current, group.sourceUnitId, existingSharedAttachment(latestSharedArtwork(group)!.artwork), { applyUnitId: unitId });
+      return NextResponse.json(await mutate(revision, state => commitSharedArtwork(state, prepared!)));
+    }
+    if (action === 'normalizeTextPlan') return NextResponse.json(await mutate(revision, state => normalizeProductionTextPlan(state, textValue(body.unitId, 'unitId'))));
     if (action === 'importReviews') {
       const prepared = await prepareCatalogReviews(reviewsValue(body.reviews));
       const reviews = usesProductionCloud() ? await persistProductionReferences(prepared) : prepared;
       return NextResponse.json(await mutate(revision, (state) => importTaskReviews(state, reviews)));
     }
-    if (action === 'upsertReviews') {
-      const prepared = await prepareCatalogReviews(reviewsValue(body.reviews));
-      const reviews = usesProductionCloud() ? await persistProductionReferences(prepared) : prepared;
-      return NextResponse.json(await mutate(revision, (state) => upsertTaskReviews(state, reviews)));
-    }
+    if (action === 'upsertReviews') return NextResponse.json(await saveWpsAnalysis(reviewsValue(body.reviews), body.targetSnapshots as Record<string, string>));
     if (action === 'updatePlan') {
       const unitId = textValue(body.unitId, 'unitId');
       return NextResponse.json(await mutate(revision, async state => {
@@ -315,18 +358,24 @@ export async function POST(request: Request) {
       if (receipt && await completedProductionSave(receipt)) return NextResponse.json(await readWpsProductionState());
       const current = await readWpsProductionState();
       const snapshot = body.expectedUnitSnapshot === undefined ? null : z.string().min(1).max(100_000).parse(body.expectedUnitSnapshot);
-      const assertUnchangedTarget = snapshot === null ? undefined : (state: typeof current) => assertProductionArtworkSnapshot(state, unitId, snapshot);
+      const shared = sharedArtworkForUnit(current, unitId);
+      const sharedSnapshot = shared ? textValue(body.expectedSharedSnapshot, 'expectedSharedSnapshot') : null;
+      const assertUnchangedTarget = snapshot === null && !sharedSnapshot ? undefined : (state: typeof current) => {
+        if (snapshot) assertProductionArtworkSnapshot(state, unitId, snapshot);
+        if (sharedSnapshot) assertProductionSharedSnapshot(state, unitId, sharedSnapshot);
+      };
       if (assertUnchangedTarget) assertUnchangedTarget(current);
       else assertCurrent(current);
       const unit = current.units.find(unit => unit.id === unitId);
       if (!unit) throw new Error(`找不到定制单元：${unitId}`);
       const service = serviceValue(body.service);
       if (service !== 'manual-upload' && service !== artworkProcessingRoute(unit)) throw new ProductionTransitionError(`制作服务 ${service} 与当前路线 ${unit.route} 不一致`);
-      if (action === 'saveArtworkDraft' && (!unit.artwork || !body.draft || service !== 'manual-upload')) {
+      if (action === 'saveArtworkDraft' && (!(unit.artwork || shared && latestSharedArtwork(shared)) || !body.draft || service !== 'manual-upload')) {
         throw new ProductionTransitionError('保存编辑需要已有图案及完整图层草稿');
       }
-      const { validation, draft } = await validateProductionArtworkDraft(url, body.draft, unit.artwork?.validation, unit.artwork?.draft);
-      return NextResponse.json(await mutate(revision, (state) => attachProductionArtwork(state, unitId, {
+      const previousArtwork = shared && latestSharedArtwork(shared)?.artwork || unit.artwork;
+      const { validation, draft } = await validateProductionArtworkDraft(url, body.draft, previousArtwork?.validation, previousArtwork?.draft);
+      const attachment: ArtworkAttachment = {
         url,
         name: textValue(body.name, 'name'),
         validation,
@@ -340,7 +389,11 @@ export async function POST(request: Request) {
         providerTaskId: optionalText(body.providerTaskId, 'providerTaskId'),
         estimatedCostCny: body.estimatedCostCny === undefined ? 0 : numberValue(body.estimatedCostCny, 'estimatedCostCny'),
         actualCostCny: body.actualCostCny === undefined || body.actualCostCny === null ? null : numberValue(body.actualCostCny, 'actualCostCny'),
-      }, randomUUID()), assertUnchangedTarget, receipt));
+      };
+      const attemptId = randomUUID();
+      const preparedShared = await prepareSharedArtwork(current, unitId, attachment, { attemptId });
+      return NextResponse.json(await mutate(revision, state => preparedShared ? commitSharedArtwork(state, preparedShared)
+        : attachProductionArtwork(state, unitId, attachment, attemptId), assertUnchangedTarget, receipt));
     }
     if (action === 'checkArtworkQuality') {
       const unitId = textValue(body.unitId, 'unitId');
@@ -406,7 +459,7 @@ export async function POST(request: Request) {
       if (task.status === 'completed') {
         const saved = await downloadGptImage2Result(task.results[0], unitId);
         const { validation } = await validateProductionArtworkDraft(saved.url);
-        const completed = await mutate(revision, (state) => attachProductionArtwork(state, unitId, {
+        const attachment: ArtworkAttachment = {
           url: saved.url,
           name: saved.name,
           validation,
@@ -414,7 +467,9 @@ export async function POST(request: Request) {
           requestSummary: attempt.requestSummary,
           providerTaskId: attempt.providerTaskId,
           actualCostCny: attempt.actualCostCny,
-        }, attemptId));
+        };
+        const prepared = await prepareSharedArtwork(current, unitId, attachment, { attemptId });
+        const completed = await mutate(revision, state => prepared ? commitSharedArtwork(state, prepared) : attachProductionArtwork(state, unitId, attachment, attemptId));
         return NextResponse.json({ state: completed, validation });
       }
       const status = task.status === 'pending' ? 'submitted' : task.status;

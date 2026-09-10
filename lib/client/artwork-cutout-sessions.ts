@@ -1,9 +1,9 @@
 import type { ArtworkCutoutResult } from '@/lib/artwork-cutout';
 import type { ProductionUnit, WpsProductionState } from '@/lib/wps-production';
-import { assertProductionArtworkSnapshot } from '@/lib/production-artwork-snapshot';
+import { assertProductionArtworkSnapshot, assertProductionSharedSnapshot, productionSharedSnapshot } from '@/lib/production-artwork-snapshot';
 
-export type CutoutSession = { result: ArtworkCutoutResult; snapshot: string; purpose?: 'recut' | 'generated' | 'component'; stale?: boolean };
-type Bookmark = Pick<CutoutSession, 'snapshot' | 'purpose'> & { jobKey: string; batchId: string };
+export type CutoutSession = { result: ArtworkCutoutResult; snapshot: string; sharedSnapshot?: string; purpose?: 'recut' | 'generated' | 'component'; stale?: boolean };
+type Bookmark = Pick<CutoutSession, 'snapshot' | 'sharedSnapshot' | 'purpose'> & { jobKey: string; batchId: string };
 type Storage = Pick<globalThis.Storage, 'getItem' | 'setItem'>;
 export const CUTOUT_BOOKMARK_KEY = 'wps-artwork-cutouts-v1';
 
@@ -17,6 +17,7 @@ export function cutoutSessionForState(state: WpsProductionState | null, unitId: 
   if (!state || artworkUsedCutout(state.units.find(unit => unit.id === unitId), session.result.receipt.jobKey)) return null;
   let stale = false;
   try { assertProductionArtworkSnapshot(state, unitId, session.snapshot); } catch { stale = true; }
+  try { if (session.sharedSnapshot) assertProductionSharedSnapshot(state, unitId, session.sharedSnapshot); } catch { stale = true; }
   return session.stale === stale ? session : { ...session, stale };
 }
 
@@ -74,12 +75,13 @@ export class ArtworkCutoutSessions {
     }
     if (Object.keys(next).length !== Object.keys(this.sessions).length || Object.entries(next).some(([id, session]) => this.sessions[id] !== session)) this.publish(next);
   }
-  remember(unitId: string, result: ArtworkCutoutResult, snapshot: string, purpose: CutoutSession['purpose'] = 'recut') {
+  remember(unitId: string, result: ArtworkCutoutResult, snapshot: string, purpose: CutoutSession['purpose'] = 'recut', sharedSnapshot?: string) {
     if (!this.state) return false;
-    const session = cutoutSessionForState(this.state, unitId, { result, snapshot, purpose });
+    sharedSnapshot ??= this.sessions[unitId]?.sharedSnapshot ?? (this.state.units.find(unit => unit.id === unitId)?.sharedArtworkId ? productionSharedSnapshot(this.state, unitId) : undefined);
+    const session = cutoutSessionForState(this.state, unitId, { result, snapshot, purpose, sharedSnapshot });
     if (!session) { this.discard(unitId); return false; }
     this.epochs.set(unitId, (this.epochs.get(unitId) ?? 0) + 1);
-    this.save({ ...this.bookmarks(), [unitId]: { jobKey: result.receipt.jobKey, snapshot, purpose, batchId: this.state.batchId } });
+    this.save({ ...this.bookmarks(), [unitId]: { jobKey: result.receipt.jobKey, snapshot, sharedSnapshot, purpose, batchId: this.state.batchId } });
     this.publish({ ...this.sessions, [unitId]: session });
     return true;
   }
@@ -96,7 +98,7 @@ export class ArtworkCutoutSessions {
         const current = this.bookmarks()[unitId];
         if (cancelled() || this.state?.batchId !== batchId || this.epochs.get(unitId) !== epoch
           || current?.jobKey !== bookmark.jobKey || current?.snapshot !== bookmark.snapshot) return;
-        this.remember(unitId, result, bookmark.snapshot, bookmark.purpose);
+        this.remember(unitId, result, bookmark.snapshot, bookmark.purpose, bookmark.sharedSnapshot);
       } catch { /* Keep the original bookmark for a later signed-in visit. */ }
     }));
   }

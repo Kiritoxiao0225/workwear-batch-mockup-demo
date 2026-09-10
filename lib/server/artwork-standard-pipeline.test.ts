@@ -126,9 +126,9 @@ describe('executed artwork standard', () => {
           ? 'SOURCE 是红色描边，RESULT 的描边仍然是红色。' : '无法确定 RESULT 的描边是否已改成深蓝色。' })) };
     });
     const error = await prepareStandardArtwork({ ...t.request, instruction: '红色描边改为深蓝色，深蓝色底形调浅', generationPrompt: '编辑图1' }, t.services).catch(error => error);
-    expect(error.candidate).toMatchObject({ stage: 'edit-review', url: url(await sample(true)) });
+    expect(error.candidate).toMatchObject({ stage: 'edit-review', url: url(await sample(true)), retryable: status === 'unavailable' });
     expect(error.candidate.reason).toContain(status === 'failed' ? '有地方没按要求改好'
-      : status === 'uncertain' ? '还不能确定是否已按要求改好' : '这次没能检查修改结果');
+      : status === 'uncertain' ? '还不能确定是否已按要求改好' : '未取得检查结论');
     expect(error.candidate.reason).toContain('还没保存成品');
     expect(error.candidate.reason).not.toMatch(/SOURCE|RESULT|inspection timeout|未点名修改|候选/u);
     if (status !== 'unavailable') expect(error.candidate.reason.match(/描边/gu)).toHaveLength(status === 'failed' ? 2 : 1);
@@ -509,6 +509,47 @@ function verifyReconstruction(t: Awaited<ReturnType<typeof setup>>, status: 'pas
   }));
 }
 describe('reconstruction of artwork photographed on objects', () => {
+  it('flattens only explicit whole-design ink before verification and binds the saved result to those pixels', async () => {
+    const t = await setup();
+    const candidate = await sharp(Buffer.from('<svg width="1200" height="900"><defs><linearGradient id="y"><stop stop-color="#efb90e"/><stop offset="1" stop-color="#f4c322"/></linearGradient></defs><path fill="url(#y)" fill-rule="evenodd" d="M100 100h900v600H100z M300 300h300v200H300z"/><rect x="1050" y="100" width="20" height="200" fill="#eeb810"/></svg>')).png().toBuffer();
+    t.services.cutout = vi.fn(async () => candidate);
+    verifyReconstruction(t);
+    const result = await prepareStandardArtwork({ ...t.request, sourceAssessment: objectAssessment,
+      instruction: '仅提取原图案', layoutNote: '整组使用统一金黄色', generationPrompt: '完整保留标志和两行字，整组图案维持统一金黄色。' }, t.services);
+    const output = Buffer.from(result.draft.graphic.sourceUrl.split(',')[1], 'base64');
+    const before = await sharp(candidate).ensureAlpha().raw().toBuffer(), after = await sharp(output).ensureAlpha().raw().toBuffer();
+    const colors = new Set<string>();
+    for (let i = 0; i < before.length; i += 4) {
+      if (before[i + 3] !== after[i + 3]) throw new Error(`Alpha changed at pixel ${i / 4}`);
+      if (after[i + 3]) colors.add(after.subarray(i, i + 3).toString('hex'));
+    }
+    expect(colors.size).toBe(1);
+    expect(t.services.verifyEdits).toHaveBeenCalledWith(t.source, output, expect.arrayContaining([expect.stringContaining('整组统一颜色')]));
+    expect(result.draft.preprocessing.routingReport?.graphic.sha256).toBe(artworkSha256(output));
+    expect(t.services.saveGeneration).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      solidColor: expect.objectContaining({ inputSha256: artworkSha256(candidate), outputSha256: artworkSha256(output) }),
+    }));
+  });
+  it('reuses the historical model prompt on resume and reports it without claiming the new template generated the image', async () => {
+    const t = await setup();
+    verifyReconstruction(t);
+    const originalPrompt = '历史生图提示词：从图1还原独立图案';
+    t.services.resumeGenerationPrompt = vi.fn(async () => originalPrompt);
+    const result = await prepareStandardArtwork({ ...t.request, sourceAssessment: objectAssessment }, t.services);
+    expect(t.generate).toHaveBeenCalledWith(originalPrompt, [url(t.source)], { background: 'auto' });
+    expect(t.services.saveGeneration).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ prompt: originalPrompt, promptHash: artworkPromptHash(originalPrompt) }));
+    expect(result.draft.preprocessing.routingReport?.promptHash).toBe(artworkPromptHash(originalPrompt));
+  });
+  it('returns a concrete network reason with the retained candidate and performs no automatic regeneration', async () => {
+    const t = await setup();
+    t.services.verifyEdits = vi.fn(async () => { throw new TypeError('fetch failed', { cause: Object.assign(new Error('private host'), { code: 'ECONNRESET' }) }); });
+    const error = await prepareStandardArtwork({ ...t.request, sourceAssessment: objectAssessment }, t.services).catch(error => error);
+    expect(error.candidate.reason).toContain('连接被中途断开');
+    expect(error.candidate.reason).toContain('复用已生成图片继续核对');
+    expect(error.candidate.reason).not.toContain('private');
+    expect(t.generate).toHaveBeenCalledOnce();
+    expect(t.services.saveReport).not.toHaveBeenCalled();
+  });
   it('inspects legacy source pixels, generates the target first, then cuts out only the generated artwork', async () => {
     const t = await setup();
     const generated = await sharp(t.source).resize(1000, 750).png().toBuffer();
@@ -525,7 +566,7 @@ describe('reconstruction of artwork photographed on objects', () => {
     expect(vi.mocked(t.services.cutout).mock.invocationCallOrder[0]).toBeGreaterThan(t.generate.mock.invocationCallOrder[0]);
     const report = result.draft.preprocessing.routingReport!;
     expect(report).toMatchObject({ executedMethod: 'redraw', graphicMethod: 'redraw', repair: null, facts: { sourceAssessment: objectAssessment }, redraw: { status: 'completed' } });
-    expect(report.operations.join(' ')).toContain('未套用纯色净化');
+    expect(report.operations.join(' ')).toContain('保留原设计配色');
     expect(t.services.verifyEdits).toHaveBeenCalledWith(t.source, expect.any(Buffer), expect.arrayContaining([expect.stringContaining('去除载体不算图案内容丢失')]));
     expect(result.preprocessing.modelLayoutPreserved).toBe(true);
   });

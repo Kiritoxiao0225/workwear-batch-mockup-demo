@@ -633,6 +633,9 @@
 
 ### `API-006` 批量效果图完整素材制作
 
+- 2026-09-10 文字与细节核对稳定性：保持既有服务、模型及推理档位。逐项核对改为 SOURCE/RESULT 两张独立高精度输入，完整保留画幅与比例、最长边 2048px，小图不放大；仅制作只读预览，实际候选像素不变。每项分别记录原图和结果的可见观察，再判断文字、结构、局部颜色及保真；观察缺失或低置信保持 uncertain，不凭整体相似放行，也不重复请求直到通过。独立文字组件不向模型提供目标答案，先抄录实际文字，由程序按 NFC/去空白比较，大小写、标点与数字保持精确；含 Alpha 的组件提供深浅背景预览并只统计一次。新回执兼容旧数据，增加 inspectionVersion、提示词/输入图 hash、请求次数与观察；核对步骤键带规则版本，升级后不复用旧规则结论，原生图/抠图缓存不变。回归覆盖输入细节、真假改字、缺少观察、逐项漏项、同请求断线重试与隔离数据库恢复；实测仅用于小样本验证，不等于业务准确率保证。关联 `lib/server/artwork-content-inspection.ts`、`lib/server/ark-task-review.ts`、`lib/server/artwork-job-services.ts` 和 `output/inspection-stability-20260910/`。普通 AI 需求疑问仍按既有提醒规则处理，不新增制作禁用条件。
+- 2026-09-10 核对服务自动恢复：素材判断、文字组件、改图逐项与水印检查共用有界请求恢复，单次最多 120 秒，含退避的请求阶段总计最多 180 秒、最多 3 次（排队等待另计）。仅超时、临时连接故障和 HTTP 408/429/500/502/503/504 重试同一服务、模型及输入；遵守 Retry-After，权限/配置/证书错误、格式异常及有效的 failed/uncertain 结论不自动重试。不涉及生图或抠图重提。后台步骤在恢复期间保持 running，页面显示恢复次数；每次恢复先校验任务租约，已完成核对可按步骤键复用，逐项回执记录 requestAttempts。连续失败后仍保留图片并允许继续原任务；不能将服务不可用当作已核对通过。关联 `lib/server/artwork-inspection-retry.ts`、`lib/server/ark-task-review.ts`、`lib/server/artwork-job-runtime.ts`；恢复次数与网络原因覆盖单元测试及隔离 PostgreSQL 作业集成测试。
+- 2026-09-10 重建配色与核对恢复：B 实物图案重建保留当前单元 instruction、layoutNote 和 generationPrompt；C 的后续文字组件不提前送进主体重建。只有明确要求整组统一单色且没有保留渐变/多色等冲突时，在生成后的抠图上统一前景 RGB，逐像素保留 Alpha、轮廓和镂空；未指定色号时取该图实心前景的 RGB 中位值，指定 HEX 则精确使用。再对处理后的实际 PNG 核对内容与色相，记录填色前后 SHA、实际颜色和取色依据。核对允许 120 秒，连接错误、超时、限流及结果格式异常分别显示；不合格和服务失败都保留图片，服务失败通过原后台任务继续。恢复时校验原生图提示词、素材与步骤键，跨模板升级仍复用已付费原图；无法匹配则停止，不重复提交。关联 `lib/artwork-solid-color.ts`、`lib/server/artwork-solid-color.ts`、`lib/server/artwork-job-runtime.ts` 和 `scripts/artwork-jobs-integration.ts`。
 - 2026-09-10 局部改色与水印核对：`artworkModelEdits` 将原图描边、底形、明暗或多个图形区域的分别改色交给现有整图模型，完整传递制作要求，先编辑再抠图；普通加字、单一整体换色及参考取色继续原流程。仅此类编辑在抠图后逐项核对修改与保留内容，回执绑定前后 PNG SHA；漏改、判断不清或核对服务失败保留实际候选，不保存成品、不自动重生。中断后尚未完成改色核对的抠图结果只能作为组件恢复，不能绕过核对直接选用。`artwork-cutout-v4` 仅在像素检查发现缺失时识别水印：高置信、与主体分离、可读出的已知生成平台标记才豁免；角落位置、小字、普通品牌与署名不构成豁免依据。疑点仍不明时保留失败返回图，页面并排显示原图、返回图与疑点框。真实 CX8099NS 旧返回图验证：水印被正确豁免，两项未执行改色均被指出；未重生图、未重抠、未写生产订单，证据 `output/artwork-edit-fix-20260910/real-image-inspection.json`。
 - 2026-09-08 分流与贴图尺寸约束：保持 A/B/C/D、生成提示词、颜色和抠图像素流程独立。`print-size-request.ts` 从 WPS 原文按位置读取指定宽/高，记录数值、原文与单位推定；衣身继续按 55 cm 展示基准，透明边距不计入图案尺寸。新任务导入和位置保存绑定要求，预览与导出共用 `printSizeCm`；旧任务只在打开位置编辑器时产生未保存建议，不在 GET 中重写。服务端重新从原文绑定，旧客户端不能用过期宽度覆盖指定高度。位置编辑默认沿用客户尺寸、禁用缩放；用户明确勾选自定义尺寸才覆盖，取消后恢复。缺单位或多条冲突在贴图时提示核对，不影响先制作透明图。只改位置尺寸保持 artwork SHA、配方、颜色、文本、制作次数及 WPS 原文；失效和更新的仅位置确认/客户效果图。恢复默认位置保留客户尺寸。截图样例 `BdxM` 应为正面高35cm、后脖宽8cm（同句推定），而非默认 8×4 框。验收包含请求绑定、人工覆盖、两面比例和保存不重制图案；证据 `output/routing-placement-contract-20260908/`。
 - 2026-09-08 美图分流接入（覆盖下方较早的 MediaKit 抠图实现）：第四列“图案制作”的处理方式下增加 `cutoutMode=auto|standard|meitu`，默认自动；只切换下次抠图方式不改变既有成品或配方指纹。保留当前增强/重绘能力，背景处理统一通过 `artwork-cutout.ts`；图号取材范围为整图时沿用原有保留背景语义。
@@ -657,6 +660,9 @@
 - Tests: `TEST-006`
 
 ### `API-007` WPS 生产状态与动作接口
+
+- 2026-09-10 共用图稿（本地实现）：`linkSharedArtwork` 选择同单源稿并关联应用，`applySharedArtwork` 应用已有版本，`branchSharedArtwork` 派生独立配色/版式，`detachSharedArtwork` 保留当前稿并脱离联动，`confirmSharedArtwork` 核对当前版本的未定稿应用。快照同时冻结共用关系、成员要求与服装确认状态；组内旧编辑返回 409，无关组可继续保存。制作队列按源单元去重；入队与共用关系变更通过同一生产状态行锁排序，运行中禁止增减成员。图层保存、普通制作和 GPT Image 2 完成结果都通过同一共用发布逻辑。
+- 页面中，存在共用稿或共用建议的订单将“AI理解需求 / 图案制作”两列合为跨服装行的制作区，每份稿只展示一次；不另加顶部卡片。多份稿在同一区域分别显示，独立稿保持独立内容。应用关系及拆出操作放在各服装方案旁，位置、尺寸、效果图和交付仍按服装核对。旧单元仅显示可展开的共用建议，用户选源后关联；素材、取材范围、文字与版式不一致时拒绝直接关联。
 
 - 2026-09-08 按用户要求解除 AI 疑问的制作限制：自由文本 `ambiguities` 作为提醒展示，不再使图案制作按钮、制作服务校验、图案保存或图案确认失败。仅由旧 AI 疑问造成的历史 `route=blocked` 在执行时按 auto 处理，不在打开页面时改写记录或使既有配方/成品失效。`方案核对：` 标记的确定性素材/参考错误，以及实际缺少素材、空要求、处理中锁等仍按现有合同检查；服装与位置确认流程保持原有要求。
 - 2026-09-08 方案保存：`artworkPlanIssues` 共用于编辑窗口、服务端 updatePlan 和解析导入；漏绑图、跨位置参考、未知用途与取材范围丢失在保存前提示。人工内容修改校验失败不会修改指纹、图案或确认；位置独立调整仍可进行。原文和素材未变的订单若已有图案、确认、制作记录或人工修改，批量重新分析不会覆盖整条订单，即使模型重编号或漏掉一个面；改单只更新相关效果图版本，保留其他版本。错误处提供“核对素材与参考要求”入口。
@@ -725,6 +731,9 @@
 - Invariants: 必须保留 `recordId`、原始需求和附件 ID 的关系；`previewUrl` 用于人工核对，`url` 才能进入模型与批量任务；`public/task-review-originals/` 中的历史测试原图不再作为真实生产入口的兜底来源；源表状态变化不会使确认失效，原文或素材变化则隐藏旧派生结果并等待重新分析；历史持久数据保留但不显示为当前真实任务
 
 ### `STORE-006` WPS 生产状态
+
+- 共用数据：`sharedArtworks` 保存订单、制作源单元、应用成员和不可变版本（完整图层、PNG、质量证据、字色策略、派生来源）；单元用 `sharedArtworkId/sharedArtworkVersion` 记录已应用版本，`sharedArtworkError` 隔离应用失败。新解析保留显式 artwork ID；脱离标记防止后续导入重新绑定。
+- 共用发布只制作一次，自动字色按衣服生成必要的渲染版本，同一草稿配色复用同一 PNG。已有人工稿尚未采用共用版本及已定稿应用保留原稿；已定稿源单元也保留当前图案，但新制作费用仍仅记一次。位置和厘米尺寸独立保存，应用重试不新增制作或版本。文件引用扫描覆盖历史共用版本，防止仍使用的源图/图层被清理。横竖版式、追加网址用派生草稿与现有图层编辑器处理，首期不自动合并任意组件。
 
 - Type: Cloud PostgreSQL durable state（`WPS_PRODUCTION_STORAGE=cloud`）
 - Source: `garment_catalog.production_states` + `production_file_refs`；本地 `data/wps-production-state.json` 仅保留为迁移回滚副本。未启用云端的旧开发模式仍使用本地 JSON。
@@ -903,6 +912,8 @@
 
 ### `TEST-008` WPS 生产后端与真实文件合成
 
+- 共用回归：`lib/shared-artwork.test.ts`、`lib/server/shared-artwork.test.ts`、`lib/task-review-analysis-compact.test.ts` 覆盖显式两稿/八色展开、旧任务建议、单独尺寸、脱离后再导入、人工/定稿保护、配色变体、失败重试和单次计费。`npm run test:shared-artwork` 使用独立临时 PostgreSQL、真实素材库与 PNG 渲染，验证八个应用并发仅入一个任务、入队锁、工作进程幂等、追加第九色、九处编辑同步/旧保存 409，以及历史文件引用保护；禁止外部模型调用。浏览器隔离验收使用真实生产台组件、上传与动作接口，覆盖共用、图层编辑、拆出、追加应用和一次确认；中间单元格 colspan=2 / rowspan=3，只有一个图稿入口，保留三个服装方案；八色双位置场景 rowspan=16，仅两个制作入口，保留八个服装方案和八张客户图。生产发布另验。
+
 - Type: Automated contract and local integration tests
 - Coverage: 正前面/后背按同款色与版本聚合；历史 2208 状态兼容；参考字体与版式沿用共享自动图案处理路线，GPT Image 2 仅显式选择；歧义阻塞门 A；位置变化只使门 A 和成品失效，recipe 变化同时使素材和门 B 失效；全部位置通过门 B 才能合成；旧 compose 结果被拒绝；单位置退回不复制客户交付也不清空其他位置；真实 PNG Alpha 像素检查；所选底图上的 Sharp 合成、透明边缘裁剪与输出像素/SHA-256 读回；EvoLink 1K/Low/transparent/n=1 请求、提示词和异步响应严格解析均用 mock 验证，不产生付费调用
 - Commands: `npm run typecheck`, `npm run lint`, `npm test`, `npm run build`
@@ -996,7 +1007,7 @@
 - 移除页面登录弹窗和退出入口；连接失败显示实际错误与重试，不提示输入密码。
 - 保留停用账号检查、viewer 写入限制、同源校验，以及原有 revision/CAS 与历史确认人；不修改 WPS 附件保存流程。
 
-- Vercel 数据库每个实例最多 1 条连接，查询与事务计数保护并发操作；通过 Next.js `after()` 在响应后关闭空闲池，避免实例暂停后驱动 idle timer 无法执行。常驻本地进程保持原有连接复用。此调整不释放旧部署已经遗留的数据库连接。
+- Vercel 数据库每个实例最多 5 条连接（以 `catalogDatabaseConfig` 为准），查询与事务计数保护并发操作；通过 Next.js `after()` 在响应后关闭空闲池，避免实例暂停后驱动 idle timer 无法执行。常驻本地进程保持原有连接复用。此调整不释放旧部署已经遗留的数据库连接。
 
 
 ### `API-ARTWORK-JOBS` 云端图案制作与阶段调度
@@ -1008,3 +1019,24 @@
 - Rendering: `lib/server/render-artwork.ts` 使用打包的抖音字体和共享字形几何，服务器输出完整透明图及可编辑图层；保留模型排版的路线直接保存抠图结果。保存不冒充人工内容确认。
 - Tests: `scripts/artwork-jobs-integration.ts` 的重复提交、双后台抢占、断线复用、未知提交锁定、12 项并发 6/2/1、取消、文件保护、真实文字 PNG 保存及过期快照拒绝；`artwork-standard-pipeline.test.ts` 证明源评分未结束即可抠图。
 - Deployment: 需要先执行迁移，再启动独立持续运行的 `Dockerfile.artwork-worker` 服务并确认心跳，最后开启 Web 入口；仅 Vercel 请求生命周期不足以保证关闭浏览器后的持续执行。当前变更是否已发布应以部署回执和正式页面验证为准。
+
+
+### `API-WPS-ANALYSIS-JOBS` 可恢复自动解析与旧结果保护（2026-09-10）
+
+- `FLOW-009` → `POST/GET /api/wps-production/analysis-jobs` → `scripts/artwork-worker.ts` → `STORE-006`。`WPS_DURABLE_ANALYSIS=1` 时，浏览器只提交和读取状态；worker 每 30 秒通过跨实例发现租约检查待领取/设计中、非空且尚未解析的新需求。关闭页面后继续执行，已解析任务不因代码版本升级自动重跑。关闭开关保留原浏览器解析入口。
+- `STORE-WPS-ANALYSIS-JOBS`：`012_production_reliability.sql` 新增 `wps_analysis_jobs` 与 `wps_analysis_files`。按 state、原记录、源证据 hash、解析版本去重；同订单只允许一个在途任务，全局最多 5 条解析，与生图/抠图/评分名额独立。解析返回先保存，再提交生产状态；保存失败只重试保存。失去租约且无返回结果的模型任务置为 unknown，需显式重试，不自动重复调用。保存操作 ID 独立记录，提交后断线可幂等恢复。
+- `RULE-WPS-ANALYSIS-SNAPSHOT`：开始时从服务端持久状态冻结本订单、制作单元、服装版本与共用历史。保存前重新读取 WPS 原文、附件与可解析状态，在每次 CAS 重试中核对冻结目标；无关订单和全局 revision 变化可继续。人工编辑、共用增减或定稿使旧结果返回冲突。原浏览器 `analyze` 返回 `targetSnapshots`，`upsertReviews` 必须携带该快照；旧页面需刷新，不能用新 revision 提交旧模型结果。WPS 与 PostgreSQL 无跨系统事务，保存前核验之后的 WPS 改动由下一次同步识别。
+- `TEST-WPS-RELIABILITY`：`scripts/production-reliability-integration.ts` 用临时 PostgreSQL、真实 PNG 和假 WPS/模型服务验证重复提交、全局名额、租约失效、解析结果重连复用、保存回执、迟到覆盖拒绝、无关修改并行及数据库备份恢复；`wps-analysis-snapshot.test.ts` 覆盖共用成员与定稿保护。没有新增准确率评测集，没有真实付费调用。
+
+### `STORE-CUTOUT-IMAGE-REFS` 抠图回执文件引用与短上传事务
+
+- `ARTWORK_CUTOUT_FILE_STORAGE=oss` 时，抠图 `job_json` 内联图片按原始字节存入现有文件库，用 `$cutoutImage` 引用替代；读适配器兼容旧 Base64 与新引用，并恢复旧 API 的 Data URL，保留 jobKey、source/output SHA、provider taskId、pending/unknown 与明确失败重试规则。`artwork_cutout_files` 保留回执关联的全部图像，GC 和备份包含这些引用；不重新编码，也不重新抠图。
+- `production:migrate-cutout` 默认只读统计，`--apply --limit=10` 小批迁移；只有 job_json 与读取时一致才更新，防止覆盖正在回来的供应商结果。混合格式可继续读取。完整恢复仍要求备份与目标迁移版本一致；旧备份先恢复到同版本再迁移。
+- 文件上传用 `production_operations` 的 owner/租约登记，OSS GET/PUT/校验和本地文件写入在数据库事务外进行；最终短事务核对租约并原子写 ready 与文件引用。失效旧 owner 不能发布，同 SHA 并发复用现有内容，PUT 禁止覆盖并校验回读 SHA；GC 不删除 pending 上传文件。保留默认连接池大小。
+- 滚动启用顺序：迁移 012 → 部署支持双读的新 Web 和 worker → 开启 `ARTWORK_CUTOUT_FILE_STORAGE=oss` 和 `WPS_DURABLE_ANALYSIS=1` → 分批迁移旧回执。暂停新解析可关闭开关并排空 worker；文件引用产生后回滚必须保留双读适配器。
+
+### `API-PRODUCTION-READ-OPTIMIZATION` 小图与条件读取
+
+- `WpsMaterialImage` 仅小图访问 `/api/production-files/:id?size=thumb`，320px WebP 使用有界、可重建缓存。原图文件、素材 URL、共用快照和放大入口不变；认证和文件状态检查先于缓存读取。
+- 解析输入 ≤8MB 保持原字节；超限先同尺寸无损压缩，再为理解用途生成尽量保留细节的 95 质量 WebP。保真制作仍采用历史 upright PNG 像素，只允许无损压缩；不会为了通过大小限制自动降低生产稿清晰度。
+- 制作/解析队列运行时可见 2.5 秒、后台 15 秒轮询，空闲可见 30 秒、后台 60 秒；焦点和提交立即读取，同一读取合并。`GET /api/wps-production` 和两类队列以实际响应内容 ETag 支持 304；派生几何、后台心跳变化同样使 ETag 变化，不能仅看 production revision。WPS 源同步仍独立每 30 秒并保留编辑保护。保留现有 state JSONB 合同，与共用图稿结构兼容。

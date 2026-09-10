@@ -13,7 +13,10 @@ import EmbeddedPostgres from 'embedded-postgres';
 import sharp from 'sharp';
 import { catalogDatabase, catalogTransaction, migrateCatalog, closeCatalogDatabase } from '../lib/server/catalog-database';
 import { enqueueArtworkJob, claimArtworkJob, readArtworkJobs, changeArtworkJob, heartbeatArtworkWorker, updateArtworkJob, type ArtworkJob } from '../lib/server/artwork-job-store';
-import { inArtworkJob, artworkJobStep, withArtworkStage } from '../lib/server/artwork-job-runtime';
+import { inArtworkJob, artworkJobStep, withArtworkStage, resumeArtworkGenerationPrompt, reportArtworkInspectionRetry } from '../lib/server/artwork-job-runtime';
+import { retryArtworkInspection } from '../lib/server/artwork-inspection-retry';
+import { durableArtworkServices } from '../lib/server/artwork-job-services';
+import { standardArtworkServices } from '../lib/server/artwork-standard-pipeline';
 import { evaluateArtworkBytes } from '../lib/server/media-kit-artwork';
 import { processArtworkJob } from '../lib/server/artwork-job-worker';
 import { saveProductionFile, readProductionFile } from '../lib/server/production-storage';
@@ -102,6 +105,70 @@ try {
   pass('Distinct source/result images get distinct upload tickets; retry reuses the correct uploaded pixels');
   await updateArtworkJob(resumed, 'completed', 'fixture saved');
   pass('DB reconnect and failed-score retry restore the exact generated PNG without a second model call');
+
+  const legacyInput = { ...input, unit: { ...input.unit, id: 'legacy-inspection-retry' } };
+  await enqueueArtworkJob(legacyInput, 'legacy-fixture');
+  const legacyJob = (await claimArtworkJob(owner))!;
+  const legacyRun = randomUUID(), oldPrompt = '原设计重建：旧提示词', newPrompt = '原设计重建：统一金黄色的新提示词';
+  const images = ['data:image/png;base64,fixture'], settings = { background: 'auto' as const };
+  let legacyGenerations = 0;
+  await inArtworkJob(legacyJob, async () => {
+    await artworkJobStep('generate', 'generation', [oldPrompt, images, settings], async () => { legacyGenerations++; return { bytes, model: 'fixture' }; });
+    await assert.rejects(() => artworkJobStep('verifyEdits', 'inspection', bytes, async () => { throw new Error('fetch failed'); }));
+  });
+  await catalogDatabase().query("INSERT INTO artwork_run_records(state_key,run_id,kind,record_json) VALUES($1,$2,'generation',$3)", [legacyJob.state_key, legacyRun, { prompt: oldPrompt }]);
+  await updateArtworkJob(legacyJob, 'failed', '核对失败', '旧版笼统错误', { runId: legacyRun, stage: 'edit-review', url: file.url });
+  const failedView = (await readArtworkJobs()).jobs.find(item => item.id === legacyJob.id)!;
+  assert.match(failedView.error!, /网络请求失败/);
+  assert.match(failedView.steps.find(step => step.stage === 'inspection')!.error!, /网络请求失败/);
+  await changeArtworkJob(legacyJob.id, 'retry');
+  const legacyResumed = (await claimArtworkJob(owner2))!;
+  let inspectionRequests = 0;
+  await inArtworkJob(legacyResumed, async () => {
+    const prompt = await resumeArtworkGenerationPrompt(newPrompt, images, settings);
+    assert.equal(prompt, oldPrompt);
+    const result = await artworkJobStep('generate', 'generation', [prompt, images, settings], async () => { legacyGenerations++; return { bytes, model: 'fixture' }; });
+    assert.deepEqual(result.bytes, bytes);
+    const inspected = await artworkJobStep('verifyEdits', 'inspection', bytes, () => retryArtworkInspection(async () => {
+      inspectionRequests++;
+      if (inspectionRequests === 1) throw new TypeError('fetch failed', { cause: { code: 'ECONNRESET' } });
+      return { status: 'passed' };
+    }, { onRetry: async notice => {
+      await reportArtworkInspectionRetry(notice);
+      const during = (await readArtworkJobs()).jobs.find(item => item.id === legacyJob.id)!;
+      assert.equal(during.status, 'running');
+      assert.equal(during.steps.find(step => step.stage === 'inspection')!.status, 'running');
+      assert.match(during.message, /自动恢复（第 2\/3 次）/);
+      assert.equal(legacyGenerations, 1);
+    } }));
+    assert.deepEqual(inspected, { value: { status: 'passed' }, attempts: 2 });
+    assert.deepEqual(await artworkJobStep('verifyEdits', 'inspection', bytes, async () => { throw new Error('completed inspection must be reused'); }), inspected);
+    const originalVerify = standardArtworkServices.verifyEdits;
+    let upgradedChecks = 0;
+    try {
+      const requirements = ['保留文字与标志'];
+      await artworkJobStep('verifyEdits', 'inspection', [bytes, bytes, requirements], async () => ({ version: 'old-check', checks: [] }));
+      standardArtworkServices.verifyEdits = async (source, output, checks) => {
+        assert.deepEqual(source, bytes); assert.deepEqual(output, bytes);
+        upgradedChecks++;
+        return { version: 'artwork-edit-check-v1', sourceSha256: 'fixture-source', outputSha256: 'fixture-output', model: 'fixture',
+          inspectionVersion: 'artwork-edit-inspection-v2', checks: checks.map(requirement => ({ requirement, status: 'passed', evidence: '文字与标志保持原样' })) };
+      };
+      const current = await durableArtworkServices().verifyEdits(bytes, bytes, requirements);
+      assert.equal(current.inspectionVersion, 'artwork-edit-inspection-v2');
+      assert.deepEqual(await durableArtworkServices().verifyEdits(bytes, bytes, requirements), current);
+      assert.equal(upgradedChecks, 1);
+      assert.equal(legacyGenerations, 1);
+    } finally { standardArtworkServices.verifyEdits = originalVerify; }
+    await assert.rejects(() => resumeArtworkGenerationPrompt(newPrompt, ['different input'], settings), /停止重复生图/);
+  });
+  await assert.rejects(() => inArtworkJob({ ...legacyResumed, owner }, () => reportArtworkInspectionRetry({ attempt: 3, maxAttempts: 3, delayMs: 5000 })));
+  assert.equal(inspectionRequests, 2);
+  assert.equal(legacyGenerations, 1);
+  await updateArtworkJob(legacyResumed, 'completed', 'fixture done');
+  pass('A legacy inspection retry exposes its real error and reuses the original generation across prompt upgrades; mismatched inputs cannot regenerate');
+  pass('A transient inspection failure stays running, reports automatic recovery, saves and reuses its final check; stale owners cannot retry');
+  pass('Upgraded inspection ignores a legacy check, caches the current version and never regenerates the image');
 
   const unknownInput = { ...input, unit: { ...input.unit, id: 'unknown-generation' } };
   await enqueueArtworkJob(unknownInput, 'unknown-fixture');

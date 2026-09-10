@@ -26,7 +26,7 @@ export function catalogDatabaseConfig(environment: Record<string, string | undef
     connectionString, max: 5, connect_timeout: 10, idle_timeout: environment.VERCEL === '1' ? SERVERLESS_IDLE_SECONDS : 30,
     connection: { application_name: 'workwear-mockup', search_path: 'garment_catalog,public', statement_timeout: 30000,
       // A database-side fallback also runs when a serverless instance is suspended.
-      // This only expires sessions outside transactions; uploads may hold a transaction.
+      // This only expires sessions outside transactions; image uploads run outside transactions.
       ...(environment.VERCEL === '1' ? { idle_session_timeout: 60000 } : {}),
     },
     ...(!local ? { socket: () => new Promise<Socket>((resolve, reject) => {

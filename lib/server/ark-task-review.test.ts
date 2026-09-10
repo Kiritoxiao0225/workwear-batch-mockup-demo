@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { analyzeSourceTaskRecords, planArtworkGenerationPrompt } from '@/lib/server/ark-task-review';
+import { analyzeSourceTaskRecords, inspectArtworkReferenceImage, planArtworkGenerationPrompt } from '@/lib/server/ark-task-review';
 import { sourceTaskSnapshot } from '@/lib/task-review-snapshot';
 import { WpsAnalysisTrace } from './wps-analysis-trace';
 
@@ -15,10 +15,98 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   delete process.env.ARK_RUNTIME_API_KEY;
+});
+
+describe('focused artwork inspection recovery', () => {
+  const inspectedImage = 'data:image/png;base64,aW1hZ2U=';
+  const inspectionReply = () => new Response(JSON.stringify({ choices: [{ message: { content: '{"checks":[{"status":"failed"}]}' } }] }));
+
+  it.each(['ark', 'cliproxy'])('retries %s transport failures with exactly the same image, prompt and model', async provider => {
+    vi.useFakeTimers();
+    if (provider === 'cliproxy') useProxy(); else process.env.ARK_RUNTIME_API_KEY = 'test-key';
+    const fetchMock = vi.fn<typeof fetch>().mockRejectedValueOnce(new TypeError('fetch failed')).mockResolvedValueOnce(inspectionReply());
+    vi.stubGlobal('fetch', fetchMock);
+    const result = inspectArtworkReferenceImage(inspectedImage, '逐项核对');
+    await vi.runAllTimersAsync();
+    expect(await result).toMatchObject({ provider, inspectionAttempts: 2, content: '{"checks":[{"status":"failed"}]}' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][0]).toBe(fetchMock.mock.calls[0][0]);
+    expect(fetchMock.mock.calls[1][1]?.body).toBe(fetchMock.mock.calls[0][1]?.body);
+    expect(fetchMock.mock.calls[1][1]?.body).toContain(inspectedImage);
+  });
+
+  it.each(['ark', 'cliproxy'])('keeps labeled image order and unchanged model settings when retrying a %s comparison', async provider => {
+    vi.useFakeTimers();
+    if (provider === 'cliproxy') { useProxy(); vi.stubEnv('WPS_ANALYSIS_MODEL', 'gpt-5.6-sol'); vi.stubEnv('WPS_ANALYSIS_REASONING_EFFORT', 'low'); }
+    else process.env.ARK_RUNTIME_API_KEY = 'test-key';
+    const fetchMock = vi.fn<typeof fetch>().mockRejectedValueOnce(new TypeError('fetch failed')).mockResolvedValueOnce(inspectionReply());
+    vi.stubGlobal('fetch', fetchMock);
+    const input = [{ label: 'SOURCE 原图', dataUrl: inspectedImage }, { label: 'RESULT 实际结果', dataUrl: 'data:image/png;base64,cmVzdWx0' }];
+    const result = inspectArtworkReferenceImage(input, '检查文字与轮廓');
+    await vi.runAllTimersAsync();
+    expect(await result).toMatchObject({ inspectionAttempts: 2, provider });
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.messages[0].content).toEqual([
+      { type: 'text', text: '检查文字与轮廓' },
+      ...input.flatMap(image => [{ type: 'text', text: image.label }, { type: 'image_url', image_url: { url: image.dataUrl, ...(provider === 'cliproxy' ? { detail: 'high' } : {}) } }]),
+    ]);
+    if (provider === 'cliproxy') expect(body).toMatchObject({ model: 'gpt-5.6-sol', reasoning_effort: 'low' });
+    expect(fetchMock.mock.calls[1][1]?.body).toBe(fetchMock.mock.calls[0][1]?.body);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['TimeoutError', 'AbortError', 'socket'])('recovers a %s while reading the response body', async errorName => {
+    vi.useFakeTimers(); useProxy();
+    const brokenResponse = new Response('');
+    vi.spyOn(brokenResponse, 'json').mockRejectedValue(errorName === 'socket'
+      ? new TypeError('terminated', { cause: { code: 'UND_ERR_SOCKET' } }) : new DOMException('body deadline', errorName));
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(brokenResponse).mockResolvedValueOnce(inspectionReply());
+    vi.stubGlobal('fetch', fetchMock);
+    const result = inspectArtworkReferenceImage(inspectedImage, '逐项核对');
+    await vi.runAllTimersAsync();
+    expect(await result).toMatchObject({ inspectionAttempts: 2 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('recovers proxy throttling without reading private upstream error text', async () => {
+    vi.useFakeTimers(); useProxy();
+    const response = new Response('secret-upstream-details', { status: 429, headers: { 'Retry-After': '10' } });
+    const readBody = vi.spyOn(response, 'json');
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(response).mockResolvedValueOnce(inspectionReply());
+    vi.stubGlobal('fetch', fetchMock);
+    const result = inspectArtworkReferenceImage(inspectedImage, '逐项核对');
+    await vi.advanceTimersByTimeAsync(9999);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await result).toMatchObject({ inspectionAttempts: 2 });
+    expect(readBody).not.toHaveBeenCalled();
+  });
+
+  it.each([401, 403, 200])('does not retry HTTP %s permission failures or malformed JSON', async status => {
+    useProxy();
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response('invalid json', { status }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(inspectArtworkReferenceImage(inspectedImage, '逐项核对')).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('reports exhausted inspection requests without claiming that no retry occurred', async () => {
+    vi.useFakeTimers(); useProxy();
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => new Response('secret-upstream-details', { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = inspectArtworkReferenceImage(inspectedImage, '逐项核对').catch(error => error);
+    await vi.runAllTimersAsync();
+    const error = await result;
+    expect(error).toMatchObject({ inspectionAttempts: 3 });
+    expect(error.message).toContain('内容核对（CLIProxyAPI）HTTP 503');
+    expect(error.message).not.toMatch(/未自动重试|secret-upstream/);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
 });
 
 function useProxy() {

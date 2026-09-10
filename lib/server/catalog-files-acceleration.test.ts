@@ -53,14 +53,19 @@ it.each([
   const image = await sharp({ create: { width: 8, height: 8, channels: 3, background: '#b41230' } }).png().toBuffer();
   const hash = fileSha256(image);
   const key = `workwear-mockup/prod/${prefix}${hash.slice(0, 2)}/${hash}`;
-  const query = vi.fn(async (sql: string) => sql.includes('RETURNING id,status')
-    ? { rows: [{ id: 'audit-1', status: 'pending', object_key: key, gc_state: 'active' }], rowCount: 1 }
-    : { rows: [], rowCount: 0 });
+  let transactionOpen = false;
+  const file = { id: 'audit-1', status: 'pending', object_key: key, gc_state: 'active', sha256: hash, mime_type: 'image/png', width: 8, height: 8, byte_length: image.length, has_alpha: false };
+  const query = vi.fn(async (sql: string) => sql.startsWith('SELECT * FROM files') ? { rows: [file], rowCount: 1 }
+    : sql.includes('RETURNING owner') || sql.startsWith('SELECT owner') ? { rows: [{ owner: 'lease' }], rowCount: 1 } : { rows: [], rowCount: 0 });
   vi.mocked(catalogDatabase).mockReturnValue({ query });
-  vi.mocked(catalogTransaction).mockImplementation(async operation => operation({ query }));
+  vi.mocked(catalogTransaction).mockImplementation(async operation => {
+    transactionOpen = true;
+    try { return await operation({ query }); } finally { transactionOpen = false; }
+  });
+
   get.mockRejectedValueOnce(Object.assign(new Error('missing'), { code: 'NoSuchKey' }))
     .mockResolvedValueOnce({ content: image, res: { headers: { 'x-oss-version-id': 'uploaded-v1' } } });
-  put.mockResolvedValue({ res: { headers: { 'x-oss-version-id': 'uploaded-v1' } } });
+  put.mockImplementation(async () => { expect(transactionOpen).toBe(false); return { res: { headers: { 'x-oss-version-id': 'uploaded-v1' } } }; });
 
   expect(await saveCatalogFile(image, 'audit-original.png', purpose)).toMatchObject({ id: 'audit-1', sha256: hash });
   const config = vi.mocked(OSS).mock.calls[0][0];
@@ -70,7 +75,7 @@ it.each([
   }));
   expect(get).toHaveBeenNthCalledWith(1, key);
   expect(get).toHaveBeenNthCalledWith(2, key, { versionId: 'uploaded-v1' });
-  expect(query).toHaveBeenCalledWith(expect.stringContaining("status='ready'"), ['audit-1', 'uploaded-v1']);
+  expect(query).toHaveBeenCalledWith(expect.stringContaining("status='ready'"), ['audit-1', 'uploaded-v1', 1]);
 });
 
 it.each(['bucket', 'prefix'])('rejects a file outside the configured %s before making an OSS request', async mismatch => {

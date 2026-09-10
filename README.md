@@ -153,3 +153,13 @@ Demo 文件存储只适合本地体验，不适合作为多实例生产部署方
 - 本次新增 `009_artwork_run_records.sql`；发布前执行 `npm run catalog:migrate`。历史本机处理报告及模型回执已导入同一状态空间，本地审计图片保留。备份包含抠图任务与处理回执。
 - Meitu 官方 CLI 的动态依赖显式纳入函数打包，避免构建通过但线上缺少运行文件。
 - 发布检查：`npm run check`、`npm run test:catalog`、`npm run test:production-storage`、`npm run build`。完整生图涉及付费服务，发布检查不自动提交真实模型任务。
+
+### 解析恢复与存储优化（2026-09-10，本地实现）
+
+在共用图稿实现上增加订单快照校验、后台解析、抠图文件引用、展示缩略图、短上传事务和 ETag/空闲轮询。人工确认、已定稿保护和原有图案处理路线保留。没有新增准确率评测集。
+
+启用前执行 `npm run catalog:migrate` 应用 `012_production_reliability.sql`，部署新的 Web 和常驻 worker，再在两端设置 `WPS_DURABLE_ANALYSIS=1`、`ARTWORK_CUTOUT_FILE_STORAGE=oss`。worker 沿用 WPS 和解析模型配置，每 30 秒发现新任务；未完成、状态未知的解析不会因刷新页面反复调用模型。结果已返回但保存失败时，显式重试只继续保存。升级前打开的旧页面需要刷新才能提交带快照的解析结果。
+
+历史抠图回执使用 `npm run production:migrate-cutout` 只读盘点；`npm run production:migrate-cutout -- --apply --limit=10` 按批次迁移，保留精确字节和原供应商任务号，可重复执行直到 remaining 为 0。先备份；混合格式可双读。开启文件引用之后，回滚代码也必须保留该读取适配器。生产发布和历史数据迁移没有包含在本地测试结果中。
+
+验证入口：`npm run check`、`npm run test:reliability`、`npm run test:shared-artwork`、`npm run test:artwork-jobs`、`npm run test:production-storage`、`npm run test:catalog`。这些集成测试使用独立临时数据库与 PNG，不调用真实付费模型。

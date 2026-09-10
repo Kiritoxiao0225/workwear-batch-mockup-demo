@@ -33,15 +33,49 @@ it('refuses duplicate or invented region IDs', async () => {
 });
 it('binds every edit check to both actual images and downgrades low confidence instead of passing', async () => {
   const before = await source(), after = await sharp(before).modulate({ brightness: .9 }).png().toBuffer();
-  reply({ checks: [{ index: 1, status: 'passed', confidence: 'low', evidence: '底形看不清' }, { index: 0, status: 'failed', confidence: 'high', evidence: '描边仍为红色' }] });
+  reply({ checks: [{ index: 1, status: 'passed', confidence: 'low', sourceObservation: '蓝色', resultObservation: '蓝色', evidence: '底形看不清' },
+    { index: 0, status: 'failed', confidence: 'high', sourceObservation: '红色描边', resultObservation: '红色描边', evidence: '描边仍为红色' }] });
   const result = await verifyArtworkModelEdits(before, after, ['红描边变蓝', '底形变浅']);
   expect(result).toMatchObject({ sourceSha256: artworkSha256(before), outputSha256: artworkSha256(after), checks: [
     { requirement: '红描边变蓝', status: 'failed' }, { requirement: '底形变浅', status: 'uncertain' },
   ] });
 });
+it('sends separate full frames without squashing small details into a comparison sheet', async () => {
+  const before = await sharp({ create: { width: 1500, height: 700, channels: 3, background: '#1264a8' } }).png().toBuffer();
+  const after = await sharp({ create: { width: 700, height: 1500, channels: 3, background: '#aa1020' } }).png().toBuffer();
+  reply({ checks: [{ index: 0, status: 'failed', confidence: 'high', sourceObservation: '蓝色', resultObservation: '红色', evidence: '颜色不同' }] });
+  const result = await verifyArtworkModelEdits(before, after, ['保留蓝色']);
+  const input = vi.mocked(inspectArtworkReferenceImage).mock.calls[0][0];
+  expect(typeof input).not.toBe('string');
+  if (typeof input === 'string') throw new Error('Expected separate images');
+  expect(input.map(image => image.label)).toEqual([expect.stringContaining('SOURCE'), expect.stringContaining('RESULT')]);
+  const previews = input.map(image => Buffer.from(image.dataUrl.split(',')[1], 'base64'));
+  expect(await sharp(previews[0]).metadata()).toMatchObject({ width: 1500, height: 700 });
+  expect(await sharp(previews[1]).metadata()).toMatchObject({ width: 700, height: 1500 });
+  expect((await sharp(previews[0]).raw().toBuffer()).equals(await sharp(before).raw().toBuffer())).toBe(true);
+  expect(result).toMatchObject({ inspectionVersion: 'artwork-edit-inspection-v2', promptSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+    inputSha256: previews.map(artworkSha256), sourceSha256: artworkSha256(before), outputSha256: artworkSha256(after) });
+  expect(inspectArtworkReferenceImage).toHaveBeenCalledOnce();
+});
+it.each([null, undefined])('downgrades an unsupported high-confidence pass when an observation is %s', async sourceObservation => {
+  reply({ checks: [{ index: 0, status: 'passed', confidence: 'high', sourceObservation, resultObservation: '文字完整', evidence: '已经符合要求' }] });
+  const result = await verifyArtworkModelEdits(await source(), await source(), ['保留原有笔画']);
+  expect(result.checks[0]).toMatchObject({ status: 'uncertain', evidence: expect.stringContaining('看不清') });
+  expect(inspectArtworkReferenceImage).toHaveBeenCalledOnce();
+});
+it('rejects duplicated checks instead of leaving another requirement unchecked', async () => {
+  reply({ checks: [0, 0].map(index => ({ index, status: 'passed', confidence: 'high', sourceObservation: '蓝色', resultObservation: '蓝色', evidence: '蓝色' })) });
+  await expect(verifyArtworkModelEdits(await source(), await source(), ['文字保留', '标志保留'])).rejects.toThrow('逐项');
+});
 it('does not silently pass a missing customer requirement', async () => {
   reply({ checks: [{ index: 0, status: 'passed', confidence: 'high', evidence: '蓝色描边' }] });
   await expect(verifyArtworkModelEdits(await source(), await source(), ['描边改蓝', '底形调浅'])).rejects.toThrow('逐项');
+});
+it('preserves transport causes for persisted step errors and allows 120 seconds for visual verification', async () => {
+  vi.mocked(inspectArtworkReferenceImage).mockRejectedValue(new TypeError('fetch failed', { cause: Object.assign(new Error('socket'), { code: 'ECONNRESET' }) }));
+  await expect(verifyArtworkModelEdits(await source(), await source(), ['整组统一黄色'])).rejects.toThrow('连接被中途断开');
+  expect(vi.mocked(inspectArtworkReferenceImage).mock.calls[0][2]).toMatchObject({ timeoutMs: 120_000 });
+  expect(inspectArtworkReferenceImage).toHaveBeenCalledOnce();
 });
 
 it.each([
@@ -63,4 +97,29 @@ it.each([
 it('rejects malformed content inspection instead of accepting it', async () => {
   reply({ recognizedText: '康悦', confidence: 'high', evidence: '没有返回是否夹带图形' });
   await expect(verifyArtworkTextComponent(await source(), '康悦')).rejects.toThrow();
+});
+
+it('transcribes without revealing the expected answer and compares punctuation and case in code', async () => {
+  reply({ recognizedText: 'ACME-A8', onlyText: true, confidence: 'high', evidence: '读到 ACME-A8' });
+  const result = await verifyArtworkTextComponent(await source(), 'Acme-A8');
+  expect(result.status).toBe('failed');
+  const [, prompt] = vi.mocked(inspectArtworkReferenceImage).mock.calls[0];
+  expect(prompt).not.toContain('Acme-A8');
+  expect(prompt).not.toContain('ACME-A8');
+  expect(result).toMatchObject({ inspectionVersion: 'artwork-text-inspection-v2', promptSha256: expect.stringMatching(/^[a-f0-9]{64}$/) });
+});
+it('uses light and dark previews of transparent text without altering the candidate', async () => {
+  const bytes = await sharp(Buffer.from('<svg width="240" height="80"><rect x="20" y="20" width="40" height="40" fill="white"/><rect x="100" y="20" width="40" height="40" fill="black"/></svg>')).png().toBuffer();
+  const original = Buffer.from(bytes);
+  reply({ recognizedText: 'AB', onlyText: true, confidence: 'high', evidence: '两种背景读到同样的 AB' });
+  const result = await verifyArtworkTextComponent(bytes, 'AB');
+  const input = vi.mocked(inspectArtworkReferenceImage).mock.calls[0][0];
+  if (typeof input === 'string') throw new Error('Expected separate previews');
+  expect(input).toHaveLength(2);
+  const data = await Promise.all(input.map(image => sharp(Buffer.from(image.dataUrl.split(',')[1], 'base64')).raw().toBuffer()));
+  expect([...data[0].subarray(0, 3)]).toEqual([255, 255, 255]);
+  expect([...data[1].subarray(0, 3)]).toEqual([32, 32, 32]);
+  expect(bytes).toEqual(original);
+  expect(result.outputSha256).toBe(artworkSha256(original));
+  expect(inspectArtworkReferenceImage).toHaveBeenCalledOnce();
 });

@@ -12,6 +12,7 @@ export type WpsAnalysisStage = keyof typeof WPS_ANALYSIS_STAGE_LABELS;
 export type WpsAnalysisTiming = { stage: WpsAnalysisStage; durationMs: number; status: 'completed' | 'failed' };
 export type WpsAnalysisProgress = { type: 'stage'; stage: WpsAnalysisStage } | { type: 'timing'; timing: WpsAnalysisTiming };
 export type WpsAnalysisResult = {
+  targetSnapshots?: Record<string, string>;
   reviews: TaskReview[]; model: string; provider?: string; reasoningEffort?: string;
   requestId?: string;
   timing?: { queueMs: number; processingMs: number; totalMs: number; stages: WpsAnalysisTiming[] };

@@ -21,6 +21,9 @@ import { verifyArtworkModelEdits, verifyArtworkTextComponent } from './artwork-c
 import { artworkTextRemovalChecks } from '@/lib/artwork-text-contract';
 import { inspectArtworkSourceAssessment } from './artwork-source-assessment';
 import { artworkReconstructionRequirements } from '@/lib/artwork-source-assessment';
+import { artworkSolidColor } from '@/lib/artwork-solid-color';
+import { flattenArtworkSolidColor } from './artwork-solid-color';
+import { artworkInspectionFailure } from './artwork-network-error';
 
 async function routedCutout(bytes: Buffer, options: { scene?: 'product' | 'general'; crop?: boolean; mode?: ArtworkCutoutMode } = {}) {
   return (await cutoutArtworkForPipeline(bytes, options.mode)).bytes;
@@ -44,7 +47,9 @@ export const standardArtworkServices = {
   verifyEdits: verifyArtworkModelEdits,
   verifyText: verifyArtworkTextComponent,
 };
-export type StandardArtworkServices = typeof standardArtworkServices;
+export type StandardArtworkServices = typeof standardArtworkServices & {
+  resumeGenerationPrompt?: (prompt: string, images: string[], settings: { background?: 'auto' | 'transparent' }) => Promise<string>;
+};
 const dataUrl = (bytes: Buffer) => `data:image/png;base64,${bytes.toString('base64')}`;
 const bytesFromDataUrl = (url: string) => Buffer.from(url.slice(url.indexOf(',') + 1), 'base64');
 const evaluation = (quality: ArtworkQualityMeasurement): ArtworkQualityEvaluation => ({ blur: quality.rawBlur ?? 100 - quality.score, vqscore: quality.vqscore, noise: quality.noise, compressionArtifacts: quality.compressionArtifacts });
@@ -121,7 +126,7 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
   if (decision.method === 'generate' && !request.generationPrompt?.trim()) throw new Error('请先整理生图提示词，再制作图案');
   const reconstructSource = Boolean(facts.reconstructSource);
   const modelPreparation = decision.method === 'generate' || reconstructSource;
-  const modelPrompt = decision.method === 'generate' ? prompts.generate : prompts.reconstruct;
+  let modelPrompt = decision.method === 'generate' ? prompts.generate : prompts.reconstruct;
   if (reconstructSource && decision.method !== 'generate') prompts = { ...prompts,
     imageMapping: prompts.imageMapping.filter(mapping => mapping.sourceLabel === request.primaryImageLabel)
       .map(mapping => ({ ...mapping, modelInputLabel: '图1' })) };
@@ -184,6 +189,7 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
       services.measure(sourceBytes),
       (async () => {
         const images = reconstructSource && decision.method !== 'generate' ? [request.image.dataUrl] : prompts.imageMapping.map(mapping => mapping.sourceLabel === request.primaryImageLabel ? request.image.dataUrl : request.referenceImages.find(reference => reference.label === mapping.sourceLabel)!.image.dataUrl);
+        if (services.resumeGenerationPrompt) modelPrompt = await services.resumeGenerationPrompt(modelPrompt!, images, { background: 'auto' });
         const generated = await services.generate(modelPrompt!, images, { background: 'auto' });
         progress('图案已生成，正在保存原图…', true);
         await preview(generated.bytes, '刚生成的图 · 还要去背景和检查，尚未保存成品');
@@ -242,6 +248,7 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
     let mask = originalMask;
     graphic = generated.bytes;
     let cutoutFailure = '';
+    let solidColor: Awaited<ReturnType<typeof flattenArtworkSolidColor>>['receipt'] | undefined;
     let pendingCutout: ArtworkCutoutResult | undefined;
     try {
       // Keep the full model layout, including detached lettering, on its original canvas.
@@ -251,6 +258,13 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
       if (preparedMetadata.format !== 'png' || !preparedMetadata.hasAlpha) throw new Error('抠图结果不是带透明通道的 PNG');
       mask = await alphaMaskReport(graphic);
       assertUsableArtworkMask(mask);
+      const solidContract = artworkSolidColor(request);
+      if (solidContract) {
+        const flattened = await flattenArtworkSolidColor(graphic, solidContract);
+        graphic = flattened.bytes;
+        solidColor = flattened.receipt;
+        operations.push(`整组图案统一填色 ${solidColor.color}，保持原透明度、轮廓与镂空`);
+      }
       backgroundRemoval = 'product';
       progress('透明背景已处理，正在检查成品清晰度…');
       await preview(graphic, '去背景后的图 · 还在检查，尚未保存成品');
@@ -263,11 +277,12 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
     let editFailure = '';
     let editFailureMessage = '';
     const verificationRequirements = reconstructSource
-      ? artworkReconstructionRequirements(request.sourceAssessment!)
+      ? artworkReconstructionRequirements(request.sourceAssessment!, request)
       : modelEdits.length ? [...modelEdits, '未点名修改的原有文字、字形、数字、装饰、配色及相对排版保持原样；无关来源水印与外围背景除外'] : [];
     if (decision.method === 'generate' && prompts.textOperation === 'replace') verificationRequirements.push(
       `指定旧字已按要求替换为 ${JSON.stringify(request.exactText)}，新字只出现要求的次数，旧字不再残留：${request.instruction}`,
       '未指定替换的原文字与原 Logo 图形数量、结构仍保留，没有把原图和改字后的完整图重复拼接。');
+    if (solidColor) verificationRequirements.push(`按要求整组统一颜色：${solidColor.requirement}。检查图案实际色相符合要求，笔画内部均匀，未改变轮廓与镂空。`);
     if (!cutoutFailure && verificationRequirements.length) {
       progress(reconstructSource ? '正在核对原文字、标志与载体残留…' : '正在检查颜色是否改对、其他地方有没有被误改…');
       try {
@@ -282,25 +297,25 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
         }
       } catch (error) {
         editFailure = `修改要求核对未完成：${error instanceof Error ? error.message : String(error)}`;
-        editFailureMessage = '图案已生成，但这次没能检查修改结果。';
+        editFailureMessage = `图案已生成，${artworkInspectionFailure(error)}`;
       }
     }
     await services.saveGeneration(runId, { runId, model: generated.model, prompt: usedPrompt, promptHash: artworkPromptHash(usedPrompt), imageMapping: prompts.imageMapping,
       sourceSha256: artworkSha256(sourceBytes), originalSha256: artworkSha256(generated.bytes), metadata: generated.generationMetadata,
       width: metadata.width, height: metadata.height, originalHasAlpha: metadata.hasAlpha, originalMask, mask, backgroundRemoval,
-      sourceAssessment: request.sourceAssessment, editVerification, status: cutoutFailure || editFailure ? 'needs-review' : 'cutout-accepted', reason: cutoutFailure || editFailure, timings: [...timings] });
+      sourceAssessment: request.sourceAssessment, editVerification, solidColor, status: cutoutFailure || editFailure ? 'needs-review' : 'cutout-accepted', reason: cutoutFailure || editFailure, timings: [...timings] });
     if (cutoutFailure) throw new NativeArtworkCandidateError({ runId, url: dataUrl(generated.bytes), model: generated.model, reason: cutoutFailure,
       promptHash: artworkPromptHash(usedPrompt), cutout: pendingCutout, requiresEditVerification: verificationRequirements.length > 0 });
     if (editFailure) {
       await services.saveImage(runId, 'edit-review-candidate', graphic);
       throw new NativeArtworkCandidateError({ runId, url: dataUrl(graphic), model: generated.model, stage: 'edit-review',
-        reason: `${editFailureMessage}这张图还没保存成品。请先查看下方图片，需要重做时再点本行的制作按钮。`, promptHash: artworkPromptHash(usedPrompt) });
+        reason: `${editFailureMessage}这张图还没保存成品。${editVerification ? '请先查看下方图片并核对要求。' : '可复用已生成图片继续核对。'}`, promptHash: artworkPromptHash(usedPrompt), requiresEditVerification: true, retryable: !editVerification });
     }
     if (editVerification) operations.push(reconstructSource ? '已核对目标文字、标志、排版与载体残留' : '已逐项核对指定改色及其余图案保留要求');
     model = generated.model;
     graphicMethod = reconstructSource && decision.method !== 'generate' ? 'redraw' : 'generate';
     graphicQuality = await services.measure(graphic);
-    operations.push(graphicMethod === 'redraw' ? 'B 原设计重建 1 次；先还原目标图案，再去底；未套用纯色净化' : 'D 白底整图生成 1 次', '抠图后真实 Alpha 检查通过', '抠图后统一口径评分');
+    operations.push(graphicMethod === 'redraw' ? `B 原设计重建 1 次；先还原目标图案，再去底；${solidColor ? '按明确要求统一单色' : '保留原设计配色'}` : 'D 白底整图生成 1 次', '抠图后真实 Alpha 检查通过', '抠图后统一口径评分');
     if (graphicMethod === 'redraw') redraw = { status: 'completed', stage: 'measurement', model,
       inputSha256: artworkSha256(sourceBytes), promptHash: artworkPromptHash(usedPrompt) };
     else graphicDecision = decision;

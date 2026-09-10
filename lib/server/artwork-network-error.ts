@@ -30,6 +30,20 @@ export function artworkNetworkFailure(error: unknown, fallbackStage = '图案处
   return { stage, codes: [...codes], message: `${stage}未完成：${reason}。` };
 }
 
+export function artworkInspectionFailure(error: unknown) {
+  const network = artworkNetworkFailure(error, '内容核对');
+  if (network) return network.message;
+  const message = error instanceof Error ? error.message : String(error);
+  const savedNetwork = message.match(/^内容核对未完成：(.+)。$/u)?.[1];
+  if (savedNetwork && savedNetwork.split('；').every(reason => [...Object.values(networkReasons), '等待服务响应超时', '网络请求失败，未取得更具体的连接原因'].includes(reason))) return message;
+  const timeout = message.match(/超时（(\d+) 秒）/u);
+  if (timeout) return `内容核对服务在 ${timeout[1]} 秒内未返回结果。`;
+  if (error instanceof SyntaxError || (error instanceof Error && error.name === 'ZodError') || /核对缺少逐项结果/u.test(message)) return '内容核对服务返回的结果不完整或无法解析。';
+  const status = message.match(/\b(?:HTTP\s*)?(401|403|429|5\d\d)\b/iu)?.[1];
+  if (status) return `内容核对服务${status === '429' ? '请求过多' : ['401', '403'].includes(status) ? '认证或权限失败' : '暂时异常'}（HTTP ${status}）。`;
+  return '内容核对服务返回异常，未取得检查结论。';
+}
+
 class ArtworkNetworkError extends Error {
   constructor(readonly stage: string, message: string, cause: unknown) {
     super(message, { cause });

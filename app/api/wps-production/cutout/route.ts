@@ -7,7 +7,8 @@ import { CatalogHttpError } from '@/lib/server/catalog-auth';
 import { readCutoutJob } from '@/lib/server/artwork-cutout-store';
 import { alignCutoutLayer } from '@/lib/server/artwork-cutout-layer';
 export const runtime = 'nodejs';
-export const maxDuration = 120;
+// A completed cutout can still require the bounded visual watermark check.
+export const maxDuration = 300;
 const schema = z.object({ action: z.enum(['inspect', 'process', 'query', 'align']), targetUrl: z.string().max(500).optional(), mode: z.enum(['auto', 'standard', 'meitu']).default('auto'),
   image: z.string().max(16_000_000).optional(), jobKey: z.string().regex(/^[a-f0-9]{64}$/u).optional(), retryOf: z.string().regex(/^[a-f0-9]{64}$/u).optional() });
 export async function POST(request: Request) {

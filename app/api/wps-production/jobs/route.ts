@@ -1,26 +1,29 @@
+import { conditionalJson } from '@/lib/server/conditional-json';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { productionUser } from '@/lib/server/production-storage';
 import { CatalogHttpError } from '@/lib/server/catalog-auth';
-import { updateProductionPlan } from '@/lib/wps-production';
+import { normalizeProductionTextPlan } from '@/lib/wps-production';
 import { readWpsProductionState, mutateWpsProductionState } from '@/lib/server/wps-production-store';
 import { assertProductionArtworkSnapshot, productionArtworkSnapshot, ProductionArtworkConflictError } from '@/lib/production-artwork-snapshot';
 import { artworkJobsEnabled, readArtworkJobs, enqueueArtworkJob, changeArtworkJob } from '@/lib/server/artwork-job-store';
 import { artworkPlanIssues, isTextOnlyArtwork } from '@/lib/artwork-reference';
 import { productionArtworkRouting } from '@/lib/production-recipe';
+import { sharedArtworkForUnit, sharedArtworkLeader } from '@/lib/shared-artwork';
+import { assertProductionSharedSnapshot, productionSharedSnapshot } from '@/lib/production-artwork-snapshot';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 const inputSchema = z.union([
-  z.object({ action: z.literal('enqueue'), units: z.array(z.object({ unitId: z.string().min(1), snapshot: z.string().min(1).max(100_000) })).min(1).max(100) }),
+  z.object({ action: z.literal('enqueue'), units: z.array(z.object({ unitId: z.string().min(1), snapshot: z.string().min(1).max(100_000), sharedSnapshot: z.string().min(1).max(10_000_000).optional() })).min(1).max(100) }),
   z.object({ action: z.enum(['cancel', 'retry']), id: z.string().uuid() }),
 ]);
 function failure(error: unknown) {
   return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: error instanceof CatalogHttpError ? error.status : error instanceof ProductionArtworkConflictError ? 409 : 400 });
 }
 export async function GET(request: Request) {
-  try { await productionUser(request); return NextResponse.json(await readArtworkJobs(), { headers: { 'Cache-Control': 'no-store' } }); }
+  try { await productionUser(request); return conditionalJson(await readArtworkJobs(), request); }
   catch (error) { return failure(error); }
 }
 export async function POST(request: Request) {
@@ -43,11 +46,19 @@ export async function POST(request: Request) {
       try {
         assertProductionArtworkSnapshot(state, requested.unitId, requested.snapshot);
         let unit = state.units.find(unit => unit.id === requested.unitId)!;
+        if (sharedArtworkForUnit(state, unit.id)) {
+          if (!requested.sharedSnapshot) throw new Error('请刷新页面后从共用图稿入口制作');
+          assertProductionSharedSnapshot(state, unit.id, requested.sharedSnapshot);
+          unit = sharedArtworkLeader(state, unit);
+        }
         if (isTextOnlyArtwork(unit) && (unit.route !== 'deterministic' || unit.generationPrompt)) {
-          const unitId = unit.id, exactText = unit.exactText;
-          state = await mutateWpsProductionState(state.revision, current => updateProductionPlan(current, unitId, {
-            textMode: 'replace', exactText, generationPrompt: '', route: 'deterministic',
-          }), current => assertProductionArtworkSnapshot(current, unitId, requested.snapshot));
+          const unitId = unit.id;
+          const before = productionArtworkSnapshot(unit, state.records.find(record => record.source.recordId === unit.sourceRecordId)!.source);
+          const sharedBefore = sharedArtworkForUnit(state, unitId) ? productionSharedSnapshot(state, unitId) : undefined;
+          state = await mutateWpsProductionState(state.revision, current => normalizeProductionTextPlan(current, unitId), current => {
+            assertProductionArtworkSnapshot(current, unitId, before);
+            if (sharedBefore) assertProductionSharedSnapshot(current, unitId, sharedBefore);
+          });
           unit = state.units.find(candidate => candidate.id === unitId)!;
         }
         const source = state.records.find(record => record.source.recordId === unit.sourceRecordId)!.source;
@@ -56,7 +67,8 @@ export async function POST(request: Request) {
         if (unit.attempts.some(attempt => ['submitted', 'processing', 'unknownSubmission'].includes(attempt.status))) throw new Error('已有制作任务未结束');
         const routing = productionArtworkRouting({ ...unit, artwork: null }, source);
         if (!isTextOnlyArtwork(unit) && routing.decision.state === 'review') throw new Error(routing.facts.blockers.join('；') || routing.decision.reason);
-        const queued = await enqueueArtworkJob({ unit, source }, productionArtworkSnapshot(unit, source));
+        const queued = await enqueueArtworkJob({ unit, source, ...(sharedArtworkForUnit(state, unit.id)
+          ? { sharedSnapshot: productionSharedSnapshot(state, unit.id) } : {}) }, productionArtworkSnapshot(unit, source));
         results.push({ unitId: unit.id, ...queued });
       } catch (error) { results.push({ unitId: requested.unitId, error: error instanceof Error ? error.message : String(error) }); }
     }

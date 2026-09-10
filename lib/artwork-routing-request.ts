@@ -86,7 +86,7 @@ export function artworkRequirementFacts(input: ArtworkRequirementInput): Artwork
   };
 }
 
-export const STANDARD_ARTWORK_PROMPT_VERSION = 'artwork-standard-prompts-v14';
+export const STANDARD_ARTWORK_PROMPT_VERSION = 'artwork-standard-prompts-v15';
 export function artworkPromptHash(text: string) {
   let hash = 0x811c9dc5;
   for (let index = 0; index < text.length; index++) hash = Math.imul(hash ^ text.charCodeAt(index), 0x01000193);
@@ -123,7 +123,7 @@ export function standardArtworkPrompts(input: Omit<ArtworkPreparationRequest, 'i
   ].join('\n') }));
   const textOperation = artworkTextOperation(input);
   const removeText = textOperation === 'replace' ? artworkTextRemovalPrompt(input) : null;
-  const reconstruct = input.sourceAssessment ? artworkReconstructionPrompt(input.sourceAssessment, input.primaryImageLabel) : null;
+  const reconstruct = input.sourceAssessment ? artworkReconstructionPrompt(input.sourceAssessment, input.primaryImageLabel, input) : null;
   const hash = artworkPromptHash(JSON.stringify({ version: STANDARD_ARTWORK_PROMPT_VERSION, route: input.processingRoute, ...(input.artworkMethod ? { artworkMethod: input.artworkMethod } : {}), canonical: generate, redraw, reconstruct, textOperation, removeText, styledTexts, imageMapping: canonical.imageMapping }));
   return { version: STANDARD_ARTWORK_PROMPT_VERSION, hash, redraw, reconstruct, generate, textOperation, removeText, styledTexts, imageMapping: canonical.imageMapping };
 }

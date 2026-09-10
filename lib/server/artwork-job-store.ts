@@ -4,9 +4,11 @@ import { productionFileReferences, productionStateKey, usesProductionCloud } fro
 import type { ProductionUnit } from '@/lib/wps-production';
 import type { SourceTaskRecord } from '@/lib/batch-task-review';
 import type { ArtworkJobsResponse, ArtworkJobStatus } from '@/lib/artwork-jobs';
+import { assertProductionArtworkSnapshot, assertProductionSharedSnapshot } from '@/lib/production-artwork-snapshot';
+import { artworkInspectionFailure } from './artwork-network-error';
 
 export const artworkJobsEnabled = () => usesProductionCloud() && process.env.ARTWORK_DURABLE_JOBS === '1';
-export type ArtworkJobInput = { unit: ProductionUnit; source: SourceTaskRecord };
+export type ArtworkJobInput = { unit: ProductionUnit; source: SourceTaskRecord; sharedSnapshot?: string };
 export type ArtworkJob = { id: string; state_key: string; unit_id: string; snapshot: string; input: ArtworkJobInput; status: ArtworkJobStatus; owner: string; attempt: number };
 export async function retainJobFiles(client: CatalogQueryClient, id: string, value: unknown) {
   const ids = [...new Set(productionFileReferences(value).map(ref => ref.id))].sort();
@@ -14,11 +16,17 @@ export async function retainJobFiles(client: CatalogQueryClient, id: string, val
 }
 export async function enqueueArtworkJob(input: ArtworkJobInput, snapshot: string) {
   return catalogTransaction(async client => {
+    const stored = (await client.query('SELECT state_jsonb FROM production_states WHERE state_key=$1 FOR SHARE', [productionStateKey()])).rows[0];
+    if (input.sharedSnapshot && !stored) throw new Error('共用图稿生产状态不存在');
+    if (stored && input.sharedSnapshot) {
+      assertProductionArtworkSnapshot(stored.state_jsonb, input.unit.id, snapshot);
+      if (input.sharedSnapshot) assertProductionSharedSnapshot(stored.state_jsonb, input.unit.id, input.sharedSnapshot);
+    }
     // Serialize same-unit submissions from separate browsers and workers.
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`artwork:${productionStateKey()}:${input.unit.id}`]);
     const existing = (await client.query("SELECT * FROM artwork_jobs WHERE state_key=$1 AND unit_id=$2 AND status IN ('queued','running','unknown')", [productionStateKey(), input.unit.id])).rows[0];
     if (existing) {
-      if (existing.snapshot !== snapshot) throw new Error('该图案已有后台任务，要求发生变化，请等待原任务结束后再制作');
+      if (existing.snapshot !== snapshot || existing.input.sharedSnapshot !== input.sharedSnapshot) throw new Error('该图案已有后台任务，要求发生变化，请等待原任务结束后再制作');
       return { id: existing.id as string, existing: true };
     }
     const id = randomUUID();
@@ -31,7 +39,7 @@ export async function readArtworkJobs(): Promise<ArtworkJobsResponse> {
   if (!artworkJobsEnabled()) return { enabled: false, workerOnline: false, jobs: [] };
   const [jobs, workers] = await Promise.all([
     catalogDatabase().query(`SELECT j.id,j.unit_id,j.status,j.message,j.error,j.candidate,j.created_at,j.updated_at,
-      COALESCE((SELECT jsonb_agg(jsonb_build_object('stage',s.stage,'status',s.status,'durationMs',
+      COALESCE((SELECT jsonb_agg(jsonb_build_object('stage',s.stage,'status',s.status,'error',s.error,'durationMs',
        CASE WHEN s.finished_at IS NULL THEN NULL ELSE ROUND(EXTRACT(EPOCH FROM(s.finished_at-s.started_at))*1000) END) ORDER BY s.started_at)
        FROM artwork_job_steps s WHERE s.job_id=j.id),'[]'::jsonb) AS steps
       FROM artwork_jobs j WHERE j.state_key=$1 AND (j.status IN ('queued','running','unknown') OR
@@ -39,8 +47,15 @@ export async function readArtworkJobs(): Promise<ArtworkJobsResponse> {
       ORDER BY j.created_at DESC`, [productionStateKey()]),
     catalogDatabase().query("SELECT 1 FROM artwork_workers WHERE state_key=$1 AND heartbeat_at>now()-interval '35 seconds' LIMIT 1", [productionStateKey()]),
   ]);
-  return { enabled: true, workerOnline: !!workers.rowCount, jobs: jobs.rows.map(row => ({ id: row.id, unitId: row.unit_id, status: row.status,
-    message: row.message, error: row.error, candidate: row.candidate, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString(), steps: row.steps })) };
+  return { enabled: true, workerOnline: !!workers.rowCount, jobs: jobs.rows.map(row => {
+    const steps = (row.steps as ArtworkJobsResponse['jobs'][number]['steps']).map(step => ({ ...step,
+      error: step.stage === 'inspection' && step.error ? artworkInspectionFailure(new Error(step.error)) : null }));
+    const inspectionError = steps.find(step => step.stage === 'inspection' && step.status === 'failed' && step.error)?.error;
+    return { id: row.id, unitId: row.unit_id, status: row.status, message: row.message,
+      error: row.status === 'failed' && row.candidate?.stage === 'edit-review' && inspectionError
+        ? `图案已生成，${inspectionError}这张图还没保存成品，可复用已生成图片继续核对。` : row.error,
+      candidate: row.candidate, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString(), steps };
+  }) };
 }
 export async function claimArtworkJob(owner: string): Promise<ArtworkJob | null> {
   return catalogTransaction(async client => {

@@ -14,6 +14,15 @@ const input = (patch: Partial<ArtworkRequirementInput> = {}): ArtworkRequirement
 const decision = (patch: Partial<ArtworkRequirementInput> = {}) => decideArtworkMethod(artworkRequirementFacts(input(patch)));
 
 describe('visual source evidence selects artwork processing', () => {
+  it('carries actual unit instructions, layout and uniform ink into reconstruction and its identity', () => {
+    const task = { ...input(), sourceRequirementText: '后背图2', instruction: '保留图2弧形文字、爱心手掌及下方两行组织名称',
+      layoutNote: '整组使用统一金黄色', generationPrompt: '仅取图2印花，三部分保持原顺序，整组图案维持统一金黄色。' };
+    const prompts = standardArtworkPrompts(task);
+    for (const requirement of [task.instruction, task.layoutNote, task.generationPrompt]) expect(prompts.reconstruct).toContain(requirement);
+    expect(prompts.reconstruct).toContain('笔画内部不带渐变');
+    expect(prompts.reconstruct).not.toContain('保留目标图案本身的白色、渐变');
+    expect(prompts.hash).not.toBe(standardArtworkPrompts({ ...task, layoutNote: '整组使用统一蓝色', generationPrompt: '' }).hash);
+  });
   it('routes the hospital chest photo directly to B, without a failed repair or guessed exact text', () => {
     expect(decision()).toMatchObject({ method: 'redraw', action: 'redraw', state: 'ready' });
     expect(artworkRequirementFacts(input()).blockers).toEqual([]);

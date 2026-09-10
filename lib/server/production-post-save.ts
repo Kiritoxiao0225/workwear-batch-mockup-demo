@@ -1,9 +1,10 @@
 import { readCloudProductionState } from './production-cloud-state';
 import { savedProductionRender } from './production-render-cache';
 import { cleanupReplacedFiles } from './production-replaced-files';
+import { sharedArtworkForUnit } from '@/lib/shared-artwork';
 
 const changesPicture = new Set(['submitArtwork', 'saveArtworkDraft', 'updatePlan', 'confirmPlan',
-  'placeArtwork', 'savePlacements', 'selectGarment', 'pollGptImage2', 'confirmArtwork', 'returnUnit']);
+  'placeArtwork', 'savePlacements', 'selectGarment', 'pollGptImage2', 'confirmArtwork', 'returnUnit', 'linkSharedArtwork', 'applySharedArtwork', 'confirmSharedArtwork']);
 
 /** State and preview reads can arrive together; they share one cleanup check.
  * Writes still get a fresh pass so files queued during a previous pass are seen.
@@ -38,6 +39,7 @@ export async function finishProductionSave(body: Record<string, unknown> = {}) {
       const state = await readCloudProductionState();
       const unitIds = new Set([body.unitId, ...(Array.isArray(body.updates)
         ? body.updates.map(update => update?.unitId) : [])]);
+      for (const id of sharedArtworkForUnit(state, String(body.unitId))?.unitIds ?? []) unitIds.add(id);
       const versions = state.mockupVersions.filter(version => version.id === body.versionId || version.unitIds.some(id => unitIds.has(id)));
       for (const version of versions) {
         const units = version.unitIds.map(id => state.units.find(unit => unit.id === id)!);

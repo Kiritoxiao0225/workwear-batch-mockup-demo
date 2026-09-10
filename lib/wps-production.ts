@@ -1,4 +1,5 @@
 import type { BrowserLogoTextVerification } from '@/lib/client/browser-logo-ocr';
+import { sharedArtworkGroups } from './shared-artwork';
 import type { ArtworkQualityMeasurement } from '@/lib/artwork-routing-standard';
 import type { ArtworkMethodChoice } from '@/lib/artwork-routing-request';
 import { parseGenerationPrompt } from '@/lib/artwork-generation-prompt';
@@ -126,6 +127,10 @@ export type ProductionAttempt = {
 };
 
 export type ProductionUnit = {
+  sharedArtworkId?: string;
+  sharedArtworkDetached?: boolean;
+  sharedArtworkVersion?: number;
+  sharedArtworkError?: string;
   cutoutMode?: import('@/lib/artwork-cutout').ArtworkCutoutMode;
   sourceAssessment?: import('./artwork-source-assessment').ArtworkSourceAssessment;
   generationPrompt?: string;
@@ -197,6 +202,7 @@ export type ProductionMockupVersion = {
 };
 
 export type WpsProductionState = {
+  sharedArtworks?: import('./shared-artwork').SharedArtwork[];
   schemaVersion: typeof WPS_PRODUCTION_SCHEMA_VERSION;
   revision: number;
   batchId: string;
@@ -474,6 +480,11 @@ function fromReviewUnit(review: TaskReview, unit: GenerationUnit, previous: Prod
     garmentMatchNote: unit.garmentMatchNote,
     placement: unit.garment === undefined ? defaultPlacement(unit.placement) : requestedCatalogPlacement(review.source, unit),
     materialId: unit.logo.materialId,
+    sharedArtworkDetached: previous?.sharedArtworkDetached,
+    ...(!previous?.sharedArtworkDetached && (previous?.sharedArtworkId || unit.sharedArtworkId) ? {
+      sharedArtworkId: previous?.sharedArtworkId ?? unit.sharedArtworkId,
+      sharedArtworkVersion: previous?.sharedArtworkVersion ?? 0,
+    } : {}),
     referenceMaterialIds: [...new Set(unit.referenceMaterialIds)],
     sourceScope: unit.sourceScope,
     textMode: unit.textMode,
@@ -509,6 +520,12 @@ function fromReviewUnit(review: TaskReview, unit: GenerationUnit, previous: Prod
     candidate.gateB = candidate.artwork && previous.gateB?.fingerprint === candidate.artwork.validation.sha256
       ? previous.gateB
       : null;
+    if (previous.sharedArtworkId && previous.recipeFingerprint !== candidate.recipeFingerprint) {
+      candidate.sharedArtworkId = undefined;
+      candidate.sharedArtworkVersion = undefined;
+      candidate.sharedArtworkDetached = true;
+    }
+    candidate.sharedArtworkError = candidate.sharedArtworkId ? previous.sharedArtworkError : undefined;
     candidate.attempts = previous.attempts;
     candidate.error = previous.recipeFingerprint === candidate.recipeFingerprint ? previous.error : null;
     candidate.returnReason = previous.returnReason;
@@ -553,6 +570,7 @@ export function importTaskReviews(
     })),
     units,
     mockupVersions: reconcileVersions(units, current.mockupVersions, now),
+    sharedArtworks: sharedArtworkGroups({ ...current, units }),
     updatedAt: now.toISOString(),
   };
 }
@@ -602,6 +620,7 @@ export function upsertTaskReviews(
     revision: current.revision + 1,
     records,
     units,
+    sharedArtworks: sharedArtworkGroups({ ...current, units }),
     mockupVersions: reconcileVersions(units, current.mockupVersions, now).map(version =>
       !incomingRecordIds.has(version.sourceRecordId) ? current.mockupVersions.find(previous => previous.id === version.id) ?? version : version),
     updatedAt: now.toISOString(),
@@ -652,6 +671,7 @@ function changedUnitState(
     ...state,
     revision: state.revision + 1,
     units,
+    sharedArtworks: sharedArtworkGroups({ ...state, units }),
     mockupVersions: reconcileVersions(units, state.mockupVersions, now).map(version => {
       const previous = state.mockupVersions.find(candidate => candidate.id === version.id);
       return previous && !previous.unitIds.includes(unitId) && !version.unitIds.includes(unitId) ? previous : version;
@@ -727,6 +747,10 @@ export function updateProductionPlan(
     next.planFingerprint = planFingerprint(next);
     if (next.planFingerprint !== unit.planFingerprint) next.gateA = null;
     if (next.recipeFingerprint !== unit.recipeFingerprint) {
+      next.sharedArtworkDetached = Boolean(unit.sharedArtworkId || unit.sharedArtworkDetached);
+      next.sharedArtworkId = undefined;
+      next.sharedArtworkVersion = undefined;
+      next.sharedArtworkError = undefined;
       next.previousArtwork = unit.artwork ?? unit.previousArtwork;
       next.artwork = null;
       next.gateB = null;
@@ -853,6 +877,24 @@ export function updateProductionAttempt(
       error: nextAttempt.status === 'failed' ? nextAttempt.error || '制作尝试失败' : null,
     };
   }, now);
+}
+
+/** Legacy text plans can be normalized without turning a shared source into an individual edit. */
+export function normalizeProductionTextPlan(state: WpsProductionState, unitId: string) {
+  const source = state.units.find(unit => unit.id === unitId);
+  if (!source) throw new Error('找不到文字图案');
+  const targets = source.sharedArtworkId ? state.units.filter(unit => unit.sharedArtworkId === source.sharedArtworkId) : [source];
+  let next = state;
+  for (const unit of targets) {
+    if (!isTextOnlyArtwork(unit)) throw new Error('此图稿不是纯文字要求');
+    next = updateProductionPlan(next, unit.id, { textMode: 'replace', exactText: unit.exactText, generationPrompt: '', route: 'deterministic' });
+  }
+  const units = next.units.map(unit => {
+    const previous = targets.find(target => target.id === unit.id);
+    return previous ? { ...unit, sharedArtworkId: previous.sharedArtworkId, sharedArtworkDetached: previous.sharedArtworkDetached,
+      sharedArtworkVersion: previous.sharedArtworkVersion } : unit;
+  });
+  return { ...next, units, sharedArtworks: sharedArtworkGroups({ ...state, units }), revision: state.revision + 1 };
 }
 
 export function attachProductionArtwork(

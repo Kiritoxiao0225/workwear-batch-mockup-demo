@@ -450,6 +450,7 @@ function parsedUnit(
   const assessment = parseArtworkSourceAssessment(unit.sourceAssessment);
   return {
     id: requiredText(unit.id, `${source.recordId}.units[${index}].id`),
+    ...(typeof unit.sharedArtworkId === 'string' ? { sharedArtworkId: unit.sharedArtworkId } : {}),
     garmentLabel: requiredText(unit.garmentLabel, `${source.recordId}.units[${index}].garmentLabel`),
     variantLabel: requiredText(unit.variantLabel, `${source.recordId}.units[${index}].variantLabel`),
     productCode,
@@ -528,6 +529,7 @@ function expandedAnalysisUnits(analysis: Record<string, unknown>, source: Source
   const expanded = [...garments].flatMap(([garmentId, garmentRequest]) => artworks.filter(item => item.garmentIds.includes(garmentId)).map(({ artwork, id }) => ({
     ...artwork,
     id: `${source.recordId}:g:${garmentId}:a:${id}`,
+    sharedArtworkId: `${source.recordId}:artwork:${id}`,
     garmentRequest,
     garmentLabel: [garmentRequest.styleCode.trim() || '款式待确认', garmentRequest.colorText.trim(), garmentRequest.sizeText.trim()].filter(Boolean).join(' '),
     productCode: null,

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { catalogTransaction } from './catalog-database';
 import { fileSha256 } from './catalog-files';
 
-const TABLES = ['users', 'sessions', 'files', 'catalog_body_geometry', 'garment_styles', 'garment_variants', 'garment_asset_versions', 'asset_sources', 'garment_views', 'placement_standard_versions', 'standard_reuse_checks', 'import_batches', 'import_items', 'audit_events', 'production_states', 'production_file_refs', 'production_operations', 'production_renders', 'production_render_cache', 'production_save_receipts', 'artwork_cutout_jobs', 'artwork_run_records', 'artwork_jobs', 'artwork_job_steps', 'artwork_job_files', 'artwork_stage_slots', 'artwork_workers'] as const;
+const TABLES = ['users', 'sessions', 'files', 'catalog_body_geometry', 'garment_styles', 'garment_variants', 'garment_asset_versions', 'asset_sources', 'garment_views', 'placement_standard_versions', 'standard_reuse_checks', 'import_batches', 'import_items', 'audit_events', 'production_states', 'production_file_refs', 'production_operations', 'production_renders', 'production_render_cache', 'production_save_receipts', 'artwork_cutout_jobs', 'artwork_run_records', 'artwork_jobs', 'artwork_job_steps', 'artwork_job_files', 'artwork_stage_slots', 'artwork_workers', 'artwork_cutout_files', 'wps_analysis_jobs', 'wps_analysis_files'] as const;
 const payloadSchema = z.object({ schemaVersion: z.literal(1), migrations: z.array(z.object({ name: z.string(), sha256: z.string() }).strict()), tables: z.record(z.string(), z.array(z.record(z.string(), z.unknown()))) }).strict();
 export async function backupCatalog() {
   const payload = await catalogTransaction(async client => {

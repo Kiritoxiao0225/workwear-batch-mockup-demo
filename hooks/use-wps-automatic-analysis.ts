@@ -1,4 +1,5 @@
 'use client';
+import { useWpsDurableAnalysis } from './use-wps-durable-analysis';
 import { useEffect, useRef, useState } from 'react';
 import type { SourceTaskRecord } from '@/lib/batch-task-review';
 import type { WpsProductionState } from '@/lib/wps-production';
@@ -23,7 +24,7 @@ async function json<T>(response: Response): Promise<T> {
 }
 
 /** A source revision is attempted once per page session; failed entries require explicit retry. */
-export function useWpsAutomaticAnalysis(state: WpsProductionState | null, enabled: boolean, accept: (state: WpsProductionState) => void) {
+function useLegacyWpsAutomaticAnalysis(state: WpsProductionState | null, enabled: boolean, accept: (state: WpsProductionState) => void) {
   const attempted = useRef(new Set<string>()), running = useRef(false);
   const parsed = useRef(new Map<string, WpsAnalysisResult>());
   const currentSources = useRef<SourceTaskRecord[]>([]);
@@ -72,7 +73,7 @@ export function useWpsAutomaticAnalysis(state: WpsProductionState | null, enable
         if (alreadySaved) { accept(latest); savedTiming(); return; }
         try {
           const saved = await json<WpsProductionState>(await fetch('/api/wps-production', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(60_000),
-            body: JSON.stringify({ action: 'upsertReviews', expectedRevision: latest.revision, reviews: result.reviews }) }));
+            body: JSON.stringify({ action: 'upsertReviews', expectedRevision: latest.revision, reviews: result.reviews, targetSnapshots: result.targetSnapshots }) }));
           accept(saved); savedTiming(); return;
         } catch (error) {
           if (attempt === 2 || !(error instanceof Error) || !('status' in error) || error.status !== 409) throw error;
@@ -117,4 +118,10 @@ export function useWpsAutomaticAnalysis(state: WpsProductionState | null, enable
       setRetry(current => current + 1);
     },
   };
+}
+
+export function useWpsAutomaticAnalysis(state: WpsProductionState | null, enabled: boolean, accept: (state: WpsProductionState) => void) {
+  const durable = useWpsDurableAnalysis(state, enabled, accept);
+  const legacy = useLegacyWpsAutomaticAnalysis(state, enabled && durable.available === false, accept);
+  return durable.available === false ? legacy : durable;
 }

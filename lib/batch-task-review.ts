@@ -48,6 +48,7 @@ export type LogoSelection = {
 };
 
 export type GenerationUnit = {
+  sharedArtworkId?: string;
   sourceAssessment?: import('./artwork-source-assessment').ArtworkSourceAssessment;
   generationPrompt?: string;
   garmentRequest?: GarmentRequest;

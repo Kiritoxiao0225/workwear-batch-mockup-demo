@@ -1,4 +1,6 @@
-import sharp from 'sharp';
+import { fidelityModelImage } from './model-image-input';
+import { assertProductionSharedSnapshot } from '@/lib/production-artwork-snapshot';
+import { prepareSharedArtwork, commitSharedArtwork, type ArtworkAttachment } from './shared-artwork';
 import { artworkInputSelection, artworkPlanIssues, isTextOnlyArtwork } from '@/lib/artwork-reference';
 import { assertProductionArtworkSnapshot } from '@/lib/production-artwork-snapshot';
 import { productionArtworkRouting } from '@/lib/production-recipe';
@@ -22,18 +24,19 @@ import { prepareServerPrintedArtwork, serverProductionTextColor, serverProductio
 
 async function modelInput(url: string, fileName: string) {
   const bytes = await readProductionFile(url);
-  const png = await sharp(bytes, { limitInputPixels: 32_000_000 }).rotate().png().toBuffer();
-  if (png.length > 8 * 1024 * 1024) throw new Error('主要素材大于 8MB，请先缩小素材');
-  return { fileName, mimeType: 'image/png', dataUrl: `data:image/png;base64,${png.toString('base64')}` };
+  const input = await fidelityModelImage(bytes);
+  return { fileName, mimeType: input.mimeType, dataUrl: input.dataUrl };
 }
 export async function processArtworkJob(job: ArtworkJob) {
   return inArtworkJob(job, async () => {
     // Saving is idempotent even if a worker dies after committing the production state.
-    const receipt = { id: job.id, hash: artworkStepHash({ unitId: job.unit_id, snapshot: job.snapshot }) };
+    const receipt = { id: job.id, hash: artworkStepHash({ unitId: job.unit_id, snapshot: job.snapshot,
+      ...(job.input.sharedSnapshot ? { sharedSnapshot: job.input.sharedSnapshot } : {}) }) };
     try {
       if (await completedProductionSave(receipt)) { await updateArtworkJob(job, 'completed', '图案已保存，请核对'); return; }
       const current = await readWpsProductionState();
       assertProductionArtworkSnapshot(current, job.unit_id, job.snapshot);
+      if (job.input.sharedSnapshot) assertProductionSharedSnapshot(current, job.unit_id, job.input.sharedSnapshot);
       const { unit, source } = job.input;
       const textOnly = isTextOnlyArtwork(unit);
       const issue = artworkPlanIssues(source, unit).join('；');
@@ -82,12 +85,20 @@ export async function processArtworkJob(job: ArtworkJob) {
         const service = textOnly ? 'deterministic' : artworkProcessingRoute(unit);
         if (service === 'blocked') throw new Error('制作路线仍待核对');
         const latest = await readWpsProductionState();
-        await mutateWpsProductionState(latest.revision, state => attachProductionArtwork(state, unit.id, {
+        assertProductionArtworkSnapshot(latest, unit.id, job.snapshot);
+        if (job.input.sharedSnapshot) assertProductionSharedSnapshot(latest, unit.id, job.input.sharedSnapshot);
+        const attachment: ArtworkAttachment = {
           url: layout.url, name: `${unit.id}-artwork.png`, validation, draft: verified, automaticWidthCm: layout.automaticWidthCm ?? undefined,
           service, inputImageUrls, prompt: result?.preprocessing.resolvedPrompt ?? null, promptHash: result?.preprocessing.promptHash ?? null,
           requestSummary: textOnly ? `程序文字排版：${unit.exactText}；抖音美好体。${layout.summary}` : `${layout.summary} ${result!.preprocessing.decisionRule}`,
           providerTaskId: job.id, estimatedCostCny: 0, actualCostCny: null,
-        }, job.id), state => assertProductionArtworkSnapshot(state, unit.id, job.snapshot), receipt);
+        };
+        const preparedShared = await prepareSharedArtwork(latest, unit.id, attachment, { attemptId: job.id });
+        await mutateWpsProductionState(latest.revision, state => preparedShared ? commitSharedArtwork(state, preparedShared)
+          : attachProductionArtwork(state, unit.id, attachment, job.id), state => {
+            assertProductionArtworkSnapshot(state, unit.id, job.snapshot);
+            if (job.input.sharedSnapshot) assertProductionSharedSnapshot(state, unit.id, job.input.sharedSnapshot);
+          }, receipt);
       });
       await updateArtworkJob(job, 'completed', '图案已保存，请核对');
       // Customer preview failure must never turn a saved artwork back into a failed paid job.
@@ -96,7 +107,7 @@ export async function processArtworkJob(job: ArtworkJob) {
       const steps = (await catalogDatabase().query('SELECT status FROM artwork_job_steps WHERE job_id=$1', [job.id])).rows;
       const unknown = steps.some(step => step.status === 'unknown');
       const candidate = error instanceof NativeArtworkCandidateError ? await persistProductionReferences(error.candidate) : null;
-      const failed = steps.some(step => step.status === 'failed');
+      const failed = candidate?.retryable ?? steps.some(step => step.status === 'failed');
       const message = error instanceof Error ? error.message : String(error);
       await updateArtworkJob(job, unknown ? 'unknown' : candidate && !failed ? 'review' : 'failed',
         unknown ? '生图结果不确定，请核对原任务' : candidate && !failed ? '图案需要核对，已保留图片' : '处理未完成，可从已保存步骤继续', message.slice(0, 4000), candidate);

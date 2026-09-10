@@ -1,6 +1,7 @@
 'use client';
 
 import Image from 'next/image';
+import { productionThumbnailUrl } from '@/lib/production-file-url';
 import { useEffect, useState } from 'react';
 
 const RETRY_DELAYS = [1000, 2000, 4000];
@@ -36,6 +37,7 @@ function MaterialImageAttempt({ src, alt, label, sizes, large = false, open }: P
     setAttempt({ count: 0, nonce: String(Date.now()) });
     setStatus('loading');
   };
+  if (!large && src) src = productionThumbnailUrl(src);
   // Bust cached failures on our file endpoint. Never change WPS signed URLs.
   const imageSrc = src && attempt.nonce && src.startsWith('/api/production-files/')
     ? `${src}${src.includes('?') ? '&' : '?'}_imageRetry=${attempt.nonce}-${attempt.count}`

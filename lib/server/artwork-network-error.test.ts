@@ -1,5 +1,14 @@
 import { expect, it, vi } from 'vitest';
-import { artworkNetworkFailure, withArtworkNetworkContext } from './artwork-network-error';
+import { artworkInspectionFailure, artworkNetworkFailure, withArtworkNetworkContext } from './artwork-network-error';
+
+it('explains inspection failures and persisted network reasons without leaking upstream responses', () => {
+  expect(artworkInspectionFailure(new TypeError('fetch failed'))).toContain('网络请求失败');
+  expect(artworkInspectionFailure(new Error('内容核对未完成：连接被中途断开。'))).toContain('连接被中途断开');
+  expect(artworkInspectionFailure(new Error('任务分析模型处理超时（120 秒）：图案修改逐项核对'))).toContain('120 秒');
+  expect(artworkInspectionFailure(new SyntaxError('bad JSON: token=secret'))).toContain('无法解析');
+  expect(artworkInspectionFailure(new Error('HTTP 429 https://private.test?token=secret'))).toBe('内容核对服务请求过多（HTTP 429）。');
+  expect(artworkInspectionFailure(new Error('unexpected private upstream response'))).not.toContain('private');
+});
 
 it('explains nested and aggregate transport causes without exposing credentials or URLs', () => {
   const cause = Object.assign(new Error('https://signed.example/?token=private'), { code: 'UND_ERR_CONNECT_TIMEOUT' });

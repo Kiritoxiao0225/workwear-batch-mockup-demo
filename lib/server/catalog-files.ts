@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import sharp from 'sharp';
 import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './catalog-database';
 import { catalogOssBrowserSigner, catalogOssObjects } from './catalog-oss';
@@ -55,66 +56,81 @@ export async function saveCatalogFile(bytes: Buffer, originalName: string, purpo
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending') ON CONFLICT(backend,bucket,sha256) DO NOTHING`,
     [randomUUID(), config.backend, config.bucket, key, hash, inspected.mimeType, inspected.width, inspected.height, inspected.byteLength, inspected.hasAlpha, originalName]);
   }
-  return catalogTransaction(async client => {
-    // Use this connection for all SQL while holding the lock; never wait for another pool slot.
-    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`file:${config.backend}:${config.bucket}:${hash}`]);
-    const saved = await saveLocked(client);
-    if (retain) await retain(client, saved.id);
-    return saved;
-  });
-  async function saveLocked(client: ReturnType<typeof catalogDatabase>) {
-  const config = catalogStorageConfig();
-  const known = await client.query("SELECT id,object_key,width,height,has_alpha,byte_length,mime_type,sha256 FROM files WHERE backend=$1 AND bucket=$2 AND sha256=$3 AND status='ready' AND gc_state='active' FOR SHARE", [config.backend, config.bucket, fileSha256(bytes)]);
-  if (known.rowCount) {
-    const file = known.rows[0];
-    if (config.backend === 'oss') assertOssObjectKey(file.object_key);
-    return { id: file.id as string, width: file.width as number, height: file.height as number, hasAlpha: file.has_alpha as boolean, byteLength: Number(file.byte_length), mimeType: file.mime_type as string, sha256: file.sha256 as string };
-  }
-  const metadata = inspected ?? await inspectCatalogImage(bytes);
-  const objectKey = `${config.backend === 'oss' ? `${catalogObjectPrefix()}/` : ''}${purpose === 'production' ? 'production/' : ''}objects/${metadata.sha256.slice(0, 2)}/${metadata.sha256}`;
-  const inserted = await client.query(`INSERT INTO files(id,backend,bucket,object_key,sha256,mime_type,width,height,byte_length,has_alpha,original_name,status)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending') ON CONFLICT(backend,bucket,sha256) DO UPDATE SET sha256=EXCLUDED.sha256 RETURNING id,status,object_key,gc_state`,
-  [randomUUID(), config.backend, config.bucket, objectKey, metadata.sha256, metadata.mimeType, metadata.width, metadata.height, metadata.byteLength, metadata.hasAlpha, originalName]);
-  const file = inserted.rows[0];
-  if (file.gc_state === 'deleting') throw new Error('文件正在回收，请稍后重试');
-  if (file.status === 'ready' && file.gc_state === 'active') return { id: file.id as string, ...metadata };
-  const storedKey = file.object_key as string;
-  try {
-    let versionId: string | null = null;
-    let saved: Buffer;
-    if (config.backend === 'local') {
-      const destination = localObjectPath(config.bucket, storedKey);
-      await mkdir(path.dirname(destination), { recursive: true });
-      const temporary = `${destination}.${randomUUID()}.tmp`;
-      await writeFile(temporary, bytes); await rename(temporary, destination); saved = await readFile(destination);
-    } else {
-      const objectClient = catalogOssObjects(config.bucket);
-      // A previous response may have been lost after OSS accepted the file. Read it before retrying PUT.
-      let exists = false;
-      try { const existing = await objectClient.get(storedKey); if (fileSha256(Buffer.from(existing.content)) !== metadata.sha256) throw new Error('已有对象内容不匹配'); exists = true; }
-      catch (error) { if (!(error && typeof error === 'object' && 'code' in error && error.code === 'NoSuchKey')) throw error; }
-      try {
-        const uploaded = exists ? null : await objectClient.put(storedKey, bytes, { mime: metadata.mimeType,
-          headers: { 'x-oss-forbid-overwrite': 'true', 'x-oss-object-acl': 'private', 'Cache-Control': 'private, max-age=86400' } });
-        const header = (uploaded?.res.headers as Record<string, unknown> | undefined)?.['x-oss-version-id'];
-        if (uploaded) await client.query('UPDATE files SET upload_count=upload_count+1 WHERE id=$1', [file.id]);
-        versionId = typeof header === 'string' ? header : null;
-      } catch (error) {
-        if (!(error && typeof error === 'object' && 'code' in error && error.code === 'FileAlreadyExists')) throw error;
+  const owner = randomUUID(), deadline = Date.now() + 150_000;
+  const descriptor = (file: Record<string, unknown>) => ({ id: file.id as string, width: file.width as number, height: file.height as number,
+    hasAlpha: file.has_alpha as boolean, byteLength: Number(file.byte_length), mimeType: file.mime_type as string, sha256: file.sha256 as string });
+  // Transactions only claim/finalize metadata. OSS I/O never holds a pool connection.
+  while (Date.now() < deadline) {
+    const claimed = await catalogTransaction(async client => {
+      const file = (await client.query('SELECT * FROM files WHERE backend=$1 AND bucket=$2 AND sha256=$3 FOR UPDATE', [config.backend, config.bucket, hash])).rows[0];
+      if (!file) throw new Error('文件登记丢失，请重试');
+      if (config.backend === 'oss') assertOssObjectKey(file.object_key);
+      if (file.status === 'ready' && file.gc_state === 'active') {
+        if (retain) await retain(client, file.id);
+        return { file, ready: true };
       }
-      const downloaded = await objectClient.get(storedKey, { versionId: versionId ?? undefined });
-      const header = (downloaded.res.headers as Record<string, unknown>)['x-oss-version-id'];
-      versionId ??= typeof header === 'string' ? header : null;
-      saved = Buffer.from(downloaded.content);
-    }
-    if (fileSha256(saved) !== metadata.sha256) throw new Error(`图片上传后 SHA-256 不一致：${originalName}`);
-    await client.query("UPDATE files SET status='ready',gc_state='active',error=NULL,object_version_id=$2 WHERE id=$1", [file.id, versionId]);
-    return { id: file.id as string, ...metadata };
-  } catch (error) {
-    await client.query("UPDATE files SET status='failed',error=$2 WHERE id=$1 AND status <> 'ready'", [file.id, error instanceof Error ? error.message : String(error)]);
-    throw error;
+      if (file.gc_state === 'deleting') throw new Error('文件正在回收，请稍后重试');
+      const lease = await client.query(`INSERT INTO production_operations(operation_key,owner,lease_until)
+        VALUES($1,$2,now()+interval '2 minutes') ON CONFLICT(operation_key) DO UPDATE
+        SET owner=EXCLUDED.owner,lease_until=EXCLUDED.lease_until,updated_at=now()
+        WHERE production_operations.lease_until<=now() RETURNING owner`, [`file-upload:${file.id}`, owner]);
+      if (!lease.rowCount) return null;
+      await client.query("UPDATE files SET status='pending',gc_state='active',error=NULL WHERE id=$1", [file.id]);
+      return { file, ready: false };
+    });
+    if (!claimed) { await delay(250); continue; }
+    const { file } = claimed;
+    if (claimed.ready) return descriptor(file);
+    const key = `file-upload:${file.id}`;
+    const heartbeat = setInterval(() => { void catalogDatabase().query("UPDATE production_operations SET lease_until=now()+interval '2 minutes',updated_at=now() WHERE operation_key=$1 AND owner=$2", [key, owner]).catch(() => {}); }, 15_000);
+    let versionId: string | null = null, uploaded = false;
+    try {
+      let saved: Buffer;
+      if (config.backend === 'local') {
+        const destination = localObjectPath(config.bucket, file.object_key);
+        await mkdir(path.dirname(destination), { recursive: true });
+        const temporary = `${destination}.${owner}.tmp`;
+        await writeFile(temporary, bytes); await rename(temporary, destination); saved = await readFile(destination);
+      } else {
+        const client = catalogOssObjects(config.bucket);
+        let exists = false;
+        try { const previous = await client.get(file.object_key); if (fileSha256(Buffer.from(previous.content)) !== hash) throw new Error('已有对象内容不匹配'); exists = true; }
+        catch (error) { if (!(error && typeof error === 'object' && 'code' in error && error.code === 'NoSuchKey')) throw error; }
+        if (!exists) {
+          try {
+            const result = await client.put(file.object_key, bytes, { mime: file.mime_type,
+              headers: { 'x-oss-forbid-overwrite': 'true', 'x-oss-object-acl': 'private', 'Cache-Control': 'private, max-age=86400' } });
+            uploaded = true;
+            const header = (result.res.headers as Record<string, unknown>)['x-oss-version-id'];
+            versionId = typeof header === 'string' ? header : null;
+          } catch (error) { if (!(error && typeof error === 'object' && 'code' in error && error.code === 'FileAlreadyExists')) throw error; }
+        }
+        const result = await client.get(file.object_key, { versionId: versionId ?? undefined });
+        const header = (result.res.headers as Record<string, unknown>)['x-oss-version-id'];
+        versionId ??= typeof header === 'string' ? header : null;
+        saved = Buffer.from(result.content);
+      }
+      if (fileSha256(saved) !== hash) throw new Error(`图片上传后 SHA-256 不一致：${originalName}`);
+      return await catalogTransaction(async client => {
+        await client.query('SELECT id FROM files WHERE id=$1 FOR UPDATE', [file.id]);
+        const lease = await client.query('SELECT owner FROM production_operations WHERE operation_key=$1 AND owner=$2 AND lease_until>now() FOR UPDATE', [key, owner]);
+        if (!lease.rowCount) throw new Error('文件上传租约已过期，请重试读取已上传文件');
+        await client.query("UPDATE files SET status='ready',gc_state='active',error=NULL,object_version_id=$2,upload_count=upload_count+$3 WHERE id=$1", [file.id, versionId, uploaded ? 1 : 0]);
+        if (retain) await retain(client, file.id);
+        await client.query('DELETE FROM production_operations WHERE operation_key=$1 AND owner=$2', [key, owner]);
+        return descriptor(file);
+      });
+    } catch (error) {
+      await catalogTransaction(async client => {
+        await client.query('SELECT id FROM files WHERE id=$1 FOR UPDATE', [file.id]);
+        const removed = await client.query('DELETE FROM production_operations WHERE operation_key=$1 AND owner=$2 RETURNING owner', [key, owner]);
+        if (removed.rowCount) await client.query("UPDATE files SET status='failed',error=$2 WHERE id=$1 AND status<>'ready'", [file.id, error instanceof Error ? error.message : String(error)]);
+      });
+      throw error;
+    } finally { clearInterval(heartbeat); }
   }
-}}
+  throw new Error('相同文件仍在上传，请稍后重试；已上传内容会自动复用');
+}
 
 export async function catalogFile(id: string) {
   const found = await catalogDatabase().query("SELECT * FROM files WHERE id=$1 AND status='ready'", [id]);

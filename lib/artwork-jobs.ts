@@ -5,6 +5,6 @@ export const ARTWORK_STAGE_LABELS: Record<ArtworkStage, string> = { generation: 
 export type ArtworkJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'review' | 'unknown' | 'cancelled';
 export type ArtworkJobView = { id: string; unitId: string; status: ArtworkJobStatus; message: string; error: string | null;
   candidate: NativeArtworkCandidate | null; createdAt: string; updatedAt: string;
-  steps: { stage: string; status: string; durationMs: number | null }[] };
+  steps: { stage: string; status: string; durationMs: number | null; error?: string | null }[] };
 export type ArtworkJobsResponse = { enabled: boolean; workerOnline: boolean; jobs: ArtworkJobView[] };
 export const activeArtworkJob = (job: Pick<ArtworkJobView, 'status'>) => ['queued', 'running', 'unknown'].includes(job.status);

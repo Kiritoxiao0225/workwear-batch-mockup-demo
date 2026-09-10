@@ -37,6 +37,9 @@ describe('shared artwork analysis', () => {
       expect(units.map(unit => matchProductionGarment(source, unit, styles).item?.colorName)).toEqual([color, color]);
     }
     const state = importTaskReviews(emptyWpsProductionState(), [review]);
+    expect(state.sharedArtworks).toHaveLength(2);
+    expect(state.sharedArtworks!.map(group => group.unitIds.length)).toEqual([8, 8]);
+    expect(new Set(review.units.map(unit => unit.sharedArtworkId)).size).toBe(2);
     expect(state.mockupVersions).toHaveLength(8);
     expect(state.mockupVersions.every(version => version.unitIds.length === 2)).toBe(true);
     review.units[0].ambiguities.push('只修改第一件');

@@ -56,3 +56,47 @@
 .wps-artwork-cell :is(button, select, summary, a):focus-visible { outline: 2px solid #22734f; outline-offset: 3px; }
 .wps-production-table :is(.wps-requirement-cell, .wps-artwork-cell) button:disabled,
 .wps-artwork-settings select:disabled { opacity: .5; cursor: not-allowed; }
+/* A shared design occupies the original requirement/making columns once per order. */
+.wps-production-table .wps-shared-production-cell { padding: 0; background: #fff; vertical-align: top; }
+.wps-shared-workbench { min-width: 0; }
+.wps-shared-design { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.wps-shared-design + .wps-shared-design { border-top: 1px solid #d9e3da; }
+.wps-shared-requirement, .wps-shared-making, .wps-shared-design > .wps-requirement-cell, .wps-shared-design > .wps-artwork-cell { min-width: 0; padding: 18px 14px; }
+.wps-shared-requirement { border-right: 1px solid #edf0ed; }
+.wps-shared-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.wps-shared-title > strong { font-size: 14px; }
+.wps-shared-title > span { padding: 3px 7px; border-radius: 4px; background: #edf4ee; color: #3b6b4d; font-size: 11px; white-space: nowrap; }
+.wps-shared-workbench p { margin: 9px 0; font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; white-space: pre-line; }
+.wps-shared-workbench summary { padding: 5px 0; color: #617769; font-size: 12px; cursor: pointer; }
+.wps-shared-scope ul { padding-left: 16px; margin: 6px 0 10px; font-size: 12px; line-height: 1.7; color: #5a6c60; }
+.wps-shared-scope { margin-top: 12px; }
+.wps-shared-history { margin-top: 6px; }
+.wps-shared-thumbnails { display: flex; gap: 8px; flex-wrap: wrap; }
+.wps-shared-thumbnail { width: 100%; max-width: 190px; min-width: 0; padding: 8px; border: 1px solid #dce4dd; border-radius: 6px; background: #f7f9f6; cursor: pointer; }
+.wps-shared-thumbnails:has(> :nth-child(2)) .wps-shared-thumbnail { width: calc(50% - 4px); }
+.wps-shared-thumbnail img { display: block; width: 100%; height: 124px; object-fit: contain; background-color: #eef0ec; background-image: conic-gradient(#fff 25%, transparent 0 50%, #fff 0 75%, transparent 0); background-size: 14px 14px; }
+.wps-shared-thumbnail small { display: block; margin-top: 5px; color: #66786b; font-size: 11px; }
+.wps-shared-design-state { margin: 10px 0 8px; color: #657768; font-size: 12px; }
+.wps-shared-primary-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.wps-shared-workbench button:not(.wps-shared-thumbnail), .wps-garment-application button { min-height: 32px; padding: 5px 9px; border: 1px solid #b9cabe; border-radius: 5px; background: #fff; color: #31573f; font: inherit; font-size: 12px; cursor: pointer; }
+.wps-shared-workbench button.wps-shared-edit { background: #295c41; color: #fff; border-color: #295c41; }
+.wps-shared-workbench button:disabled, .wps-garment-application button:disabled { opacity: .5; cursor: not-allowed; }
+.wps-shared-workbench button:hover:not(:disabled) { border-color: #537c60; }
+.wps-shared-workbench :is(button, select, summary, input):focus-visible, .wps-garment-application :is(button, summary):focus-visible { outline: 2px solid #22734f; outline-offset: 3px; }
+.wps-shared-workbench .wps-shared-notice { color: #8d622e; font-size: 12px; }
+.wps-shared-suggestion { padding: 10px 14px; border-bottom: 1px solid #dce5dd; background: #f3f7f1; }
+.wps-shared-suggestion > summary { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.wps-shared-suggestion > summary > span:first-child { color: #315a3e; font-weight: 600; }
+.wps-shared-suggestion select { width: 100%; margin: 6px 0; padding: 6px; border: 1px solid #bacabd; border-radius: 5px; background: #fff; font: inherit; font-size: 12px; }
+.wps-shared-add label { display: flex; align-items: flex-start; gap: 6px; font-size: 12px; line-height: 1.5; margin: 6px 0; }
+.wps-shared-recovery[open] { margin-top: 10px; padding-top: 6px; border-top: 1px solid #e5ebe5; }
+.wps-garment-applications { margin: 10px 0; border-top: 1px solid #e0e7e1; }
+.wps-garment-application { font-size: 12px; }
+.wps-garment-application summary { padding: 9px 0; cursor: pointer; color: #5d7565; }
+.wps-garment-application summary > span + span { margin-left: 8px; font-size: 11px; color: #6b7b70; }
+.wps-garment-application button { display: block; margin: 5px 0; }
+.wps-garment-application p { font-size: 12px; line-height: 1.5; }
+.wps-standalone-label { display: block; color: #7b827b; margin-bottom: 10px; font-size: 11px; }
+.wps-unit-production-controls > button { min-height: 32px; margin: 6px 5px 0 0; padding: 6px 10px; border: 1px solid #b2c4b7; border-radius: 6px; background: #fff; color: #294e39; font: inherit; font-size: 13px; cursor: pointer; }
+.wps-unit-production-controls > button.primary { background: #245a3e; color: #fff; border-color: #245a3e; }
+.wps-unit-production-controls > .wps-production-cost { display: block; margin: 8px 0; color: #6c7c72; font-size: 11px; line-height: 1.5; }

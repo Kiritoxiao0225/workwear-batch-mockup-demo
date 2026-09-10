@@ -1,3 +1,5 @@
+import { wpsAnalysisSnapshot } from '@/lib/wps-analysis-snapshot';
+import { readWpsProductionState } from '@/lib/server/wps-production-store';
 import { after, NextResponse } from 'next/server';
 
 import type { SourceTaskRecord } from '@/lib/batch-task-review';
@@ -30,6 +32,8 @@ function parsedRecords(value: unknown): SourceTaskRecord[] {
 
 async function analyze(records: SourceTaskRecord[], trace: WpsAnalysisTrace, signal: AbortSignal) {
   signal.throwIfAborted();
+  const initial = await readWpsProductionState();
+  const targetSnapshots = Object.fromEntries(records.map(source => [source.recordId, wpsAnalysisSnapshot(initial, source.recordId)]));
   const verifiedRecords = await trace.measure('source', async () => {
     const { records: currentRecords } = await listWpsSourceTaskRecords({ recordIds: records.map(record => record.recordId) });
     const currentById = new Map(currentRecords.map((record) => [record.recordId, record]));
@@ -42,7 +46,7 @@ async function analyze(records: SourceTaskRecord[], trace: WpsAnalysisTrace, sig
     });
   });
   signal.throwIfAborted();
-  return analyzeSourceTaskRecords(verifiedRecords, { trace, signal });
+  return { ...await analyzeSourceTaskRecords(verifiedRecords, { trace, signal }), targetSnapshots };
 }
 
 function failure(error: unknown, trace?: WpsAnalysisTrace): WpsAnalysisFailure {

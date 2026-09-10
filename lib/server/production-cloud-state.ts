@@ -31,6 +31,16 @@ export async function commitCloudProductionState(current: WpsProductionState, ne
   return catalogTransaction(async client => {
     const row = (await client.query('SELECT revision FROM production_states WHERE state_key=$1 FOR UPDATE', [productionStateKey()])).rows[0];
     if (!row || Number(row.revision) !== current.revision) return false;
+    // Enqueue holds a share lock on this state row. Membership cannot change
+    // between its snapshot check and insertion, including from another browser.
+    const allIds = new Set([...current.units, ...next.units].map(unit => unit.id));
+    const changed = [...allIds].filter(id => current.units.find(unit => unit.id === id)?.sharedArtworkId !== next.units.find(unit => unit.id === id)?.sharedArtworkId);
+    const affectedGroups = new Set([...current.units, ...next.units].filter(unit => changed.includes(unit.id)).map(unit => unit.sharedArtworkId).filter(Boolean));
+    const changedMembership = [...new Set([...changed, ...[...current.units, ...next.units].filter(unit => unit.sharedArtworkId && affectedGroups.has(unit.sharedArtworkId)).map(unit => unit.id)])];
+    if (changedMembership.length) {
+      const jobs = await client.query("SELECT 1 FROM artwork_jobs WHERE state_key=$1 AND unit_id=ANY($2::text[]) AND status IN ('queued','running','unknown') LIMIT 1", [productionStateKey(), changedMembership]);
+      if (jobs.rowCount) throw new Error('图案正在制作，暂不能更改共用关系');
+    }
     // Existing references already protect these files from collection. Moving a
     // Logo or editing text does not require deleting/reinserting every reference.
     const references = (state: WpsProductionState) => productionFileReferences(state).sort((a, b) => a.ref.localeCompare(b.ref));
