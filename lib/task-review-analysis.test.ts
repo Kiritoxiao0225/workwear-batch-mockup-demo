@@ -358,3 +358,12 @@ it('does not submit the main image a second time as its own reference', () => {
   const [review] = parseTaskReviewAnalysis([sourceRecord('左胸:图一')], JSON.stringify(raw));
   expect(review.units[0].referenceMaterialIds).toEqual([]);
 });
+
+it('persists visual source evidence separately from exact customer text and binds it to the selected material', () => {
+  const raw = JSON.parse(analysisContent({ logoMaterialId: 'material-1', textMode: 'keep', instruction: '左胸使用图1原图案', layoutNote: '' }));
+  raw.records[0].units[0].sourceAssessment = { version: 'artwork-source-v1', kind: 'artwork-on-object', targetDescription: '衣物胸标',
+    needsReconstruction: true, evidence: ['图案被衣料褶皱拉伸'], uncertainDetails: ['首字看不清'], materialId: 'model-guessed-id' };
+  const [review] = parseTaskReviewAnalysis([sourceRecord('左胸：图1')], JSON.stringify(raw));
+  expect(review.units[0].sourceAssessment).toMatchObject({ kind: 'artwork-on-object', materialId: 'material-1', uncertainDetails: ['首字看不清'] });
+  expect(review.units[0].exactText).toBe('');
+});

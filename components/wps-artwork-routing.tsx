@@ -10,7 +10,7 @@ export function WpsArtworkMethodSelector({ unit, source, busy, change }: { unit:
   const routing = productionArtworkRouting({ ...unit, artworkMethod: 'auto', route: 'auto' }, source);
   const selected = unit.artworkMethod ?? ({ deterministic: 'preserve', hybrid: 'compose', model: 'generate' } as const)[unit.route as 'deterministic' | 'hybrid' | 'model'] ?? 'auto';
   const recommendation = routing.decision.method ? ARTWORK_METHODS[routing.decision.method].label : null;
-  const input = { generationPrompt: unit.generationPrompt, sourceRequirementText: source.requirementText, printPlacement: unit.placement ?? undefined, instruction: unit.instruction, layoutNote: unit.layoutNote, exactText: unit.textMode === 'replace' ? unit.exactText : '', primaryImageLabel: artworkInputSelection(source, unit).primaryImageLabel, primaryImageRole: artworkInputSelection(source, unit).primaryImageRole, sourceScope: unit.sourceScope, processingRoute: 'auto' as const, referenceImages: artworkInputSelection(source, unit).referenceMaterialIds.map(id => ({ label: `图${source.materials.findIndex(material => material.id === id) + 1}` })) };
+  const input = { sourceAssessment: unit.sourceAssessment ?? routing.facts.sourceAssessment, generationPrompt: unit.generationPrompt, sourceRequirementText: source.requirementText, printPlacement: unit.placement ?? undefined, instruction: unit.instruction, layoutNote: unit.layoutNote, exactText: unit.textMode === 'replace' ? unit.exactText : '', primaryImageLabel: artworkInputSelection(source, unit).primaryImageLabel, primaryImageRole: artworkInputSelection(source, unit).primaryImageRole, sourceScope: unit.sourceScope, processingRoute: 'auto' as const, referenceImages: artworkInputSelection(source, unit).referenceMaterialIds.map(id => ({ label: `图${source.materials.findIndex(material => material.id === id) + 1}` })) };
   return <div className="wps-method-selector"><label>处理方式<select aria-label={`${unit.id} 处理方式`} disabled={busy} value={unit.route === 'gpt-image-2' ? 'gpt-image-2' : selected} onChange={event => change(event.target.value as ArtworkMethodChoice)}>
     {ARTWORK_METHOD_OPTIONS.map(method => {
       const issue = artworkMethodIssue(input, method);
@@ -18,7 +18,7 @@ export function WpsArtworkMethodSelector({ unit, source, busy, change }: { unit:
       return <option key={method} value={method} disabled={Boolean(issue)}>{label}{issue ? `（${issue}）` : method === routing.decision.method ? '（推荐）' : ''}</option>;
     })}
     {unit.route === 'gpt-image-2' && <option value="gpt-image-2">GPT Image 2（已有方案）</option>}
-  </select></label><small>{selected === 'auto' ? '按客户需求分类；整理提示词不会切换处理方式。' : selected === 'redraw' ? '先核对纯色图案与保真修复结果，再执行重绘。' : ARTWORK_METHODS[selected].operation}</small></div>;
+  </select></label><small>{selected === 'auto' ? '先识别素材与目标，再按客户需求选择处理方式。' : selected === 'redraw' ? '实物表面图案直接重建；独立低清图先修复再判断。' : ARTWORK_METHODS[selected].operation}</small></div>;
 }
 
 export function WpsArtworkRouting({ unit, source }: { unit: ProductionUnit; source: SourceTaskRecord }) {
@@ -54,11 +54,11 @@ export function WpsArtworkRouting({ unit, source }: { unit: ProductionUnit; sour
     <details className="wps-routing-all"><summary>本图的逐项判断依据</summary><dl>{decision.checks.map(check => <div key={check.label} className={check.state}><dt>{check.label}</dt><dd>{check.value}</dd></div>)}</dl></details>
     <details className="wps-routing-all"><summary>查看四种方案与统一标准</summary>
       <p>制作按钮按以下标准实际执行。每次最多保真修复一次、高清重绘一次；未达标保留候选，转人工核对。</p>
-      <p>先核对资料，再按需求判断：D 整图生成 → C 图文组合 → A 原图保真；A 修复仍不达标且满足适用条件时，转 B 高清重绘。</p>
+      <p>先识别目标与载体：实物表面图案直接走 B 原设计重建；独立图稿按需求走 A／C／D。独立低清图经 A 修复仍不达标且满足条件时转 B。</p>
       {(Object.entries(ARTWORK_METHODS) as Array<[ArtworkMethod, typeof ARTWORK_METHODS[ArtworkMethod]]>).map(([id, rule]) => <div key={id}><b>{rule.code} · {rule.label}</b><ul>{rule.criteria.map(criterion => <li key={criterion}>{criterion}</li>)}</ul><p>{rule.operation}</p></div>)}
       <p>评分口径：有效图案长边统一为 {ARTWORK_ROUTING_STANDARD.targetLongEdge}px，保持比例、铺白底。标准版接口 blur 是模糊度，越低越清晰；页面清晰度按 100 − blur 换算，并保留原始值。综合画质另列，不代替模糊检测。</p>
       <p>统一验收：清晰度 ≥ {ARTWORK_ROUTING_STANDARD.clarityMinimum}；透明检查通过；人工核对文字、图形、颜色和排版。缺少任何证据，都不能标为全部达标。80 分是本项目的验收目标。</p>
-      <p>规则版本：{decision.version}。照片、渐变和含白色前景的图案不套用纯色 Logo 净化。</p>
+      <p>规则版本：{decision.version}。实拍重建保留图案自身的白色与渐变，不套用纯色 Logo 净化。</p>
       {report && <p>本次执行：{report.operations.join(' → ')}。记录：{report.runId}</p>}
     </details>
   </section>;

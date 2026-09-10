@@ -4,8 +4,9 @@ import type { ArtworkRoutingFacts } from '@/lib/artwork-routing-standard';
 import { artworkReferenceEvidence, artworkReferenceIssues, normalizeArtworkImageNumbers } from '@/lib/artwork-reference';
 import { artworkReferenceColors } from '@/lib/artwork-reference-color';
 import { artworkModelEdits } from '@/lib/artwork-model-edits';
+import { needsArtworkReconstruction, artworkReconstructionPrompt } from './artwork-source-assessment';
 
-export type ArtworkRequirementInput = Pick<ArtworkPreparationRequest, 'primaryImageRole' | 'artworkMethod' | 'instruction' | 'layoutNote' | 'exactText' | 'primaryImageLabel' | 'sourceScope' | 'processingRoute'> & Partial<Pick<ArtworkPreparationRequest, 'sourceRequirementText' | 'printPlacement' | 'generationPrompt'>> & { referenceImages: Array<{ label: string }> };
+export type ArtworkRequirementInput = Pick<ArtworkPreparationRequest, 'sourceAssessment' | 'primaryImageRole' | 'artworkMethod' | 'instruction' | 'layoutNote' | 'exactText' | 'primaryImageLabel' | 'sourceScope' | 'processingRoute'> & Partial<Pick<ArtworkPreparationRequest, 'sourceRequirementText' | 'printPlacement' | 'generationPrompt'>> & { referenceImages: Array<{ label: string }> };
 
 export const ARTWORK_METHOD_OPTIONS = ['auto', 'preserve', 'redraw', 'compose', 'generate'] as const;
 export type ArtworkMethodChoice = typeof ARTWORK_METHOD_OPTIONS[number];
@@ -16,6 +17,7 @@ export function artworkMethodIssue(input: ArtworkRequirementInput, method: Artwo
   if (method === 'auto') return null;
   const natural = artworkRequirementFacts({ ...input, artworkMethod: undefined, processingRoute: 'auto' });
   if (natural.blockers.length) return natural.blockers[0];
+  if (method === 'preserve' && natural.reconstructSource) return '图案需要从实物表面还原，请选择原设计重建';
   if ((method === 'preserve' || method === 'redraw') && natural.intent !== 'preserve') return '要求包含加字、换色或重新设计，请选择图文组合或整图生成';
   if ((method === 'redraw' || method === 'generate') && natural.strictPreservation) return '客户要求严格保真，不能重绘或生成新图';
   if (method === 'compose' && natural.intent === 'generate') return '当前要求需要模型编辑完整图案，请选择自动或整图生成';
@@ -71,6 +73,9 @@ export function artworkRequirementFacts(input: ArtworkRequirementInput): Artwork
     intentReason: referenceText ? '按准确文字与参考样式生成文字标识，不提取参考图内容' : input.processingRoute === 'model' ? '人工指定整图生成' : modelEdits.length ? '原图包含指定区域改色或明暗调整，先按完整要求编辑，再抠图' : redesign ? '明确要求重新设计完整图案' : wholeReference ? '参考图决定整体构图与排版'
       : input.exactText.trim() ? `保留主体，组合准确文字“${input.exactText.trim()}”` : compose ? '保留主体，修改指定局部' : '沿用原图案，未要求新增或重新设计',
     sourcePresent: true, blockers,
+    sourceAssessment: input.sourceAssessment,
+    sourceAssessmentRequired: input.sourceScope !== 'wholeImage' && !referenceText && !generate,
+    reconstructSource: !generate && needsArtworkReconstruction(input),
     sourceClarity: null, requiredScale: null,
     repair: { attempts: 0, clarity: null, requiredScale: null }, redrawEligibility: 'unknown',
     editSpecification: blockers.length || needsCrop ? 'incomplete' : generate || input.exactText.trim() || knownColor || colorReferences.length ? 'complete' : compose ? 'unknown' : 'complete',
@@ -78,7 +83,7 @@ export function artworkRequirementFacts(input: ArtworkRequirementInput): Artwork
   };
 }
 
-export const STANDARD_ARTWORK_PROMPT_VERSION = 'artwork-standard-prompts-v12';
+export const STANDARD_ARTWORK_PROMPT_VERSION = 'artwork-standard-prompts-v13';
 export function artworkPromptHash(text: string) {
   let hash = 0x811c9dc5;
   for (let index = 0; index < text.length; index++) hash = Math.imul(hash ^ text.charCodeAt(index), 0x01000193);
@@ -113,8 +118,9 @@ export function standardArtworkPrompts(input: Omit<ArtworkPreparationRequest, 'i
     `本任务的字形和排版要求：\n${input.instruction}\n${input.layoutNote}`,
     '本次只输出上述准确文字，整体图文组合由程序完成。纯白背景，完整居中，保留留白，不生成衣服、场景或水印。',
   ].join('\n') }));
-  const hash = artworkPromptHash(JSON.stringify({ version: STANDARD_ARTWORK_PROMPT_VERSION, route: input.processingRoute, ...(input.artworkMethod ? { artworkMethod: input.artworkMethod } : {}), canonical: generate, redraw, styledTexts, imageMapping: canonical.imageMapping }));
-  return { version: STANDARD_ARTWORK_PROMPT_VERSION, hash, redraw, generate, styledTexts, imageMapping: canonical.imageMapping };
+  const reconstruct = input.sourceAssessment ? artworkReconstructionPrompt(input.sourceAssessment, input.primaryImageLabel) : null;
+  const hash = artworkPromptHash(JSON.stringify({ version: STANDARD_ARTWORK_PROMPT_VERSION, route: input.processingRoute, ...(input.artworkMethod ? { artworkMethod: input.artworkMethod } : {}), canonical: generate, redraw, reconstruct, styledTexts, imageMapping: canonical.imageMapping }));
+  return { version: STANDARD_ARTWORK_PROMPT_VERSION, hash, redraw, reconstruct, generate, styledTexts, imageMapping: canonical.imageMapping };
 }
 
 export function resolvedFlatLogoRedrawPrompt(base: string, facts: { palette: Array<[number, number, number]>; recognizedText: string; structureDescription?: string }) {

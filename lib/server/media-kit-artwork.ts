@@ -554,7 +554,7 @@ async function graphicBytesAfterLocalBackgroundRemoval(
 
 export async function prepareTaskArtwork(
   request: ArtworkPreparationRequest,
-  options?: { measuredQuality: ArtworkQualityEvaluation },
+  options?: { measuredQuality: ArtworkQualityEvaluation; cutout?: (bytes: Buffer) => Promise<Buffer> },
 ): Promise<ArtworkPreparationResponse> {
   assertWholeImageWasExplicitlyRequested(request);
   const sourceBytes = dataUrlBuffer(request.image.dataUrl);
@@ -581,7 +581,7 @@ export async function prepareTaskArtwork(
   }
   const componentPlan = buildArtworkComponentPlan({ request, resolution, route });
   const croppedSubjectInput = shouldRemoveBackground
-    && (sourceProfile.kind === 'flat-background' || sourceProfile.kind === 'transparent')
+    && (sourceProfile.kind === 'flat-background' || sourceProfile.kind === 'transparent' || options?.cutout)
     ? await subjectEnhancementInput(
         sourceBytes,
         localFlatCutout ?? sourceBytes,
@@ -633,7 +633,27 @@ export async function prepareTaskArtwork(
   let graphicBytes: Buffer<ArrayBufferLike> = sourceBytes;
   let strictMaskQuality = false;
 
-  if (sourceProfile.kind === 'flat-background') {
+  if (options?.cutout && shouldRemoveBackground) {
+    // The production pipeline selects enhancement from the original first.
+    // Opaque inputs retain their background through enhancement so the selected
+    // cutout provider works on the enhanced strokes, not an enlarged old mask.
+    let cutoutInput = enhancement === 'none'
+      ? sourceBytes
+      : await downloadResult(preparedImageUrl, 'MediaKit 抠图前保真增强图');
+    if (enhancement !== 'none') {
+      const metadata = await sharp(cutoutInput).metadata();
+      if (!metadata.width || !metadata.height) throw new Error('保真增强结果缺少图片尺寸');
+      const drift = Math.abs((metadata.width / metadata.height) / (evaluationWidth / evaluationHeight) - 1);
+      if (drift > .01) throw new Error(`保真增强后 Logo 长宽比变化 ${(drift * 100).toFixed(2)}%，超过 1% 结构门禁`);
+    }
+    if (enhancement !== 'none' && sourceProfile.kind === 'transparent') {
+      cutoutInput = await applyArtworkAlphaMask(cutoutInput, croppedSubjectInput?.maskBytes ?? sourceBytes,
+        croppedSubjectInput ? { r: 255, g: 255, b: 255 } : undefined);
+    }
+    graphicBytes = await options.cutout(cutoutInput);
+    backgroundRemoval = 'product';
+    strictMaskQuality = true;
+  } else if (sourceProfile.kind === 'flat-background') {
     const enhancedBytes = enhancement === 'none'
       ? sourceBytes
       : await downloadResult(preparedImageUrl, 'MediaKit Logo 保真增强图');

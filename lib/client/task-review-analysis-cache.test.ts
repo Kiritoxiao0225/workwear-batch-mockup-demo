@@ -60,9 +60,9 @@ function review(source: SourceTaskRecord): TaskReview {
 }
 
 describe('task review analysis browser cache', () => {
-  it('invalidates earlier analysis caches after reference and selection validation changed', () => {
-    expect(TASK_REVIEW_ANALYSIS_CACHE_VERSION).toBe('task-review-analysis-v7');
-    expect(taskReviewAnalysisCacheKey(record())).toContain('task-review-analysis-v7:');
+  it('invalidates earlier analysis caches after visual source assessment was added', () => {
+    expect(TASK_REVIEW_ANALYSIS_CACHE_VERSION).toBe('task-review-analysis-v8');
+    expect(taskReviewAnalysisCacheKey(record())).toContain('task-review-analysis-v8:');
   });
 
   it('restores an unchanged source record', () => {

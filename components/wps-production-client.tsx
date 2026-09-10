@@ -1,4 +1,6 @@
 'use client';
+
+import { artworkReconstructionPrompt } from '@/lib/artwork-source-assessment';
 import { ProductionOperationLocks, productionOperation, productionOperationsOverlap, type ProductionOperation } from '@/lib/production-operation-lock';
 import { artworkPixelFingerprint } from '@/lib/artwork-save-fingerprint';
 import { artworkInputSelection, currentArtworkAmbiguities, isReferenceTextArtwork, artworkPlanIssues, isTextOnlyArtwork } from '@/lib/artwork-reference';
@@ -73,7 +75,7 @@ type PlanForm = Pick<ProductionUnit, 'referenceMaterialIds' | 'sourceScope' | 't
 
 function artworkPrompt(unit: ProductionUnit, source: SourceTaskRecord) {
   return standardArtworkPrompts({
-    sourceRequirementText: source.requirementText, instruction: unit.instruction, generationPrompt: unit.generationPrompt,
+    sourceRequirementText: source.requirementText, instruction: unit.instruction, generationPrompt: unit.generationPrompt, sourceAssessment: productionArtworkRouting(unit, source).facts.sourceAssessment,
     exactText: unit.textMode === 'replace' ? unit.exactText : '', layoutNote: unit.layoutNote,
     sourceScope: unit.sourceScope, artworkMethod: unit.artworkMethod,
     processingRoute: unit.route === 'deterministic' ? 'fidelity' : unit.route === 'blocked' || unit.route === 'gpt-image-2' ? 'auto' : unit.route,
@@ -117,6 +119,7 @@ function WpsArtworkPreparationDetails({ unit, source, preview }: { unit: Product
     {canonical ? <details><summary>本路线的提示词与输入映射</summary><small>{canonical.version} / {canonical.hash}</small>
       <pre>{canonical.imageMapping.map(mapping => `${mapping.sourceLabel} → ${mapping.modelInputLabel}：${mapping.role}`).join('\n')}</pre>
       {routing.facts.intent === 'generate' ? <pre>{unit.generationPrompt ? canonical.generate : '请先整理整图生成提示词。'}</pre>
+        : routing.facts.reconstructSource ? <><p>先重建目标图案，再去底；保留原设计并校正载体变形。</p><pre>{canonical.reconstruct}</pre></>
         : routing.decision.method === 'redraw' ? <><p>以下为保真重绘约束；实际调用前会补入原图取色和可辨内容。</p><pre>{canonical.redraw}</pre></>
         : recipe.title === '保真主体＋模型文字' ? canonical.styledTexts.map(text => <pre key={text.text}>{text.prompt}</pre>)
         : <p>本路线先处理原图和准确文字；需要保真增强或符合条件的重绘时，记录实际执行步骤。</p>}
@@ -689,7 +692,7 @@ export function WpsProductionClient() {
           body: JSON.stringify({
             sourceRequirementText: record.source.requirementText,
             printPlacement: artworkPrintPlacement(unit.placement),
-            instruction: unit.instruction, generationPrompt: unit.generationPrompt,
+            instruction: unit.instruction, generationPrompt: unit.generationPrompt, sourceAssessment: productionArtworkRouting(unit, record.source).facts.sourceAssessment,
             exactText: unit.textMode === 'replace' ? unit.exactText : '',
             layoutNote: unit.layoutNote,
             image,
@@ -1030,7 +1033,10 @@ export function WpsProductionClient() {
                 const issues = unit.artwork ? artworkAcceptanceIssues(unit.artwork.validation) : [];
                 const stage = productionArtworkStage(unit);
                 const textOnly = isTextOnlyArtwork(unit);
-                const wholeGeneration = !textOnly && productionArtworkRouting(unit, record.source).facts.intent === 'generate';
+                const sourceRouting = productionArtworkRouting(unit, record.source);
+                const wholeGeneration = !textOnly && sourceRouting.facts.intent === 'generate';
+                const reconstructionPrompt = !wholeGeneration && sourceRouting.facts.reconstructSource && sourceRouting.facts.sourceAssessment
+                  ? artworkReconstructionPrompt(sourceRouting.facts.sourceAssessment, artworkInputSelection(record.source, unit).primaryImageLabel) : null;
                 const visibleAmbiguities = textOnly ? artworkPlanIssues(record.source, unit) : currentArtworkAmbiguities(unit);
                 const status = issues.length ? '图案有待完成项' : stage === '待核对 Logo' ? '已制作 · 待核对' : stage === 'Logo 已确认' ? '图案已核对' : stage;
                 return <tr key={unit.id} data-version-id={version.id} data-unit-id={unit.id} className={unitIndex === 0 ? 'wps-version-start' : undefined}>
@@ -1057,7 +1063,7 @@ export function WpsProductionClient() {
                       {unit.referenceMaterialIds.length > 0 && <span>仅作参考 {unit.referenceMaterialIds.map(id => `图${record.source.materials.findIndex(material => material.id === id) + 1}`).join('、')}</span>}</div>
                       <div className="wps-requirement-details">
                         {!wholeGeneration && unit.layoutNote && <details><summary>排版要求</summary><p>{unit.layoutNote}</p></details>}
-                        {!textOnly && unit.generationPrompt && <details><summary>{wholeGeneration ? '完整生图提示词' : '模型提示词'}</summary><p>{unit.generationPrompt}</p></details>}
+                        {!textOnly && (reconstructionPrompt || unit.generationPrompt) && <details><summary>{reconstructionPrompt ? '重建提示词' : wholeGeneration ? '完整生图提示词' : '模型提示词'}</summary><p>{reconstructionPrompt || unit.generationPrompt}</p></details>}
                         {groupIndex === 0 && unitIndex === 0 && record.summary && record.summary !== repeatedSummary && <details><summary>整单理解</summary><p>{record.summary}</p></details>}
                       </div>
                       {visibleAmbiguities.length > 0 && <details className="wps-requirement-issues" open={artworkBlockingAmbiguities(visibleAmbiguities).length > 0}><summary>{artworkBlockingAmbiguities(visibleAmbiguities).length ? `有 ${visibleAmbiguities.length} 项待核对` : `AI 提醒 ${visibleAmbiguities.length} 条 · 可继续制作`}</summary><p>{visibleAmbiguities.join('；')}</p></details>}
@@ -1067,14 +1073,14 @@ export function WpsProductionClient() {
                     {textOnly && !unit.artwork && <p className="wps-text-artwork-hint">纯文字排版 · 抖音美好体</p>}
                     {!textOnly && (!unit.artwork || cutoutSettings[unit.id]) && <div className="wps-artwork-settings">
                     <WpsArtworkMethodSelector unit={unit} source={record.source} busy={Boolean(unitBlocked)} change={method => { void runAction(`method:${unit.id}`, { action: 'updatePlan', unitId: unit.id, patch: { artworkMethod: method } }); }} />
-                    {unit.route !== 'gpt-image-2' && unit.sourceScope !== 'wholeImage' && <WpsCutoutControls compact key={`${unit.id}:${unit.materialId}`} mode={unit.cutoutMode ?? 'auto'} sourceUrl={record.source.materials.find(material => material.id === unit.materialId)?.url ?? record.source.materials.find(material => material.id === unit.materialId)?.previewUrl} generated={productionArtworkRouting(unit, record.source).decision.method === 'generate'} busy={Boolean(unitBlocked)} change={mode => { void runAction(`cutoutMode:${unit.id}`, { action: 'updatePlan', unitId: unit.id, patch: { cutoutMode: mode } }); }} />}
+                    {unit.route !== 'gpt-image-2' && unit.sourceScope !== 'wholeImage' && <WpsCutoutControls compact key={`${unit.id}:${unit.materialId}`} mode={unit.cutoutMode ?? 'auto'} sourceUrl={record.source.materials.find(material => material.id === unit.materialId)?.url ?? record.source.materials.find(material => material.id === unit.materialId)?.previewUrl} generated={Boolean(productionArtworkRouting(unit, record.source).facts.reconstructSource) || productionArtworkRouting(unit, record.source).decision.method === 'generate'} busy={Boolean(unitBlocked)} change={mode => { void runAction(`cutoutMode:${unit.id}`, { action: 'updatePlan', unitId: unit.id, patch: { cutoutMode: mode } }); }} />}
                     </div>}
                     <div className="wps-artwork-current">
                       {unit.artwork ? <button className="wps-artwork-preview" aria-label={`编辑${unit.garmentLabel} ${placement ? productionPositionLabel(placement) : ''}图案`} disabled={Boolean(unitBlocked)} title={unitBlocked ?? undefined} onPointerEnter={() => { if (unit.artwork?.draft) preloadArtworkDraft(unit.artwork.draft); }} onFocus={() => { if (unit.artwork?.draft) preloadArtworkDraft(unit.artwork.draft); }} onClick={() => editArtwork(unit)} type="button"><Image alt={unit.artwork.name} fill sizes="200px" src={unit.artwork.url} unoptimized onLoad={() => { if (unit.artwork?.draft) preloadArtworkDraft(unit.artwork.draft); }}/></button> : !artworkProgress[unit.id]?.preview && <div className="wps-artwork-placeholder">{positionLabel}图案将在这里显示</div>}
                       {unit.artwork && <div className="wps-artwork-caption"><small>点击图案编辑</small><button type="button" className="wps-text-button" disabled={inspectingId === unit.id} onClick={() => void openArtworkReview(unit)}>{textOnly ? '查看文字图案' : '原图与抠图结果'}</button>{unit.route !== 'gpt-image-2' && issues.length === 0 && <button type="button" className="wps-artwork-redo" disabled={preparationDisabled || Boolean(activeAttempt)} title={unitBlocked ?? preparationIssue ?? '按当前要求重新制作，可能产生费用；上次图案保留供对照。'} onClick={prepare}>{queueJob ? queueJob.status === 'queued' ? '已加入队列' : '正在重做…' : '重做图案'}</button>}{unit.artwork.draft?.preprocessing.cutout && <small>{CUTOUT_ROUTE_LABELS[unit.artwork.draft.preprocessing.cutout.route]} · {cutoutFeeLabel(unit.artwork.draft.preprocessing.cutout)}</small>}</div>}
                     </div>
                     {unitBlocked && !queueJob && !activeAttempt && <small role="status">{unitBlocked}</small>}
-                    <p role="status" aria-live="polite" className={`wps-artwork-status ${issues.length || unit.error || rowError ? 'needs-attention' : unit.gateB ? 'complete' : ''}`}>{queueJob ? queueJob.status === 'queued' ? `排队中 · 第 ${queuePosition} 张` : queueJob.progress : activeAttempt ? '正在制作，请查询进度' : rowError ? '本次操作未完成' : status}</p>
+                    <p role="status" aria-live="polite" className={`wps-artwork-status ${issues.length || unit.error || rowError ? 'needs-attention' : unit.gateB ? 'complete' : ''}`}>{queueJob ? queueJob.status === 'queued' ? `排队中 · 第 ${queuePosition} 张` : queueJob.progress : activeAttempt ? '正在制作，请查询进度' : rowError ? '这次没做完，请看下方原因' : status}</p>
                     {rowError && <p className="wps-production-row-error" role="alert">{rowError}</p>}
                     {artworkProgress[unit.id] && <WpsArtworkProgress {...artworkProgress[unit.id]} failed={Boolean(rowError) && !queueJob} open={(url, title) => setPreview({ url, title })} />}
                     {cutoutSessions[unit.id] && <>
@@ -1083,9 +1089,9 @@ export function WpsProductionClient() {
                       {cutoutSessions[unit.id].result.status === 'failed' && !cutoutSessions[unit.id].stale && ['standard', 'volcano'].includes(cutoutSessions[unit.id].result.receipt.route) && <button type="button" className="primary" disabled={Boolean(queueJob)} onClick={() => void runCutout(unit, 'meitu')}>可选：美图精细 · 预计 1 积分</button>}
                     </>}
                     {nativeCandidate && <div className="wps-production-row-error">
-                      <a href={nativeCandidate.url} target="_blank" rel="noreferrer">{nativeCandidate.stage === 'edit-review' ? '查看实际候选（修改要求待核对）' : '查看模型原图（尚未完成透明处理）'}</a>
-                      <a href={nativeCandidate.url} download={`${unit.id}-candidate.png`}>下载候选 PNG</a>
-                      <small>候选未上衣。请先下载保留，再刷新页面。</small>
+                      <a href={nativeCandidate.url} target="_blank" rel="noreferrer">{nativeCandidate.stage === 'edit-review' ? '查看这次做出的图（尚未保存成品）' : '查看刚生成的图（背景还没去好）'}</a>
+                      <a href={nativeCandidate.url} download={`${unit.id}-candidate.png`}>下载这张图</a>
+                      <small>这张图还没用到衣服上。需要保留的话，请先下载，再刷新页面。</small>
                     </div>}
                     {queueJob?.status === 'queued' && <button className="wps-text-button" type="button" onClick={() => artworkQueue.cancel(unit.id)}>取消排队</button>}
                     {pendingSave && !queueJob && <div className="wps-production-row-error"><button type="button" disabled={Boolean(operationReason({ action: 'submitArtwork', unitId: unit.id }, { ignorePending: unit.id }))} onClick={() => void retryArtworkSave(unit)}>重试保存图案</button><a href={String(pendingSave.url)} download>下载已生成图案</a><small>保存重试不会重新生图；请先保存或下载，再刷新页面。</small></div>}

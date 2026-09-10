@@ -1,6 +1,6 @@
 /** Business routing rules shared by the production UI and processing callers. */
 export const ARTWORK_ROUTING_STANDARD = {
-  version: 'artwork-routing-v2',
+  version: 'artwork-routing-v3',
   clarityMinimum: 80,
   directScaleMaximum: 1.25,
   repairLimit: 1,
@@ -17,13 +17,13 @@ const { clarityMinimum, directScaleMaximum, repairLimit } = ARTWORK_ROUTING_STAN
 export const ARTWORK_METHODS: Record<ArtworkMethod, { code: string; label: string; criteria: string[]; operation: string }> = {
   preserve: {
     code: 'A', label: '原图保真',
-    criteria: ['保留原图形、原文字和原排版', `清晰度 ≥ ${clarityMinimum} 且目标放大 ≤ ${directScaleMaximum} 倍：直接去底`, `清晰度 < ${clarityMinimum} 或目标放大 > ${directScaleMaximum} 倍：先保真修复 ${repairLimit} 次，再评分`],
+    criteria: ['目标已是独立平面图案，原结构与排版可直接沿用；明确保留整图时按原图处理', `清晰度 ≥ ${clarityMinimum} 且目标放大 ≤ ${directScaleMaximum} 倍：直接去底`, `清晰度 < ${clarityMinimum} 或目标放大 > ${directScaleMaximum} 倍：先保真修复 ${repairLimit} 次，再评分`],
     operation: '只去底、去杂点；需要时保真增强，不重新设计。',
   },
   redraw: {
-    code: 'B', label: '高清重绘',
-    criteria: ['仍需保留原设计', `保真修复 ${repairLimit} 次后，清晰度仍 < ${clarityMinimum} 或目标放大仍 > ${directScaleMaximum} 倍`, '已确认是纯色平面图案，原文字与图形可辨认', '照片、渐变、白色前景或内容不明时，转人工核对'],
-    operation: '参考原图重绘，再净化纯色、处理透明边缘；核对文字和品牌形状。',
+    code: 'B', label: '原设计重建',
+    criteria: ['保留原设计；目标位于实物表面或需要校正透视、褶皱时，直接重建独立图案', `独立低清 Logo 先保真修复 ${repairLimit} 次，仍未达标且满足纯色条件时重建`, '先生成图案，再去底并核对文字、标志与载体残留', '纯色净化仅适用于已确认的纯色平面图案，保留设计本身的白色与渐变'],
+    operation: '按原设计重建独立图案，再去底并核对内容。',
   },
   compose: {
     code: 'C', label: '图文组合',
@@ -71,7 +71,7 @@ export function artworkClarityLabel(quality: ArtworkClarityMeasurement | null | 
 
 export type ArtworkRoutingReport = {
   timings?: import('./artwork-progress').ArtworkTiming[];
-  version: typeof ARTWORK_ROUTING_STANDARD.version;
+  version: typeof ARTWORK_ROUTING_STANDARD.version | 'artwork-routing-v2';
   runId: string;
   requestHash: string;
   sourceSha256: string;
@@ -108,6 +108,9 @@ export function artworkQualityPassed(quality: ArtworkQualityMeasurement | null |
 }
 
 export type ArtworkRoutingFacts = {
+  sourceAssessment?: import('./artwork-source-assessment').ArtworkSourceAssessment;
+  sourceAssessmentRequired?: boolean;
+  reconstructSource?: boolean;
   intent: ArtworkIntentKind;
   intentReason: string;
   sourcePresent: boolean;
@@ -154,6 +157,20 @@ export function decideArtworkMethod(facts: ArtworkRoutingFacts): ArtworkRoutingD
   if (!facts.sourcePresent || facts.blockers.length > 0 || facts.intent === 'unknown') {
     checks.push({ label: '必要资料', value: !facts.sourcePresent ? '缺少可读取的主体素材' : facts.blockers.join('；') || '需求不能唯一判断', state: 'fail' });
     return finish(null, 'review', 'review', '先补齐资料或核对需求，再选择处理方案。');
+  }
+  if ((facts.intent === 'generate' || facts.intent === 'compose') && facts.editSpecification !== 'complete') {
+    checks.push({ label: '修改要求', value: '需明确准确文字、修改范围或参考用途', state: 'pending' });
+    return finish(facts.intent, 'review', 'review', '方案类型已判断；补齐具体修改要求后才能执行。');
+  }
+  if (facts.sourceAssessmentRequired && (!facts.sourceAssessment || facts.sourceAssessment.kind === 'unknown'
+    || facts.sourceAssessment.needsReconstruction === null)) {
+    checks.push({ label: '素材形态', value: '尚未判断目标是否为独立图案，制作前读图判断', state: 'pending' });
+    return finish(null, 'pending', 'inspect', '先识别目标图案与载体，再决定保真处理或原设计重建。');
+  }
+  if (facts.sourceAssessmentRequired && facts.sourceAssessment) checks.push({ label: '素材形态', value: facts.sourceAssessment.evidence.join('；'), state: 'pass' });
+  if (facts.reconstructSource && facts.strictPreservation) return finish(null, 'review', 'review', '目标需要重建，但当前指定保留原像素；请选择原设计重建或提供独立图稿。');
+  if (facts.reconstructSource && facts.intent === 'preserve') {
+    return finish('redraw', 'ready', 'redraw', `目标需要还原为独立图案，直接按原设计重建：${facts.sourceAssessment?.evidence.join('；')}`);
   }
   if (facts.intent === 'generate' || facts.intent === 'compose') {
     const method = facts.intent;

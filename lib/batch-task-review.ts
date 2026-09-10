@@ -48,6 +48,7 @@ export type LogoSelection = {
 };
 
 export type GenerationUnit = {
+  sourceAssessment?: import('./artwork-source-assessment').ArtworkSourceAssessment;
   generationPrompt?: string;
   garmentRequest?: GarmentRequest;
   garment?: GarmentBinding | null;
@@ -111,6 +112,7 @@ export function artworkRecipeFingerprint(unit: GenerationUnit) {
     exactText: unit.exactText.trim(),
     layoutNote: unit.layoutNote.trim(),
     instruction: unit.instruction.trim(),
+    ...(unit.sourceAssessment ? { sourceAssessment: unit.sourceAssessment } : {}),
     ...(unit.generationPrompt ? { generationPrompt: unit.generationPrompt.trim() } : {}),
   });
 }

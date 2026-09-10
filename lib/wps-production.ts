@@ -127,6 +127,7 @@ export type ProductionAttempt = {
 
 export type ProductionUnit = {
   cutoutMode?: import('@/lib/artwork-cutout').ArtworkCutoutMode;
+  sourceAssessment?: import('./artwork-source-assessment').ArtworkSourceAssessment;
   generationPrompt?: string;
   id: string;
   sourceRecordId: string;
@@ -288,7 +289,7 @@ function defaultPlacement(key: PlacementKey | null): ProductionPlacement | null 
 
 function recipeFingerprint(unit: Pick<
   ProductionUnit,
-  'materialId' | 'referenceMaterialIds' | 'sourceScope' | 'textMode' | 'exactText' | 'layoutNote' | 'instruction' | 'route' | 'artworkMethod' | 'generationPrompt'
+  'materialId' | 'referenceMaterialIds' | 'sourceScope' | 'textMode' | 'exactText' | 'layoutNote' | 'instruction' | 'route' | 'artworkMethod' | 'generationPrompt' | 'sourceAssessment'
 >) {
   return sha256(JSON.stringify({
     materialId: unit.materialId,
@@ -298,6 +299,7 @@ function recipeFingerprint(unit: Pick<
     exactText: unit.exactText.trim(),
     layoutNote: unit.layoutNote.trim(),
     instruction: unit.instruction.trim(),
+    ...(unit.sourceAssessment ? { sourceAssessment: unit.sourceAssessment } : {}),
     ...(unit.generationPrompt ? { generationPrompt: unit.generationPrompt.trim() } : {}),
     route: unit.route,
     ...(unit.artworkMethod ? { artworkMethod: unit.artworkMethod } : {}),
@@ -478,6 +480,7 @@ function fromReviewUnit(review: TaskReview, unit: GenerationUnit, previous: Prod
     exactText: unit.exactText,
     layoutNote: unit.layoutNote,
     instruction: unit.instruction,
+    ...(unit.sourceAssessment ? { sourceAssessment: unit.sourceAssessment } : {}),
     ...(unit.generationPrompt ? { generationPrompt: unit.generationPrompt } : {}),
     route,
     routeEvidence,
@@ -705,6 +708,9 @@ export function updateProductionPlan(
       error: null,
       returnReason: null,
     };
+    // Visual evidence belongs to the selected target, not to a later material/brief.
+    if (['materialId', 'sourceScope', 'instruction', 'layoutNote'].some(key =>
+      key in patch && JSON.stringify(next[key as keyof ProductionUnit]) !== JSON.stringify(unit[key as keyof ProductionUnit]))) next.sourceAssessment = undefined;
     // Legacy metadata edits cannot silently reuse a prompt authored for different inputs.
     if (!('generationPrompt' in patch) && ['materialId', 'referenceMaterialIds', 'sourceScope', 'textMode', 'exactText', 'instruction', 'layoutNote'].some(key =>
       key in patch && JSON.stringify(next[key as keyof ProductionUnit]) !== JSON.stringify(unit[key as keyof ProductionUnit]))) next.generationPrompt = undefined;

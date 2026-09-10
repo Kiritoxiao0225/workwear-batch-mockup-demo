@@ -1,3 +1,4 @@
+import { ARTWORK_SOURCE_ASSESSMENT_RULES, parseArtworkSourceAssessment } from './artwork-source-assessment';
 import { parseGenerationPrompt, GENERATION_PROMPT_WRITING_RULES } from './artwork-generation-prompt';
 import { garmentRequestSchema } from '@/lib/production-garment';
 import { ARTWORK_PLACEMENT_ALIASES, currentArtworkAmbiguities, isReferenceTextArtwork, type ArtworkContentPlan, artworkPlanIssues, artworkPlacementFields, artworkSourceSelections, artworkReferenceCovers, artworkReferenceEvidence, sourceArtworkReferenceRequirement } from '@/lib/artwork-reference';
@@ -333,6 +334,7 @@ export function normalizeTaskReview(review: TaskReview): TaskReview {
     const checks = artworkPlanIssues(review.source, { ...unit, materialId: unit.logo.materialId, referenceMaterialIds: references, placement: unit.placement ? { key: unit.placement } : null });
     return {
       ...unit,
+      sourceAssessment: unit.sourceAssessment?.materialId && unit.sourceAssessment.materialId !== unit.logo.materialId ? undefined : unit.sourceAssessment,
       referenceMaterialIds: references,
       // Missing optional metadata is not contradictory content. Never drop a
       // mixed ambiguity (e.g. missing font AND illegible target text).
@@ -400,6 +402,8 @@ ${productOptions}
 - 图三、图3、图 3、图３指同一张素材。原文明示的扇形、字体、颜色、排版等参考要求必须保留在对应单元，referenceMaterialIds 必须包含对应素材；不能因为参考图不进入成品就漏传给制作模型。
 - referenceMaterialIds 只能放原文在该生成单元中明确写作“参考图N”或“按照图N”的素材，不得把同一行的其他 Logo 图随意当参考图。
 
+${ARTWORK_SOURCE_ASSESSMENT_RULES}
+
 素材容器的默认理解：
 - “使用图1”不必然表示整张图复用。生成完整图案时默认 sourceScope=subject，纯白底，背景移除交给后续抠图步骤。
 - 音符、文字、边框、装饰、内部细节与负形都属于前景；客户原文没有明确要求删除时必须保留，不能因为位于主体外围就擅自删除。
@@ -432,6 +436,7 @@ function parsedUnit(
     : null;
   const textMode = nullableTextMode(unit.textMode);
   const parsedSourceScope = sourceScope(unit.sourceScope);
+  const assessment = parseArtworkSourceAssessment(unit.sourceAssessment);
   return {
     id: requiredText(unit.id, `${source.recordId}.units[${index}].id`),
     garmentLabel: requiredText(unit.garmentLabel, `${source.recordId}.units[${index}].garmentLabel`),
@@ -446,6 +451,7 @@ function parsedUnit(
     },
     referenceMaterialIds: textList(unit.referenceMaterialIds, `${source.recordId}.units[${index}].referenceMaterialIds`),
     sourceScope: parsedSourceScope,
+    sourceAssessment: assessment && logoMaterialId ? { ...assessment, materialId: logoMaterialId } : undefined,
     processingRoute: 'auto',
     textMode,
     exactText: typeof unit.exactText === 'string' ? unit.exactText.trim() : '',

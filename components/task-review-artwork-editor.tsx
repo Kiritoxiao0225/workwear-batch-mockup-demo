@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode, type PointerEvent, type KeyboardEvent } from 'react';
 import { ARTWORK_CANVAS_SIZE, ARTWORK_SNAP_SCREEN_PX, artworkGraphicBounds, artworkGraphicFrame, snapArtworkPosition, type ArtworkBounds, type ArtworkDraft, type ArtworkGraphicLayer, type ArtworkTextLayer, type ArtworkSnapGuide } from '@/lib/artwork-editor';
 import './task-review-artwork-editor.css';
-import { addArtworkText, duplicateArtworkLayers, removeArtworkLayers, artworkLayers, artworkPointInLayer, artworkRasterIntersectsSelection, editableArtworkDraft, recordArtworkHistory, reorderArtworkLayer, travelArtworkHistory, updateArtworkLayer, type ArtworkHistory, type ArtworkLayer } from '@/lib/artwork-layers';
+import { addArtworkText, duplicateArtworkLayers, removeArtworkLayers, artworkLayers, artworkPointInLayer, artworkPolygonSelection, artworkRasterIntersectsSelection, editableArtworkDraft, recordArtworkHistory, reorderArtworkLayer, travelArtworkHistory, updateArtworkLayer, type ArtworkHistory, type ArtworkLayer, type ArtworkPoint, type ArtworkSelection } from '@/lib/artwork-layers';
 import { splitArtworkGraphic } from '@/lib/client/artwork-layer-editing';
 import { artworkTextLayout, loadArtworkFont } from '@/lib/client/artwork-text-layout';
 import { artworkDraftCanvasBounds, drawArtworkText, loadArtworkGraphicView } from '@/lib/client/render-artwork';
@@ -39,6 +39,7 @@ function arrangePair(draft: ArtworkDraft, preset: 'vertical' | 'verticalReverse'
 const ICONS: Record<string, string> = {
   text: 'M4 5h16M12 5v15M8 20h8M4 5v3M20 5v3', layers: 'm12 3 9 5-9 5-9-5 9-5ZM3 12l9 5 9-5M3 16l9 5 9-5',
   pointer: 'm5 3 14 10-7 1-3 7L5 3Z', select: 'M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4',
+  lasso: 'm4 5 15-2 2 12-10 5-7-8V5Zm0 7-2 7 5 3',
   undo: 'M8 5 3 10l5 5M3 10h10a7 7 0 0 1 7 7', redo: 'm16 5 5 5-5 5M21 10H11a7 7 0 0 0-7 7',
   up: 'm6 11 6-6 6 6M12 5v15', down: 'm6 13 6 6 6-6M12 4v15', copy: 'M8 8h12v12H8ZM15 8V4H4v11h4',
   trash: 'M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7M14 10v7',
@@ -98,14 +99,17 @@ export function TaskReviewArtworkEditor({ title, originalRequirement, initialDra
   const draft = history.present;
   const [selectedIds, setSelectedIds] = useState<string[]>(() => artworkLayers(editableArtworkDraft(initialDraft)).filter(layer => layer.value.visible !== false).slice(-1).map(layer => layer.id));
   const selectedId = selectedIds.length === 1 ? selectedIds[0] : null;
-  const [tool, setTool] = useState<'auto' | 'marquee'>('auto');
+  const [tool, setTool] = useState<'auto' | 'marquee' | 'lasso'>('auto');
   const [background, setBackground] = useState<'checker' | 'white' | 'dark'>('checker');
   const inspector = useRef<HTMLElement>(null), dialog = useRef<HTMLElement>(null), textInput = useRef<HTMLTextAreaElement>(null), focusNewText = useRef(false);
   const [pointerCursor, setPointerCursor] = useState('crosshair');
-  const [selection, setSelection] = useState<ArtworkBounds | null>(null);
+  const [selection, setSelection] = useState<ArtworkSelection | null>(null);
+  const [lassoPoints, setLassoPoints] = useState<ArtworkPoint[]>([]);
+  const [lassoCursor, setLassoCursor] = useState<ArtworkPoint | null>(null);
   const marquee = useRef<{ x: number; y: number; clientX: number; clientY: number; pointerId: number; started: boolean } | null>(null);
   const drag = useRef<{ id: string; pointerId: number; startX: number; startY: number; layer: ArtworkLayer; companions: ArtworkLayer[]; resize: boolean; started: boolean } | null>(null);
   const [splitting, setSplitting] = useState(false), [error, setError] = useState<string | null>(null);
+  const clearSelection = () => { setSelection(null); setLassoPoints([]); setLassoCursor(null); setError(null); };
   const [snap, setSnap] = useState(true), [guides, setGuides] = useState<ArtworkSnapGuide[]>([]);
   const [fitViewport, setFitViewport] = useState({ width: 420, height: 420 }), [zoom, setZoom] = useState(1), [previewOpen, setPreviewOpen] = useState(false);
   const [pointerView, setPointerView] = useState<{ surface: ArtworkBounds; scale: number } | null>(null);
@@ -131,7 +135,7 @@ export function TaskReviewArtworkEditor({ title, originalRequirement, initialDra
   };
   const patch = (value: Partial<ArtworkGraphicLayer & ArtworkTextLayer>) => { if (selectedId) change(current => updateArtworkLayer(current, selectedId, value)); };
   const choose = (id: string | null) => {
-    finishGesture(); setSelectedIds(id ? [id] : []); setSelection(null); setError(null); if (inspector.current) inspector.current.scrollTop = 0;
+    finishGesture(); setSelectedIds(id ? [id] : []); clearSelection(); setError(null); if (inspector.current) inspector.current.scrollTop = 0;
   };
   const addText = async () => {
     if (busy) return;
@@ -142,7 +146,7 @@ export function TaskReviewArtworkEditor({ title, originalRequirement, initialDra
       const visible = artworkLayers(historyRef.current.present).filter(layer => layer.value.visible !== false);
       const bottom = Math.max(300, ...visible.map(layer => { const b = boundsOf(layer); return b.top + b.height; }));
       const result = addArtworkText(historyRef.current.present, { x: 512, y: Math.min(1980, bottom + 84) }, color);
-      change(() => result.draft); setSelectedIds([result.selectedId]); setSelection(null); setPreviewOpen(false); setTool('auto'); focusNewText.current = true;
+      change(() => result.draft); setSelectedIds([result.selectedId]); clearSelection(); setPreviewOpen(false); setTool('auto'); focusNewText.current = true;
     } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
     finally { setSplitting(false); }
   };
@@ -152,7 +156,7 @@ export function TaskReviewArtworkEditor({ title, originalRequirement, initialDra
     try {
       if (action === 'duplicate') { const result = duplicateArtworkLayers(historyRef.current.present, selectedIds); change(() => result.draft); setSelectedIds(result.selectedIds); }
       else { const next = removeArtworkLayers(historyRef.current.present, selectedIds); change(() => next); setSelectedIds([]); }
-      setSelection(null);
+      clearSelection();
     } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
   };
   useEffect(() => { if (focusNewText.current && textInput.current) { textInput.current.focus(); textInput.current.select(); focusNewText.current = false; } }, [selectedId]);
@@ -165,7 +169,7 @@ export function TaskReviewArtworkEditor({ title, originalRequirement, initialDra
     finishGesture();
     const next = travelArtworkHistory(historyRef.current, direction); publish(next);
     setSelectedIds(ids => ids.filter(id => artworkLayers(next.present).some(layer => layer.id === id && layer.value.visible !== false)));
-    setSelection(null); setError(null); setGuides([]);
+    clearSelection(); setError(null); setGuides([]);
   };
   useEffect(() => {
     const element = viewport.current;
@@ -191,7 +195,7 @@ export function TaskReviewArtworkEditor({ title, originalRequirement, initialDra
     }
     return null;
   };
-  const layersInSelection = (area: ArtworkBounds) => layers.filter(layer => {
+  const layersInSelection = (area: ArtworkSelection) => layers.filter(layer => {
     if (layer.value.visible === false) return false;
     const outer = boundsOf(layer);
     if (outer.left >= area.left + area.width || outer.left + outer.width <= area.left || outer.top >= area.top + area.height || outer.top + outer.height <= area.top) return false;
@@ -201,6 +205,13 @@ export function TaskReviewArtworkEditor({ title, originalRequirement, initialDra
     const bounds = layer.kind === 'graphic' ? artworkGraphicFrame(layer.value) : outer;
     return artworkRasterIntersectsSelection(context.getImageData(0, 0, canvas.width, canvas.height), bounds, area, layer.kind === 'graphic' ? layer.value.rotation : 0);
   }).map(layer => layer.id);
+  const closeLasso = () => {
+    if (busy) return;
+    const area = artworkPolygonSelection(lassoPoints);
+    if (!area) { setError('请至少选择三个不在同一直线上的点，再闭合选区。'); return; }
+    setSelection(area); setSelectedIds(layersInSelection(area)); setLassoPoints([]); setLassoCursor(null); setError(null);
+    board.current?.focus({ preventScroll: true });
+  };
   const beginMove = (event: PointerEvent<HTMLElement>, layer: ArtworkLayer, resize = false) => {
     if (busy || event.button !== 0) return;
     event.stopPropagation(); finishGesture(); board.current?.focus({ preventScroll: true }); if (resize || !selectedIds.includes(layer.id)) choose(layer.id);
@@ -211,8 +222,17 @@ export function TaskReviewArtworkEditor({ title, originalRequirement, initialDra
   };
   const beginPointer = (event: PointerEvent<HTMLDivElement>) => {
     if (busy || event.button !== 0) return;
-    const location = point(event), hit = event.altKey || tool === 'marquee' ? null : hitLayer(location);
-    if (hit && event.shiftKey) { finishGesture(); setSelectedIds(ids => ids.includes(hit.id) ? ids.filter(id => id !== hit.id) : [...ids, hit.id]); setSelection(null); return; }
+    const location = point(event);
+    if (tool === 'lasso') {
+      event.preventDefault(); event.currentTarget.focus({ preventScroll: true });
+      if (lassoPoints.length >= 3 && Math.hypot(location.x - lassoPoints[0].x, location.y - lassoPoints[0].y) * scale <= 8) { closeLasso(); return; }
+      if (!lassoPoints.length) { finishGesture(); choose(null); }
+      const last = lassoPoints.at(-1);
+      if (!last || Math.hypot(location.x - last.x, location.y - last.y) * scale >= 2) setLassoPoints(points => [...points, location]);
+      setLassoCursor(location); setPointerCursor('crosshair'); setError(null); return;
+    }
+    const hit = event.altKey || tool === 'marquee' ? null : hitLayer(location);
+    if (hit && event.shiftKey) { finishGesture(); setSelectedIds(ids => ids.includes(hit.id) ? ids.filter(id => id !== hit.id) : [...ids, hit.id]); clearSelection(); return; }
     if (hit) { beginMove(event, hit); return; }
     finishGesture(); event.currentTarget.focus({ preventScroll: true }); choose(null);
     marquee.current = { ...location, clientX: event.clientX, clientY: event.clientY, pointerId: event.pointerId, started: false };
@@ -220,6 +240,7 @@ export function TaskReviewArtworkEditor({ title, originalRequirement, initialDra
     setPointerCursor('crosshair'); event.currentTarget.setPointerCapture(event.pointerId);
   };
   const move = (event: PointerEvent<HTMLDivElement>) => {
+    if (tool === 'lasso' && !busy) { setPointerCursor('crosshair'); if (lassoPoints.length) setLassoCursor(point(event)); return; }
     if (marquee.current?.pointerId === event.pointerId) {
       const cursor = point(event), start = marquee.current;
       if (!start.started && Math.hypot(event.clientX - start.clientX, event.clientY - start.clientY) < 4) return;
@@ -264,7 +285,7 @@ export function TaskReviewArtworkEditor({ title, originalRequirement, initialDra
         const result = await splitArtworkGraphic(next, id, selection, copy);
         next = result.draft; extractedIds.push(result.selectedId);
       }
-      change(() => next); setSelectedIds(extractedIds); setSelection(null);
+      change(() => next); setSelectedIds(extractedIds); clearSelection(); setTool('auto');
     } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
     finally { setSplitting(false); }
   };
@@ -277,10 +298,12 @@ export function TaskReviewArtworkEditor({ title, originalRequirement, initialDra
     }
     if (busy || (event.target instanceof HTMLElement && event.target.closest('input,textarea,select,[contenteditable="true"]'))) return;
     const key = event.key.toLowerCase();
+    if (lassoPoints.length && event.key === 'Enter') { event.preventDefault(); closeLasso(); return; }
+    if (lassoPoints.length && ['Delete', 'Backspace'].includes(event.key)) { event.preventDefault(); setLassoPoints(points => points.slice(0, -1)); setError(null); return; }
     if ((event.metaKey || event.ctrlKey) && key === 'z') { event.preventDefault(); travel(event.shiftKey ? 'redo' : 'undo'); return; }
     if (!(event.metaKey || event.ctrlKey) && key === 't') { event.preventDefault(); addText(); return; }
     if (['Delete', 'Backspace'].includes(event.key)) { event.preventDefault(); modifyLayers('delete'); return; }
-    if (event.key === 'Escape') { endPointer(); setSelection(null); setError(null); return; }
+    if (event.key === 'Escape') { endPointer(); clearSelection(); setError(null); return; }
     if (!selected || selected.value.visible === false || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key) || !(event.target instanceof HTMLElement && event.target.closest('[role="application"]'))) return;
     event.preventDefault(); const step = event.shiftKey ? 10 : 1;
     patch({ x: selected.value.x + (event.key === 'ArrowRight' ? step : event.key === 'ArrowLeft' ? -step : 0), y: selected.value.y + (event.key === 'ArrowDown' ? step : event.key === 'ArrowUp' ? -step : 0) });
@@ -304,8 +327,9 @@ export function TaskReviewArtworkEditor({ title, originalRequirement, initialDra
     <header className="artwork-editor-header"><span className="artwork-v2-mark"><EditorIcon name="layers"/></span><div><span>图案编辑</span><h2>{title.replace(/\s*·\s*图案调整$/u, '')}</h2></div><p className="artwork-v2-context"><span>图案与文字独立编辑</span>选中内容，在右侧调整</p><button type="button" aria-label="关闭图案精修" disabled={busy} onClick={onCancel}>×</button></header>
     <div className="artwork-v2-tools" role="toolbar" aria-label="图案编辑工具">
       <button type="button" className="primary artwork-v2-add" disabled={busy || layers.length >= 64} onClick={addText}><EditorIcon name="text"/>添加文字</button>
-      <button type="button" className="artwork-v2-icon" disabled={busy} aria-label="选择与移动" title="选择与移动" aria-pressed={tool === 'auto'} onClick={() => { setTool('auto'); setSelection(null); }}><EditorIcon name="pointer"/></button>
-      <button type="button" className="artwork-v2-icon" disabled={busy} aria-label="框选拆层" title="框选拆层" aria-pressed={tool === 'marquee'} onClick={() => { setTool('marquee'); setSelection(null); setPreviewOpen(false); }}><EditorIcon name="select"/></button>
+      <button type="button" className="artwork-v2-icon" disabled={busy} aria-label="选择与移动" title="选择与移动" aria-pressed={tool === 'auto'} onClick={() => { setTool('auto'); clearSelection(); }}><EditorIcon name="pointer"/></button>
+      <button type="button" className="artwork-v2-icon" disabled={busy} aria-label="框选拆层" title="框选拆层" aria-pressed={tool === 'marquee'} onClick={() => { setTool('marquee'); clearSelection(); setPreviewOpen(false); }}><EditorIcon name="select"/></button>
+      <button type="button" className="artwork-v2-lasso-tool" disabled={busy} aria-label="多边形套索" title="多边形套索：逐点圈选不规则区域" aria-pressed={tool === 'lasso'} onClick={() => { finishGesture(); setTool('lasso'); clearSelection(); setSelectedIds([]); setPreviewOpen(false); }}><EditorIcon name="lasso"/>套索</button>
       <span className="artwork-v2-divider"/>
       <button type="button" className="artwork-v2-icon" disabled={busy || (!history.past.length && !gestureChanged)} onClick={() => travel('undo')} aria-label="撤销" title="撤销 ⌘Z"><EditorIcon name="undo"/></button><button type="button" className="artwork-v2-icon" disabled={busy || !history.future.length} onClick={() => travel('redo')} aria-label="重做" title="重做 ⇧⌘Z"><EditorIcon name="redo"/></button>
       <span className="artwork-v2-tool-hint">点选图案或文字，分别编辑</span><button type="button" className="artwork-v2-snap" disabled={busy} aria-pressed={snap} onClick={() => setSnap(value => !value)}>自动吸附：{snap ? '开' : '关'}</button>
@@ -313,26 +337,42 @@ export function TaskReviewArtworkEditor({ title, originalRequirement, initialDra
     <div className="artwork-editor-body">
       <aside className="artwork-v2-layers" aria-label="图层面板"><div className="artwork-v2-panel-title"><strong>图层</strong><small>{layers.length} 个图层</small></div><div className="artwork-v2-layer-scroll"><div className="artwork-layer-list">{[...layers].reverse().map(layer => <div key={layer.id} className={`artwork-layer-row${selectedIds.includes(layer.id) ? ' active' : ''}${layer.value.visible === false ? ' hidden-layer' : ''}`}>
         <button type="button" className="artwork-layer-pick" aria-label={`选择图层：${labelOf(layer)}`} aria-pressed={selectedIds.includes(layer.id)} disabled={busy} onClick={() => choose(layer.id)}><span className="artwork-layer-thumb" style={layer.kind === 'graphic' ? { backgroundImage: `url(${JSON.stringify(layer.value.sourceUrl)})` } : undefined}>{layer.kind === 'text' ? 'T' : ''}</span><span>{labelOf(layer)}<small>{layer.kind === 'text' ? '可编辑文字' : '图片图层'}</small></span></button>
-        <button type="button" className="artwork-layer-visibility" aria-label={`${layer.value.visible === false ? '显示' : '隐藏'}${labelOf(layer)}`} aria-pressed={layer.value.visible !== false} disabled={busy} onClick={() => { finishGesture(); change(current => updateArtworkLayer(current, layer.id, { visible: layer.value.visible === false })); setSelection(null); }}>{layer.value.visible === false ? '○' : <EditorIcon name="eye"/>}</button>
+        <button type="button" className="artwork-layer-visibility" aria-label={`${layer.value.visible === false ? '显示' : '隐藏'}${labelOf(layer)}`} aria-pressed={layer.value.visible !== false} disabled={busy} onClick={() => { finishGesture(); change(current => updateArtworkLayer(current, layer.id, { visible: layer.value.visible === false })); clearSelection(); }}>{layer.value.visible === false ? '○' : <EditorIcon name="eye"/>}</button>
       </div>)}</div><button type="button" className="artwork-v2-add-inline" disabled={busy || layers.length >= 64} onClick={addText}><EditorIcon name="plus"/>再添加一段文字</button><p className="artwork-v2-help">每段文字都是独立图层，<br/>可单独改字、换色和移动。</p></div>
       <div className="artwork-v2-layer-footer"><div className="artwork-v2-layer-actions"><button type="button" disabled={busy || !selected || layers.at(-1)?.id === selectedId} aria-label="图层上移" title="上移一层" onClick={() => { finishGesture(); change(current => reorderArtworkLayer(current, selectedId!, 1)); }}><EditorIcon name="up"/></button><button type="button" disabled={busy || !selected || layers[0]?.id === selectedId} aria-label="图层下移" title="下移一层" onClick={() => { finishGesture(); change(current => reorderArtworkLayer(current, selectedId!, -1)); }}><EditorIcon name="down"/></button><button type="button" disabled={busy || !selectedIds.length || layers.length + selectedIds.length > 64} aria-label="复制图层" title="复制所选图层" onClick={() => modifyLayers('duplicate')}><EditorIcon name="copy"/></button><button type="button" disabled={busy || !selectedIds.length} aria-label="删除图层" title="删除所选图层" onClick={() => modifyLayers('delete')}><EditorIcon name="trash"/></button></div>
       <details className="artwork-v2-requirement"><summary>查看 WPS 原文与要求</summary><p>{originalRequirement}</p></details></div></aside>
       <div className="artwork-editor-canvas-column">
-        <div className="artwork-editor-toolbar"><strong>{previewOpen ? '上衣效果与字高' : '透明图案'}</strong><span className="artwork-v2-current">{selected ? `已选择：${labelOf(selected)}` : selectedIds.length ? `已选择 ${selectedIds.length} 个图层` : '点击图案或文字进行编辑'}</span>{renderPreview && <button type="button" aria-expanded={previewOpen} onClick={() => setPreviewOpen(value => !value)}>{previewOpen ? '返回编辑画布' : '上衣效果与字高 ↗'}</button>}</div>
-      <div className="artwork-editor-canvas-viewport" ref={viewport} hidden={previewOpen}><div className={`artwork-editor-artboard artwork-background-${background}`} style={{ width: surface.width * scale, height: surface.height * scale, cursor: pointerCursor }} ref={board} role="application" aria-label="图案编辑画布" tabIndex={0} onPointerMove={move} onPointerUp={endPointer} onPointerCancel={() => { endPointer(); setSelection(null); setSelectedIds([]); }} onPointerDown={beginPointer}>
+        <div className="artwork-editor-toolbar"><strong>{previewOpen ? '上衣效果与字高' : '透明图案'}</strong><span className="artwork-v2-current">{selected ? `已选择：${labelOf(selected)}` : selectedIds.length ? `已选择 ${selectedIds.length} 个图层` : '点击图案或文字进行编辑'}</span>{renderPreview && <button type="button" aria-expanded={previewOpen} onClick={() => { clearSelection(); setPreviewOpen(value => !value); }}>{previewOpen ? '返回编辑画布' : '上衣效果与字高 ↗'}</button>}</div>
+      <div className="artwork-editor-canvas-viewport" ref={viewport} hidden={previewOpen}><div className={`artwork-editor-artboard artwork-background-${background}`} style={{ width: surface.width * scale, height: surface.height * scale, cursor: pointerCursor }} ref={board} role="application" aria-label="图案编辑画布" tabIndex={0} onPointerMove={move} onPointerUp={endPointer} onPointerCancel={() => { endPointer(); clearSelection(); setSelectedIds([]); }} onPointerDown={beginPointer}>
         {layers.filter(layer => layer.value.visible !== false).map(layer => {
           const bounds = layer.kind === 'graphic' ? artworkGraphicFrame(layer.value) : boundsOf(layer);
           return <button type="button" key={layer.id} data-layer-id={layer.id} aria-label={`${labelOf(layer)}图层`} aria-pressed={selectedIds.includes(layer.id)} className={`artwork-editor-layer ${layer.kind}${selectedIds.includes(layer.id) ? ' selected' : ''}`} style={{ left: (bounds.left - surface.left) * scale, top: (bounds.top - surface.top) * scale, width: bounds.width * scale, height: bounds.height * scale, transform: layer.kind === 'graphic' ? `rotate(${layer.value.rotation}deg)` : undefined, zIndex: layers.findIndex(item => item.id === layer.id) + 1, cursor: 'inherit' }} disabled={busy} onClick={event => { if (event.detail === 0) { event.stopPropagation(); choose(layer.id); } }}>
             {layer.kind === 'graphic' ? <GraphicView graphic={layer.value} onError={setError}/> : <TextView text={layer.value} scale={scale} onError={setError} onFontLoaded={fontLoaded}/>}
-            {selectedId === layer.id && !selection && <span className="artwork-editor-resize" title="拖动等比缩放" onPointerDown={event => beginMove(event, layer, true)}/>}
+            {selectedId === layer.id && !selection && tool === 'auto' && <span className="artwork-editor-resize" title="拖动等比缩放" onPointerDown={event => beginMove(event, layer, true)}/>}
           </button>;
         })}
         {guides.map(guide => <i key={`${guide.axis}:${guide.label}`} className={`artwork-editor-smart-guide ${guide.axis}`} style={{ zIndex: 100, ...(guide.axis === 'x' ? { left: (guide.position - surface.left) * scale } : { top: (guide.position - surface.top) * scale }) }}/>) }
-        {selection && <div className="artwork-marquee" style={{ left: (selection.left - surface.left) * scale, top: (selection.top - surface.top) * scale, width: selection.width * scale, height: selection.height * scale }} aria-label="当前矩形选区"/>}
+        {selection && !selection.points && <div className="artwork-marquee" style={{ left: (selection.left - surface.left) * scale, top: (selection.top - surface.top) * scale, width: selection.width * scale, height: selection.height * scale }} aria-label="当前矩形选区"/>}
+        {(lassoPoints.length > 0 || selection?.points) && <svg className="artwork-lasso-overlay" viewBox={`0 0 ${surface.width * scale} ${surface.height * scale}`} role="img" aria-label={selection?.points ? '当前多边形选区' : '正在绘制套索'}>
+          {selection?.points ? <polygon points={selection.points.map(p => `${(p.x - surface.left) * scale},${(p.y - surface.top) * scale}`).join(' ')} fillRule="evenodd"/> : <>
+            <polyline points={[...lassoPoints, ...(lassoCursor ? [lassoCursor] : [])].map(p => `${(p.x - surface.left) * scale},${(p.y - surface.top) * scale}`).join(' ')}/>
+            {lassoPoints.map((p, index) => <circle key={index} cx={(p.x - surface.left) * scale} cy={(p.y - surface.top) * scale} r={index === 0 ? 5 : 3} className={index === 0 ? 'lasso-start' : undefined}/>)}
+          </>}
+        </svg>}
       </div></div>
 
         {previewOpen && renderPreview && <div className="artwork-v2-garment-preview">{renderPreview(draft)}</div>}
-        <div className="artwork-selection-actions">{selection && !previewOpen && selection.width > 0 && selection.height > 0 ? <><button type="button" className="primary" disabled={busy || !selectedIds.length || selectedIds.some(id => layers.find(layer => layer.id === id)?.kind !== 'graphic')} onClick={() => void extract(false)}>拆为新图层</button><button type="button" disabled={busy || !selectedIds.length || selectedIds.some(id => layers.find(layer => layer.id === id)?.kind !== 'graphic')} onClick={() => void extract(true)}>复制为新图层</button><button type="button" disabled={busy} onClick={() => setSelection(null)}>取消选区</button></> : <p>{splitting ? '正在拆分图层…' : previewOpen ? '位置与字高沿用当前任务设置' : tool === 'marquee' ? '拖动框选图片区域，拆出独立图层；原字仍为图片内容' : '拖动移动 · 拖动角点缩放 · Shift 多选 · 方向键微调'}</p>}</div>
+        <div className="artwork-selection-actions">{!previewOpen && lassoPoints.length > 0 ? <>
+          <p>逐点圈选 · 点击起点或 Enter 闭合 · Backspace 退一点</p>
+          <button type="button" className="primary" disabled={busy || lassoPoints.length < 3} onClick={closeLasso}>闭合选区</button>
+          <button type="button" disabled={busy} onClick={() => { setLassoPoints(points => points.slice(0, -1)); setError(null); }}>退回一点</button>
+          <button type="button" disabled={busy} onClick={clearSelection}>取消选区</button>
+        </> : selection && !previewOpen && selection.width > 0 && selection.height > 0 ? <>
+          <button type="button" className="primary" disabled={busy || !selectedIds.length || selectedIds.some(id => layers.find(layer => layer.id === id)?.kind !== 'graphic')} onClick={() => void extract(false)}>拆为新图层</button>
+          <button type="button" disabled={busy || !selectedIds.length || selectedIds.some(id => layers.find(layer => layer.id === id)?.kind !== 'graphic')} onClick={() => void extract(true)}>复制为新图层</button>
+          <button type="button" disabled={busy} onClick={clearSelection}>取消选区</button>
+          {!selectedIds.length && <p>选区内没有可见内容，请重新圈选。</p>}
+        </> : <p>{splitting ? '正在拆分图层…' : previewOpen ? '位置与字高沿用当前任务设置' : tool === 'lasso' ? '逐点圈住内部内容并拆层，再选外圈图层改色；Esc 取消' : tool === 'marquee' ? '拖动框选图片区域，拆出独立图层；原字仍为图片内容' : '拖动移动 · 拖动角点缩放 · Shift 多选 · 方向键微调'}</p>}</div>
         <div className="artwork-v2-canvas-footer"><div className="artwork-v2-backgrounds"><span>背景</span>{(['checker', 'white', 'dark'] as const).map(value => <button type="button" key={value} className={`artwork-background-${value}`} aria-label={value === 'checker' ? '透明棋盘背景' : value === 'white' ? '白色背景' : '深色背景'} aria-pressed={background === value} onClick={() => setBackground(value)}/>)}</div><div className="artwork-editor-zoom"><button type="button" aria-label="缩小视图" onClick={() => setZoom(value => Math.max(.5, value - .25))}>−</button><span>{Math.round(zoom * 100)}%</span><button type="button" aria-label="放大视图" onClick={() => setZoom(value => Math.min(3, value + .25))}>＋</button><button type="button" onClick={() => setZoom(1)}>适应全部</button></div></div>
       </div>
       <aside className="artwork-editor-inspector" ref={inspector} aria-label="属性面板">
@@ -353,6 +393,6 @@ export function TaskReviewArtworkEditor({ title, originalRequirement, initialDra
       </aside>
     </div>
     {(error || empty || emptyText) && <div className="artwork-editor-error" role="alert">{error ?? (empty ? '至少显示一个图层后再保存。' : '有空白文字图层，请填写内容或删除该层后保存。')}</div>}
-    <footer className="artwork-editor-footer"><div><strong><i/>{layers.length} 个图层 · {layers.filter(layer => layer.value.visible !== false).length} 个可见</strong><span>{saveHint}</span></div><div><button type="button" disabled={busy} onClick={() => { finishGesture(); change(() => editableArtworkDraft(initialDraft)); setSelectedIds([]); setSelection(null); }}>恢复打开时状态</button><button type="button" disabled={busy} onClick={onCancel}>取消</button><button type="button" className="primary" disabled={busy || empty || emptyText} onClick={() => void save()}>{saving ? '正在保存图层与 PNG…' : saveLabel}</button></div></footer>
+    <footer className="artwork-editor-footer"><div><strong><i/>{layers.length} 个图层 · {layers.filter(layer => layer.value.visible !== false).length} 个可见</strong><span>{saveHint}</span></div><div><button type="button" disabled={busy} onClick={() => { finishGesture(); change(() => editableArtworkDraft(initialDraft)); setSelectedIds([]); clearSelection(); }}>恢复打开时状态</button><button type="button" disabled={busy} onClick={onCancel}>取消</button><button type="button" className="primary" disabled={busy || empty || emptyText} onClick={() => void save()}>{saving ? '正在保存图层与 PNG…' : saveLabel}</button></div></footer>
   </section></div>;
 }

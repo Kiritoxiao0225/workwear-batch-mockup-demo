@@ -2,6 +2,34 @@ import { artworkGraphicLayers, artworkTextLayers, type ArtworkBounds, type Artwo
 import { DEFAULT_ARTWORK_FONT } from './artwork-text-defaults';
 
 export type ArtworkLayer = { kind: 'graphic'; id: string; index: number; value: ArtworkGraphicLayer } | { kind: 'text'; id: string; index: number; value: ArtworkTextLayer };
+export type ArtworkPoint = { x: number; y: number };
+/** Selection is transient editor state; persisted layers keep the existing PNG format. */
+export type ArtworkSelection = ArtworkBounds & { points?: ArtworkPoint[] };
+
+export function artworkPolygonSelection(points: ArtworkPoint[]): ArtworkSelection | null {
+  if (points.length < 3 || points.some(point => !Number.isFinite(point.x) || !Number.isFinite(point.y))) return null;
+  const area = points.reduce((sum, point, index) => {
+    const next = points[(index + 1) % points.length];
+    return sum + point.x * next.y - next.x * point.y;
+  }, 0);
+  if (Math.abs(area) < 1e-8) return null;
+  const left = Math.min(...points.map(p => p.x)), top = Math.min(...points.map(p => p.y));
+  return { left, top, width: Math.max(...points.map(p => p.x)) - left, height: Math.max(...points.map(p => p.y)) - top, points: points.map(p => ({ ...p })) };
+}
+
+function selectionContainsPoint(selection: ArtworkSelection, x: number, y: number) {
+  if (x < selection.left || x > selection.left + selection.width || y < selection.top || y > selection.top + selection.height) return false;
+  const points = selection.points;
+  if (!points) return x < selection.left + selection.width && y < selection.top + selection.height;
+  let inside = false;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    const a = points[j], b = points[i];
+    const cross = (x - a.x) * (b.y - a.y) - (y - a.y) * (b.x - a.x);
+    if (Math.abs(cross) < 1e-8 && x >= Math.min(a.x, b.x) && x <= Math.max(a.x, b.x) && y >= Math.min(a.y, b.y) && y <= Math.max(a.y, b.y)) return true;
+    if ((a.y > y) !== (b.y > y) && x < (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
 
 /** Map a pointer to the unrotated layer, for alpha-aware picking at any canvas zoom. */
 export function artworkPointInLayer(point: { x: number; y: number }, bounds: ArtworkBounds, rotation = 0) {
@@ -98,7 +126,7 @@ export type PixelRaster = { width: number; height: number; data: Uint8ClampedArr
 export type PixelPiece = PixelRaster & { bounds: ArtworkBounds };
 
 /** Match the pixels that splitting would take, not the layer's transparent rectangle. */
-export function artworkRasterIntersectsSelection(source: PixelRaster, bounds: ArtworkBounds, selection: ArtworkBounds, rotation = 0): boolean {
+export function artworkRasterIntersectsSelection(source: PixelRaster, bounds: ArtworkBounds, selection: ArtworkSelection, rotation = 0): boolean {
   if (bounds.width <= 0 || bounds.height <= 0 || selection.width <= 0 || selection.height <= 0) return false;
   const angle = rotation * Math.PI / 180, cos = Math.cos(angle), sin = Math.sin(angle);
   const centerX = bounds.left + bounds.width / 2, centerY = bounds.top + bounds.height / 2;
@@ -115,7 +143,7 @@ export function artworkRasterIntersectsSelection(source: PixelRaster, bounds: Ar
     if (source.data[(y * source.width + x) * 4 + 3] <= 8) continue;
     const dx = ((x + .5) / source.width - .5) * bounds.width, dy = ((y + .5) / source.height - .5) * bounds.height;
     const px = centerX + dx * cos - dy * sin, py = centerY + dx * sin + dy * cos;
-    if (px >= selection.left && px < selection.left + selection.width && py >= selection.top && py < selection.top + selection.height) return true;
+    if (selectionContainsPoint(selection, px, py)) return true;
   }
   return false;
 }
@@ -142,10 +170,11 @@ function croppedPixels(data: Uint8ClampedArray, width: number, height: number): 
   return { width: w, height: h, data: result, bounds: { left, top, width: w, height: h } };
 }
 
-/** Marquee is in artwork coordinates; source pixels remain at native resolution, including rotation. */
-export function splitArtworkPixels(source: PixelRaster, graphic: ArtworkGraphicLayer, selection: ArtworkBounds) {
+/** Rectangle or polygon is in artwork coordinates; source pixels keep their native grid and alpha. */
+export function splitArtworkPixels(source: PixelRaster, graphic: ArtworkGraphicLayer, selection: ArtworkSelection) {
   if (source.data.length !== source.width * source.height * 4) throw new Error('图层像素尺寸不匹配');
   if (![selection.left, selection.top, selection.width, selection.height].every(Number.isFinite) || selection.width <= 0 || selection.height <= 0) throw new Error('请先框选图层内容');
+  if (selection.points && !artworkPolygonSelection(selection.points)) throw new Error('请至少选择三个不在同一直线上的点');
   const extracted = new Uint8ClampedArray(source.data.length), remaining = new Uint8ClampedArray(source.data);
   const angle = graphic.rotation * Math.PI / 180, cos = Math.cos(angle), sin = Math.sin(angle);
   for (let y = 0; y < source.height; y++) for (let x = 0; x < source.width; x++) {
@@ -153,7 +182,7 @@ export function splitArtworkPixels(source: PixelRaster, graphic: ArtworkGraphicL
     if (!source.data[offset + 3]) continue;
     const localX = ((x + .5) / source.width - .5) * graphic.width, localY = ((y + .5) / source.height - .5) * graphic.height;
     const canvasX = graphic.x + localX * cos - localY * sin, canvasY = graphic.y + localX * sin + localY * cos;
-    if (canvasX < selection.left || canvasX >= selection.left + selection.width || canvasY < selection.top || canvasY >= selection.top + selection.height) continue;
+    if (!selectionContainsPoint(selection, canvasX, canvasY)) continue;
     extracted.set(source.data.subarray(offset, offset + 4), offset);
     remaining.fill(0, offset, offset + 4);
   }

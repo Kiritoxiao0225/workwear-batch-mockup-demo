@@ -1,6 +1,6 @@
 import type { SourceTaskRecord, TaskReview } from '@/lib/batch-task-review';
 
-export const TASK_REVIEW_ANALYSIS_CACHE_VERSION = 'task-review-analysis-v7';
+export const TASK_REVIEW_ANALYSIS_CACHE_VERSION = 'task-review-analysis-v8';
 
 type AnalysisCacheStorage = Pick<Storage, 'getItem' | 'removeItem' | 'setItem'>;
 

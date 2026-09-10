@@ -3,7 +3,8 @@ import { artworkReferenceEvidence, artworkReferenceIssues, normalizeArtworkImage
 import { artworkRequirementFacts } from '@/lib/artwork-routing-request';
 import { decideArtworkMethod } from '@/lib/artwork-routing-standard';
 
-const input = { instruction: '保留图2，下方加文字', exactText: '志愿者', layoutNote: '', primaryImageLabel: '图2', sourceScope: 'subject' as const, processingRoute: 'auto' as const, referenceImages: [] as Array<{ label: string }> };
+const flatAssessment = { version: 'artwork-source-v1' as const, kind: 'flat-artwork' as const, targetDescription: '独立平面 Logo', needsReconstruction: false, evidence: ['测试素材为独立平面图案'], uncertainDetails: [] };
+const input = { sourceAssessment: flatAssessment, instruction: '保留图2，下方加文字', exactText: '志愿者', layoutNote: '', primaryImageLabel: '图2', sourceScope: 'subject' as const, processingRoute: 'auto' as const, referenceImages: [] as Array<{ label: string }> };
 const source = '货号:719SF-黑色 B01SD-月牙白-L\n左胸：冲锋衣：图一    POLO衫：研+图5+2026【参考图四】\n后背：冲锋衣：宜宾学院研究生会志愿者【做扇形】 下面加图二 + 奉献、友爱、互助、进步 （后背排版和字体颜色参考图三）\n左袖 图一';
 
 describe('reference identity and routing evidence', () => {

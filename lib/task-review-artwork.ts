@@ -1,3 +1,4 @@
+import { parseArtworkSourceAssessment } from './artwork-source-assessment';
 import { compileGenerationPrompt, parseGenerationPrompt } from './artwork-generation-prompt';
 import { artworkPrintInstruction, artworkPrintPlacementSchema, type ArtworkPrintPlacement } from './production-artwork-layout';
 import { clarityFromStandardBlur } from '@/lib/artwork-routing-standard';
@@ -72,6 +73,7 @@ export type ArtworkPreparationRequest = {
   generationPrompt?: string;
   artworkMethod?: 'auto' | 'preserve' | 'redraw' | 'compose' | 'generate';
   printPlacement?: ArtworkPrintPlacement;
+  sourceAssessment?: import('./artwork-source-assessment').ArtworkSourceAssessment;
   sourceRequirementText: string;
   instruction: string;
   exactText: string;
@@ -107,6 +109,7 @@ export type CanonicalArtworkModelPrompt = {
 };
 
 export type CanonicalArtworkModelPromptInput = {
+  sourceAssessment?: import('./artwork-source-assessment').ArtworkSourceAssessment;
   primaryImageRole?: 'content' | 'reference';
   generationPrompt?: string;
   printPlacement?: ArtworkPrintPlacement;
@@ -374,6 +377,7 @@ export function parseArtworkPreparationRequest(value: unknown): ArtworkPreparati
   return {
     sourceRequirementText,
     generationPrompt: parseGenerationPrompt(input.generationPrompt),
+    sourceAssessment: parseArtworkSourceAssessment(input.sourceAssessment),
     instruction: parsed.instruction,
     printPlacement: input.printPlacement === undefined ? undefined : artworkPrintPlacementSchema.parse(input.printPlacement),
     exactText,

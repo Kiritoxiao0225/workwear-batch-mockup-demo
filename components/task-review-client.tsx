@@ -276,7 +276,7 @@ function canonicalModelPromptForUnit(
     instruction: unit.instruction,
     exactText: unit.textMode === 'replace' ? unit.exactText : '',
     layoutNote: unit.layoutNote,
-    sourceScope: unit.sourceScope,
+    sourceScope: unit.sourceScope, sourceAssessment: unit.sourceAssessment,
     primaryImageLabel: `图${primaryIndex + 1}`,
     referenceImageLabels,
   });
@@ -587,6 +587,8 @@ export function TaskReviewClient() {
         ? { ...review, units: review.units.map((unit) => {
             if (unit.id !== unitId) return unit;
             const nextUnit = transform(unit, review);
+            if (nextUnit !== unit && (nextUnit.logo.materialId !== unit.logo.materialId || nextUnit.sourceScope !== unit.sourceScope
+              || nextUnit.instruction !== unit.instruction || nextUnit.layoutNote !== unit.layoutNote)) nextUnit.sourceAssessment = undefined;
             return nextUnit === unit ? unit : { ...nextUnit, confirmed: false };
           }) }
         : review));
@@ -707,7 +709,7 @@ export function TaskReviewClient() {
         instruction: unit.instruction,
         exactText: unit.textMode === 'replace' ? unit.exactText : '',
         layoutNote: unit.layoutNote,
-        sourceScope: unit.sourceScope,
+        sourceScope: unit.sourceScope, sourceAssessment: unit.sourceAssessment,
         primaryImageLabel: `图${primaryMaterialIndex + 1}`,
         referenceImageLabels: referenceImages.map((reference) => reference.label),
       });
@@ -723,7 +725,7 @@ export function TaskReviewClient() {
           primaryImageLabel: `图${primaryMaterialIndex + 1}`,
           referenceImages,
           enhancementMode: 'auto',
-          sourceScope: unit.sourceScope,
+          sourceScope: unit.sourceScope, sourceAssessment: unit.sourceAssessment,
           processingRoute: unit.processingRoute ?? 'auto',
           expectedPromptVersion: canonicalPrompt.version,
           expectedPromptHash: canonicalPrompt.promptHash,

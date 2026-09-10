@@ -143,7 +143,7 @@
   .artwork-editor-approved.artwork-editor-dialog .artwork-editor-header { padding: 11px 13px; min-height: 66px; gap: 10px; }
   .artwork-editor-approved.artwork-editor-dialog .artwork-editor-header h2 { font-size: 18px; }
   .artwork-editor-approved.artwork-editor-dialog .artwork-v2-mark { width: 34px; height: 34px; }
-  .artwork-editor-approved.artwork-editor-dialog .artwork-v2-tools { padding: 8px 10px; gap: 4px; min-height: 51px; }
+  .artwork-editor-approved.artwork-editor-dialog .artwork-v2-tools { padding: 8px 10px; gap: 4px; min-height: 51px; flex-wrap: wrap; }
   .artwork-editor-approved.artwork-editor-dialog .artwork-v2-add { min-width: 100px; }
   .artwork-editor-approved.artwork-editor-dialog .artwork-v2-tools .artwork-v2-icon { padding: 6px; width: 30px; }
   .artwork-editor-approved.artwork-editor-dialog .artwork-v2-divider { margin: 0 1px; }
@@ -163,3 +163,9 @@
 }
 
 .artwork-v2-spread-labels { display: flex; justify-content: space-between; margin-top: -8px; color: #6b7e73; font-size: 12px; }
+
+.artwork-editor-approved.artwork-editor-dialog svg.artwork-lasso-overlay { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 101; pointer-events: none; overflow: visible; }
+.artwork-lasso-overlay polygon { fill: #3b957022; stroke: #24654b; stroke-width: 1.5; stroke-dasharray: 5 3; }
+.artwork-lasso-overlay polyline { fill: none; stroke: #24654b; stroke-width: 1.5; }
+.artwork-lasso-overlay circle { fill: #fff; stroke: #24654b; stroke-width: 1.5; }
+.artwork-lasso-overlay circle.lasso-start { fill: #24654b; stroke: #fff; stroke-width: 2; }

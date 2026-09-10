@@ -20,7 +20,8 @@ async function setup(scores: number[] = [90, 90]) {
   const fidelity = vi.fn(async (input: typeof request) => ({ status: 'prepared', draft: createLegacyArtworkDraft(url(prepared)), preprocessing: { enhancement: input.enhancementMode, backgroundRemoval: 'edge-connected' } } as ArtworkPreparationResponse));
   const generate = vi.fn<StandardArtworkServices['generate']>(async () => ({ bytes: source, model: 'test-seedream' }));
   const inspect = vi.fn(async (): Promise<RedrawInspection> => ({ type: 'flat-logo', textReadable: true, graphicReadable: true, hasWhiteForeground: false, recognizedText: '', reasons: ['测试图为平面纯色'] }));
-  const services: StandardArtworkServices = { measure, fidelity, generate, inspect, cutout: vi.fn(async () => prepared), saveReport: vi.fn(), saveImage: vi.fn(), saveGeneration: vi.fn(), resolveReferenceColor: vi.fn(async () => { throw new Error('Unexpected reference color inspection'); }), verifyEdits: vi.fn(async () => { throw new Error('Unexpected edit verification'); }) };
+  const services: StandardArtworkServices = { measure, fidelity, generate, inspect,
+    inspectSource: vi.fn<StandardArtworkServices['inspectSource']>(async () => ({ version: 'artwork-source-v1', kind: 'flat-artwork', targetDescription: '独立平面 Logo', needsReconstruction: false, evidence: ['图案已独立，无实物载体'], uncertainDetails: [] })), cutout: vi.fn(async () => prepared), saveReport: vi.fn(), saveImage: vi.fn(), saveGeneration: vi.fn(), resolveReferenceColor: vi.fn(async () => { throw new Error('Unexpected reference color inspection'); }), verifyEdits: vi.fn(async () => { throw new Error('Unexpected edit verification'); }) };
   return { request, services, measure, fidelity, generate, inspect, source };
 }
 
@@ -60,10 +61,19 @@ describe('executed artwork standard', () => {
     t.services.verifyEdits = vi.fn<StandardArtworkServices['verifyEdits']>(async (source, output, requirements) => {
       if (status === 'unavailable') throw new Error('inspection timeout');
       return { version: 'artwork-edit-check-v1', sourceSha256: artworkSha256(source), outputSha256: artworkSha256(output), model: 'test',
-        checks: requirements.map(requirement => ({ requirement, status, evidence: '描边仍然是红色' })) };
+        checks: requirements.map(requirement => ({ requirement, status, evidence: status === 'failed'
+          ? 'SOURCE 是红色描边，RESULT 的描边仍然是红色。' : '无法确定 RESULT 的描边是否已改成深蓝色。' })) };
     });
     const error = await prepareStandardArtwork({ ...t.request, instruction: '红色描边改为深蓝色，深蓝色底形调浅', generationPrompt: '编辑图1' }, t.services).catch(error => error);
     expect(error.candidate).toMatchObject({ stage: 'edit-review', url: url(await sample(true)) });
+    expect(error.candidate.reason).toContain(status === 'failed' ? '有地方没按要求改好'
+      : status === 'uncertain' ? '还不能确定是否已按要求改好' : '这次没能检查修改结果');
+    expect(error.candidate.reason).toContain('还没保存成品');
+    expect(error.candidate.reason).not.toMatch(/SOURCE|RESULT|inspection timeout|未点名修改|候选/u);
+    if (status !== 'unavailable') expect(error.candidate.reason.match(/描边/gu)).toHaveLength(status === 'failed' ? 2 : 1);
+    expect(t.services.saveGeneration).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      reason: expect.stringContaining(status === 'unavailable' ? 'inspection timeout' : '修改要求尚未通过核对'),
+    }));
     expect(error.candidate.cutout).toBeUndefined();
     expect(t.services.saveReport).not.toHaveBeenCalled();
     expect(t.services.saveImage).toHaveBeenCalledWith(expect.any(String), 'edit-review-candidate', await sample(true));
@@ -404,4 +414,68 @@ it('blocks legacy whole-image generation before paid measurement until a final p
   expect(t.measure).not.toHaveBeenCalled();
   expect(t.generate).not.toHaveBeenCalled();
   expect(t.services.cutout).not.toHaveBeenCalled();
+});
+
+
+const objectAssessment = { version: 'artwork-source-v1' as const, kind: 'artwork-on-object' as const,
+  targetDescription: '图二衣袋上方的红色弧形中文和中心医疗标志', needsReconstruction: true,
+  evidence: ['衣料上有蓝色花纹，红色刺绣受褶皱和透视影响'], uncertainDetails: ['原文字个别笔画不清'] };
+function verifyReconstruction(t: Awaited<ReturnType<typeof setup>>, status: 'passed' | 'failed' | 'uncertain' = 'passed') {
+  t.services.verifyEdits = vi.fn<StandardArtworkServices['verifyEdits']>(async (source, result, requirements) => ({
+    version: 'artwork-edit-check-v1', sourceSha256: artworkSha256(source), outputSha256: artworkSha256(result), model: 'test',
+    checks: requirements.map(requirement => ({ requirement, status, evidence: status === 'passed' ? '目标图案已还原，未残留衣料' : '原文字看不清' })),
+  }));
+}
+describe('reconstruction of artwork photographed on objects', () => {
+  it('inspects legacy source pixels, generates the target first, then cuts out only the generated artwork', async () => {
+    const t = await setup();
+    const generated = await sharp(t.source).resize(1000, 750).png().toBuffer();
+    t.services.inspectSource = vi.fn(async () => objectAssessment);
+    t.generate.mockResolvedValue({ bytes: generated, model: 'test' });
+    verifyReconstruction(t);
+    const submittedPrompt = standardArtworkPrompts(t.request);
+    const result = await prepareStandardArtwork({ ...t.request, expectedPromptVersion: submittedPrompt.version, expectedPromptHash: submittedPrompt.hash }, t.services);
+    expect(t.services.inspectSource).toHaveBeenCalledExactlyOnceWith(t.request.image.dataUrl, expect.any(String));
+    expect(t.fidelity).not.toHaveBeenCalled();
+    expect(t.inspect).not.toHaveBeenCalled();
+    expect(t.generate).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('【B 原设计重建】'), [url(t.source)], { background: 'auto' });
+    expect(t.services.cutout).toHaveBeenCalledExactlyOnceWith(generated, { scene: 'product', crop: false });
+    expect(vi.mocked(t.services.cutout).mock.invocationCallOrder[0]).toBeGreaterThan(t.generate.mock.invocationCallOrder[0]);
+    const report = result.draft.preprocessing.routingReport!;
+    expect(report).toMatchObject({ executedMethod: 'redraw', graphicMethod: 'redraw', repair: null, facts: { sourceAssessment: objectAssessment }, redraw: { status: 'completed' } });
+    expect(report.operations.join(' ')).toContain('未套用纯色净化');
+    expect(t.services.verifyEdits).toHaveBeenCalledWith(t.source, expect.any(Buffer), expect.arrayContaining([expect.stringContaining('去除载体不算图案内容丢失')]));
+    expect(result.preprocessing.modelLayoutPreserved).toBe(true);
+  });
+  it('reuses current image analysis and rebuilds the C graphic before deterministic text composition', async () => {
+    const t = await setup(); verifyReconstruction(t);
+    const result = await prepareStandardArtwork({ ...t.request, sourceAssessment: objectAssessment, exactText: '新增文字', instruction: '保留图1并添加文字“新增文字”' }, t.services);
+    expect(t.services.inspectSource).not.toHaveBeenCalled();
+    expect(t.fidelity).not.toHaveBeenCalled();
+    expect(t.generate).toHaveBeenCalledOnce();
+    expect(t.generate.mock.calls[0][0]).not.toContain('新增文字');
+    expect(result.draft.text?.value).toBe('新增文字');
+    expect(result.draft.preprocessing.routingReport).toMatchObject({ executedMethod: 'compose', graphicMethod: 'redraw' });
+  });
+  it.each(['failed', 'uncertain'] as const)('retains a candidate with %s content verification and never falls back to whole-photo cutout', async status => {
+    const t = await setup(); verifyReconstruction(t, status);
+    const error = await prepareStandardArtwork({ ...t.request, sourceAssessment: objectAssessment }, t.services).catch(error => error);
+    expect(error.candidate.stage).toBe('edit-review');
+    expect(t.generate).toHaveBeenCalledOnce();
+    expect(t.fidelity).not.toHaveBeenCalled();
+    expect(t.services.saveReport).not.toHaveBeenCalled();
+    expect(t.services.saveGeneration).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ sourceAssessment: objectAssessment, status: 'needs-review' }));
+  });
+  it('does not guess a source route if inspection cannot identify the target', async () => {
+    const t = await setup();
+    t.services.inspectSource = vi.fn(async () => ({ ...objectAssessment, kind: 'unknown' as const, needsReconstruction: null }));
+    await expect(prepareStandardArtwork(t.request, t.services)).rejects.toThrow('尚不能确定');
+    expect(t.generate).not.toHaveBeenCalled(); expect(t.fidelity).not.toHaveBeenCalled(); expect(t.services.cutout).not.toHaveBeenCalled();
+  });
+  it('respects explicit whole-image usage even when the source includes a logo on clothing', async () => {
+    const t = await setup();
+    const result = await prepareStandardArtwork({ ...t.request, sourceAssessment: objectAssessment, sourceScope: 'wholeImage' }, t.services);
+    expect(t.services.inspectSource).not.toHaveBeenCalled(); expect(t.generate).not.toHaveBeenCalled();
+    expect(result.draft.preprocessing.routingReport?.executedMethod).toBe('preserve');
+  });
 });

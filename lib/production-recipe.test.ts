@@ -6,12 +6,13 @@ import { emptyWpsProductionState, importTaskReviews, updateProductionPlan } from
 import { artworkQualityFixture } from '@/lib/testing/artwork-quality-fixture';
 import type { ArtworkRoutingReport } from '@/lib/artwork-routing-standard';
 
+const flatAssessment = { version: 'artwork-source-v1' as const, kind: 'flat-artwork' as const, targetDescription: '独立平面 Logo', needsReconstruction: false, evidence: ['测试素材为独立平面图案'], uncertainDetails: [] };
 describe('production recipe explanations', () => {
   it('distinguishes a preflight plan from measured processing and preserves WPS image numbers', () => {
     const review = taskReviewFixture()[1];
     const state = importTaskReviews(emptyWpsProductionState(), [review]);
     const unit = state.units.find(unit => unit.materialId === 'snapshot-02-m5')!;
-    const clarified = (layoutNote: string) => updateProductionPlan(state, unit.id, { layoutNote }).units.find(candidate => candidate.id === unit.id)!;
+    const clarified = (layoutNote: string) => ({ ...updateProductionPlan(state, unit.id, { layoutNote }).units.find(candidate => candidate.id === unit.id)!, sourceAssessment: flatAssessment });
     const layoutUnit = clarified('按照图4的整体排版');
     const recipe = productionRecipe(layoutUnit, review.source);
     expect(recipe.title).toBe('模型生成完整图案');
@@ -25,6 +26,7 @@ describe('production recipe explanations', () => {
   it('does not invent a measured enhancement tier or mislabel a missing source as image zero', () => {
     const review = taskReviewFixture()[0];
     const unit = importTaskReviews(emptyWpsProductionState(), [review]).units[0];
+    unit.sourceAssessment = flatAssessment;
     const recipe = productionRecipe(unit, review.source);
     expect(recipe.reason).toContain('检测原图后确定');
     expect(recipe.actualLabel).toBeNull();
@@ -35,7 +37,7 @@ describe('production recipe explanations', () => {
 describe('production routing evidence', () => {
   const review = taskReviewFixture()[0];
   const imported = importTaskReviews(emptyWpsProductionState(), [review]).units[0];
-  const unit = { ...imported, textMode: 'keep' as const, exactText: '', instruction: '保留图1原样', layoutNote: '', referenceMaterialIds: [], ambiguities: [] };
+  const unit = { ...imported, sourceAssessment: flatAssessment, textMode: 'keep' as const, exactText: '', instruction: '保留图1原样', layoutNote: '', referenceMaterialIds: [], ambiguities: [] };
 
   it('does not treat merely attaching a reference, negated design intent or crop as whole generation', () => {
     expect(productionArtworkRouting({ ...unit, referenceMaterialIds: [review.source.materials[0].id] }, review.source).decision.method).toBe('preserve');

@@ -1,6 +1,6 @@
 'use client';
-import { artworkGraphicLayers, assertArtworkDraft, type ArtworkBounds, type ArtworkDraft, type ArtworkGraphicLayer } from '@/lib/artwork-editor';
-import { artworkLayers, croppedGraphicGeometry, padArtworkPiece, splitArtworkPixels, updateArtworkLayer, wholeGraphicGeometry, type PixelPiece } from '@/lib/artwork-layers';
+import { artworkGraphicLayers, assertArtworkDraft, type ArtworkDraft, type ArtworkGraphicLayer } from '@/lib/artwork-editor';
+import { artworkLayers, croppedGraphicGeometry, padArtworkPiece, splitArtworkPixels, updateArtworkLayer, wholeGraphicGeometry, type ArtworkSelection, type PixelPiece } from '@/lib/artwork-layers';
 import { loadArtworkImage } from './render-artwork';
 import { uploadLogo } from './logo';
 
@@ -11,7 +11,7 @@ function pixelCanvas(width: number, height: number) {
   return { canvas, context };
 }
 
-export async function splitArtworkGraphic(draft: ArtworkDraft, id: string, selection: ArtworkBounds, copy: boolean) {
+export async function splitArtworkGraphic(draft: ArtworkDraft, id: string, selection: ArtworkSelection, copy: boolean) {
   if (artworkLayers(draft).length >= 64) throw new Error('最多支持 64 个图层，请先整理图层');
   const graphic = artworkGraphicLayers(draft).find(layer => layer.id === id);
   if (!graphic || graphic.visible === false) throw new Error('请先选择一个可见的图片图层');

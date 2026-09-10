@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createLegacyArtworkDraft, assertArtworkDraft, type ArtworkGraphicLayer } from './artwork-editor';
-import { artworkRasterIntersectsSelection, artworkPointInLayer, artworkLayers, croppedGraphicGeometry, editableArtworkDraft, recordArtworkHistory, reorderArtworkLayer, travelArtworkHistory, splitArtworkPixels, recolorArtworkPixels, wholeGraphicGeometry, type PixelPiece } from './artwork-layers';
+import { artworkRasterIntersectsSelection, artworkPointInLayer, artworkPolygonSelection, artworkLayers, croppedGraphicGeometry, editableArtworkDraft, recordArtworkHistory, reorderArtworkLayer, travelArtworkHistory, splitArtworkPixels, recolorArtworkPixels, wholeGraphicGeometry, type PixelPiece } from './artwork-layers';
 import { persistArtworkLayerAssets } from './client/artwork-layer-editing';
 import { addArtworkText, duplicateArtworkLayers, removeArtworkLayers, updateArtworkLayer } from './artwork-layers';
 
@@ -117,6 +117,69 @@ describe('pixel selections preserve source artwork', () => {
     const source = new Uint8ClampedArray([99, 22, 33, 0, 199, 18, 18, 30]);
     const mask = new Uint8ClampedArray([255, 255, 255, 255, 255, 255, 255, 255]);
     expect([...recolorArtworkPixels(source, '#0000ff', mask)]).toEqual([99, 22, 33, 0, 0, 0, 255, 30]);
+  });
+});
+
+describe('polygon selections isolate irregular artwork', () => {
+  // A concave selection excludes the upper-right notch even though it is inside the bounding box.
+  const vertices = [[1, 0], [4, 0], [4, 3], [7, 3], [7, 6], [1, 6]];
+  const polygon = (rotation = 0, scale = 1, reverse = false) => {
+    const angle = rotation * Math.PI / 180;
+    const points = vertices.map(([x, y]) => {
+      const dx = (x - 4) * 10, dy = (y - 3) * 10;
+      return { x: (graphic.x + dx * Math.cos(angle) - dy * Math.sin(angle)) * scale, y: (graphic.y + dx * Math.sin(angle) + dy * Math.cos(angle)) * scale };
+    });
+    return artworkPolygonSelection(reverse ? points.reverse() : points)!;
+  };
+
+  it.each([0, 45, 90, -30])('keeps exactly the selected native pixels at rotation %s, with no loss or overlap', rotation => {
+    const source = raster(), before = new Uint8ClampedArray(source.data);
+    for (const scale of [.5, 1, 3]) for (const reverse of [false, true]) {
+      const layer = { ...graphic, rotation, x: graphic.x * scale, y: graphic.y * scale, width: graphic.width * scale, height: graphic.height * scale };
+      const selection = polygon(rotation, scale, reverse);
+      const parts = splitArtworkPixels(source, layer, selection);
+      const taken = new Uint8ClampedArray(source.data.length), kept = new Uint8ClampedArray(source.data.length);
+      restore(parts.selected, taken, source.width); restore(parts.remaining, kept, source.width);
+      for (let y = 0; y < source.height; y++) for (let x = 0; x < source.width; x++) {
+        const offset = (y * source.width + x) * 4, selected = x >= 1 && x < 7 && (x < 4 || y >= 3);
+        expect(taken.slice(offset, offset + 4)).toEqual(selected ? source.data.slice(offset, offset + 4) : new Uint8ClampedArray(4));
+        expect(kept.slice(offset, offset + 4)).toEqual(selected ? new Uint8ClampedArray(4) : source.data.slice(offset, offset + 4));
+      }
+      expect(artworkRasterIntersectsSelection(source, { left: layer.x - layer.width / 2, top: layer.y - layer.height / 2, width: layer.width, height: layer.height }, selection, rotation)).toBe(true);
+    }
+    expect(source.data).toEqual(before);
+  });
+
+  it('does not select a separate layer lying only in the polygon bounding box', () => {
+    const selection = polygon(), source = raster();
+    const notch = { left: 203, top: 222, width: 20, height: 20 };
+    expect(artworkRasterIntersectsSelection(source, notch, selection)).toBe(false);
+    const { left, top, width, height } = selection, rectangle = { left, top, width, height };
+    expect(artworkRasterIntersectsSelection(source, notch, rectangle)).toBe(true);
+  });
+
+  it('recolors the remaining outline while the extracted interior and all alpha values stay unchanged', () => {
+    const source = raster(), parts = splitArtworkPixels(source, graphic, polygon());
+    const interiorBefore = new Uint8ClampedArray(parts.selected.data);
+    const colored = { ...parts.remaining!, data: recolorArtworkPixels(parts.remaining!.data, '#008800') };
+    const result = new Uint8ClampedArray(source.data.length), selected = new Uint8ClampedArray(source.data.length);
+    restore(parts.selected, selected, source.width); restore(parts.selected, result, source.width); restore(colored, result, source.width);
+    for (let i = 0; i < result.length; i += 4) {
+      expect(result[i + 3]).toBe(source.data[i + 3]);
+      if (selected[i + 3]) expect(result.slice(i, i + 4)).toEqual(source.data.slice(i, i + 4));
+      else if (source.data[i + 3]) expect([...result.slice(i, i + 3)]).toEqual([0, 136, 0]);
+    }
+    expect(parts.selected.data).toEqual(interiorBefore);
+  });
+
+  it('rejects incomplete, non-finite, collinear and transparent selections', () => {
+    expect(artworkPolygonSelection([])).toBeNull();
+    expect(artworkPolygonSelection([{ x: 0, y: 0 }, { x: 1, y: 1 }])).toBeNull();
+    expect(artworkPolygonSelection([{ x: 0, y: 0 }, { x: 1, y: 1 }, { x: 2, y: 2 }])).toBeNull();
+    expect(artworkPolygonSelection([{ x: 0, y: 0 }, { x: Infinity, y: 0 }, { x: 0, y: 2 }])).toBeNull();
+    const empty = artworkPolygonSelection([{ x: 160, y: 220 }, { x: 169, y: 220 }, { x: 169, y: 240 }])!;
+    expect(() => splitArtworkPixels(raster(), graphic, empty)).toThrow('没有当前图层');
+    expect(() => splitArtworkPixels(raster(), graphic, { ...polygon(), points: [] })).toThrow('至少选择三个');
   });
 });
 
