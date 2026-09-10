@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { commitCloudProductionState } from './production-cloud-state';
-import { catalogTransaction } from './catalog-database';
+import { commitCloudProductionState, readCloudProductionState } from './production-cloud-state';
+import { catalogTransaction, catalogDatabase } from './catalog-database';
 import { emptyWpsProductionState } from '../wps-production';
 
 vi.mock('./catalog-database', () => ({ catalogTransaction: vi.fn(), catalogDatabase: vi.fn() }));
@@ -48,5 +48,56 @@ describe('position-only production commits', () => {
     const current = emptyWpsProductionState();
     await commitCloudProductionState(current, { ...current, revision: 1 }, { id: 'save-id', hash: 'hash' });
     expect(query.mock.calls.at(-1)?.[0]).toContain('INSERT INTO production_save_receipts');
+  });
+});
+
+describe('database-validated production snapshots', () => {
+  let serial = 0;
+  beforeEach(() => {
+    vi.stubEnv('WPS_PRODUCTION_STATE_KEY', 'snapshot-test-' + serial++);
+    vi.mocked(catalogDatabase).mockReturnValue({ query });
+  });
+  const row = (revision: string, stamp: string, state: unknown) => ({ rows: [{ revision, stamp, state_jsonb: state }], rowCount: 1 });
+  it('checks the database on every read and never exposes the cached object to mutation', async () => {
+    const state = emptyWpsProductionState();
+    query.mockResolvedValueOnce(row('0', 'one', state)).mockResolvedValueOnce(row('0', 'one', null));
+    const first = await readCloudProductionState();
+    first.budgetLimitCny = 999;
+    expect(await readCloudProductionState()).toEqual(state);
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(query.mock.calls[1][1].slice(1)).toEqual(['0', 'one']);
+    expect(query.mock.calls[1][0]).toContain('THEN NULL ELSE state_jsonb');
+  });
+  it('observes edits by another process and same-revision maintenance writes', async () => {
+    const state = emptyWpsProductionState();
+    query.mockResolvedValueOnce(row('0', 'one', state))
+      .mockResolvedValueOnce(row('1', 'two', { ...state, revision: 1, budgetLimitCny: 21 }))
+      .mockResolvedValueOnce(row('1', 'three', { ...state, revision: 1, budgetLimitCny: 32 }));
+    await readCloudProductionState();
+    expect((await readCloudProductionState()).budgetLimitCny).toBe(21);
+    expect((await readCloudProductionState()).budgetLimitCny).toBe(32);
+  });
+  it('propagates database failures and missing rows instead of reporting cached success', async () => {
+    query.mockResolvedValueOnce(row('0', 'one', emptyWpsProductionState()))
+      .mockRejectedValueOnce(new Error('statement timeout'))
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce(row('0', 'one', null));
+    await readCloudProductionState();
+    await expect(readCloudProductionState()).rejects.toThrow('statement timeout');
+    await expect(readCloudProductionState()).rejects.toThrow('尚未初始化');
+    await expect(readCloudProductionState()).rejects.toThrow('版本未能核实');
+    expect(query.mock.calls[3][1].slice(1)).toEqual([null, null]);
+  });
+  it('isolates workspaces and cannot reuse a snapshot from another database', async () => {
+    query.mockResolvedValueOnce(row('0', 'one', emptyWpsProductionState()))
+      .mockResolvedValueOnce(row('0', 'one', emptyWpsProductionState()))
+      .mockResolvedValueOnce(row('0', 'one', emptyWpsProductionState()));
+    await readCloudProductionState();
+    vi.stubEnv('WPS_PRODUCTION_STATE_KEY', 'different-state');
+    await readCloudProductionState();
+    vi.stubEnv('CATALOG_DATABASE_URL', 'postgresql://fixture.invalid/different');
+    await readCloudProductionState();
+    expect(query.mock.calls.every(call => call[1][1] === null)).toBe(true);
+    vi.unstubAllEnvs();
   });
 });

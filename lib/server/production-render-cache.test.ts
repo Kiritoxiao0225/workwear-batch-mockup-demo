@@ -85,7 +85,7 @@ describe('unchanged render cache hits', () => {
   it('still checks latest input under a lock before publishing a different pointer', async () => {
     query.mockResolvedValue({ rowCount: 1, rows: [{ file_id: 'cached', is_current: false }] });
     const state = fixture();
-    transactionQuery.mockImplementation(async (sql: string) => ({ rowCount: 1, rows: sql.includes('SELECT state_jsonb') ? [{ state_jsonb: state }] : [] }));
+    transactionQuery.mockImplementation(async (sql: string) => ({ rowCount: 1, rows: sql.includes('FROM production_states') ? [{ state_jsonb: state }] : [] }));
     await savedProductionRender(state.mockupVersions[0], state.units);
     expect(transactionQuery.mock.calls[0][0]).toContain('FOR UPDATE');
     expect(transactionQuery.mock.calls.some(([sql]) => sql.includes('INSERT INTO production_renders'))).toBe(true);
@@ -96,7 +96,7 @@ describe('unchanged render cache hits', () => {
     let release!: () => void;
     const waiting = new Promise<void>(resolve => { release = resolve; });
     transactionQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes('SELECT state_jsonb')) { await waiting; return { rowCount: 1, rows: [{ state_jsonb: state }] }; }
+      if (sql.includes('FROM production_states')) { await waiting; return { rowCount: 1, rows: [{ state_jsonb: state }] }; }
       return { rowCount: 1, rows: [] };
     });
     const pending = savedProductionRender(state.mockupVersions[0], state.units);
@@ -119,7 +119,7 @@ describe('unchanged render cache hits', () => {
     const state = fixture();
     const persisted = JSON.parse(JSON.stringify(state, (_key, value) => value && typeof value === 'object' && !Array.isArray(value)
       ? Object.fromEntries(Object.entries(value).reverse()) : value));
-    transactionQuery.mockImplementation(async (sql: string) => ({ rowCount: 1, rows: sql.includes('SELECT state_jsonb') ? [{ state_jsonb: persisted }] : [] }));
+    transactionQuery.mockImplementation(async (sql: string) => ({ rowCount: 1, rows: sql.includes('FROM production_states') ? [{ state_jsonb: persisted }] : [] }));
     await savedProductionRender(state.mockupVersions[0], state.units);
     expect(transactionQuery.mock.calls.some(([sql]) => sql.includes('INSERT INTO production_renders'))).toBe(true);
   });

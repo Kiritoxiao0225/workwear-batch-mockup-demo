@@ -1,11 +1,17 @@
 import type { SourceTaskRecord } from '@/lib/batch-task-review';
 import { mergeWpsSourceOrder, orderWpsSourceRecords } from '@/lib/wps-source';
 import { mutateWpsProductionState, ProductionRevisionConflictError, readWpsProductionState } from './wps-production-store';
+import { usesProductionCloud } from './production-storage';
+import { readCloudProductionSourceOrder } from './production-cloud-state';
 
 /** Only discovery changes the order. Never persist the live source payload or
  * touch artwork here; concurrent production saves are re-read before retrying. */
 export async function persistWpsSourceOrder(records: SourceTaskRecord[]) {
   const ids = records.map(record => record.recordId);
+  if (usesProductionCloud()) {
+    const previous = await readCloudProductionSourceOrder();
+    if (mergeWpsSourceOrder(previous, ids).length === previous.length) return orderWpsSourceRecords(previous, records);
+  }
   for (let attempt = 0; attempt < 5; attempt++) {
     const state = await readWpsProductionState();
     const previous = state.sourceRecordOrder ?? [];

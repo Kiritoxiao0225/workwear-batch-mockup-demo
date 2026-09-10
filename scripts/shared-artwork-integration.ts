@@ -21,6 +21,7 @@ import { catalogDetail, savePlacementStandard } from '../lib/server/catalog-repo
 import { withGarmentBodyScale } from '../lib/server/wps-garment-sizing';
 import { productionActionSnapshot, productionArtworkSnapshot, productionSharedSnapshot } from '../lib/production-artwork-snapshot';
 import { sharedArtworkGroups } from '../lib/shared-artwork';
+import { reconcileAutomaticSharedArtworks } from '../lib/server/automatic-shared-artwork';
 import { POST as postJobs } from '../app/api/wps-production/jobs/route';
 import { POST as postProduction } from '../lib/server/wps-production-actions';
 import { claimArtworkJob, heartbeatArtworkWorker, readArtworkJobs } from '../lib/server/artwork-job-store';
@@ -70,8 +71,20 @@ try {
     garmentLabel: `B01SD-颜色${index + 1}`, garment: garments[index],
     logo: { materialId: null, url: null, name: '' }, placement: 'back', textMode: 'replace', exactText: 'Sales ELT\nLearn.Lead.Grow',
     instruction: '后背排字：Sales ELT\nLearn.Lead.Grow', sharedArtworkId: index < 8 ? `${review.source.recordId}:artwork:a1` : undefined }));
-  const initial = importTaskReviews(emptyWpsProductionState(), [review]);
-  await catalogTransaction(client => writeCloudProductionState(client, initial));
+  review.source.wpsSource = { ...review.source.wpsSource!, status: '设计中' };
+  const legacy = importTaskReviews(emptyWpsProductionState(), [review]);
+  legacy.sharedArtworks = [];
+  legacy.units = legacy.units.map((unit, index) => ({ ...unit, sharedArtworkId: undefined, sharedArtworkVersion: undefined, sharedArtworkDetached: index === 8 }));
+  await catalogTransaction(client => writeCloudProductionState(client, legacy));
+  const initial = await reconcileAutomaticSharedArtworks([review.source]);
+  assert.equal(initial.revision, legacy.revision + 1);
+  assert.equal(initial.sharedArtworks?.length, 1);
+  assert.equal(initial.sharedArtworks[0].automatic, true);
+  assert.equal(initial.sharedArtworks[0].unitIds.length, 8);
+  assert.equal(initial.units[8].sharedArtworkId, undefined);
+  assert.deepEqual(initial.mockupVersions, legacy.mockupVersions);
+  assert.equal((await reconcileAutomaticSharedArtworks([review.source])).revision, initial.revision);
+  pass('Discovery automatically persists eight untouched legacy applications once and preserves the detached ninth garment');
   const submissions = await Promise.all(initial.units.slice(0, 8).map(unit => postJobs(request('/jobs', { action: 'enqueue', units: [{ unitId: unit.id,
     snapshot: productionArtworkSnapshot(unit, initial.records[0].source), sharedSnapshot: productionSharedSnapshot(initial, unit.id) }] })).then(async response => { const body = await response.json(); assert.equal(response.status, 202, JSON.stringify(body)); return body; })));
   assert.equal(new Set(submissions.map(body => body.results[0].id)).size, 1);

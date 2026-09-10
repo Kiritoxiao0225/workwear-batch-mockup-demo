@@ -16,7 +16,7 @@ import { cutoutArtworkForPipeline, ArtworkCutoutPendingError } from './artwork-c
 import type { ArtworkProgressEvent, ArtworkTiming } from '@/lib/artwork-progress';
 import { artworkReferenceColors, type ArtworkReferenceColorReceipt } from '@/lib/artwork-reference-color';
 import { resolveArtworkReferenceColor } from './artwork-reference-color';
-import { artworkModelEdits, type ArtworkEditVerification } from '@/lib/artwork-model-edits';
+import { artworkModelEdits, artworkGraphicRemovals, artworkGraphicRemovalPrompt, artworkGraphicRemovalChecks, type ArtworkEditVerification } from '@/lib/artwork-model-edits';
 import { verifyArtworkModelEdits, verifyArtworkTextComponent } from './artwork-content-inspection';
 import { artworkTextRemovalChecks } from '@/lib/artwork-text-contract';
 import { inspectArtworkSourceAssessment } from './artwork-source-assessment';
@@ -419,14 +419,37 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
       ? '保真处理已达标，无需高清重绘。请选择原图保真；本次未执行重绘。'
       : `高清重绘未完成，未将其他处理结果当作重绘成品保存。${reviewReasons.join('；') || graphicDecision.reason}`);
   }
+  const graphicRemovals = artworkGraphicRemovals(request);
+  if (executedMethod === 'compose' && graphicRemovals.length) {
+    if (reviewReasons.length) throw new Error(`删除指定内部元素前，主体尚未可用：${reviewReasons.join('；')}`);
+    progress('正在删除指定内部元素，核对后继续排版…');
+    const componentSource = graphic;
+    const checks = artworkGraphicRemovalChecks(graphicRemovals, request.exactText, request.sourceScope === 'wholeImage');
+    const removalPrompt = artworkGraphicRemovalPrompt(graphicRemovals, request.exactText, request.sourceScope === 'wholeImage');
+    const removed = await prepareComponent(removalPrompt, [dataUrl(componentSource)], 'graphic-removal', async bytes => {
+      const verification = await timed('graphicRemovalVerification', () => services.verifyEdits(componentSource, bytes, checks));
+      textComposition.graphicRemoval = verification;
+      if (verification.sourceSha256 !== artworkSha256(componentSource) || verification.outputSha256 !== artworkSha256(bytes)
+        || verification.checks.length !== checks.length || checks.some((requirement, index) => verification.checks[index]?.requirement !== requirement)) {
+        throw new Error('局部删除核对没有对应当前图片或全部修改要求');
+      }
+      const issues = verification.checks.filter(check => check.status !== 'passed');
+      if (issues.length) throw new Error(`指定内容删除或其余图案保留尚未通过核对：${issues.map(check => check.evidence).join('；')}`);
+    }, request.sourceScope === 'wholeImage');
+    graphic = removed.bytes;
+    graphicQuality = removed.quality;
+    model = removed.model;
+    usedPrompt = [usedPrompt, removalPrompt].filter(Boolean).join('\n\n');
+    operations.push('已删除并核对指定内部元素，保留其余图案后继续原图文组合流程');
+  }
   if (executedMethod === 'compose' && prompts.textOperation === 'replace') {
     if (reviewReasons.length) throw new Error(`替换旧字前，主体尚未可用：${reviewReasons.join('；')}`);
     progress('正在清除指定旧字，核对后再添加新文字…');
     const checks = artworkTextRemovalChecks(request);
     const removed = await prepareComponent(prompts.removeText!, [dataUrl(graphic)], 'text-base', async bytes => {
-      const verification = await timed('textRemovalVerification', () => services.verifyEdits(sourceBytes, bytes, checks));
+      const verification = await timed('textRemovalVerification', () => services.verifyEdits(graphic, bytes, checks));
       textComposition.removal = verification;
-      if (verification.sourceSha256 !== artworkSha256(sourceBytes) || verification.outputSha256 !== artworkSha256(bytes)
+      if (verification.sourceSha256 !== artworkSha256(graphic) || verification.outputSha256 !== artworkSha256(bytes)
         || verification.checks.length !== checks.length || checks.some((requirement, index) => verification.checks[index]?.requirement !== requirement)) {
         throw new Error('去旧字核对没有对应当前图片或全部修改要求');
       }

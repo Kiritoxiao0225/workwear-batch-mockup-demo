@@ -12,6 +12,7 @@ import { persistProductionReferences, productionStateKey } from './production-st
 import { readWpsProductionState } from './wps-production-store';
 import { listWpsSourceTaskRecords } from './wps-dbsheet';
 import { persistWpsSourceOrder } from './wps-source-order';
+import { reconcileAutomaticSharedArtworks } from './automatic-shared-artwork';
 import { enqueueWpsAnalysis, finishWpsAnalysis, storeWpsAnalysisResult, type AnalysisJob } from './wps-analysis-jobs';
 import { saveWpsAnalysis, verifyWpsAnalysisSources } from './wps-analysis-save';
 import { WpsAnalysisTrace } from './wps-analysis-trace';
@@ -71,6 +72,7 @@ export async function discoverWpsAnalysis(owner: string) {
   try {
     const sync = await listWpsSourceTaskRecords({ activeOnly: true, downloadMaterials: false });
     const records = await persistWpsSourceOrder(sync.records);
+    await reconcileAutomaticSharedArtworks(records);
     for (const source of records.filter(source => canAnalyzeWpsTask(source) && source.requirementText.trim())) await enqueueWpsAnalysis(source);
   } finally {
     await catalogDatabase().query("UPDATE production_operations SET lease_until=now()+interval '30 seconds' WHERE operation_key=$1 AND owner=$2", [`analysis-discovery:${productionStateKey()}`, owner]);

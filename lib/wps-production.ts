@@ -1,5 +1,5 @@
 import type { BrowserLogoTextVerification } from '@/lib/client/browser-logo-ocr';
-import { sharedArtworkGroups } from './shared-artwork';
+import { autoLinkSharedArtworks, sharedArtworkGroups } from './shared-artwork';
 import type { ArtworkQualityMeasurement } from '@/lib/artwork-routing-standard';
 import type { ArtworkMethodChoice } from '@/lib/artwork-routing-request';
 import { parseGenerationPrompt } from '@/lib/artwork-generation-prompt';
@@ -561,7 +561,7 @@ export function importTaskReviews(
     previousById.get(unit.id),
     now,
   )));
-  return {
+  const next: WpsProductionState = {
     ...current,
     revision: current.revision + 1,
     records: reviews.map((review) => ({
@@ -574,6 +574,7 @@ export function importTaskReviews(
     sharedArtworks: sharedArtworkGroups({ ...current, units }),
     updatedAt: now.toISOString(),
   };
+  return { ...autoLinkSharedArtworks(next, { recordIds: new Set(reviews.map(review => review.source.recordId)), now }), revision: next.revision };
 }
 
 export function upsertTaskReviews(
@@ -616,7 +617,7 @@ export function upsertTaskReviews(
       unitIds: review.units.map((unit) => unit.id),
     })),
   ];
-  return {
+  const next: WpsProductionState = {
     ...current,
     revision: current.revision + 1,
     records,
@@ -626,6 +627,7 @@ export function upsertTaskReviews(
       !incomingRecordIds.has(version.sourceRecordId) ? current.mockupVersions.find(previous => previous.id === version.id) ?? version : version),
     updatedAt: now.toISOString(),
   };
+  return { ...autoLinkSharedArtworks(next, { recordIds: new Set(reviews.map(review => review.source.recordId)), now }), revision: next.revision };
 }
 
 function checkedPlacement(value: ProductionPlacement | null) {

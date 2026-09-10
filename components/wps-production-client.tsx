@@ -1086,10 +1086,11 @@ export function WpsProductionClient() {
         <section className="wps-production-stats">
           <div><span>WPS 记录</span><strong>{production?.records.length ?? 0}</strong></div>
           <div><span>印花位置总数</span><strong>{production?.units.length ?? 0}</strong></div>
-          <div><span>未完成的位置</span><strong>{pendingUnits}</strong></div>
+          <div><span>图案尚未确认的位置</span><strong>{pendingUnits}</strong></div>
           <div><span>已确认客户图</span><strong>{approvedVersions}</strong></div>
           <div><span>已记录费用 / 上限</span><strong>¥{actualCost.toFixed(2)} / ¥{(production?.budgetLimitCny ?? 0).toFixed(2)}</strong></div>
         </section>
+        <small>待制作数量按可提交的图稿计算；共用图稿只制作一次。费用仅汇总已记录的人民币金额，积分和未回传费用以服务商账单为准。</small>
 
         <p className="wps-production-message" aria-live="polite">{syncing ? sourceInfo ? '正在后台同步 WPS，可继续操作。' : '正在同步设计中和待领取任务；已显示的制作记录为上次保存内容…' : syncMessage}{sourceInfo && <> · <a href={sourceInfo.sourceUrl} target="_blank" rel="noreferrer">{sourceInfo.sourceFile.fileName}</a> · 最近同步 {new Date(sourceInfo.syncedAt).toLocaleTimeString('zh-CN')}</>}{!syncMode && sourceInfo ? ' · 连接异常，显示上次同步数据' : ''}</p>
         {message && <p className="wps-production-message" role="status">{message}</p>}
@@ -1178,7 +1179,7 @@ export function WpsProductionClient() {
                     {!sharedView && unitBlocked && !queueJob && !activeAttempt && <small role="status">{unitBlocked}</small>}
                     {!sharedView && <p role="status" aria-live="polite" className={`wps-artwork-status ${issues.length || unit.error || rowError || unit.artwork?.validation.contentWarnings?.length ? 'needs-attention' : unit.gateB ? 'complete' : ''}`}>{submittingArtwork ? '正在提交制作任务，请稍候…' : queueJob ? queueJob.status === 'queued' ? `排队中 · 第 ${queuePosition} 张` : queueJob.progress : activeAttempt ? '正在制作，请查询进度' : rowError ? nativeCandidate ? '图片已生成 · 后续处理有问题，可查看下方图片' : '这次没做完，请看下方原因' : unit.artwork?.validation.contentWarnings?.length ? '图案已生成 · 有核对提醒，可继续编辑' : status}</p>}
                     {!sharedView && actionFeedback[unit.id] && <div className="wps-shared-operation" role="status"><p>{actionFeedback[unit.id].message}</p>{['error', 'unknown'].includes(actionFeedback[unit.id].status) && <button type="button" onClick={() => void refreshActionState(unit.id)}>重新检查状态</button>}</div>}
-                    {rowError && <p className="wps-production-row-error" role="alert">{rowError}</p>}
+                    {rowError && <div className="wps-production-row-error" role="alert"><p>{productionActionError(rowError)}</p>{unit.artwork && <small>当前保存的图案仍保留；这里显示的是最近一次制作的问题。</small>}{productionActionError(rowError) !== rowError && <details><summary>查看错误详情</summary><p>{rowError}</p></details>}</div>}
                     {Boolean(unit.artwork?.validation.contentWarnings?.length) && <details className="wps-inline-records" open><summary>图案已保存，有 {unit.artwork!.validation.contentWarnings!.length} 项核对提醒 · 可继续编辑和使用</summary><ul>{unit.artwork!.validation.contentWarnings!.map((warning, index) => <li key={index}>{warning}</li>)}</ul><button type="button" onClick={() => void openArtworkReview(unit)}>对照原图查看</button></details>}
                     {artworkProgress[unit.id] && <WpsArtworkProgress {...artworkProgress[unit.id]} failed={Boolean(rowError) && !queueJob} open={(url, title) => setPreview({ url, title })} />}
                     {cutoutSessions[unit.id] && <>
@@ -1193,7 +1194,7 @@ export function WpsProductionClient() {
                       <small>{cloudJob ? '这张图已保留在后台，还没用到衣服上。' : '这张图还没用到衣服上。需要保留的话，请先下载，再刷新页面。'}</small>
                     </div>}
                     {queueJob?.status === 'queued' && <button className="wps-text-button" type="button" onClick={() => cloudJob ? void changeCloudJob(cloudJob.id, 'cancel') : artworkQueue.cancel(unit.id)}>取消排队</button>}
-                    {cloudJob && <details className="wps-inline-records"><summary>后台处理记录</summary><p>{cloudJob.message} · 任务 {cloudJob.id.slice(0, 8)}</p>{cloudJob.steps.length > 0 && <ul>{cloudJob.steps.map((step, index) => <li key={index}>{ARTWORK_STAGE_LABELS[step.stage as ArtworkStage] ?? step.stage}：{step.status === 'completed' ? '已完成' : step.status === 'running' ? '处理中' : step.status === 'unknown' ? '结果不确定' : '未完成'}{step.durationMs !== null ? ` · ${(step.durationMs / 1000).toFixed(1)} 秒` : ''}{step.error && <span> · {step.error}</span>}</li>)}</ul>}</details>}
+                    {cloudJob && <details className="wps-inline-records"><summary>后台处理记录</summary><p>{cloudJob.message} · 任务 {cloudJob.id.slice(0, 8)}</p><small>按处理顺序显示，包含重试记录；某一步完成不代表整个任务已保存。</small>{cloudJob.steps.length > 0 && <ul>{cloudJob.steps.map((step, index) => <li key={index}>{ARTWORK_STAGE_LABELS[step.stage as ArtworkStage] ?? step.stage}：{step.status === 'completed' ? '已完成' : step.status === 'running' ? '处理中' : step.status === 'unknown' ? '结果不确定' : '未完成'}{step.durationMs !== null ? ` · ${(step.durationMs / 1000).toFixed(1)} 秒` : ''}{step.error && <span> · {step.error}</span>}</li>)}</ul>}</details>}
                     {cloudJob?.status === 'failed' && <button type="button" disabled={cloudQueue.submitting} onClick={() => void changeCloudJob(cloudJob.id, 'retry')}>{cloudJob.candidate?.stage === 'edit-review' && cloudJob.steps.some(step => step.stage === 'inspection' && step.status === 'failed') ? '继续核对（复用已生成图片）' : '继续未完成步骤（复用已生成图片）'}</button>}
                     {cloudJob?.recheckAvailable && <button type="button" disabled={cloudQueue.submitting} onClick={() => void changeCloudJob(cloudJob.id, 'retry')}>按新规则重新核对（不重新生图）</button>}
                     {cloudJob?.status === 'unknown' && <p role="alert">生图返回结果不确定，已锁定原任务，避免重复扣费。任务号：{cloudJob.id}</p>}

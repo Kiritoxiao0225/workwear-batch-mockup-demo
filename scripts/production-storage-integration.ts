@@ -11,7 +11,7 @@ import { catalogDatabase, catalogTransaction, migrateCatalog, closeCatalogDataba
 import { fileSha256, readCatalogFile } from '../lib/server/catalog-files';
 import { saveProductionFile, productionFileReferences } from '../lib/server/production-storage';
 import { claimProductionUpload } from '../lib/server/production-upload';
-import { writeCloudProductionState } from '../lib/server/production-cloud-state';
+import { writeCloudProductionState, readCloudProductionState, readCloudProductionPreviewState, readCloudProductionSourceOrder } from '../lib/server/production-cloud-state';
 import { cleanupReplacedFiles, queueReplacedFiles } from '../lib/server/production-replaced-files';
 import { readWpsProductionState, mutateWpsProductionState } from '../lib/server/wps-production-store';
 import { emptyWpsProductionState, importTaskReviews, confirmProductionArtwork } from '../lib/wps-production';
@@ -78,7 +78,38 @@ try {
   pass('并发单上传资格、同哈希单文件、20 次复用及响应丢失后查询恢复');
   const hidden = await saveProductionFile(await sharp(pixels).negate().png().toBuffer(), 'hidden.png');
   let state = importTaskReviews(emptyWpsProductionState(), [taskReviewFixture()[2]]);
+  state.sourceRecordOrder = state.records.map(record => record.source.recordId);
   await catalogTransaction(client => writeCloudProductionState(client, state));
+  const projectionFixture = importTaskReviews(emptyWpsProductionState(), taskReviewFixture());
+  await catalogTransaction(client => writeCloudProductionState(client, projectionFixture, 'preview-projection-test'));
+  process.env.WPS_PRODUCTION_STATE_KEY = 'preview-projection-test';
+  const previewVersion = projectionFixture.mockupVersions[0];
+  const firstRead = await readCloudProductionState();
+  firstRead.budgetLimitCny = -1;
+  assert.equal((await readCloudProductionState()).budgetLimitCny, projectionFixture.budgetLimitCny);
+  const stamp = (await catalogDatabase().query("SELECT revision::text AS revision,updated_at::text AS stamp FROM production_states WHERE state_key=$1", ['preview-projection-test'])).rows[0];
+  const unchanged = (await catalogDatabase().query("SELECT CASE WHEN revision::text=$2 AND updated_at::text=$3 THEN NULL ELSE state_jsonb END AS state_jsonb FROM production_states WHERE state_key=$1", ['preview-projection-test', stamp.revision, stamp.stamp])).rows[0];
+  assert.equal(unchanged.state_jsonb, null);
+  // Simulate a separate writer, including maintenance that preserves revision.
+  await catalogDatabase().query("UPDATE production_states SET state_jsonb=jsonb_set(state_jsonb,'{budgetLimitCny}','42'),updated_at=clock_timestamp() WHERE state_key=$1", ['preview-projection-test']);
+  assert.equal((await readCloudProductionState()).budgetLimitCny, 42);
+  await catalogDatabase().query("UPDATE production_states SET revision=revision+1,state_jsonb=jsonb_set(state_jsonb,'{budgetLimitCny}','43'),updated_at=clock_timestamp() WHERE state_key=$1", ['preview-projection-test']);
+  assert.equal((await readCloudProductionState()).budgetLimitCny, 43);
+  pass('重复读取不传完整 JSON，外部写入立即可见，读取副本不会污染云端缓存');
+  const previewState = await readCloudProductionPreviewState(previewVersion.id);
+  assert.deepEqual(previewState, JSON.parse(JSON.stringify({
+    mockupVersions: [previewVersion], units: projectionFixture.units.filter(unit => previewVersion.unitIds.includes(unit.id)),
+  })));
+  assert.ok(previewState!.units.length < projectionFixture.units.length);
+  assert.deepEqual(await catalogTransaction(client => readCloudProductionPreviewState(previewVersion.id, client, true)), previewState);
+  assert.deepEqual(await readCloudProductionPreviewState('missing-version'), { mockupVersions: [], units: [] });
+  process.env.WPS_PRODUCTION_STATE_KEY = 'integration';
+  assert.deepEqual(await readCloudProductionSourceOrder(), state.sourceRecordOrder);
+  process.env.WPS_PRODUCTION_STATE_KEY = 'another-workspace';
+  assert.equal(await readCloudProductionPreviewState(previewVersion.id), null);
+  await assert.rejects(() => readCloudProductionSourceOrder(), /尚未初始化/u);
+  process.env.WPS_PRODUCTION_STATE_KEY = 'integration';
+  pass('预览仅读取指定版本及其单元，发布锁与工作台隔离保留；同步仅读取任务顺序');
   const inputs = state.units.map(unit => ({ action: 'submitArtwork', operationId: randomUUID(), expectedRevision: state.revision,
     expectedUnitSnapshot: productionArtworkSnapshot(unit, state.records[0].source), unitId: unit.id, url: image.url, name: 'image.png', service: 'manual-upload', requestSummary: 'integration' }));
   const responses = await Promise.all(inputs.map(input => post(input)));
@@ -143,6 +174,7 @@ try {
   assert.deepEqual((await cleanupReplacedFiles()).deleted, [failed.id]);
   await assert.rejects(() => readFile(filePath));
   pass('删除失败留记录，后续请求重试成功且不删除当前新图');
+  await mkdir('output/production-replace-20260907', { recursive: true });
   await writeFile('output/production-replace-20260907/storage-integration.json', JSON.stringify({ checks, passed: checks.length, database: 'isolated real PostgreSQL', objects: 'isolated filesystem', localStateUntouched: true }, null, 2));
 
 } finally { await closeCatalogDatabase(); await database.stop(); await rm(root, { recursive: true, force: true }); }
