@@ -42,6 +42,17 @@ jobs:
       - name: Install locked dependencies (no production credentials)
         id: install
         run: npm ci
+      - name: Package dependencies for offline full-project verification
+        run: |
+          mkdir -p "$RUNNER_TEMP/workwear-dependencies"
+          tar -czf "$RUNNER_TEMP/workwear-dependencies/node-modules.tar.gz" node_modules
+          sha256sum package-lock.json > "$RUNNER_TEMP/workwear-dependencies/lock-sha256.txt"
+          node --version > "$RUNNER_TEMP/workwear-dependencies/node-version.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: workwear-dependencies-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/workwear-dependencies
+          retention-days: 1
       - name: Lint
         id: lint
         continue-on-error: true
