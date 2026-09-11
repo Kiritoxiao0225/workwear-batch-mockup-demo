@@ -31,6 +31,10 @@ export function sharedArtworkGroups(state: WpsProductionState): SharedArtwork[] 
 export function sharedArtworkForUnit(state: WpsProductionState, unitId: string) {
   return sharedArtworkGroups(state).find(group => group.unitIds.includes(unitId));
 }
+/** A stored source/history can remain after its applications shrink to one. */
+export function isSharedArtwork(group: SharedArtwork | null | undefined): boolean {
+  return Boolean(group && group.unitIds.length > 1);
+}
 export function sharedArtworkLeader(state: WpsProductionState, unit: ProductionUnit) {
   const group = sharedArtworkForUnit(state, unit.id);
   return state.units.find(candidate => candidate.id === group?.sourceUnitId) ?? unit;

@@ -18,6 +18,15 @@ function saved() {
 }
 
 describe('shared application results and confirmation recovery', () => {
+  it('does not describe a single saved source as multi-location sharing', () => {
+    const pending = sharedFixture(1, true);
+    expect(sharedArtworkStatus(pending, sharedArtworkGroups(pending)[0]).summary).toBe('仅用于此位置');
+    const { state, group } = saved();
+    group.unitIds = [state.units[0].id];
+    const before = structuredClone(state);
+    expect(sharedArtworkStatus(state, group)).toMatchObject({ confirmable: 1, complete: false, summary: '已应用 · 待确认' });
+    expect(state).toEqual(before);
+  });
   it('distinguishes saved applications from human confirmation', () => {
     const { state, group } = saved();
     expect(sharedArtworkStatus(state, group)).toMatchObject({ applied: 3, confirmed: 0, confirmable: 3, complete: false });

@@ -21,6 +21,19 @@ function compact() {
 }
 
 describe('shared artwork analysis', () => {
+  it('keeps a single garment with different chest and back artwork independent', () => {
+    const raw = compact(), row = raw.records[0];
+    row.garments = row.garments.slice(0, 1);
+    row.artworks.forEach(artwork => { artwork.garmentIds = ['g1']; });
+    const [review] = parseTaskReviewAnalysis([source], JSON.stringify(raw));
+    expect(review.units).toHaveLength(2);
+    expect(review.units.every(unit => unit.sharedArtworkId === undefined)).toBe(true);
+    const state = importTaskReviews(emptyWpsProductionState(), [review]);
+    expect(state.sharedArtworks ?? []).toHaveLength(0);
+    expect(state.units.map(unit => unit.placement?.key)).toEqual(['leftChest', 'back']);
+    expect(state.mockupVersions).toHaveLength(1);
+  });
+
   it('expands two definitions into sixteen independently editable units and eight garment versions', () => {
     const raw = compact();
     const [review] = parseTaskReviewAnalysis([source], JSON.stringify(raw));
@@ -58,6 +71,7 @@ describe('shared artwork analysis', () => {
     expect(red).toHaveLength(2);
     expect(red.map(unit => unit.variantLabel)).toEqual(['版本1', '图1第二版']);
     expect(red[0].generationPrompt).toContain('白色');
+    expect(red.every(unit => unit.sharedArtworkId === undefined)).toBe(true);
     expect(review.units.find(unit => unit.garmentRequest?.colorText === '黑色')?.generationPrompt).toContain('原文字与颜色');
   });
 

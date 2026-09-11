@@ -526,10 +526,10 @@ function expandedAnalysisUnits(analysis: Record<string, unknown>, source: Source
     return { artwork, id, garmentIds };
   });
   if (used.size !== garments.size) throw new Error('任务分析存在没有绑定图案的衣服，未采用不完整方案');
-  const expanded = [...garments].flatMap(([garmentId, garmentRequest]) => artworks.filter(item => item.garmentIds.includes(garmentId)).map(({ artwork, id }) => ({
+  const expanded = [...garments].flatMap(([garmentId, garmentRequest]) => artworks.filter(item => item.garmentIds.includes(garmentId)).map(({ artwork, id, garmentIds }) => ({
     ...artwork,
     id: `${source.recordId}:g:${garmentId}:a:${id}`,
-    sharedArtworkId: `${source.recordId}:artwork:${id}`,
+    sharedArtworkId: garmentIds.length > 1 ? `${source.recordId}:artwork:${id}` : undefined,
     garmentRequest,
     garmentLabel: [garmentRequest.styleCode.trim() || '款式待确认', garmentRequest.colorText.trim(), garmentRequest.sizeText.trim()].filter(Boolean).join(' '),
     productCode: null,

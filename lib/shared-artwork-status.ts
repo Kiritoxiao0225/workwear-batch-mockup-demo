@@ -1,5 +1,5 @@
 import { artworkAcceptanceIssues } from './artwork-acceptance';
-import { latestSharedArtwork, sharedArtworkFixed, sharedArtworkForUnit, type SharedArtwork } from './shared-artwork';
+import { isSharedArtwork, latestSharedArtwork, sharedArtworkFixed, sharedArtworkForUnit, type SharedArtwork } from './shared-artwork';
 import type { ProductionUnit, WpsProductionState } from './wps-production';
 
 export function sharedArtworkApplication(state: WpsProductionState, group: SharedArtwork, unit: ProductionUnit) {
@@ -34,7 +34,8 @@ export function sharedArtworkStatus(state: WpsProductionState, group: SharedArtw
   const confirmable = applications.filter(item => item.canConfirm).length;
   const complete = applications.every(item => item.fixed || item.confirmed && !item.error);
   return { applications, applied, confirmed, preserved, failed, pending, confirmable, complete,
-    summary: latestSharedArtwork(group)
+    summary: !isSharedArtwork(group) ? latestSharedArtwork(group) ? applications[0]?.status ?? '待制作' : '仅用于此位置'
+      : latestSharedArtwork(group)
       ? `已应用 ${applied}/${applications.length} 处 · 已确认 ${confirmed} 处${preserved ? ` · ${preserved} 处保留原稿` : ''}${failed ? ` · ${failed} 处需处理` : ''}`
       : `共 ${applications.length} 处，制作一次后自动应用`,
   };

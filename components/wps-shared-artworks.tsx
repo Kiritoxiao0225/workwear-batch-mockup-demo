@@ -2,7 +2,7 @@
 import { productionThumbnailUrl } from '@/lib/production-file-url';
 import { useState, type ReactNode } from 'react';
 import type { ProductionUnit, WpsProductionState } from '@/lib/wps-production';
-import { latestSharedArtwork, sharedArtworkCandidateKey, sharedArtworkFixed, sharedArtworkGroups, sharedArtworkSuggestions, sharedArtworkUnit } from '@/lib/shared-artwork';
+import { isSharedArtwork, latestSharedArtwork, sharedArtworkCandidateKey, sharedArtworkFixed, sharedArtworkGroups, sharedArtworkSuggestions, sharedArtworkUnit } from '@/lib/shared-artwork';
 import { productionPositionLabel } from '@/lib/production-garment';
 import { sharedArtworkStatus, productionActionError, type ProductionActionFeedback } from '@/lib/shared-artwork-status';
 
@@ -25,7 +25,7 @@ export function WpsSharedArtworks({ state, recordId, busy, make, edit, preview, 
   const suggestions = sharedArtworkSuggestions(state, recordId);
   const standalone = state.units.filter(unit => unit.sourceRecordId === recordId && !unit.sharedArtworkId);
   const label = (unit: ProductionUnit) => `${unit.garmentLabel} · ${unit.placement ? productionPositionLabel(unit.placement) : '位置待定'}`;
-  return <section className="wps-shared-workbench" aria-label="共用需求与图案制作">
+  return <section className="wps-shared-workbench" aria-label="需求与图案制作">
     {suggestions.map(units => {
       const key = units[0].id;
       const source = units.find(unit => unit.id === chosen[key]) ?? units.find(unit => unit.artwork) ?? units[0];
@@ -42,6 +42,8 @@ export function WpsSharedArtworks({ state, recordId, busy, make, edit, preview, 
     {groups.map(group => {
       const unit = sharedArtworkUnit(state, group), source = state.units.find(item => item.id === group.sourceUnitId)!;
       const members = state.units.filter(unit => group.unitIds.includes(unit.id));
+      const shared = isSharedArtwork(group);
+      const artworkLabel = shared ? '共用稿' : '图案';
       const version = latestSharedArtwork(group);
       const available = state.units.filter(candidate => !candidate.sharedArtworkId && sharedArtworkCandidateKey(candidate) === sharedArtworkCandidateKey(unit));
       const updating = members.filter(member => !sharedArtworkFixed(state, member.id) && (!member.artwork || member.sharedArtworkVersion !== 0));
@@ -56,10 +58,10 @@ export function WpsSharedArtworks({ state, recordId, busy, make, edit, preview, 
       const content = renderUnit(unit, true);
       return <article className="wps-shared-design" key={group.id} data-shared-artwork-id={group.id}>
         <div className="wps-shared-requirement">
-          <div className="wps-shared-title"><strong>{unit.placement ? productionPositionLabel(unit.placement) : '图稿'}</strong><span>{group.derivedFrom ? '独立版式' : `${members.length} 处${group.automatic ? '自动' : ''}共用`}</span></div>
+          <div className="wps-shared-title"><strong>{unit.placement ? productionPositionLabel(unit.placement) : '图稿'}</strong><span>{shared ? `${members.length} 处${group.automatic ? '自动' : ''}共用` : group.derivedFrom ? '独立版式' : '单独制作'}</span></div>
           <p className="wps-shared-instruction">{unit.instruction}</p>
           {unit.exactText && !unit.instruction.includes(unit.exactText) && <p>{unit.exactText}</p>}
-          <details className="wps-shared-scope"><summary>应用到 {names.length} 件衣服</summary><ul>{members.map(member => <li key={member.id}>{label(member)}</li>)}</ul></details>
+          {shared && <details className="wps-shared-scope"><summary>应用到 {names.length} 件衣服</summary><ul>{members.map(member => <li key={member.id}>{label(member)}</li>)}</ul></details>}
           {unit.layoutNote && <details><summary>排版要求</summary><p>{unit.layoutNote}</p></details>}
           {available.length > 0 && <details className="wps-shared-add"><summary>＋ 添加应用</summary>
             {available.map(candidate => <label key={candidate.id}><input type="checkbox" checked={(additional[group.id] ?? []).includes(candidate.id)} disabled={Boolean(busy(candidate.id))}
@@ -75,7 +77,7 @@ export function WpsSharedArtworks({ state, recordId, busy, make, edit, preview, 
             {variants.length > 1 && <small>{variant.garment?.colorName || variant.garmentLabel}</small>}
           </button>)}</div>
           <div className={`wps-shared-design-state ${status.complete && version ? 'complete' : ''}`} role="status" aria-live="polite">
-            <strong>{operation?.status === 'unknown' ? '本次操作结果待核实' : reason || working || (version ? status.complete ? '共用图案已确认' : `图稿已保存 · v${version.number}` : '待制作共用图案')}</strong>
+            <strong>{operation?.status === 'unknown' ? '本次操作结果待核实' : reason || working || (version ? status.complete ? `${shared ? '共用' : ''}图案已确认` : `图稿已保存 · v${version.number}` : `待制作${shared ? '共用' : ''}图案`)}</strong>
             <span>{operation?.status === 'unknown' ? '上次读取：' : ''}{status.summary}</span>
           </div>
           {operation && <div className={`wps-shared-operation ${operation.status}`} role={operation.status === 'error' || operation.status === 'unknown' ? 'alert' : 'status'}>
@@ -83,17 +85,17 @@ export function WpsSharedArtworks({ state, recordId, busy, make, edit, preview, 
             {['error', 'unknown'].includes(operation.status) && <button type="button" onClick={() => void refresh(members.find(member => feedback(member.id) === operation)?.id ?? group.sourceUnitId)}>重新检查状态</button>}
             {operation.detail && <details><summary>错误详情</summary><p>{operation.detail}</p></details>}
           </div>}
-          {generationError && !working && <p className="wps-shared-notice" role="alert">本次制作未完成：{productionActionError(generationError)}。{version ? '已保存的共用稿仍保留。' : ''}展开下方记录处理。</p>}
-          <ul className="wps-shared-applications" aria-label="各位置应用结果">{status.applications.map(item => <li key={item.unit.id}>
+          {generationError && !working && <p className="wps-shared-notice" role="alert">本次制作未完成：{productionActionError(generationError)}。{version ? `已保存的${artworkLabel}仍保留。` : ''}展开下方记录处理。</p>}
+          {(shared || status.applications.some(item => item.error || item.canApply)) && <ul className="wps-shared-applications" aria-label="各位置应用结果">{status.applications.map(item => <li key={item.unit.id}>
             <div><span>{label(item.unit)}</span><strong className={item.error ? 'needs-attention' : item.confirmed || item.fixed ? 'complete' : ''}>{item.status}</strong></div>
             {item.error && <p>{productionActionError(item.error)}</p>}
-            {item.canApply && <button type="button" disabled={Boolean(reason)} onClick={() => void action({ action: 'applySharedArtwork', unitId: item.unit.id })}>{item.error ? '重试应用（不重新制作）' : `应用共用稿 v${version!.number}`}</button>}
-          </li>)}</ul>
+            {item.canApply && <button type="button" disabled={Boolean(reason)} onClick={() => void action({ action: 'applySharedArtwork', unitId: item.unit.id })}>{item.error ? '重试应用（不重新制作）' : `应用${artworkLabel} v${version!.number}`}</button>}
+          </li>)}</ul>}
           <div className="wps-shared-primary-actions">
-            {unit.artwork ? <button className="wps-shared-edit" type="button" disabled={Boolean(reason)} onClick={() => edit(unit)} title={`保存后更新 ${updating.length} 处；已定稿保留原版`}>编辑共用稿</button> : unit.route !== 'gpt-image-2' && <button className="wps-shared-edit" type="button" disabled={Boolean(reason)} onClick={() => make(source)}>制作共用稿</button>}
-            {status.confirmable > 0 && <button type="button" disabled={Boolean(reason)} onClick={() => void action({ action: 'confirmSharedArtwork', unitId: group.sourceUnitId, actor: '当前操作员' })}>{operation?.status === 'saving' && operation.message.startsWith('正在确认') ? '正在确认…' : `确认 ${status.confirmable} 处图案`}</button>}
+            {unit.artwork ? <button className="wps-shared-edit" type="button" disabled={Boolean(reason)} onClick={() => edit(unit)} title={shared ? `保存后更新 ${updating.length} 处；已定稿保留原版` : '保存此位置的图案'}>编辑{artworkLabel}</button> : unit.route !== 'gpt-image-2' && <button className="wps-shared-edit" type="button" disabled={Boolean(reason)} onClick={() => make(source)}>{shared ? '制作共用稿' : `制作${unit.placement ? productionPositionLabel(unit.placement) : ''}图案`}</button>}
+            {status.confirmable > 0 && <button type="button" disabled={Boolean(reason)} onClick={() => void action({ action: 'confirmSharedArtwork', unitId: group.sourceUnitId, actor: '当前操作员' })}>{operation?.status === 'saving' && operation.message.startsWith('正在确认') ? '正在确认…' : shared ? `确认 ${status.confirmable} 处图案` : '确认图案'}</button>}
           </div>
-          {version && <p className="wps-shared-next">{status.complete ? '图案这一步已完成。下一步在衣服旁核对位置，生成客户图。' : status.confirmable ? '核对上方图形、文字和配色后，一次确认这些位置。' : '请先处理上方待应用或待修正的位置。'}</p>}
+          {version && <p className="wps-shared-next">{status.complete ? '图案这一步已完成。下一步在衣服旁核对位置，生成客户图。' : status.confirmable ? shared ? '核对上方图形、文字和配色后，一次确认这些位置。' : '核对上方图形、文字和配色后确认图案。' : '请先处理上方待应用或待修正的位置。'}</p>}
           <details className="wps-shared-recovery" open={unit.route === 'gpt-image-2' || Boolean(generationError || working)}><summary>{unit.artwork ? '重新制作、设置与历史记录' : '制作设置与记录'}</summary>{content.artwork}</details>
         </div>
       </article>;
