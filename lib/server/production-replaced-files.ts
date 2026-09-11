@@ -3,6 +3,7 @@ import { unlink, access } from 'node:fs/promises';
 import path from 'node:path';
 import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './catalog-database';
 import { catalogObjectPrefix, catalogStorageConfig } from './catalog-files';
+import { imageStoreRequest } from './catalog-image-store';
 import { catalogOssBucketControl, catalogOssObjects } from './catalog-oss';
 
 const unreferenced = `f.status='ready' AND NOT EXISTS(SELECT 1 FROM production_file_refs r WHERE r.file_id=f.id)
@@ -27,7 +28,7 @@ export async function queueReplacedFiles(client: CatalogQueryClient, ids: string
 export async function cleanupReplacedFiles(limit = 20, budgetMs = 60_000) {
   const deadline = Date.now() + budgetMs;
   const storage = catalogStorageConfig();
-  const prefix = `${storage.backend === 'oss' ? `${catalogObjectPrefix()}/` : ''}production/objects/`;
+  const prefix = `${storage.backend !== 'local' ? `${catalogObjectPrefix()}/` : ''}production/objects/`;
   const candidates = (await catalogDatabase().query(`SELECT substring(operation_key FROM 8)::uuid AS id FROM production_operations
     WHERE operation_key LIKE 'delete:%' AND lease_until<=now() ORDER BY updated_at LIMIT $1`, [limit])).rows;
   const deleted: string[] = [], failures: { id: string; error: string }[] = [];
@@ -62,6 +63,9 @@ export async function cleanupReplacedFiles(limit = 20, budgetMs = 60_000) {
         try { await client.delete(file.object_key, options); } catch (error) { if (!absent(error)) throw error; }
         try { await client.head(file.object_key, options); throw new Error('旧图删除后仍可读取'); } catch (error) { if (!absent(error)) throw error; }
         try { await client.head(file.object_key); throw new Error('旧图仍存在历史对象'); } catch (error) { if (!absent(error)) throw error; }
+      } else if (storage.backend === 'zeabur') {
+        await imageStoreRequest(file.object_key, 'DELETE');
+        try { await imageStoreRequest(file.object_key, 'HEAD'); throw new Error('旧图删除后仍可读取'); } catch (error) { if (!absent(error)) throw error; }
       } else {
         const target = path.join(storage.bucket, file.object_key);
         try { await unlink(target); } catch (error) { if (!absent(error)) throw error; }

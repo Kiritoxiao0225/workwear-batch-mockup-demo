@@ -1122,3 +1122,12 @@
 - `WpsMaterialImage` 仅小图访问 `/api/production-files/:id?size=thumb`，320px WebP 使用有界、可重建缓存。原图文件、素材 URL、共用快照和放大入口不变；认证和文件状态检查先于缓存读取。
 - 解析输入 ≤8MB 保持原字节；超限先同尺寸无损压缩，再为理解用途生成尽量保留细节的 95 质量 WebP。保真制作仍采用历史 upright PNG 像素，只允许无损压缩；不会为了通过大小限制自动降低生产稿清晰度。
 - 制作/解析队列运行时可见 2.5 秒、后台 15 秒轮询，空闲可见 30 秒、后台 60 秒；焦点和提交立即读取，同一读取合并。`GET /api/wps-production` 和两类队列以实际响应内容 ETag 支持 304；派生几何、后台心跳变化同样使 ETag 变化，不能仅看 production revision。WPS 源同步仍独立每 30 秒并保留编辑保护。保留现有 state JSONB 合同，与共用图稿结构兼容。
+
+## 2026-09-11 Zeabur 持久图片存储
+
+- `STORE-008` / `RULE-011`：`013_zeabur_image_storage.sql` 增加 files.backend=`zeabur`；保留 file ID、SHA、图片尺寸、Alpha、原始 key 和所有业务引用。`CATALOG_IMAGE_STORAGE=zeabur` 只决定新文件写入；读取与素材签名按每个文件实际 backend 分派，兼容滚动迁移中的 OSS/Zeabur 混合状态。
+- `API-009` / 生产文件：`lib/server/catalog-image-store.ts` 统一 HTTPS 上传、读回、签名及限定删除。服务端凭据不会发给浏览器；浏览器仅取得单张图片、15 分钟有效的 HMAC GET 链接，保留跨域 Canvas 读取能力。上传后仍校验 SHA，备份失败不提交 ready 或客户文件引用。
+- `STORE-008`：`services/image-store/server.mjs` 为独立图片服务，必须挂载 `/data/images` 持久卷，普通容器目录拒绝启动；内容寻址、流式上传上限 64 MiB、fsync+原子链接禁止覆盖。主服务在既有腾讯新加坡服务器，独立副本在既有阿里云新加坡服务器；主服务上传在独立备份确认后才返回成功。备份服务没有删除凭据，生产旧图回收仅删除主副本，备份保留。低于 1 GiB 可用磁盘时拒绝新增上传并返回不健康状态。
+- 迁移：`scripts/migrate-image-storage.ts copy` 从数据库登记的 active/ready OSS 文件复制，逐一读回主副本与独立副本核对 SHA，并记录原定位。所有 Web/worker 支持双读后执行 activate，在行锁下复核身份与状态再切换同一 file ID；copy 可根据 manifest 续传，失败不迁移对应引用；最后再次补齐新增文件。不会删除 OSS 原图或改写客户状态。
+- 回退：运行版本必须继续支持 zeabur 已有引用；将新写入设回 oss 不会自动搬回旧图。迁移前 OSS 定位保存在 manifest，回迁前需逐个验证 OSS 原对象，新增 Zeabur 文件需先复制回 OSS；不能直接部署不认识 zeabur backend 的旧版本。
+- 验证：`services/image-store/server.test.mjs` 覆盖匿名拒绝、篡改/过期签名、不可覆盖、备份失败、删除隔离与备份保留；`catalog-image-store.test.ts` 和 `catalog-files-acceleration.test.ts` 覆盖存储归属、HTTPS、混合读/签名和内容损坏拒绝。正式服务重启持久性、全量图片迁移、正式 Web 与 worker 验收以本轮发布回执为准。

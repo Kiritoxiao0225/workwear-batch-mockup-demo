@@ -5,6 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import sharp from 'sharp';
 import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './catalog-database';
 import { catalogOssBrowserSigner, catalogOssObjects } from './catalog-oss';
+import { imageStoreConfig, imageStoreRequest, signedImageStoreFile } from './catalog-image-store';
 
 export function fileSha256(bytes: Buffer | string) { return createHash('sha256').update(bytes).digest('hex'); }
 export function catalogObjectPrefix(value = process.env.CATALOG_OSS_PREFIX) {
@@ -21,6 +22,10 @@ export function catalogStorageConfig() {
   if (local) {
     if (process.env.NODE_ENV === 'production') throw new Error('生产环境禁止使用 CATALOG_LOCAL_OBJECT_ROOT');
     return { backend: 'local' as const, bucket: path.resolve(local) };
+  }
+  if (process.env.CATALOG_IMAGE_STORAGE === 'zeabur') {
+    catalogObjectPrefix();
+    return { backend: 'zeabur' as const, bucket: imageStoreConfig().bucket };
   }
   const bucket = process.env.CATALOG_OSS_BUCKET;
   if (!bucket || !process.env.CATALOG_OSS_REGION || !process.env.CATALOG_OSS_ACCESS_KEY_ID || !process.env.CATALOG_OSS_ACCESS_KEY_SECRET) throw new Error('尚未配置 CATALOG_OSS_BUCKET / REGION / ACCESS_KEY_ID / ACCESS_KEY_SECRET');
@@ -45,11 +50,20 @@ export async function saveCatalogFile(bytes: Buffer, originalName: string, purpo
   retain?: (client: CatalogQueryClient, id: string) => Promise<void>) {
   const config = catalogStorageConfig();
   const hash = fileSha256(bytes);
+  if (config.backend === 'zeabur') {
+    const legacy = await catalogTransaction(async client => {
+      const file = (await client.query("SELECT * FROM files WHERE backend='oss' AND bucket=$1 AND sha256=$2 AND status='ready' AND gc_state='active' FOR UPDATE", [process.env.CATALOG_OSS_BUCKET, hash])).rows[0];
+      if (!file) return null;
+      if (retain) await retain(client, file.id);
+      return { id: file.id as string, width: file.width as number, height: file.height as number, hasAlpha: file.has_alpha as boolean, byteLength: Number(file.byte_length), mimeType: file.mime_type as string, sha256: hash };
+    });
+    if (legacy) return legacy;
+  }
   const existing = await catalogDatabase().query('SELECT id FROM files WHERE backend=$1 AND bucket=$2 AND sha256=$3', [config.backend, config.bucket, hash]);
   let inspected: Awaited<ReturnType<typeof inspectCatalogImage>> | undefined;
   if (!existing.rowCount) {
     inspected = await inspectCatalogImage(bytes);
-    const key = `${config.backend === 'oss' ? `${catalogObjectPrefix()}/` : ''}${purpose === 'production' ? 'production/' : ''}objects/${hash.slice(0, 2)}/${hash}`;
+    const key = `${config.backend !== 'local' ? `${catalogObjectPrefix()}/` : ''}${purpose === 'production' ? 'production/' : ''}objects/${hash.slice(0, 2)}/${hash}`;
     // Commit the pending identity before contacting OSS. Even if the process
     // stops after PUT, retries can still find that object.
     await catalogDatabase().query(`INSERT INTO files(id,backend,bucket,object_key,sha256,mime_type,width,height,byte_length,has_alpha,original_name,status)
@@ -64,7 +78,7 @@ export async function saveCatalogFile(bytes: Buffer, originalName: string, purpo
     const claimed = await catalogTransaction(async client => {
       const file = (await client.query('SELECT * FROM files WHERE backend=$1 AND bucket=$2 AND sha256=$3 FOR UPDATE', [config.backend, config.bucket, hash])).rows[0];
       if (!file) throw new Error('文件登记丢失，请重试');
-      if (config.backend === 'oss') assertOssObjectKey(file.object_key);
+      if (config.backend !== 'local') assertOssObjectKey(file.object_key);
       if (file.status === 'ready' && file.gc_state === 'active') {
         if (retain) await retain(client, file.id);
         return { file, ready: true };
@@ -91,6 +105,12 @@ export async function saveCatalogFile(bytes: Buffer, originalName: string, purpo
         await mkdir(path.dirname(destination), { recursive: true });
         const temporary = `${destination}.${owner}.tmp`;
         await writeFile(temporary, bytes); await rename(temporary, destination); saved = await readFile(destination);
+      } else if (config.backend === 'zeabur') {
+        const response = await imageStoreRequest(file.object_key, 'PUT', bytes);
+        const receipt = await response.json();
+        if (receipt.sha256 !== hash || receipt.backedUp !== true) throw new Error('图片或独立备份尚未通过校验');
+        uploaded = true;
+        saved = Buffer.from(await (await imageStoreRequest(file.object_key, 'GET')).arrayBuffer());
       } else {
         const client = catalogOssObjects(config.bucket);
         let exists = false;
@@ -142,11 +162,13 @@ export async function readCatalogFile(id: string) {
   const file = await catalogFile(id);
   let bytes: Buffer;
   if (file.backend === 'local') bytes = await readFile(localObjectPath(file.bucket, file.object_key));
-  else {
-    const config = catalogStorageConfig();
-    if (config.backend !== 'oss' || config.bucket !== file.bucket) throw new Error('文件所属 OSS Bucket 与当前配置不一致');
+  else if (file.backend === 'zeabur') {
+    if (file.bucket !== imageStoreConfig().bucket) throw new Error('图片存储归属不匹配');
+    bytes = Buffer.from(await (await imageStoreRequest(file.object_key, 'GET')).arrayBuffer());
+  } else {
+    if (file.backend !== 'oss' || process.env.CATALOG_OSS_BUCKET !== file.bucket) throw new Error('文件所属 OSS Bucket 与当前配置不一致');
     assertOssObjectKey(file.object_key);
-    const result = await catalogOssObjects(config.bucket).get(file.object_key, { versionId: file.object_version_id ?? undefined });
+    const result = await catalogOssObjects(file.bucket).get(file.object_key, { versionId: file.object_version_id ?? undefined });
     bytes = Buffer.from(result.content);
   }
   if (fileSha256(bytes) !== file.sha256) throw new Error(`文件内容校验失败：${id}`);
@@ -155,26 +177,35 @@ export async function readCatalogFile(id: string) {
 export async function signedCatalogFile(id: string) {
   const file = await catalogFile(id);
   if (file.backend === 'local') return null;
-  const config = catalogStorageConfig();
-  if (config.backend !== 'oss' || config.bucket !== file.bucket) throw new Error('文件所属 OSS Bucket 与当前配置不一致');
+  if (file.backend === 'zeabur') {
+    if (file.bucket !== imageStoreConfig().bucket) throw new Error('图片存储归属不匹配');
+    return signedImageStoreFile(file.object_key);
+  }
+  if (file.backend !== 'oss' || process.env.CATALOG_OSS_BUCKET !== file.bucket) throw new Error('文件所属 OSS Bucket 与当前配置不一致');
   assertOssObjectKey(file.object_key);
-  return catalogOssBrowserSigner(config.bucket).signatureUrlV4('GET', 900, { queries: file.object_version_id ? { versionId: file.object_version_id } : {} }, file.object_key);
+  return catalogOssBrowserSigner(file.bucket).signatureUrlV4('GET', 900, { queries: file.object_version_id ? { versionId: file.object_version_id } : {} }, file.object_key);
 }
 
 /** One authorized list request signs the visible card thumbnails in one query. */
 export async function signedCatalogThumbnails(urls: string[]) {
   const config = catalogStorageConfig();
-  if (config.backend !== 'oss' || !urls.length) return new Map<string, string>();
+  if (config.backend === 'local' || !urls.length) return new Map<string, string>();
   const ids = [...new Set(urls.map(url => {
     const match = /^\/api\/catalog\/files\/([0-9a-f-]{36})$/.exec(url);
     if (!match) throw new Error('缩略图必须使用素材库文件 ID');
     return match[1];
   }))];
   const { rows } = await catalogDatabase().query("SELECT id,backend,bucket,object_key,object_version_id FROM files WHERE id=ANY($1::uuid[]) AND status='ready' AND gc_state='active'", [ids]);
-  const client = catalogOssBrowserSigner(config.bucket);
+  let client: ReturnType<typeof catalogOssBrowserSigner> | undefined;
   const signed = new Map<string, string>();
   for (const file of rows) {
-    if (file.backend !== 'oss' || file.bucket !== config.bucket) throw new Error('缩略图存储与当前配置不一致');
+    if (file.backend === 'zeabur') {
+      if (file.bucket !== imageStoreConfig().bucket) throw new Error('缩略图存储归属不匹配');
+      signed.set(`/api/catalog/files/${file.id}`, signedImageStoreFile(file.object_key));
+      continue;
+    }
+    if (file.backend !== 'oss' || file.bucket !== process.env.CATALOG_OSS_BUCKET) throw new Error('缩略图存储与当前配置不一致');
+    client ??= catalogOssBrowserSigner(file.bucket);
     assertOssObjectKey(file.object_key);
     signed.set(`/api/catalog/files/${file.id}`, await client.signatureUrlV4('GET', 900, { queries: file.object_version_id ? { versionId: file.object_version_id } : {} }, file.object_key));
   }

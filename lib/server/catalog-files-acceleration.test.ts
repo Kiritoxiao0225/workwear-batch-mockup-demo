@@ -86,3 +86,27 @@ it.each(['bucket', 'prefix'])('rejects a file outside the configured %s before m
   expect(OSS).not.toHaveBeenCalled();
   expect(get).not.toHaveBeenCalled();
 });
+
+it('reads legacy OSS files after switching the write backend to Zeabur', async () => {
+  vi.stubEnv('CATALOG_IMAGE_STORAGE', 'zeabur');
+  expect((await readCatalogFile('file-1')).bytes).toEqual(bytes);
+  expect(get).toHaveBeenCalledTimes(1);
+});
+it('reads and signs migrated file IDs while the write backend is still OSS', async () => {
+  vi.stubEnv('CATALOG_IMAGE_STORE_URL', 'https://images.example.com');
+  vi.stubEnv('CATALOG_IMAGE_STORE_TOKEN', 't'.repeat(64));
+  vi.stubEnv('CATALOG_IMAGE_STORE_SIGNING_KEY', 's'.repeat(64));
+  const file = (await catalogDatabase().query('fixture')).rows[0];
+  file.backend = 'zeabur'; file.bucket = 'workwear-images-v1';
+  const fetcher = vi.fn().mockResolvedValue(new Response(new Uint8Array(bytes)));
+  vi.stubGlobal('fetch', fetcher);
+  try {
+    expect((await readCatalogFile('file-1')).bytes).toEqual(bytes);
+    expect(await signedCatalogFile('file-1')).toMatch(/^https:\/\/images.example.com\/v1\/objects\//);
+    const signed = await signedCatalogThumbnails(['/api/catalog/files/a0000000-0000-4000-8000-000000000000']);
+    expect(signed.get('/api/catalog/files/file-1')).toContain('images.example.com');
+    fetcher.mockResolvedValue(new Response('corrupted'));
+    await expect(readCatalogFile('file-1')).rejects.toThrow('文件内容校验失败');
+    expect(get).not.toHaveBeenCalled();
+  } finally { vi.unstubAllGlobals(); }
+});
