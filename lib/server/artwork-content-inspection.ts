@@ -36,7 +36,7 @@ const editCheckSchema = z.object({ checks: z.array(z.object({
   index: z.number().int().nonnegative(), status: z.enum(['passed', 'failed', 'uncertain']),
   confidence: z.enum(['high', 'low']), evidence: z.string().min(1).max(500),
   category: z.enum(['text', 'color', 'flatness', 'structure', 'layout', 'background', 'other']).optional(),
-  location: z.string().max(300).optional(), correction: z.string().max(800).optional(), preserve: z.string().max(800).optional(),
+  location: z.string().max(300).optional(), expected: z.string().max(800).optional(), correction: z.string().max(800).optional(), preserve: z.string().max(800).optional(),
   impact: z.enum(['none', 'minor', 'material', 'unknown']).optional(),
   sourceObservation: z.string().trim().min(1).max(500).nullable().default(null), resultObservation: z.string().trim().min(1).max(500).nullable().default(null),
 })).max(30) });
@@ -80,9 +80,9 @@ RESULT 已完成抠图。制作要求中的“纯白背景输出”只约束此�
 给每项标注 category（text文字、color配色、flatness纯色均匀度、structure元素结构、layout相对排版、background载体残留、other其他）和 impact（none无问题、minor轻微偏差、material实质错误、unknown无法确定）。
 material 仅用于能从前后对应区域明确证实的错字、漏字、多字、主色变成另一种颜色、图形增加或缺失、元素顺序错误、明显衣服或场景残留。轻微字形粗细、边缘、抗锯齿、重建时的比例和间距变化属于 minor；不能把拍摄透视、缩放或画布留白算成实质变化，layout 不单独拦截。原图模糊的轮廓或小缺口不得断言为结果新增。
 检查纯色时，边缘抗锯齿和内部少量压缩色差不是明显渐变；本次像素检测仅描述不透明前景内部的色值变化，不证明颜色选对或图形保真：${JSON.stringify(flatnessEvidence ?? null)}。若像素检测为 within-tolerance，不得凭明暗错觉断言存在大片渐变。配色错误仍应独立核对。
-每项同时返回 location（具体问题位置）、correction（根据实际差异给出可执行的修改方法）、preserve（本次不能改动的内容）。failed 必须给具体修正动作，不重复写“重新生成”；uncertain 只描述待核对部位，不把猜测传成确定的修正文字。
+每项同时返回 location（具体问题位置）、expected（客户要求的实际目标状态，修改任务不能把原图状态误当目标）、correction（根据实际差异给出可执行的修改方法）、preserve（本次不能改动的内容），各项用简短中文，不粘贴完整制作背景。failed 必须给具体修正动作，不重复写“重新生成”；uncertain 只描述待核对部位，不把猜测传成确定的修正文字。
 evidence 会直接展示给用户，请用简短、日常的中文说明哪个地方发生了什么变化，每项尽量不超过 80 字。称两张图为“原图”和“修改后的图”，不要使用 SOURCE、RESULT、候选、底形等检查术语，不要复述整条要求。保留所有影响判断的问题；不确定时明确说“看不清”或“无法确定”，不要说成已经改错。
-只返回 JSON：{"checks":[{"index":0,"sourceObservation":"原图对应区域实际可见内容或null","resultObservation":"修改后的图对应区域实际可见内容或null","status":"passed|failed|uncertain","confidence":"high|low","category":"text|color|flatness|structure|layout|background|other","impact":"none|minor|material|unknown","evidence":"具体区域和前后变化或未完成之处"}]}。`;
+只返回 JSON：{"checks":[{"index":0,"sourceObservation":"原图对应区域实际可见内容或null","resultObservation":"修改后的图对应区域实际可见内容或null","status":"passed|failed|uncertain","confidence":"high|low","category":"text|color|flatness|structure|layout|background|other","impact":"none|minor|material|unknown","evidence":"具体区域和前后变化或未完成之处","location":"具体部位","expected":"客户要求的目标状态","correction":"本次具体修改方法或核对方法","preserve":"必须保持不变的内容"}]}。`;
   const previews = await Promise.all([source, result].map(bytes => inspectionPreview(bytes)));
   const response = await withArtworkNetworkContext('内容核对', () => inspectArtworkReferenceImage(previews.map((preview, index) => ({
     label: index === 0 ? 'SOURCE：原图，修改与保留要求的对照依据' : 'RESULT：修改后的实际图案，逐项检查这张图', dataUrl: preview.dataUrl,
@@ -98,16 +98,18 @@ evidence 会直接展示给用户，请用简短、日常的中文说明哪个�
       const observed = check.sourceObservation !== null && check.resultObservation !== null;
       if (check.category === 'layout' && check.impact !== 'none') {
         return { requirement, status: 'uncertain' as const, category: check.category, impact: 'minor' as const,
+          location: check.location, expected: check.expected, correction: check.correction, preserve: check.preserve,
           sourceObservation: check.sourceObservation, resultObservation: check.resultObservation,
           evidence: '排版比例或间距可能有轻微变化，请对照原图查看；本次未做几何测量，不据此判定尺寸改错。' };
       }
       if (check.category === 'flatness' && check.status === 'failed' && flatnessEvidence?.status === 'within-tolerance') {
         return { requirement, status: 'uncertain' as const, category: check.category, impact: 'minor' as const,
+          location: check.location, expected: check.expected, correction: check.correction, preserve: check.preserve,
           sourceObservation: check.sourceObservation, resultObservation: check.resultObservation,
           evidence: '图案内部已接近平涂纯色，仍有少量色差；像素检查不支持“明显渐变”的判断，可查看这版效果。' };
       }
       return { requirement, status: check.confidence === 'high' && observed ? check.status : 'uncertain',
-        location: check.location, correction: check.correction, preserve: check.preserve,
+        location: check.location, expected: check.expected, correction: check.correction, preserve: check.preserve,
         category: check.category, impact: check.confidence === 'high' && observed ? check.impact : 'unknown',
         sourceObservation: check.sourceObservation, resultObservation: check.resultObservation,
         evidence: observed ? check.evidence : '对应区域有内容看不清，暂时无法确认是否符合这项要求。' };

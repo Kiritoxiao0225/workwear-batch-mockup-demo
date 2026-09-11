@@ -53,7 +53,7 @@ it('sends separate full frames without squashing small details into a comparison
   expect(await sharp(previews[0]).metadata()).toMatchObject({ width: 1500, height: 700 });
   expect(await sharp(previews[1]).metadata()).toMatchObject({ width: 700, height: 1500 });
   expect((await sharp(previews[0]).raw().toBuffer()).equals(await sharp(before).raw().toBuffer())).toBe(true);
-  expect(result).toMatchObject({ inspectionVersion: 'artwork-edit-inspection-v4', promptSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+  expect(result).toMatchObject({ inspectionVersion: 'artwork-edit-inspection-v5', promptSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
     inputSha256: previews.map(artworkSha256), sourceSha256: artworkSha256(before), outputSha256: artworkSha256(after) });
   expect(inspectArtworkReferenceImage).toHaveBeenCalledOnce();
 });

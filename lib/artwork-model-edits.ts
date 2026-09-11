@@ -52,12 +52,12 @@ export function artworkGraphicRemovalChecks(requirements: string[], exactText: s
   ];
 }
 
-export const ARTWORK_EDIT_INSPECTION_VERSION = 'artwork-edit-inspection-v4';
+export const ARTWORK_EDIT_INSPECTION_VERSION = 'artwork-edit-inspection-v5';
 export const ARTWORK_TEXT_INSPECTION_VERSION = 'artwork-text-inspection-v2';
 export type ArtworkEditCheck = { requirement: string; status: 'passed' | 'failed' | 'uncertain'; evidence: string;
   category?: import('./artwork-review-policy').ArtworkReviewCategory;
   impact?: import('./artwork-review-policy').ArtworkReviewImpact;
-  location?: string; correction?: string; preserve?: string;
+  location?: string; expected?: string; correction?: string; preserve?: string;
   sourceObservation?: string | null; resultObservation?: string | null };
 type ArtworkInspectionReceipt = { inspectionVersion?: string; promptSha256?: string; inputSha256?: string[]; requestAttempts?: number };
 export type ArtworkEditVerification = {
