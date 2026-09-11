@@ -1,18 +1,15 @@
 name: Workwear reliability verification
-
 on:
   push:
     branches: [fix/wps-production-reliability-20260911]
+    paths-ignore: ['.github/repair/**', '.github/workflows/apply-workwear-repair.yml']
   pull_request:
     branches: [main]
-
 permissions:
   contents: read
-
 concurrency:
   group: workwear-reliability-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -20,55 +17,77 @@ jobs:
     env:
       CI: 'true'
       NEXT_TELEMETRY_DISABLED: '1'
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - name: Archive exact tracked source for isolated inspection
-        run: |
-          mkdir -p "$RUNNER_TEMP/workwear-source"
-          git rev-parse HEAD > "$RUNNER_TEMP/workwear-source/commit.txt"
-          git archive --format=tar.gz HEAD > "$RUNNER_TEMP/workwear-source/repository.tar.gz"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: workwear-source-${{ github.event.pull_request.head.sha || github.sha }}
-          path: ${{ runner.temp }}/workwear-source
-          retention-days: 3
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: npm
-      - name: Install locked dependencies (no production credentials)
+      - name: Install locked dependencies without production credentials
         id: install
-        run: npm ci
-      - name: Package dependencies for offline full-project verification
         run: |
-          mkdir -p "$RUNNER_TEMP/workwear-dependencies"
-          tar -czf "$RUNNER_TEMP/workwear-dependencies/node-modules.tar.gz" node_modules
-          sha256sum package-lock.json > "$RUNNER_TEMP/workwear-dependencies/lock-sha256.txt"
-          node --version > "$RUNNER_TEMP/workwear-dependencies/node-version.txt"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: workwear-dependencies-${{ github.event.pull_request.head.sha || github.sha }}
-          path: ${{ runner.temp }}/workwear-dependencies
-          retention-days: 1
+          mkdir -p verification output
+          npm ci 2>&1 | tee verification/install.log
+          git rev-parse HEAD > verification/commit.txt
       - name: Lint
         id: lint
         continue-on-error: true
-        run: npm run lint
+        run: npm run lint 2>&1 | tee verification/lint.log
       - name: Full TypeScript check
         id: types
         continue-on-error: true
-        run: npm run typecheck
-      - name: Repository tests
+        run: npm run typecheck 2>&1 | tee verification/typecheck.log
+      - name: Complete repository test suite
         id: tests
         continue-on-error: true
-        run: npm test
-      - name: Production build without live service credentials
+        run: npm test -- --reporter=default --reporter=json --outputFile=verification/vitest.json 2>&1 | tee verification/tests.log
+      - name: Production build
         id: build
         continue-on-error: true
-        run: npm run build
+        run: npm run build 2>&1 | tee verification/build.log
+      - name: Isolated production storage integration
+        id: storage
+        continue-on-error: true
+        run: npm run test:production-storage 2>&1 | tee verification/storage.log
+      - name: Isolated durable job integration
+        id: jobs
+        continue-on-error: true
+        run: npm run test:artwork-jobs 2>&1 | tee verification/jobs.log
+      - name: Isolated shared artwork integration
+        id: shared
+        continue-on-error: true
+        run: npm run test:shared-artwork 2>&1 | tee verification/shared.log
+      - name: Isolated reliability integration
+        id: reliability
+        continue-on-error: true
+        run: npm run test:reliability 2>&1 | tee verification/reliability.log
+      - name: HTTP page smoke check
+        id: smoke
+        if: steps.build.outcome == 'success'
+        continue-on-error: true
+        run: |
+          npm start -- --hostname 127.0.0.1 --port 3210 > verification/server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:3210/wps-production/overview > verification/overview.html; then break; fi
+            sleep 1
+          done
+          grep -q '精简总览' verification/overview.html
+          curl --fail --silent http://127.0.0.1:3210/wps-production > verification/editor.html
+          echo 'Overview and original editor return HTTP 200; no production services invoked.' | tee verification/smoke.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: workwear-verification-${{ github.event.pull_request.head.sha || github.sha }}
+          path: verification
+          retention-days: 14
       - name: Require all checks to pass
         if: always()
         env:
@@ -77,6 +96,13 @@ jobs:
           TYPES: ${{ steps.types.outcome }}
           TESTS: ${{ steps.tests.outcome }}
           BUILD: ${{ steps.build.outcome }}
+          STORAGE: ${{ steps.storage.outcome }}
+          JOBS: ${{ steps.jobs.outcome }}
+          SHARED: ${{ steps.shared.outcome }}
+          RELIABILITY: ${{ steps.reliability.outcome }}
+          SMOKE: ${{ steps.smoke.outcome }}
         run: |
-          printf 'install=%s lint=%s typecheck=%s tests=%s build=%s\n' "$INSTALL" "$LINT" "$TYPES" "$TESTS" "$BUILD"
-          test "$INSTALL" = success && test "$LINT" = success && test "$TYPES" = success && test "$TESTS" = success && test "$BUILD" = success
+          for name in INSTALL LINT TYPES TESTS BUILD STORAGE JOBS SHARED RELIABILITY SMOKE; do
+            printf '%s=%s\n' "$name" "${!name}" | tee -a "$GITHUB_STEP_SUMMARY"
+            test "${!name}" = success || exit 1
+          done
