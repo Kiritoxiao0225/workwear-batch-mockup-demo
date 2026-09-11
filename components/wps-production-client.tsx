@@ -1,4 +1,6 @@
 'use client';
+import { WpsArtworkChecklist } from './wps-artwork-checklist';
+import { currentArtworkReview, buildArtworkReview, artworkReviewSummary } from '@/lib/artwork-review-ledger';
 import { WpsArtworkCorrection } from '@/components/wps-artwork-correction';
 import { readApiBlob, fetchApi, readApiJson, assertApiResponse } from '@/lib/client/api-response';
 
@@ -706,7 +708,7 @@ export function WpsProductionClient() {
       if (!release) return;
       setArtworkErrors(current => ({ ...current, [unit.id]: '' }));
       try {
-        const queued = await cloudQueue.submit({ action: 'enqueue', units: [{ unitId: unit.id, snapshot: expectedUnitSnapshot, sharedSnapshot: expectedSharedSnapshot, ...(correctionIds ? { correction: { baseRunId: unit.artwork?.draft?.preprocessing.routingReport?.runId, issueIds: correctionIds } } : {}) }] });
+        const queued = await cloudQueue.submit({ action: 'enqueue', units: [{ unitId: unit.id, snapshot: expectedUnitSnapshot, sharedSnapshot: expectedSharedSnapshot, ...(correctionIds ? { correction: { baseRunId: unit.artwork?.validation.review ? unit.artwork.validation.sha256 : unit.artwork?.draft?.preprocessing.routingReport?.runId, issueIds: correctionIds } } : {}) }] });
         const failure = queued.results?.find(result => result.error);
         if (failure) throw new Error(failure.error);
         setArtworkErrors(current => ({ ...current, [unit.id]: '' }));
@@ -1153,6 +1155,8 @@ export function WpsProductionClient() {
                 const reusableDraft = unit.artwork?.draft;
                 const canReflow = Boolean(reusableDraft?.text && !reusableDraft.extraGraphics?.length && !reusableDraft.extraTexts?.length && reusableDraft.layout.preset !== 'custom' && unit.artwork?.recipeFingerprint === unit.recipeFingerprint);
                 const issues = unit.artwork ? artworkAcceptanceIssues(unit.artwork.validation) : [];
+                const reviewReadOnly = production.mockupVersions.some(version => version.unitIds.includes(unit.id) && Boolean(version.finalConfirmation));
+                const review = reviewReadOnly ? unit.artwork?.validation.review ?? null : currentArtworkReview(unit);
                 const stage = productionArtworkStage(unit);
                 const textOnly = isTextOnlyArtwork(unit);
                 const sourceRouting = productionArtworkRouting(unit, record.source);
@@ -1185,11 +1189,12 @@ export function WpsProductionClient() {
                     </div>}
                     {sharedView && unit.artwork && unit.route !== 'gpt-image-2' && <button type="button" disabled={preparationDisabled || Boolean(activeAttempt)} onClick={prepare} title="按当前要求重新制作，可能产生费用">重新制作共用稿</button>}
                     {!sharedView && unitBlocked && !queueJob && !activeAttempt && <small role="status">{unitBlocked}</small>}
-                    {!sharedView && <p role="status" aria-live="polite" className={`wps-artwork-status ${issues.length || unit.error || rowError || unit.artwork?.validation.contentWarnings?.length ? 'needs-attention' : unit.gateB ? 'complete' : ''}`}>{submittingArtwork ? '正在提交制作任务，请稍候…' : queueJob ? queueJob.status === 'queued' ? `排队中 · 第 ${queuePosition} 张` : queueJob.progress : activeAttempt ? '正在制作，请查询进度' : rowError ? nativeCandidate ? '图片已生成 · 后续处理有问题，可查看下方图片' : '这次没做完，请看下方原因' : unit.artwork?.validation.contentWarnings?.length ? '图案已生成 · 有核对提醒，可继续编辑' : status}</p>}
+                    {!sharedView && <p role="status" aria-live="polite" className={`wps-artwork-status ${issues.length || unit.error || rowError || unit.artwork?.validation.contentWarnings?.length ? 'needs-attention' : unit.gateB ? 'complete' : ''}`}>{submittingArtwork ? '正在提交制作任务，请稍候…' : queueJob ? queueJob.status === 'queued' ? `排队中 · 第 ${queuePosition} 张` : queueJob.progress : activeAttempt ? '正在制作，请查询进度' : rowError ? nativeCandidate ? '图片已生成 · 后续处理有问题，可查看下方图片' : '这次没做完，请看下方原因' : review ? artworkReviewSummary(review) : unit.artwork?.validation.contentWarnings?.length ? '图案已生成 · 有核对提醒，可继续编辑' : status}</p>}
                     {!sharedView && actionFeedback[unit.id] && <div className="wps-shared-operation" role="status"><p>{actionFeedback[unit.id].message}</p>{['error', 'unknown'].includes(actionFeedback[unit.id].status) && <button type="button" onClick={() => void refreshActionState(unit.id)}>重新检查状态</button>}</div>}
                     {rowError && <div className="wps-production-row-error" role="alert"><p>{productionActionError(rowError)}</p>{unit.artwork && <small>当前保存的图案仍保留；这里显示的是最近一次制作的问题。</small>}{productionActionError(rowError) !== rowError && <details><summary>查看错误详情</summary><p>{rowError}</p></details>}</div>}
-                    {Boolean(unit.artwork?.validation.contentWarnings?.length) && <details className="wps-inline-records" open><summary>图案已保存，有 {unit.artwork!.validation.contentWarnings!.length} 项核对提醒 · 可继续编辑和使用</summary><ul>{unit.artwork!.validation.contentWarnings!.map((warning, index) => <li key={index}>{warning}</li>)}</ul><button type="button" onClick={() => void openArtworkReview(unit)}>对照原图查看</button></details>}
-                    {cloudQueue.data?.enabled && <WpsArtworkCorrection key={unit.artwork?.draft?.preprocessing.routingReport?.runId} report={unit.artwork?.draft?.preprocessing.routingReport} busy={Boolean(unitBusyReason(unit.id)) || cloudQueue.submitting} submit={ids => void produceArtwork(unit, ids)} />}
+                    {!review && Boolean(unit.artwork?.validation.contentWarnings?.length) && <details className="wps-inline-records" open><summary>图案已保存，有 {unit.artwork!.validation.contentWarnings!.length} 项核对提醒 · 可继续编辑和使用</summary><ul>{unit.artwork!.validation.contentWarnings!.map((warning, index) => <li key={index}>{warning}</li>)}</ul><button type="button" onClick={() => void openArtworkReview(unit)}>对照原图查看</button></details>}
+                    {unit.artwork && (review || !reviewReadOnly) && <WpsArtworkChecklist key={`${unit.id}:${unit.artwork.validation.sha256}:${review?.updatedAt ?? 'legacy'}`} review={review ?? buildArtworkReview(unit, unit.artwork.validation, unit.artwork.draft)} busy={Boolean(unitBlocked)} readOnly={reviewReadOnly} submit={(mode, itemIds, note, actor) => void runAction(`review:${unit.id}`, { action: 'reviewArtwork', unitId: unit.id, sha256: unit.artwork!.validation.sha256, mode, itemIds, note, actor })} />}
+                    {cloudQueue.data?.enabled && <WpsArtworkCorrection key={unit.artwork?.draft?.preprocessing.routingReport?.runId} report={unit.artwork?.draft?.preprocessing.routingReport} review={review ?? undefined} busy={Boolean(unitBusyReason(unit.id)) || cloudQueue.submitting} submit={ids => void produceArtwork(unit, ids)} />}
                     {artworkProgress[unit.id] && <WpsArtworkProgress {...artworkProgress[unit.id]} failed={Boolean(rowError) && !queueJob} open={(url, title) => setPreview({ url, title })} />}
                     {cutoutSessions[unit.id] && <>
                       <CutoutTaskStatus session={cutoutSessions[unit.id]} hasArtwork={Boolean(unit.artwork)} busy={Boolean(queueJob)} query={() => void runCutout(unit, cutoutSessions[unit.id].result.receipt.mode, true)} retry={() => void runCutout(unit, cutoutSessions[unit.id].result.receipt.mode)} discard={() => discardCutout(unit.id)} apply={!unit.artwork ? () => void applyCutout(unit) : undefined} />

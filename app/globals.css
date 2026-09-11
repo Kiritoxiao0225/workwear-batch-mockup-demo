@@ -1394,6 +1394,13 @@ button.catalog-card-image { width: 100%; padding: 0; border: 0; cursor: zoom-in;
 .wps-artwork-more > div { display: grid; gap: 6px; padding-top: 8px; }
 .wps-artwork-more button, .wps-artwork-more .wps-upload { min-height: 34px; width: 100%; margin: 0; padding: 7px; border: 1px solid #cad7ce; border-radius: 5px; background: #fff; font: inherit; color: #365541; cursor: pointer; text-align: center; }
 .wps-inline-records[open] { max-height: 340px; overflow: auto; }
+.wps-artwork-checklist[open] { max-height: 560px; }
+.wps-artwork-checklist-actions { display: grid; gap: 10px; padding: 12px 0; }
+.wps-artwork-checklist-actions label { display: grid; gap: 5px; }
+.wps-artwork-checklist-actions input, .wps-artwork-checklist-actions textarea { width: 100%; min-width: 0; box-sizing: border-box; padding: 8px; border: 1px solid #b8c9bf; border-radius: 5px; }
+.wps-artwork-checklist-actions textarea { min-height: 76px; resize: vertical; }
+.wps-artwork-checklist-actions button { padding: 8px; border: 1px solid #a7bfb0; border-radius: 5px; background: #fff; color: #245f42; }
+.wps-artwork-checklist-actions button:disabled { opacity: .5; }
 .wps-artwork-options { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 10px; }
 .wps-artwork-options > details { margin-top: 0; min-width: 0; }
 .wps-artwork-options > details[open] { flex-basis: 100%; }

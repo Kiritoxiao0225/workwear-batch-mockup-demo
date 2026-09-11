@@ -1,3 +1,4 @@
+import { currentArtworkReview } from '@/lib/artwork-review-ledger';
 import { artworkCorrectionIssues } from '@/lib/artwork-correction';
 import { readArtworkRoutingReport } from '@/lib/server/artwork-routing-records';
 import { conditionalJson } from '@/lib/server/conditional-json';
@@ -18,7 +19,7 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 const inputSchema = z.union([
-  z.object({ action: z.literal('enqueue'), units: z.array(z.object({ unitId: z.string().min(1), snapshot: z.string().min(1).max(100_000), sharedSnapshot: z.string().min(1).max(10_000_000).optional(), correction: z.object({ baseRunId: z.string().uuid(), issueIds: z.array(z.string().max(40)).min(1).max(30) }).optional() })).min(1).max(100) }),
+  z.object({ action: z.literal('enqueue'), units: z.array(z.object({ unitId: z.string().min(1), snapshot: z.string().min(1).max(100_000), sharedSnapshot: z.string().min(1).max(10_000_000).optional(), correction: z.object({ baseRunId: z.string().min(1).max(64), issueIds: z.array(z.string().max(40)).min(1).max(30) }).optional() })).min(1).max(100) }),
   z.object({ action: z.enum(['cancel', 'retry']), id: z.string().uuid() }),
 ]);
 function failure(error: unknown) {
@@ -72,12 +73,14 @@ export async function POST(request: Request) {
         let correction;
         if (requested.correction) {
           const report = unit.artwork?.draft?.preprocessing.routingReport;
-          if (!report || report.runId !== requested.correction.baseRunId || !unit.artwork?.url) throw new Error('当前图案已变化，请刷新后重新选择问题');
-          const recorded = await readArtworkRoutingReport(report.runId);
+          const review = currentArtworkReview(unit);
+          const baseRunId = review?.sha256 ?? report?.runId;
+          if (!baseRunId || baseRunId !== requested.correction.baseRunId || !unit.artwork?.url) throw new Error('当前图案已变化，请刷新后重新选择问题');
+          const recorded = report && !review ? await readArtworkRoutingReport(report.runId) : undefined;
           const ids = new Set(requested.correction.issueIds);
-          const issues = artworkCorrectionIssues(recorded).filter(issue => ids.has(issue.id));
+          const issues = artworkCorrectionIssues(recorded, review ?? undefined).filter(issue => ids.has(issue.id));
           if (issues.length !== ids.size) throw new Error('选中的核对问题不属于当前图案');
-          correction = { baseRunId: report.runId, url: unit.artwork.url, issues };
+          correction = { baseRunId, url: unit.artwork.url, issues };
         }
         const queued = await enqueueArtworkJob({ unit, source, ...(correction ? { correction } : {}), ...(sharedArtworkForUnit(state, unit.id)
           ? { sharedSnapshot: productionSharedSnapshot(state, unit.id) } : {}) }, productionArtworkSnapshot(unit, source));

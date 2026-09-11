@@ -15,5 +15,5 @@ export function artworkAcceptanceIssues(validation: ArtworkValidation): string[]
 
 /** Refreshing alpha/OCR/placement must not discard a score bound to the same file. */
 export function retainArtworkQuality(previous: ArtworkValidation, fresh: ArtworkValidation): ArtworkValidation {
-  return previous.sha256 === fresh.sha256 ? { ...fresh, quality: previous.quality, qualityError: previous.qualityError, qualityIssues: previous.qualityIssues, componentQuality: previous.componentQuality, contentIssues: previous.contentIssues, contentWarnings: previous.contentWarnings } : fresh;
+  return previous.sha256 === fresh.sha256 ? { ...fresh, quality: previous.quality, qualityError: previous.qualityError, qualityIssues: previous.qualityIssues, componentQuality: previous.componentQuality, contentIssues: previous.contentIssues, contentWarnings: previous.contentWarnings, review: fresh.review ?? previous.review } : fresh;
 }

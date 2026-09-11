@@ -263,11 +263,16 @@ try {
   const saved = await readWpsProductionState();
   assert.ok(saved.units[0].artwork?.url);
   assert.equal(saved.units[0].artwork?.draft?.text?.value, textUnit.exactText);
+  const finalReview = saved.units[0].artwork?.validation.review;
+  assert.equal(finalReview?.sha256, saved.units[0].artwork?.validation.sha256);
+  assert.equal(finalReview?.items.find(item => item.id === 'text')?.status, 'uncertain');
+  assert.equal(finalReview?.items.find(item => item.id === 'position')?.status, 'pending');
   const revision = saved.revision;
   // Simulate death after production commit but before the job-completed update.
   await catalogDatabase().query("UPDATE artwork_jobs SET status='queued',owner=NULL WHERE id=$1", [textJob.id]);
   const afterSave = (await claimArtworkJob(owner2))!; await processArtworkJob(afterSave);
   assert.equal((await readWpsProductionState()).revision, revision);
+  assert.deepEqual((await readWpsProductionState()).units[0].artwork?.validation.review, finalReview);
   pass('Real server PNG rendering, transparent validation and CAS save work without a browser; replay after commit makes no duplicate save');
 
   const staleUnit = { ...textUnit, id: 'stale-task' };

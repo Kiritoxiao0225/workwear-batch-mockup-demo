@@ -1,3 +1,4 @@
+import { buildArtworkReview, manualArtworkReview, reviewForAttachment, type ArtworkReviewLedger } from './artwork-review-ledger';
 import type { BrowserLogoTextVerification } from '@/lib/client/browser-logo-ocr';
 import { autoLinkSharedArtworks, sharedArtworkGroups } from './shared-artwork';
 import type { ArtworkQualityMeasurement } from '@/lib/artwork-routing-standard';
@@ -78,6 +79,7 @@ export type ProductionPlacement = {
 };
 
 export type ArtworkValidation = {
+  review?: ArtworkReviewLedger;
   contentWarnings?: string[];
   contentIssues?: string[];
   quality?: ArtworkQualityMeasurement;
@@ -923,6 +925,7 @@ export function attachProductionArtwork(
 ) {
   const existingUnit = state.units.find((unit) => unit.id === unitId);
   if (!existingUnit) throw new Error(`找不到定制单元：${unitId}`);
+  input = { ...input, validation: { ...input.validation, review: reviewForAttachment(existingUnit, input.validation, input.draft) } };
   if (input.service === 'manual-upload' && input.draft && existingUnit.artwork?.validation.sha256 === input.validation.sha256 && existingUnit.artwork.recipeFingerprint === existingUnit.recipeFingerprint) {
     return changedUnitState(state, unitId, unit => ({ ...unit, artwork: { ...unit.artwork!, draft: input.draft, name: input.name,
       validation: retainArtworkQuality(unit.artwork!.validation, input.validation) } }), now);
@@ -1027,7 +1030,13 @@ export function placeProductionArtwork(state: WpsProductionState, unitId: string
   const refreshed = { ...state, units: state.units.map(candidate => candidate.id === unitId ? { ...candidate, artwork: { ...unit.artwork!, validation: retainArtworkQuality(unit.artwork!.validation, validation) } } : candidate) };
   const positioned = updateProductionPlan(refreshed, unitId, { placement }, now);
   const confirmed = confirmProductionPlan(positioned, unitId, actor, now);
-  return { ...confirmed, revision: state.revision + 1 };
+  const units = confirmed.units.map(candidate => {
+    if (candidate.id !== unitId || !candidate.artwork?.validation.review) return candidate;
+    const review = buildArtworkReview(candidate, candidate.artwork.validation, candidate.artwork.draft, candidate.artwork);
+    return { ...candidate, artwork: { ...candidate.artwork, validation: { ...candidate.artwork.validation,
+      review: manualArtworkReview(review, ['size', 'position'], 'confirmed', actor, '通过上衣位置弹窗确认当前印花尺寸与位置') } } };
+  });
+  return { ...confirmed, units, revision: state.revision + 1 };
 }
 
 export function confirmProductionArtwork(

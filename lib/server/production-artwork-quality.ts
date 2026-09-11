@@ -67,6 +67,7 @@ export async function validateProductionArtworkDraft(url: string, draft?: Artwor
 /** Evaluate the saved pixels, and reload routing evidence from the server instead of trusting the browser. */
 export async function validateProductionArtworkQuality(url: string, draft?: ArtworkDraft, measure = measureArtworkQuality, previous?: ArtworkValidation) {
   const validation: ArtworkValidation = await validateProductionArtwork(url);
+  if (previous?.sha256 === validation.sha256) validation.review = previous.review;
   const verifiedDraft = draft ? structuredClone(draft) : undefined;
   const claimedRunId = verifiedDraft?.preprocessing?.routingReport?.runId;
   if (verifiedDraft?.preprocessing) delete verifiedDraft.preprocessing.routingReport;

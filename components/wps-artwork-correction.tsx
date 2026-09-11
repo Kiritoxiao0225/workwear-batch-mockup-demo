@@ -1,12 +1,13 @@
 'use client';
+import type { ArtworkReviewLedger } from '@/lib/artwork-review-ledger';
 import { useState } from 'react';
 import { artworkCorrectionIssues } from '@/lib/artwork-correction';
 import type { ArtworkRoutingReport } from '@/lib/artwork-routing-standard';
 
-export function WpsArtworkCorrection({ report, busy, submit }: { report?: ArtworkRoutingReport; busy: boolean; submit: (ids: string[]) => void }) {
+export function WpsArtworkCorrection({ report, review, busy, submit }: { report?: ArtworkRoutingReport; review?: ArtworkReviewLedger; busy: boolean; submit: (ids: string[]) => void }) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
-  const issues = artworkCorrectionIssues(report);
+  const issues = artworkCorrectionIssues(report, review);
   if (!issues.length) return null;
   return <div className="wps-inline-records">
     <button type="button" disabled={busy} onClick={() => { setOpen(!open); setSelected(issues.filter(issue => !issue.uncertain).map(issue => issue.id)); }}>按这些问题修正</button>

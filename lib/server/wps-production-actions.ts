@@ -1,3 +1,5 @@
+import { inspectFinalArtwork } from './artwork-final-review';
+import { buildArtworkReview, manualArtworkReview, REVIEW_CATEGORIES, reviewForAttachment } from '@/lib/artwork-review-ledger';
 import { conditionalJson } from './conditional-json';
 import { saveWpsAnalysis } from './wps-analysis-save';
 import { completedProductionSave } from '@/lib/server/production-cloud-state';
@@ -178,8 +180,9 @@ export async function GET(request?: Request) {
 
 export async function POST(request: Request) {
   let body: Record<string, unknown>;
+  let user: Awaited<ReturnType<typeof productionUser>>;
   try {
-    await productionUser(request, true);
+    user = await productionUser(request, true);
     body = objectValue(await request.json());
   } catch (error) {
     return errorResponse(error);
@@ -379,6 +382,7 @@ export async function POST(request: Request) {
       }
       const previousArtwork = shared && latestSharedArtwork(shared)?.artwork || unit.artwork;
       const { validation, draft } = await validateProductionArtworkDraft(url, body.draft, previousArtwork?.validation, previousArtwork?.draft);
+      validation.review = reviewForAttachment(unit, validation, draft);
       const attachment: ArtworkAttachment = {
         url,
         name: textValue(body.name, 'name'),
@@ -398,6 +402,32 @@ export async function POST(request: Request) {
       const preparedShared = await prepareSharedArtwork(current, unitId, attachment, { attemptId });
       return NextResponse.json(await mutate(revision, state => preparedShared ? commitSharedArtwork(state, preparedShared)
         : attachProductionArtwork(state, unitId, attachment, attemptId), assertUnchangedTarget, receipt));
+    }
+    if (action === 'reviewArtwork') {
+      const args = z.object({ unitId: z.string().min(1), sha256: z.string().min(1), mode: z.enum(['automatic', 'confirmed', 'accepted']),
+        itemIds: z.array(z.enum(REVIEW_CATEGORIES)).min(1).max(7), note: z.string().max(2000).optional(), actor: z.string().max(100).optional() }).parse(body);
+      const current = await readWpsProductionState();
+      assertCurrent(current);
+      const unit = current.units.find(candidate => candidate.id === args.unitId);
+      const source = current.records.find(record => record.source.recordId === unit?.sourceRecordId)?.source;
+      if (!unit?.artwork || !source || unit.artwork.validation.sha256 !== args.sha256) throw new ProductionArtworkConflictError('图片已变化，请刷新后核对');
+      if (sharedArtworkFixed(current, unit.id)) throw new ProductionTransitionError('已定稿版本保留原记录，请另建版本后修改');
+      if (usesProductionCloud() && (await readArtworkJobs()).jobs.some(job => job.unitId === unit.id && ['queued', 'running'].includes(job.status))) throw new ProductionTransitionError('图案正在制作，完成后再核对');
+      if (args.mode === 'automatic' && args.itemIds.some(id => ['size', 'position'].includes(id))) throw new Error('印花尺寸和位置请对照上衣预览人工核对');
+      const ledger = buildArtworkReview(unit, unit.artwork.validation, unit.artwork.draft, unit.artwork);
+      const review = args.mode === 'automatic'
+        ? await inspectFinalArtwork(unit, source, unit.artwork.url, ledger, args.itemIds.filter(id => ['pending', 'uncertain', 'failed'].includes(ledger.items.find(item => item.id === id)!.status)))
+        : manualArtworkReview(ledger, args.itemIds, args.mode, user ? `${user.displayName} (${user.id})` : textValue(args.actor, '核对人'), textValue(args.note, '核对说明'));
+      // A metadata update must not change the artwork, approvals, placements or customer preview.
+      return NextResponse.json(await mutate(revision, state => {
+        const target = state.units.find(candidate => candidate.id === unit.id)!;
+        if (sharedArtworkFixed(state, unit.id) || target.updatedAt !== unit.updatedAt || target.artwork?.validation.sha256 !== args.sha256) throw new ProductionArtworkConflictError('图案或定稿状态已变化，请刷新');
+        return { ...state, revision: state.revision + 1, updatedAt: new Date().toISOString(),
+          sharedArtworks: state.sharedArtworks?.map(group => group.sourceUnitId === unit.id ? { ...group, versions: group.versions.map((version, index) => index === group.versions.length - 1 && version.artwork.validation.sha256 === args.sha256
+            ? { ...version, artwork: { ...version.artwork, validation: { ...version.artwork.validation, review } } } : version) } : group),
+          units: state.units.map(candidate => candidate.id === unit.id
+          ? { ...candidate, updatedAt: new Date().toISOString(), artwork: { ...candidate.artwork!, validation: { ...candidate.artwork!.validation, review } } } : candidate) };
+      }));
     }
     if (action === 'checkArtworkQuality') {
       const unitId = textValue(body.unitId, 'unitId');

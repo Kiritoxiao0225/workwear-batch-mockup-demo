@@ -53,7 +53,7 @@ export function assertProductionArtworkSnapshot(state: WpsProductionState, unitI
 }
 
 const versionActions = new Set(['selectGarment', 'savePlacements', 'composeVersion', 'approveVersion', 'returnUnit']);
-const unitActions = new Set(['updatePlan', 'confirmPlan', 'confirmArtwork', 'saveTextVerification', 'placeArtwork', 'checkArtworkQuality', 'startGptImage2', 'pollGptImage2', 'submitArtwork', 'saveArtworkDraft', 'normalizeTextPlan']);
+const unitActions = new Set(['reviewArtwork', 'updatePlan', 'confirmPlan', 'confirmArtwork', 'saveTextVerification', 'placeArtwork', 'checkArtworkQuality', 'startGptImage2', 'pollGptImage2', 'submitArtwork', 'saveArtworkDraft', 'normalizeTextPlan']);
 
 /** The server derives the scope from the action, never from client-supplied unit lists. */
 export function productionActionTarget(state: WpsProductionState, input: Record<string, unknown>) {

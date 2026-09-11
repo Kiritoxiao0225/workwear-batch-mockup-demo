@@ -1,3 +1,4 @@
+import type { ArtworkReviewLedger } from './artwork-review-ledger';
 import type { ArtworkRoutingReport } from './artwork-routing-standard';
 
 export type ArtworkCorrectionIssue = { id: string; location: string; actual: string; expected: string; action: string; preserve: string; uncertain: boolean };
@@ -6,7 +7,13 @@ function conciseRequirement(requirement: string) {
   return requirement.split(/以下为完整制作背景|当前单元的制作要求/u)[0].trim().slice(0, 240);
 }
 /** Derived from recorded checks; a browser may select IDs, never invent server evidence. */
-export function artworkCorrectionIssues(report?: ArtworkRoutingReport): ArtworkCorrectionIssue[] {
+export function artworkCorrectionIssues(report?: ArtworkRoutingReport, review?: ArtworkReviewLedger): ArtworkCorrectionIssue[] {
+  if (review) return review.items.filter(item => ['failed', 'uncertain'].includes(item.status) && !['size', 'position'].includes(item.id)).map(item => {
+    const check = item.checks?.find(check => check.status !== 'passed') ?? (review.verification?.outputSha256 === review.sha256 ? review.verification.checks.find(check => check.category === item.id && check.status !== 'passed') : undefined);
+    return { id: `review-${item.id}`, location: check?.location ?? item.label, actual: check?.resultObservation ?? item.evidence,
+      expected: check?.expected ?? item.requirement, action: check?.correction ?? `对照原图核实并修正${item.label}，看不清的字不要猜写`,
+      preserve: check?.preserve ?? '保留未选择修改的文字、图形、颜色和相对排版', uncertain: item.status === 'uncertain' };
+  });
   if (!report) return [];
   const checks = [report.contentReview?.verification, report.textComposition?.graphicRemoval, report.textComposition?.removal]
     .flatMap(verification => verification?.checks ?? []).filter(check => check.status !== 'passed');
