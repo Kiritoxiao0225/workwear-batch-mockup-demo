@@ -10,7 +10,7 @@ import { ARTWORK_EDIT_INSPECTION_VERSION } from '@/lib/artwork-model-edits';
 import { readCloudProductionState } from './production-cloud-state';
 
 export const artworkJobsEnabled = () => usesProductionCloud() && process.env.ARTWORK_DURABLE_JOBS === '1';
-export type ArtworkJobInput = { unit: ProductionUnit; source: SourceTaskRecord; sharedSnapshot?: string };
+export type ArtworkJobInput = { correction?: { baseRunId: string; url: string; issues: import('@/lib/artwork-correction').ArtworkCorrectionIssue[] }; unit: ProductionUnit; source: SourceTaskRecord; sharedSnapshot?: string };
 export type ArtworkJob = { id: string; state_key: string; unit_id: string; snapshot: string; input: ArtworkJobInput; status: ArtworkJobStatus; owner: string; attempt: number };
 export async function retainJobFiles(client: CatalogQueryClient, id: string, value: unknown) {
   const ids = [...new Set(productionFileReferences(value).map(ref => ref.id))].sort();
@@ -31,8 +31,14 @@ export async function enqueueArtworkJob(input: ArtworkJobInput, snapshot: string
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`artwork:${productionStateKey()}:${input.unit.id}`]);
       const existing = (await client.query("SELECT * FROM artwork_jobs WHERE state_key=$1 AND unit_id=$2 AND status IN ('queued','running','unknown')", [productionStateKey(), input.unit.id])).rows[0];
       if (existing) {
-        if (existing.snapshot !== snapshot || existing.input.sharedSnapshot !== input.sharedSnapshot) throw new Error('该图案已有后台任务，要求发生变化，请等待原任务结束后再制作');
+        const sameCorrection = existing.input.correction?.baseRunId === input.correction?.baseRunId && existing.input.correction?.url === input.correction?.url
+          && (existing.input.correction?.issues.map((issue: { id: string }) => issue.id).sort().join(',') ?? '') === (input.correction?.issues.map(issue => issue.id).sort().join(',') ?? '');
+        if (!sameCorrection || existing.snapshot !== snapshot || existing.input.sharedSnapshot !== input.sharedSnapshot) throw new Error('该图案已有后台任务，要求发生变化，请等待原任务结束后再制作');
         return { id: existing.id as string, existing: true };
+      }
+      if (input.correction) {
+        const previous = (await client.query("SELECT id FROM artwork_jobs WHERE state_key=$1 AND unit_id=$2 AND input->'correction'=$3::jsonb ORDER BY created_at DESC LIMIT 1", [productionStateKey(), input.unit.id, input.correction])).rows[0];
+        if (previous) return { id: previous.id as string, existing: true };
       }
       const id = randomUUID();
       await client.query("INSERT INTO artwork_jobs(id,state_key,unit_id,snapshot,input,status) VALUES($1,$2,$3,$4,$5,'queued')", [id, productionStateKey(), input.unit.id, snapshot, input]);
@@ -76,9 +82,9 @@ export async function claimArtworkJob(owner: string): Promise<ArtworkJob | null>
       ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1`, [productionStateKey()])).rows[0];
     if (!found) return null;
     // A paid generation whose response was lost cannot be submitted a second time.
-    const unknown = await client.query("SELECT 1 FROM artwork_job_steps WHERE job_id=$1 AND stage='generation' AND status IN ('running','unknown')", [found.id]);
+    const unknown = await client.query("SELECT 1 FROM artwork_job_steps WHERE job_id=$1 AND (stage='generation' OR step_key LIKE 'mediakit:/api/v1/tools-sync/enhance-image:%') AND status IN ('running','unknown')", [found.id]);
     if (unknown.rowCount) {
-      await client.query("UPDATE artwork_jobs SET status='unknown',message='生图返回结果不确定，请核对原任务，避免重复扣费',error='后台中断前的生图尚无已保存回执',owner=NULL,lease_until=NULL,updated_at=now() WHERE id=$1", [found.id]);
+      await client.query("UPDATE artwork_jobs SET status='unknown',message='付费处理返回结果不确定，请核对原任务，避免重复扣费',error='后台中断前的生图或增强尚无已保存回执',owner=NULL,lease_until=NULL,updated_at=now() WHERE id=$1", [found.id]);
       return null;
     }
     const claimed = await client.query("UPDATE artwork_jobs SET status='running',owner=$2,lease_until=now()+interval '45 seconds',attempt=attempt+1,message='正在读取素材',error=NULL,updated_at=now() WHERE id=$1 RETURNING *", [found.id, owner]);
@@ -117,7 +123,7 @@ export async function changeArtworkJob(id: string, action: 'cancel' | 'retry') {
         const inspected = await client.query("SELECT 1 FROM artwork_job_steps WHERE job_id=$1 AND stage='inspection' AND status='completed' AND result->>'inspectionVersion'=$2", [id, ARTWORK_EDIT_INSPECTION_VERSION]);
         if (!receipt || receipt.component || inspected.rowCount) throw new Error('当前规则已核对或这张图不是完整图案，请查看具体差异后修改要求；无需重复核对');
       } else if (job.status !== 'failed') throw new Error('仅处理失败或尚未按新规则核对的任务可继续');
-      const unknown = await client.query("SELECT 1 FROM artwork_job_steps WHERE job_id=$1 AND status IN ('unknown','running') AND stage='generation'", [id]);
+      const unknown = await client.query("SELECT 1 FROM artwork_job_steps WHERE job_id=$1 AND status IN ('unknown','running') AND (stage='generation' OR step_key LIKE 'mediakit:/api/v1/tools-sync/enhance-image:%')", [id]);
       if (unknown.rowCount) throw new Error('生图结果不确定，不能自动再次提交');
       await client.query("UPDATE artwork_jobs SET status='queued',message='已排队，从未完成步骤继续',error=NULL,updated_at=now() WHERE id=$1", [id]);
     }

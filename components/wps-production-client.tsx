@@ -1,4 +1,5 @@
 'use client';
+import { WpsArtworkCorrection } from '@/components/wps-artwork-correction';
 import { readApiBlob, fetchApi, readApiJson, assertApiResponse } from '@/lib/client/api-response';
 
 import { useArtworkJobs } from '@/hooks/use-artwork-jobs';
@@ -125,6 +126,7 @@ function WpsArtworkPreparationDetails({ unit, source, preview }: { unit: Product
       const label = `图${source.materials.indexOf(material) + 1} · ${material.id === unit.materialId ? '内容' : '参考'}`;
       return <WpsMaterialImage key={material.id} src={url} alt={material.description} label={label} sizes="64px" open={() => url && preview(url, label)} />;
     })}</div>
+    {routing.report?.facts.sourceAssessment?.recognizedContent && <details open><summary>实际识别内容</summary><p>{routing.report.facts.sourceAssessment.recognizedContent.structure}</p><p>{routing.report.facts.sourceAssessment.recognizedContent.layout}</p><ul>{routing.report.facts.sourceAssessment.recognizedContent.text.map((text, index) => <li key={index}>{text.location}：{text.certain ? text.value : '待人工核查'}</li>)}</ul></details>}
     <WpsArtworkRouting unit={unit} source={source}/>
     {canonical ? <details><summary>本路线的提示词与输入映射</summary><small>{canonical.version} / {canonical.hash}</small>
       <pre>{canonical.imageMapping.map(mapping => `${mapping.sourceLabel} → ${mapping.modelInputLabel}：${mapping.role}`).join('\n')}</pre>
@@ -132,7 +134,7 @@ function WpsArtworkPreparationDetails({ unit, source, preview }: { unit: Product
         : routing.facts.reconstructSource ? <><p>先重建目标图案，再去底；保留原设计并校正载体变形。</p><pre>{canonical.reconstruct}</pre></>
         : routing.decision.method === 'redraw' ? <><p>以下为保真重绘约束；实际调用前会补入原图取色和可辨内容。</p><pre>{canonical.redraw}</pre></>
         : recipe.title === '保真主体＋模型文字' ? canonical.styledTexts.map(text => <pre key={text.text}>{text.prompt}</pre>)
-        : <p>本路线先处理原图和准确文字；需要保真增强或符合条件的重绘时，记录实际执行步骤。</p>}
+        : <p>本路线先处理原图和准确文字；需要保真增强时，记录实际执行步骤。</p>}
     </details> : <p>{promptError}</p>}
   </details>;
 }
@@ -674,7 +676,7 @@ export function WpsProductionClient() {
     }
   };
 
-  const produceArtwork = async (unit: ProductionUnit) => {
+  const produceArtwork = async (unit: ProductionUnit, correctionIds?: string[]) => {
     let activeProduction = production;
     if (activeProduction) unit = sharedArtworkLeader(activeProduction, unit);
     if (isTextOnlyArtwork(unit) && (unit.route !== 'deterministic' || unit.generationPrompt || artworkBlockingAmbiguities(unit.ambiguities).length)) {
@@ -704,7 +706,7 @@ export function WpsProductionClient() {
       if (!release) return;
       setArtworkErrors(current => ({ ...current, [unit.id]: '' }));
       try {
-        const queued = await cloudQueue.submit({ action: 'enqueue', units: [{ unitId: unit.id, snapshot: expectedUnitSnapshot, sharedSnapshot: expectedSharedSnapshot }] });
+        const queued = await cloudQueue.submit({ action: 'enqueue', units: [{ unitId: unit.id, snapshot: expectedUnitSnapshot, sharedSnapshot: expectedSharedSnapshot, ...(correctionIds ? { correction: { baseRunId: unit.artwork?.draft?.preprocessing.routingReport?.runId, issueIds: correctionIds } } : {}) }] });
         const failure = queued.results?.find(result => result.error);
         if (failure) throw new Error(failure.error);
         setArtworkErrors(current => ({ ...current, [unit.id]: '' }));
@@ -1187,6 +1189,7 @@ export function WpsProductionClient() {
                     {!sharedView && actionFeedback[unit.id] && <div className="wps-shared-operation" role="status"><p>{actionFeedback[unit.id].message}</p>{['error', 'unknown'].includes(actionFeedback[unit.id].status) && <button type="button" onClick={() => void refreshActionState(unit.id)}>重新检查状态</button>}</div>}
                     {rowError && <div className="wps-production-row-error" role="alert"><p>{productionActionError(rowError)}</p>{unit.artwork && <small>当前保存的图案仍保留；这里显示的是最近一次制作的问题。</small>}{productionActionError(rowError) !== rowError && <details><summary>查看错误详情</summary><p>{rowError}</p></details>}</div>}
                     {Boolean(unit.artwork?.validation.contentWarnings?.length) && <details className="wps-inline-records" open><summary>图案已保存，有 {unit.artwork!.validation.contentWarnings!.length} 项核对提醒 · 可继续编辑和使用</summary><ul>{unit.artwork!.validation.contentWarnings!.map((warning, index) => <li key={index}>{warning}</li>)}</ul><button type="button" onClick={() => void openArtworkReview(unit)}>对照原图查看</button></details>}
+                    {cloudQueue.data?.enabled && <WpsArtworkCorrection key={unit.artwork?.draft?.preprocessing.routingReport?.runId} report={unit.artwork?.draft?.preprocessing.routingReport} busy={Boolean(unitBusyReason(unit.id)) || cloudQueue.submitting} submit={ids => void produceArtwork(unit, ids)} />}
                     {artworkProgress[unit.id] && <WpsArtworkProgress {...artworkProgress[unit.id]} failed={Boolean(rowError) && !queueJob} open={(url, title) => setPreview({ url, title })} />}
                     {cutoutSessions[unit.id] && <>
                       <CutoutTaskStatus session={cutoutSessions[unit.id]} hasArtwork={Boolean(unit.artwork)} busy={Boolean(queueJob)} query={() => void runCutout(unit, cutoutSessions[unit.id].result.receipt.mode, true)} retry={() => void runCutout(unit, cutoutSessions[unit.id].result.receipt.mode)} discard={() => discardCutout(unit.id)} apply={!unit.artwork ? () => void applyCutout(unit) : undefined} />

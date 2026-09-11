@@ -71,8 +71,8 @@ describe('production enhancement before cutout', () => {
     expect(t.services.generate).not.toHaveBeenCalled();
   });
 
-  it('keeps the 80-point and 1.25-scale inclusive boundaries without enhancement', async () => {
-    const t = await setup(800, 80);
+  it('uses native pixel sufficiency independently of legacy score boundaries', async () => {
+    const t = await setup(1000, 0);
     const result = await prepareStandardArtwork(t.request, t.services);
     expect(t.events).toEqual(['source-quality', 'cutout', 'result-quality']);
     expect(t.cutout).toHaveBeenCalledExactlyOnceWith(t.source, undefined);

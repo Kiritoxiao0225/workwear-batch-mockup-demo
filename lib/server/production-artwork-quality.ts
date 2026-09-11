@@ -89,7 +89,7 @@ export async function validateProductionArtworkQuality(url: string, draft?: Artw
       const quality = recorded ?? cached ?? measured.get(sha256) ?? await measure(bytes);
       measured.set(sha256, quality);
       validation.componentQuality.push({ id: graphic.id ?? `graphic-${index + 1}`, measurement: quality });
-      if (!artworkQualityPassed(quality, sha256)) validation.qualityIssues.push(`图案组件 ${index + 1}：${quality.score < ARTWORK_ROUTING_STANDARD.clarityMinimum ? `模糊检查未通过（换算清晰度 ${quality.score.toFixed(2)}）` : `有效像素不足（目标放大 ${quality.requiredScale.toFixed(2)} 倍）`}`);
+      if (!artworkQualityPassed(quality, sha256)) validation.qualityIssues.push(`图案组件 ${index + 1}：${quality.score !== null && quality.score < ARTWORK_ROUTING_STANDARD.clarityMinimum ? `模糊检查未通过（换算清晰度 ${quality.score.toFixed(2)}）` : `有效像素不足（目标放大 ${quality.requiredScale.toFixed(2)} 倍）`}`);
       if (matchingReport && verifiedDraft?.preprocessing) {
         verifiedDraft.preprocessing.routingReport = matchingReport;
         validation.contentWarnings = matchingReport.contentReview?.warnings ?? [];

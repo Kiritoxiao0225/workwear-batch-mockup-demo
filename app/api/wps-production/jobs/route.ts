@@ -1,3 +1,5 @@
+import { artworkCorrectionIssues } from '@/lib/artwork-correction';
+import { readArtworkRoutingReport } from '@/lib/server/artwork-routing-records';
 import { conditionalJson } from '@/lib/server/conditional-json';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
@@ -16,7 +18,7 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 const inputSchema = z.union([
-  z.object({ action: z.literal('enqueue'), units: z.array(z.object({ unitId: z.string().min(1), snapshot: z.string().min(1).max(100_000), sharedSnapshot: z.string().min(1).max(10_000_000).optional() })).min(1).max(100) }),
+  z.object({ action: z.literal('enqueue'), units: z.array(z.object({ unitId: z.string().min(1), snapshot: z.string().min(1).max(100_000), sharedSnapshot: z.string().min(1).max(10_000_000).optional(), correction: z.object({ baseRunId: z.string().uuid(), issueIds: z.array(z.string().max(40)).min(1).max(30) }).optional() })).min(1).max(100) }),
   z.object({ action: z.enum(['cancel', 'retry']), id: z.string().uuid() }),
 ]);
 function failure(error: unknown) {
@@ -67,7 +69,17 @@ export async function POST(request: Request) {
         if (unit.attempts.some(attempt => ['submitted', 'processing', 'unknownSubmission'].includes(attempt.status))) throw new Error('已有制作任务未结束');
         const routing = productionArtworkRouting({ ...unit, artwork: null }, source);
         if (!isTextOnlyArtwork(unit) && routing.decision.state === 'review') throw new Error(routing.facts.blockers.join('；') || routing.decision.reason);
-        const queued = await enqueueArtworkJob({ unit, source, ...(sharedArtworkForUnit(state, unit.id)
+        let correction;
+        if (requested.correction) {
+          const report = unit.artwork?.draft?.preprocessing.routingReport;
+          if (!report || report.runId !== requested.correction.baseRunId || !unit.artwork?.url) throw new Error('当前图案已变化，请刷新后重新选择问题');
+          const recorded = await readArtworkRoutingReport(report.runId);
+          const ids = new Set(requested.correction.issueIds);
+          const issues = artworkCorrectionIssues(recorded).filter(issue => ids.has(issue.id));
+          if (issues.length !== ids.size) throw new Error('选中的核对问题不属于当前图案');
+          correction = { baseRunId: report.runId, url: unit.artwork.url, issues };
+        }
+        const queued = await enqueueArtworkJob({ unit, source, ...(correction ? { correction } : {}), ...(sharedArtworkForUnit(state, unit.id)
           ? { sharedSnapshot: productionSharedSnapshot(state, unit.id) } : {}) }, productionArtworkSnapshot(unit, source));
         results.push({ unitId: unit.id, ...queued });
       } catch (error) { results.push({ unitId: requested.unitId, error: error instanceof Error ? error.message : String(error) }); }

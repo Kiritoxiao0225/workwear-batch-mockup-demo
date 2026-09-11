@@ -70,6 +70,7 @@ export type ArtworkCompositionDescription = {
 };
 
 export type ArtworkPreparationRequest = {
+  correction?: { baseRunId: string; image: LogoStudioInputImage; issues: import('./artwork-correction').ArtworkCorrectionIssue[] };
   cutoutMode?: import('@/lib/artwork-cutout').ArtworkCutoutMode;
   generationPrompt?: string;
   artworkMethod?: 'auto' | 'preserve' | 'redraw' | 'compose' | 'generate';

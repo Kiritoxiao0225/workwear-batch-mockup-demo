@@ -13,7 +13,7 @@ import type { BrowserLogoTextVerification } from '@/lib/client/browser-logo-ocr'
 import { artworkAcceptanceIssues, artworkQualityAdvice } from '@/lib/artwork-acceptance';
 
 type Props = { cutoutSession?: CutoutSession; onReCutout: (mode: ArtworkCutoutMode) => void; onQueryCutout: () => void; onApplyCutout: () => void; onDiscardCutout: () => void; unit: ProductionUnit; source: SourceTaskRecord; busy: boolean; error: string | null; close: () => void; edit: () => void; onCheckQuality: () => void; onSaveTextCheck: (result: BrowserLogoTextVerification) => Promise<void> };
-export function WpsArtworkReview({ unit, source, busy, error, close, edit, onCheckQuality, onSaveTextCheck, cutoutSession, onReCutout, onQueryCutout, onApplyCutout, onDiscardCutout }: Props) {
+export function WpsArtworkReview({ unit, source, busy, error, close, edit, onSaveTextCheck, cutoutSession, onReCutout, onQueryCutout, onApplyCutout, onDiscardCutout }: Props) {
   const [background, setBackground] = useState('checker');
   const [view, setView] = useState('compare');
   const [zoom, setZoom] = useState(100);
@@ -66,7 +66,7 @@ export function WpsArtworkReview({ unit, source, busy, error, close, edit, onChe
         <p>请对照原图核对图形、文字、颜色和排版。</p>
         <p className={`wps-artwork-status ${!qualityReady ? 'needs-attention' : unit.gateB ? 'complete' : ''}`}>{!qualityReady ? '图案制作有待完成项' : unit.gateB ? '图案已确认' : '随整件效果核对'}</p>
         {!qualityReady && <ul>{issues.map(issue => <li key={issue}>{issue}</li>)}</ul>}
-        <details><summary>画质参考（可选，不影响保存与确认）</summary><button type="button" disabled={busy} onClick={onCheckQuality}>获取画质参考</button>{artwork.validation.quality || artwork.validation.qualityError ? <ul>{advice.map(item => <li key={item}>{item}</li>)}</ul> : <p>尚未评分，可直接人工核对。</p>}</details>
+        {advice.length > 0 && <details open><summary>人工核查提醒</summary><ul>{advice.map((item, index) => <li key={index}>{item}</li>)}</ul></details>}
         <details className="wps-review-records"><summary>处理记录与检查详情</summary><small>{new Date(artwork.createdAt).toLocaleString()} · {artwork.validation.width} × {artwork.validation.height}px</small>{artwork.draft?.preprocessing.cutoutRuns?.map((run, index) => <p key={`${run.jobKey}-${index}`}>抠图步骤 {index + 1}：{CUTOUT_ROUTE_LABELS[run.route]} · {cutoutFeeLabel(run)}</p>)}<WpsArtworkRouting unit={unit} source={source}/></details>
         <details className="wps-review-records"><summary>检查文字</summary><LogoTextVerification key={artwork.validation.sha256} title="文字识别与逐字核对" logoName={artwork.name} logoUrl={artwork.url} initialExpectedText={artwork.textVerification?.expectedText ?? unit.exactText} initialResult={artwork.textVerification} onResult={onSaveTextCheck}/></details>
         <details className="wps-review-records"><summary>客户原文</summary><p className="wps-preserve-lines">{source.requirementText}</p></details>

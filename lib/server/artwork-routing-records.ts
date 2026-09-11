@@ -41,6 +41,6 @@ export async function readArtworkRoutingReport(runId: string): Promise<ArtworkRo
   const report = (usesProductionCloud()
     ? (await catalogDatabase().query("SELECT record_json FROM artwork_run_records WHERE state_key=$1 AND run_id=$2 AND kind='report'", [productionStateKey(), runId])).rows[0]?.record_json
     : JSON.parse(await readFile(path.join(root(), `${runId}.json`), 'utf8'))) as ArtworkRoutingReport | undefined;
-  if (!report || ![ARTWORK_ROUTING_STANDARD.version, 'artwork-routing-v2'].includes(report.version) || report.runId !== runId || !report.graphic?.sha256) throw new Error('图案处理记录不完整或版本不匹配');
+  if (!report || ![ARTWORK_ROUTING_STANDARD.version, 'artwork-routing-v3', 'artwork-routing-v2'].includes(report.version) || report.runId !== runId || !report.graphic?.sha256) throw new Error('图案处理记录不完整或版本不匹配');
   return report;
 }

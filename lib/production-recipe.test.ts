@@ -86,8 +86,8 @@ describe('production routing evidence', () => {
     const candidate = { ...unit, artwork: { draft, url: '/result.png', name: 'test', recipeFingerprint: unit.recipeFingerprint, createdAt: '2026-09-07T00:00:00Z', validation: { valid: true } } } as typeof unit;
     const result = productionArtworkRouting(candidate, review.source);
     expect(result.historicalClarity).toBe(47.62);
-    expect(result.decision).toMatchObject({ method: 'preserve', action: 'inspect' });
-    expect(result.decision.checks.find(check => check.label === '修复后清晰度')?.state).toBe('pending');
+    expect(result.decision).toMatchObject({ method: 'preserve', action: 'clean' });
+    expect(result.decision.checks.some(check => check.label.includes('清晰度'))).toBe(false);
     expect(productionArtworkRouting({ ...candidate, recipeFingerprint: 'changed' }, review.source).historicalClarity).toBeNull();
   });
   it('does not promote a reversed-score historical redraw decision as a current recommendation', () => {
@@ -99,7 +99,7 @@ describe('production routing evidence', () => {
     draft.preprocessing.routingReport = report;
     const candidate = { ...unit, artwork: { draft, url: '/result.png', name: 'test', recipeFingerprint: unit.recipeFingerprint, createdAt: '2026-09-07T00:00:00Z', validation: { valid: true } } } as typeof unit;
     const result = productionArtworkRouting(candidate, review.source);
-    expect(result.decision).toMatchObject({ method: null, state: 'pending', action: 'inspect' });
+    expect(result.decision).toMatchObject({ method: 'preserve', state: 'ready', action: 'clean' });
     expect(result.report).toBe(report);
     expect(report.decision.action).toBe('redraw');
   });

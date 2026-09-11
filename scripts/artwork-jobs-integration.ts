@@ -13,7 +13,7 @@ import EmbeddedPostgres from 'embedded-postgres';
 import sharp from 'sharp';
 import { catalogDatabase, catalogTransaction, migrateCatalog, closeCatalogDatabase } from '../lib/server/catalog-database';
 import { enqueueArtworkJob, claimArtworkJob, readArtworkJobs, changeArtworkJob, heartbeatArtworkWorker, updateArtworkJob, type ArtworkJob } from '../lib/server/artwork-job-store';
-import { inArtworkJob, artworkJobStep, withArtworkStage, resumeArtworkGenerationPrompt, reportArtworkInspectionRetry } from '../lib/server/artwork-job-runtime';
+import { inArtworkJob, artworkJobStep, withArtworkStage, resumeArtworkGenerationPrompt, resumeArtworkGenerationInput, reportArtworkInspectionRetry } from '../lib/server/artwork-job-runtime';
 import { retryArtworkInspection } from '../lib/server/artwork-inspection-retry';
 import { durableArtworkServices } from '../lib/server/artwork-job-services';
 import { standardArtworkServices } from '../lib/server/artwork-standard-pipeline';
@@ -60,6 +60,16 @@ try {
   const job = claimed.find(Boolean)!;
   await assert.rejects(() => changeArtworkJob(job.id, 'cancel'));
   pass('8 submissions from independent clients produce one job; two workers claim it once; running work cannot be cancelled');
+  const correction = { baseRunId: randomUUID(), url: file.url, issues: [{ id: 'check-0', location: '文字', actual: '深蓝色', expected: '白色', action: '恢复白色', preserve: '保留图形', uncertain: false }] };
+  await assert.rejects(() => enqueueArtworkJob({ ...input, correction }, snapshot), /已有后台任务/);
+  const correctionInput = { ...input, unit: { ...input.unit, id: 'correction-fixture' }, correction };
+  const corrected = await enqueueArtworkJob(correctionInput, 'correction-snapshot');
+  const correcting = (await claimArtworkJob(owner))!;
+  assert.equal(correcting.id, corrected.id);
+  await updateArtworkJob(correcting, 'completed', 'fixture correction saved');
+  assert.deepEqual(await enqueueArtworkJob(correctionInput, 'correction-snapshot'), { id: corrected.id, existing: true });
+  pass('A correction never replaces an in-flight normal job and repeat submission reuses its saved correction receipt');
+
 
   let generated = 0, scored = 0;
   await inArtworkJob(job, async () => {
@@ -161,6 +171,9 @@ try {
       assert.equal(legacyGenerations, 1);
     } finally { standardArtworkServices.verifyEdits = originalVerify; }
     await assert.rejects(() => resumeArtworkGenerationPrompt(newPrompt, ['different input'], settings), /停止重复生图/);
+    const cropResume = await resumeArtworkGenerationInput(newPrompt, ['new target crop'], settings, images);
+    assert.equal(cropResume.prompt, oldPrompt); assert.equal(cropResume.reusedOriginalInput, true);
+    await assert.rejects(() => resumeArtworkGenerationInput(newPrompt, ['new target crop'], settings, ['unrelated original']), /停止重复生图/);
   });
   await assert.rejects(() => inArtworkJob({ ...legacyResumed, owner }, () => reportArtworkInspectionRetry({ attempt: 3, maxAttempts: 3, delayMs: 5000 })));
   assert.equal(inspectionRequests, 2);
@@ -169,6 +182,19 @@ try {
   pass('A legacy inspection retry exposes its real error and reuses the original generation across prompt upgrades; mismatched inputs cannot regenerate');
   pass('A transient inspection failure stays running, reports automatic recovery, saves and reuses its final check; stale owners cannot retry');
   pass('Upgraded inspection ignores a legacy check, caches the current version and never regenerates the image');
+
+  await enqueueArtworkJob({ ...input, unit: { ...input.unit, id: 'unknown-enhancement' } }, 'enhancement-fixture');
+  const enhancing = (await claimArtworkJob(owner))!;
+  let enhancementCalls = 0;
+  const enhance = () => artworkJobStep('mediakit:/api/v1/tools-sync/enhance-image', 'processing', { image: 'fixture' }, async () => { enhancementCalls++; throw new Error('fetch failed'); }, true, true);
+  await assert.rejects(() => inArtworkJob(enhancing, enhance), /结果尚不确定/);
+  await assert.rejects(() => inArtworkJob(enhancing, enhance), /停止重复提交/);
+  assert.equal(enhancementCalls, 1);
+  await catalogDatabase().query("UPDATE artwork_jobs SET lease_until=now()-interval '1 second' WHERE id=$1", [enhancing.id]);
+  assert.equal(await claimArtworkJob(owner2), null);
+  assert.equal((await readArtworkJobs()).jobs.find(item => item.id === enhancing.id)?.status, 'unknown');
+  await assert.rejects(() => changeArtworkJob(enhancing.id, 'retry'));
+  pass('Lost paid enhancement is fenced across retries and worker takeover without a second provider submission');
 
   const unknownInput = { ...input, unit: { ...input.unit, id: 'unknown-generation' } };
   await enqueueArtworkJob(unknownInput, 'unknown-fixture');

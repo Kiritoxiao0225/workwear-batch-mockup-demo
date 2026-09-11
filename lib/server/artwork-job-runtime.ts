@@ -101,7 +101,7 @@ export async function withArtworkStage<T>(stage: ArtworkStage, task: () => Promi
 }
 
 /** Successful steps replay their stored result. Only the failed step is called again. */
-export async function artworkJobStep<T>(name: string, stage: ArtworkStage, args: unknown, task: () => Promise<T>, acquireSlot = true): Promise<T> {
+export async function artworkJobStep<T>(name: string, stage: ArtworkStage, args: unknown, task: () => Promise<T>, acquireSlot = true, paid = false): Promise<T> {
   const current = context.getStore();
   if (!current) return task();
   const key = `${name}:${artworkStepHash(args)}`;
@@ -110,7 +110,7 @@ export async function artworkJobStep<T>(name: string, stage: ArtworkStage, args:
   const run = (async () => {
     const row = (await catalogDatabase().query('SELECT * FROM artwork_job_steps WHERE job_id=$1 AND step_key=$2', [current.job.id, key])).rows[0];
     if (row?.status === 'completed') return await unpack(row.result) as T;
-    if (stage === 'generation' && ['running', 'unknown'].includes(row?.status)) throw new ArtworkGenerationUnknownError('已有生图提交尚无确定回执，已停止重复提交');
+    if ((stage === 'generation' || paid) && ['running', 'unknown'].includes(row?.status)) throw new ArtworkGenerationUnknownError('已有生图提交尚无确定回执，已停止重复提交');
     const execute = async () => {
       await catalogTransaction(async client => {
         await assertArtworkJobOwner(client, current.job);
@@ -131,7 +131,7 @@ export async function artworkJobStep<T>(name: string, stage: ArtworkStage, args:
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         // Explicit rate rejection is safe to retry; timeouts/disconnects are not.
-        const unknown = stage === 'generation' && (returned || !/(?:HTTP\s*(?:400|401|403|404|413|422|429)|RequestLimitExceeded|未发起生图请求|CLIPROXY_API_BASE_URL 必须|尚未配置|not configured)/iu.test(message));
+        const unknown = (stage === 'generation' || paid) && (returned || !/(?:HTTP\s*(?:400|401|403|404|413|422|429)|RequestLimitExceeded|未发起生图请求|CLIPROXY_API_BASE_URL 必须|尚未配置|not configured)/iu.test(message));
         await catalogTransaction(async client => {
           await assertArtworkJobOwner(client, current.job);
           await client.query('UPDATE artwork_job_steps SET status=$3,error=$4,finished_at=now() WHERE job_id=$1 AND step_key=$2', [current.job.id, key, unknown ? 'unknown' : 'failed', message.slice(0, 2000)]);
@@ -144,4 +144,14 @@ export async function artworkJobStep<T>(name: string, stage: ArtworkStage, args:
   })();
   current.pending.set(key, run);
   try { return await run; } catch (error) { current.pending.delete(key); throw error; }
+}
+
+/** A crop/recognition upgrade must not repurchase a full image already generated
+ * from these exact original inputs. Both alternatives still match saved step keys. */
+export async function resumeArtworkGenerationInput(prompt: string, images: string[], settings: { background?: 'auto' | 'transparent' }, originalImages: string[]) {
+  try { return { prompt: await resumeArtworkGenerationPrompt(prompt, images, settings), images, reusedOriginalInput: false }; }
+  catch (error) {
+    if (JSON.stringify(images) === JSON.stringify(originalImages)) throw error;
+    return { prompt: await resumeArtworkGenerationPrompt(prompt, originalImages, settings), images: originalImages, reusedOriginalInput: true };
+  }
 }

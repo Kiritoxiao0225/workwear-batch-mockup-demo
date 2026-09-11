@@ -30,13 +30,6 @@ export function productionArtworkRouting(unit: ProductionUnit, source: SourceTas
     ...unit.referenceMaterialIds.filter(id => !source.materials.some(material => material.id === id && (material.url || material.previewUrl))).map(id => `缺少参考素材 ${id}`),
     ...(artworkProcessingRoute(unit) === 'blocked' ? ['制作要求尚待补充'] : []));
   if (facts.intent !== 'generate' && unit.textMode === 'replace' && !unit.exactText.trim()) { facts.intent = 'compose'; facts.editSpecification = 'incomplete'; }
-  if (report && !facts.blockers.length && (report.source.protocol !== ARTWORK_ROUTING_STANDARD.scoreProtocol || report.graphic.protocol !== ARTWORK_ROUTING_STANDARD.scoreProtocol)) {
-    const decision: ArtworkRoutingDecision = {
-      version: ARTWORK_ROUTING_STANDARD.version, method: null, state: 'pending', action: 'inspect', checks: [],
-      reason: '历史处理采用了错误的评分方向，不能继续作为当前推荐依据；当前图案可单独重新检测画质。',
-    };
-    return { facts, decision, historicalClarity: null, report };
-  }
   facts.sourceClarity = report?.source ?? (typeof actual?.blurScore === 'number' ? { score: actual.blurScore, protocol: 'legacy-source-native' } : null);
   facts.requiredScale = report?.source.requiredScale ?? actual?.requiredScale ?? null;
   facts.repair = report ? { attempts: report.repair ? 1 : 0, clarity: report.repair, requiredScale: report.repair?.requiredScale ?? null }
@@ -70,9 +63,9 @@ export function productionRecipe(unit: ProductionUnit, source: SourceTaskRecord)
     : `${preservation}＋必要时增强${input.exactText ? '＋准确文字组合' : ''}`;
   const reason = needsReview ? currentRouting.facts.blockers.join('；') || currentRouting.decision.reason : unit.route === 'blocked' ? unit.ambiguities.join('；') || '请先确认主要素材和制作要求。' : unit.route === 'gpt-image-2' ? '人工指定 GPT Image 2；规格 1K / Low / 透明 PNG。'
     : sourcePending ? currentRouting.decision.reason : reconstruction ? '先定位并还原目标图案，校正载体带来的变形，再去底并核对文字与标志。' : completeModel ? unit.generationPrompt ? '按已保存的生图提示词与对应素材生成白底图，再抠图。' : unit.route === 'model' ? '人工指定完整模型生成。' : intent.wholeCompositionReference ? '参考图决定整体字形、构图或排版，主要图与参考图一起交给模型。' : '需要从素材中取指定局部或组合参考图，由模型制作完整候选。'
-    : replacesText ? '先清除指定旧字，核对其余文字与 Logo 均保留后再加新字；模型文字须确认没有夹带图形，核对不通过时保留图片待处理。'
+    : replacesText ? '先清除指定旧字，核对其余文字与 Logo 均保留后再加新字；模型文字须确认没有夹带图形，核对疑点作为提醒，继续保存和编辑。'
     : hybrid ? '主体图形保真处理，特殊字形交给模型；核对实际文字且没有夹带图形后，再组合成完整图案。'
-    : `${preservation}；增强等级须检测原图后确定。${unit.route === 'deterministic' ? '已手动指定保真处理，不自动改为模型重绘。' : '最多保真修复一次，复测仍不达标且符合纯色重绘条件才转 B。'}`;
+    : `${preservation}；增强等级须检测原图后确定。${unit.route === 'deterministic' ? '已手动指定保真处理，不自动改为模型重绘。' : '最多保真增强一次；尺寸或内容疑点只提醒，不自动重绘。'}`;
   const components = completeModel || unit.route === 'gpt-image-2'
     ? [ `${input.primaryImageLabel}：${isReferenceTextArtwork(unit) ? '仅作样式参考' : '进入成品的内容源'}`, ...composition.textSegments.map(text => `准确文字：${text}`),
       ...input.referenceImageLabels.map(label => `${label}：仅作参考，不复制背景`), '一次生成一个完整候选，再核对文字与图形' ]

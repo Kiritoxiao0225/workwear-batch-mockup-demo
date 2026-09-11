@@ -42,7 +42,7 @@ describe('normalized artwork quality', () => {
     const facts = { intent: 'preserve' as const, intentReason: '沿用原校徽', sourcePresent: true, blockers: [], requiredScale: 1,
       repair: { attempts: 0, clarity: null, requiredScale: null }, redrawEligibility: 'unknown' as const, editSpecification: 'complete' as const, strictPreservation: false };
     expect(decideArtworkMethod({ ...facts, sourceClarity: clear }).action).toBe('clean');
-    expect(decideArtworkMethod({ ...facts, sourceClarity: blurred }).action).toBe('repair-once');
+    expect(decideArtworkMethod({ ...facts, sourceClarity: blurred }).action).toBe('clean');
   });
 });
 
@@ -59,4 +59,21 @@ describe('guarded original-colour cleanup', () => {
     expect(pixel(278, 28)).toEqual([53, 98, 66, 255]);
     await expect(cleanFlatLogo(source, [[255, 255, 255]])).rejects.toThrow('非白色');
   });
+});
+
+it('reads native foreground pixels locally without fetching a score and calculates actual-size targets', async () => {
+  const { measureArtworkPixels, artworkPixelTarget } = await import('./artwork-quality');
+  const fetcher = vi.fn(async () => { throw new Error('numeric scoring must not be called'); });
+  vi.stubGlobal('fetch', fetcher);
+  try {
+    const bytes = await sharp({ create: { width: 374, height: 349, channels: 4, background: 'red' } })
+      .extend({ top: 200, bottom: 200, left: 200, right: 200, background: '#00000000' }).png().toBuffer();
+    const measured = await measureArtworkPixels(bytes);
+    expect(measured).toMatchObject({ score: null, vqscore: null, subjectWidth: 374, subjectHeight: 349, protocol: 'foreground-native-pixels-v1' });
+    expect(artworkPixelTarget(measured).requiredScale).toBe(1000 / 374);
+    const print = artworkPixelTarget(measured, { key: 'leftChest', sizeMode: 'widthCm', widthCm: 2.54 });
+    expect(print.requiredScale).toBe(300 / 374);
+    expect(print.targetBasis).toContain('参考 300 PPI');
+    expect(fetcher).not.toHaveBeenCalled();
+  } finally { vi.unstubAllGlobals(); }
 });

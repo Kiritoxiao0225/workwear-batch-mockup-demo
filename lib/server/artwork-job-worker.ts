@@ -65,7 +65,17 @@ export async function processArtworkJob(job: ArtworkJob) {
           artworkMethod: unit.artworkMethod, cutoutMode: unit.cutoutMode ?? 'auto', enhancementMode: 'auto', sourceScope: unit.sourceScope,
           processingRoute: artworkProcessingRoute(unit) === 'deterministic' ? 'fidelity' : artworkProcessingRoute(unit) });
         const prompt = standardArtworkPrompts(request);
-        result = await prepareStandardArtwork({ ...request, expectedPromptVersion: prompt.version, expectedPromptHash: prompt.hash }, durableArtworkServices());
+        const correction = job.input.correction ? { ...job.input.correction, image: await modelInput(job.input.correction.url, '当前图案.png') } : undefined;
+        if (correction) inputImageUrls.push(job.input.correction!.url);
+        let progressWrite = Promise.resolve();
+        try {
+          result = await prepareStandardArtwork({ ...request, correction, expectedPromptVersion: prompt.version, expectedPromptHash: prompt.hash }, durableArtworkServices(), event => {
+            if (event.type !== 'progress') return;
+            progressWrite = progressWrite.then(async () => {
+              await catalogDatabase().query("UPDATE artwork_jobs SET message=$3,updated_at=now() WHERE id=$1 AND owner=$2 AND status='running' AND lease_until>now()", [job.id, job.owner, event.message]);
+            }).catch(() => undefined);
+          });
+        } finally { await progressWrite; }
       }
       await withArtworkStage('processing', async () => {
         let draft = result?.draft ?? await serverProductionTextDraft(unit, requestedProductionTextColor(unit) ?? await serverProductionTextColor(unit));

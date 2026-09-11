@@ -1,4 +1,5 @@
-import { artworkJobStep, withArtworkStage } from './artwork-job-runtime';
+import { downloadArtworkResult } from './artwork-result-download';
+import { artworkJobStep, withArtworkStage, hasArtworkJobContext } from './artwork-job-runtime';
 import { artworkPrintInstruction } from '@/lib/production-artwork-layout';
 import sharp from 'sharp';
 import { refineCircularArtworkEdge } from '@/lib/server/circular-artwork-edge';
@@ -40,7 +41,7 @@ import {
 } from '@/lib/task-review-artwork';
 
 const MEDIA_KIT_ORIGIN = 'https://mediakit.cn-beijing.volces.com';
-const MAX_RESULT_BYTES = 20 * 1024 * 1024;
+
 const MAX_EMBEDDED_PNG_BYTES = 3 * 1024 * 1024;
 
 type MediaKitResult = Record<string, unknown>;
@@ -82,7 +83,7 @@ async function mediaKitPost(path: string, body: Record<string, unknown>, label: 
   if (path.includes('request-media-upload-url')) return rawMediaKitPost(path, body, label);
   if (path.includes('remove-image-background')) return withArtworkStage('cutout', () => rawMediaKitPost(path, body, label));
   if (path.includes('evaluate-image-quality')) return withArtworkStage('quality', () => rawMediaKitPost(path, body, label));
-  return artworkJobStep(`mediakit:${path}`, 'processing', body, () => rawMediaKitPost(path, body, label));
+  return artworkJobStep(`mediakit:${path}`, 'processing', body, () => rawMediaKitPost(path, body, label), true, path.includes('enhance-image'));
 }
 async function rawMediaKitPost(path: string, body: Record<string, unknown>, label: string) {
   const response = await withArtworkNetworkContext(label, () => fetch(`${MEDIA_KIT_ORIGIN}${path}`, {
@@ -231,13 +232,7 @@ async function transparentImageUrl(imageUrl: string, options: { scene?: 'product
 }
 
 async function downloadResult(url: string, label: string) {
-  const response = await withArtworkNetworkContext(`${label}下载`, () => fetch(url, { signal: AbortSignal.timeout(60_000) }));
-  if (!response.ok) throw new Error(`${label}下载失败：HTTP ${response.status}`);
-  const bytes = Buffer.from(await withArtworkNetworkContext(`${label}读取下载结果`, () => response.arrayBuffer()));
-  if (bytes.length === 0 || bytes.length > MAX_RESULT_BYTES) {
-    throw new Error(`${label}必须在 1B–20MB，实际 ${bytes.length}B`);
-  }
-  return bytes;
+  return artworkJobStep('downloadResult-v1', 'processing', { url }, () => downloadArtworkResult(url, label), false);
 }
 
 async function normalizedGraphic(
@@ -264,6 +259,13 @@ async function normalizedGraphic(
         .png({ compressionLevel: 9 })
         .toBuffer()
     : await sharp(bytes).ensureAlpha().png({ compressionLevel: 9 }).toBuffer();
+  // Durable jobs store image bytes in object storage, so the old inline HTTP
+  // response cap must not silently shrink an enhanced production image.
+  if (hasArtworkJobContext()) {
+    if (normalized.length > 8 * 1024 * 1024) throw new Error('增强图超过当前 8MB 图层限制，原结果已保留，请下载原图；未缩小冒充高清成品');
+    const metadata = await sharp(normalized).metadata();
+    return { bytes: normalized, width: metadata.width!, height: metadata.height!, maskQuality };
+  }
   let embedded = normalized;
   for (const maximumDimension of [1600, 1280, 1024]) {
     if (embedded.length <= MAX_EMBEDDED_PNG_BYTES) break;
@@ -568,7 +570,7 @@ async function graphicBytesAfterLocalBackgroundRemoval(
 
 export async function prepareTaskArtwork(
   request: ArtworkPreparationRequest,
-  options?: { measuredQuality: ArtworkQualityEvaluation; cutout?: (bytes: Buffer) => Promise<Buffer> },
+  options?: { measuredQuality: ArtworkQualityEvaluation | null; cutout?: (bytes: Buffer) => Promise<Buffer> },
 ): Promise<ArtworkPreparationResponse> {
   assertWholeImageWasExplicitlyRequested(request);
   const sourceBytes = dataUrlBuffer(request.image.dataUrl);
@@ -610,12 +612,12 @@ export async function prepareTaskArtwork(
     evaluationBytes,
     croppedSubjectInput ? 'image/png' : request.image.mimeType,
   );
-  const quality: ArtworkQualityEvaluation = options?.measuredQuality ?? await evaluateImage(sourceFileId);
+  const quality: ArtworkQualityEvaluation | null = options && 'measuredQuality' in options ? options.measuredQuality : null;
   const preserveGeometry = requiresBrandGeometryPreservation(request, sourceProfile.kind);
   const override = explicitEnhancement(request.enhancementMode);
-  const recommendation = options && override ? {
-    level: resolution.level, enhancement: override,
-    decisionRule: `按统一清晰度标准执行${override === 'none' ? '去底，不增强' : '保真修复 1 次'}，处理后重新评分`,
+  const recommendation = !quality ? {
+    level: resolution.level, enhancement: override ?? (resolution.requiredScale > 1 ? 'professional' as const : 'none' as const),
+    decisionRule: '按主体实际像素决定保真增强，最多一次；不调用数字评分',
   } : recommendedEnhancement({
     sourceWidth: evaluationWidth,
     sourceHeight: evaluationHeight,

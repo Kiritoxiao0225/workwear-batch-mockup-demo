@@ -455,7 +455,7 @@ describe('MediaKit artwork preparation adapter', () => {
     process.env.ARK_RUNTIME_API_KEY = 'test-ark-key';
 
     const result = await prepareTaskArtwork(parseArtworkPreparationRequest({
-      sourceRequirementText: 'WPS 原始需求测试文本',
+      sourceRequirementText: 'WPS 原始需求测试文本', enhancementMode: 'none',
       instruction: '保留图5的宜宾学院标志，新增文字“研究生会”，文字参考图4的书法字形。',
       exactText: '研究生会',
       layoutNote: '文字放在图5右侧；只参考图4的字体风格',
@@ -623,7 +623,7 @@ describe('MediaKit artwork preparation adapter', () => {
       instruction: '保留主体，Logo 改绿色',
       exactText: '',
       layoutNote: '',
-      enhancementMode: 'auto',
+      enhancementMode: 'none',
       image: {
         fileName: 'flat-logo.png',
         mimeType: 'image/png',
@@ -632,7 +632,7 @@ describe('MediaKit artwork preparation adapter', () => {
     }));
 
     expect(result.preprocessing).toMatchObject({
-      evaluation: { vqscore: 82, blur: 20 },
+      evaluation: null,
       enhancement: 'none',
       backgroundRemoval: 'edge-connected',
       sourceKind: 'flat-background',

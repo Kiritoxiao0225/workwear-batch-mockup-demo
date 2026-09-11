@@ -22,9 +22,9 @@ describe('final artwork acceptance', () => {
   });
   it('identifies obsolete scores separately from a current pixel-size failure', () => {
     const old = { ...validation, quality: artworkQualityFixture(validation.sha256, { score: 2.56, protocol: 'foreground-white-1000-v1' }), qualityIssues: ['主体清晰度 2.56 未达标'] };
-    expect(artworkQualityAdvice(old)).toEqual(['旧检测曾将模糊度当作清晰度，请重新检测画质；无需重新制作图案']);
+    expect(artworkQualityAdvice(old)).toEqual([]);
     const insufficient = { ...validation, quality: artworkQualityFixture(validation.sha256, { score: 97.44, rawBlur: 2.56, requiredScale: 1.96 }) };
-    expect(artworkQualityAdvice(insufficient)).toEqual(['有效像素不足：放大到 1000px 需 1.96 倍，超过 1.25 倍']);
+    expect(artworkQualityAdvice(insufficient)).toEqual([]);
   });
   it('does not let sharp composition text hide a poor logo component or an API failure', () => {
     const passing = { ...validation, quality: artworkQualityFixture(validation.sha256, { score: 80, requiredScale: 1.25 }) };

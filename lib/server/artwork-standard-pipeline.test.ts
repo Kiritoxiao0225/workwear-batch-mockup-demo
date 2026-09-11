@@ -8,7 +8,6 @@ import { measureArtworkQuality, artworkSha256 } from '@/lib/server/artwork-quali
 import { redrawEligibility, type RedrawInspection } from '@/lib/server/ark-artwork-processing';
 import type { ArtworkProgressEvent } from '@/lib/artwork-progress';
 import { ArtworkCutoutPendingError } from './artwork-cutout';
-import { artworkSeparationPrompt } from '@/lib/artwork-generation-background';
 
 const url = (bytes: Buffer) => `data:image/png;base64,${bytes.toString('base64')}`;
 async function sample(transparent = false) {
@@ -16,13 +15,13 @@ async function sample(transparent = false) {
 }
 async function setup(scores: number[] = [90, 90]) {
   const source = await sample(), prepared = await sample(true);
-  const request = parseArtworkPreparationRequest({ instruction: '保留图1原图案', sourceRequirementText: '保留原图', image: { dataUrl: url(source), mimeType: 'image/png', fileName: 'test.png' }, enhancementMode: 'auto' });
+  const request = parseArtworkPreparationRequest({ instruction: '保留图1原图案', sourceRequirementText: '保留原图', printPlacement: { key: 'leftChest', sizeMode: 'widthCm', widthCm: 7.62 }, image: { dataUrl: url(source), mimeType: 'image/png', fileName: 'test.png' }, enhancementMode: 'auto' });
   const measure = vi.fn(async (bytes: Buffer) => measureArtworkQuality(bytes, async () => ({ blur: 100 - (scores.shift() ?? 90), vqscore: 75, noise: 60, compressionArtifacts: 30 })));
   const fidelity = vi.fn(async (input: typeof request) => ({ status: 'prepared', draft: createLegacyArtworkDraft(url(prepared)), preprocessing: { enhancement: input.enhancementMode, backgroundRemoval: 'edge-connected' } } as ArtworkPreparationResponse));
   const generate = vi.fn<StandardArtworkServices['generate']>(async () => ({ bytes: source, model: 'test-seedream' }));
   const inspect = vi.fn(async (): Promise<RedrawInspection> => ({ type: 'flat-logo', textReadable: true, graphicReadable: true, hasWhiteForeground: false, recognizedText: '', reasons: ['测试图为平面纯色'] }));
   const services: StandardArtworkServices = { measure, fidelity, generate, inspect,
-    inspectSource: vi.fn<StandardArtworkServices['inspectSource']>(async () => ({ version: 'artwork-source-v1', kind: 'flat-artwork', targetDescription: '独立平面 Logo', needsReconstruction: false, selection: { scope: 'full-image' }, evidence: ['图案已独立，无实物载体'], uncertainDetails: [] })), cutout: vi.fn(async () => prepared), saveReport: vi.fn(), saveImage: vi.fn(), saveGeneration: vi.fn(), resolveReferenceColor: vi.fn(async () => { throw new Error('Unexpected reference color inspection'); }), verifyEdits: vi.fn(async () => { throw new Error('Unexpected edit verification'); }),
+    inspectSource: vi.fn<StandardArtworkServices['inspectSource']>(async () => ({ version: 'artwork-source-v1', kind: 'flat-artwork', targetDescription: '独立平面 Logo', needsReconstruction: false, recognizedContent: { text: [], layout: '原排版', colors: ['红色'], structure: '平面图形' }, selection: { scope: 'full-image' }, evidence: ['图案已独立，无实物载体'], uncertainDetails: [] })), cutout: vi.fn(async () => prepared), saveReport: vi.fn(), saveImage: vi.fn(), saveGeneration: vi.fn(), resolveReferenceColor: vi.fn(async () => { throw new Error('Unexpected reference color inspection'); }), verifyEdits: vi.fn(async () => { throw new Error('Unexpected edit verification'); }),
     verifyText: vi.fn<StandardArtworkServices['verifyText']>(async (bytes, targetText) => ({ version: 'artwork-text-component-v1', outputSha256: artworkSha256(bytes), targetText,
       recognizedText: targetText, model: 'test-inspector', status: 'passed', evidence: '只有目标文字' })) };
   return { request, services, measure, fidelity, generate, inspect, source };
@@ -95,7 +94,7 @@ describe('executed artwork standard', () => {
     expect(t.services.verifyText).not.toHaveBeenCalled();
   });
   it.each(['failed', 'uncertain', 'unavailable', 'wrong-hash', 'missing-check'] as const)(
-    'retains the paid component and does not save completed artwork when internal deletion is %s', async status => {
+    'composes and saves with a warning when internal deletion inspection is %s', async status => {
       const t = await setup();
       t.services.verifyEdits = vi.fn<StandardArtworkServices['verifyEdits']>(async (source, output, requirements) => {
         if (status === 'unavailable') throw new Error('检查超时');
@@ -105,13 +104,12 @@ describe('executed artwork standard', () => {
             requirement, status: status === 'failed' || status === 'uncertain' ? status : 'passed', evidence: '未删除或无法确认',
           })) };
       });
-      const error = await prepareStandardArtwork({ ...t.request, instruction: '去掉眼睛，新增书法文字“小景是牙医”', exactText: '小景是牙医' }, t.services).catch(error => error);
-      expect(error.candidate).toMatchObject({ stage: 'edit-review', requiresEditVerification: true });
-      expect(error.candidate.reason).toContain('不会自动再次生图');
-      expect(t.generate).toHaveBeenCalledOnce();
-      expect(t.services.verifyText).not.toHaveBeenCalled();
-      expect(t.services.saveReport).not.toHaveBeenCalled();
-      expect(t.services.saveGeneration).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ status: 'needs-review', component: 'graphic-removal' }));
+      const result = await prepareStandardArtwork({ ...t.request, instruction: '去掉眼睛，新增书法文字“小景是牙医”', exactText: '小景是牙医' }, t.services);
+      expect(result.status).toBe('prepared');
+      expect(result.draft.preprocessing.routingReport?.contentReview?.warnings.length).toBeGreaterThan(0);
+      expect(t.generate).toHaveBeenCalledTimes(2);
+      expect(t.services.verifyText).toHaveBeenCalledOnce();
+      expect(t.services.saveReport).toHaveBeenCalledOnce();
     });
   it('clears the old lettering before adding replacement text, keeping one graphic layer', async () => {
     const t = await setup();
@@ -132,33 +130,33 @@ describe('executed artwork standard', () => {
     expect(t.services.verifyText).not.toHaveBeenCalled();
   });
 
-  it.each(['failed', 'uncertain', 'unavailable', 'wrong-hash'] as const)('stops replacement before making new text when old-text removal is %s', async status => {
+  it.each(['failed', 'uncertain', 'unavailable', 'wrong-hash'] as const)('continues replacing text with a warning when old-text inspection is %s', async status => {
     const t = await setup();
     t.services.verifyEdits = vi.fn<StandardArtworkServices['verifyEdits']>(async (source, output, requirements) => {
       if (status === 'unavailable') throw new Error('检查暂不可用');
       return { version: 'artwork-edit-check-v1', sourceSha256: artworkSha256(source), outputSha256: status === 'wrong-hash' ? 'stale' : artworkSha256(output), model: 'test',
         checks: requirements.map(requirement => ({ requirement, status: status === 'wrong-hash' ? 'passed' : status, evidence: '旧字仍在或无法看清' })) };
     });
-    const error = await prepareStandardArtwork({ ...t.request, instruction: '将原文字替换为“康悦”，使用书法字体', exactText: '康悦' }, t.services).catch(error => error);
-    expect(error.candidate).toMatchObject({ stage: 'edit-review', requiresEditVerification: true });
-    expect(t.generate).toHaveBeenCalledOnce();
-    expect(t.services.verifyText).not.toHaveBeenCalled();
-    expect(t.services.saveReport).not.toHaveBeenCalled();
-    expect(t.services.saveGeneration).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ status: 'needs-review', component: 'text-base' }));
+    const result = await prepareStandardArtwork({ ...t.request, instruction: '将原文字替换为“康悦”，使用书法字体', exactText: '康悦' }, t.services);
+    expect(result.status).toBe('prepared');
+    expect(result.draft.preprocessing.routingReport?.contentReview?.warnings.length).toBeGreaterThan(0);
+    expect(t.generate).toHaveBeenCalledTimes(2);
+    expect(t.services.verifyText).toHaveBeenCalledOnce();
+    expect(t.services.saveReport).toHaveBeenCalledOnce();
   });
 
-  it.each(['failed', 'uncertain', 'unavailable', 'wrong-hash'] as const)('does not compose a styled-text component with a failed content contract: %s', async status => {
+  it.each(['failed', 'uncertain', 'unavailable', 'wrong-hash'] as const)('composes a styled-text component with an inspection warning: %s', async status => {
     const t = await setup();
     t.services.verifyText = vi.fn<StandardArtworkServices['verifyText']>(async (bytes, targetText) => {
       if (status === 'unavailable') throw new Error('检查暂不可用');
       return { version: 'artwork-text-component-v1', outputSha256: status === 'wrong-hash' ? 'stale' : artworkSha256(bytes), targetText,
         recognizedText: targetText, model: 'test', status: status === 'wrong-hash' ? 'passed' : status, evidence: '文字上方夹带了Logo或无法确认' };
     });
-    const error = await prepareStandardArtwork({ ...t.request, instruction: '保留原字，新增书法文字“康悦”', exactText: '康悦' }, t.services).catch(error => error);
-    expect(error.candidate).toMatchObject({ stage: 'edit-review', requiresEditVerification: true });
+    const result = await prepareStandardArtwork({ ...t.request, instruction: '保留原字，新增书法文字“康悦”', exactText: '康悦' }, t.services);
+    expect(result.status).toBe('prepared');
+    expect(result.draft.preprocessing.routingReport?.contentReview?.warnings.length).toBeGreaterThan(0);
     expect(t.generate).toHaveBeenCalledOnce();
-    expect(t.services.verifyEdits).not.toHaveBeenCalled();
-    expect(t.services.saveReport).not.toHaveBeenCalled();
+    expect(t.services.saveReport).toHaveBeenCalledOnce();
     expect(t.services.saveImage).toHaveBeenCalledWith(expect.any(String), 'styled-text-0-original', t.source);
   });
 
@@ -258,7 +256,7 @@ describe('executed artwork standard', () => {
     const cutoutGate = new Promise<void>(resolve => { releaseCutout = resolve; });
     const finalGate = new Promise<void>(resolve => { releaseFinal = resolve; });
     t.measure.mockReset().mockImplementationOnce(async () => { await sourceGate; return sourceQuality; })
-      .mockImplementationOnce(async () => { await finalGate; return finalQuality; });
+      .mockImplementationOnce(async () => finalQuality).mockImplementationOnce(async () => { await finalGate; return finalQuality; });
     t.services.cutout = vi.fn(async () => { await cutoutGate; return prepared; });
     const events: ArtworkProgressEvent[] = [];
     const complete = vi.fn();
@@ -276,7 +274,7 @@ describe('executed artwork standard', () => {
     releaseFinal();
     const result = await run;
     expect(result.draft.graphic.sourceUrl).toBe(url(prepared));
-    expect(result.preprocessing.timings?.map(timing => timing.stage).sort()).toEqual(['cutout', 'generation', 'resultQuality', 'sourceQuality']);
+    expect(result.preprocessing.timings?.map(timing => timing.stage).sort()).toEqual(['cutout', 'generation', 'inspection', 'resultPixels', 'resultPixels', 'sourcePixels']);
     expect(events.some(event => event.type === 'progress' && event.generationFinished)).toBe(true);
   });
 
@@ -316,7 +314,7 @@ describe('executed artwork standard', () => {
     const whiteOriginal = await sharp(original).flatten({ background: '#ffffff' }).png().toBuffer();
     t.generate.mockResolvedValue({ bytes: whiteOriginal, model: 'gpt-image-2' });
     t.services.cutout = vi.fn(async () => original);
-    const result = await prepareStandardArtwork({ ...t.request, generationPrompt: '保留图1的内容，制作完整平面图案，纯白背景（#FFFFFF）。', artworkMethod: 'generate', instruction: '制作新的完整图案' }, t.services);
+    const result = await prepareStandardArtwork({ ...t.request, printPlacement: { key: 'leftChest', sizeMode: 'widthCm', widthCm: 7 }, generationPrompt: '保留图1的内容，制作完整平面图案，纯白背景（#FFFFFF）。', artworkMethod: 'generate', instruction: '制作新的完整图案' }, t.services);
     expect(result.preprocessing).toMatchObject({ nativeOutput: false, modelLayoutPreserved: true, backgroundRemoval: 'product' });
     expect(result.draft.graphic.sourceUrl).toBe(url(original));
     expect(result.draft.text).toBeNull();
@@ -362,7 +360,8 @@ describe('executed artwork standard', () => {
     expect(result.draft.preprocessing.routingReport?.model).toBe('gpt-image-2');
     expect(result.draft.preprocessing.routingReport?.operations).toContain(generationNote);
     expect(t.fidelity).not.toHaveBeenCalled();
-    expect(t.generate).toHaveBeenCalledExactlyOnceWith(artworkSeparationPrompt('【输入图片对应关系】正文图号均为 WPS 原图号。\n输入图1 = WPS 图2（内容素材）\n输入图2 = WPS 图3（参考素材）\n\n保留图2的内容，制作完整平面图案，纯白背景（#FFFFFF）。'), [t.request.image.dataUrl, reference], { background: 'auto' });
+    expect(t.generate).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('输入图2 = WPS 图3（参考素材）'), [t.request.image.dataUrl, reference], { background: 'auto' });
+    expect(t.generate.mock.calls[0][0]).toContain('【原图具体内容】');
     expect(result.draft.graphic.sourceUrl).toBe(url(await sample(true)));
     expect(result.preprocessing).toMatchObject({ nativeOutput: false, modelLayoutPreserved: true, backgroundRemoval: 'product' });
     expect(t.services.cutout).toHaveBeenCalledExactlyOnceWith(t.source, { scene: 'product', crop: false });
@@ -424,9 +423,9 @@ describe('executed artwork standard', () => {
     expect(t.generate).not.toHaveBeenCalled();
     expect(result.draft.preprocessing.routingReport?.executedMethod).toBe('preserve');
   });
-  it('repairs once and stops when the repaired graphic passes', async () => {
+  it('enhances a small subject once without inspecting its score', async () => {
     const t = await setup([47.62, 85]);
-    const result = await prepareStandardArtwork(t.request, t.services);
+    const result = await prepareStandardArtwork({ ...t.request, printPlacement: undefined }, t.services);
     expect(t.fidelity).toHaveBeenCalledTimes(1);
     expect(t.fidelity.mock.calls[0][0].enhancementMode).toBe('professional');
     expect(t.inspect).not.toHaveBeenCalled();
@@ -446,62 +445,22 @@ describe('executed artwork standard', () => {
     expect(result.draft.preprocessing.routingReport?.operations).toContain('圆形外沿净边（circular-edge-v1）');
     expect(t.generate).not.toHaveBeenCalled();
   });
-  it('repairs a cutout that deteriorated even if the source passed', async () => {
-    const t = await setup([90, 62, 88]);
+  it('ignores a zero post-score and never repeats enhancement or redraws automatically', async () => {
+    const t = await setup([90, 0]);
     const result = await prepareStandardArtwork(t.request, t.services);
-    expect(t.fidelity.mock.calls.map(([request]) => request.enhancementMode)).toEqual(['none', 'professional']);
-    expect(result.draft.preprocessing?.routingReport?.repair?.score).toBe(88);
+    expect(t.fidelity.mock.calls.map(([request]) => request.enhancementMode)).toEqual(['none']);
     expect(t.generate).not.toHaveBeenCalled();
+    expect(result.status).toBe('prepared');
+    expect(result.draft.preprocessing.routingReport?.reviewReasons).toEqual([]);
   });
-  it('uses exactly one B redraw after failed repair and a positive source check', async () => {
-    const t = await setup([47, 63, 91]);
-    t.inspect.mockResolvedValue({ type: 'flat-logo', textReadable: true, graphicReadable: true, hasWhiteForeground: false, recognizedText: '测试', structureDescription: '红色图块在灰色横条上方', reasons: [] });
-    const generate = vi.fn<StandardArtworkServices['generate']>(async () => ({ bytes: t.source, model: 'test-seedream' }));
-    t.services.generate = generate;
-    const result = await prepareStandardArtwork(t.request, t.services);
-    const report = result.draft.preprocessing!.routingReport!;
-    expect(t.fidelity).toHaveBeenCalledTimes(1);
-    expect(generate).toHaveBeenCalledTimes(1);
-    expect(report).toMatchObject({ executedMethod: 'redraw', repair: { score: 63 }, graphic: { score: 91 }, reviewReasons: [] });
-    expect(report.graphic.sha256).toBe(artworkSha256(Buffer.from(result.draft.graphic.sourceUrl.split(',')[1], 'base64')));
-    const [prompt, images] = generate.mock.calls[0];
-    expect(prompt).toContain('#B41230');
-    expect(prompt).toContain('#323B40');
-    expect(prompt).toContain('测试');
-    expect(prompt).toContain('红色图块在灰色横条上方');
-    const modelInput = Buffer.from(images[0].split(',')[1], 'base64');
-    expect(await sharp(modelInput).metadata()).toMatchObject({ format: 'png', width: 972, height: 722 });
-    expect(report.redraw).toMatchObject({ status: 'completed', stage: 'measurement', model: 'test-seedream', inputSha256: artworkSha256(modelInput), promptHash: artworkPromptHash(prompt) });
-    expect(report.promptHash).toBe(artworkPromptHash(prompt));
-    expect(result.draft.preprocessing.promptHash).toBe(report.promptHash);
-  });
-  it.each(['photo', 'gradient', 'unknown'] as const)('does not redraw %s after repair fails', async type => {
-    const t = await setup([47, 60]);
-    t.inspect.mockResolvedValue({ type, textReadable: true, graphicReadable: true, hasWhiteForeground: false, recognizedText: '', reasons: [] });
-    const result = await prepareStandardArtwork(t.request, t.services);
+  it('enhances an undersized subject once, retains an insufficient output with a warning and never redraws', async () => {
+    const t = await setup([91, 0]);
+    const result = await prepareStandardArtwork({ ...t.request, printPlacement: { key: 'leftChest', sizeMode: 'widthCm', widthCm: 12.7 } }, t.services);
+    expect(t.fidelity.mock.calls.map(([request]) => request.enhancementMode)).toEqual(['professional']);
     expect(t.generate).not.toHaveBeenCalled();
-    expect(result.draft.preprocessing?.routingReport?.reviewReasons.length).toBeGreaterThan(0);
-  });
-  it('does not redraw strictly preserved artwork', async () => {
-    const t = await setup([47, 60]);
-    await prepareStandardArtwork({ ...t.request, processingRoute: 'fidelity' }, t.services);
     expect(t.inspect).not.toHaveBeenCalled();
-    expect(t.generate).not.toHaveBeenCalled();
-  });
-  it('keeps the measured A candidate if B post-measurement fails and does not retry', async () => {
-    const t = await setup([47, 60]);
-    const ordinaryMeasure = t.services.measure;
-    let calls = 0;
-    t.services.measure = async bytes => { if (++calls === 3) throw new Error('test score timeout'); return ordinaryMeasure(bytes); };
-    const result = await prepareStandardArtwork(t.request, t.services);
-    const report = result.draft.preprocessing!.routingReport!;
-    expect(t.generate).toHaveBeenCalledTimes(1);
-    expect(report.executedMethod).toBe('preserve');
-    expect(report.graphic.sha256).toBe(artworkSha256(Buffer.from(result.draft.graphic.sourceUrl.split(',')[1], 'base64')));
-    expect(report.reviewReasons.join(' ')).toContain('不自动重试');
-    expect(report.redraw).toMatchObject({ status: 'failed', stage: 'measurement', model: 'test-seedream', error: 'test score timeout' });
-    expect(report.decision).toMatchObject({ state: 'review', action: 'review' });
-    expect(report.decision.reason).toContain('当前显示 A 保真候选');
+    expect(result.draft.preprocessing.routingReport?.contentReview?.warnings.join('')).toContain('细节');
+    expect(result.status).toBe('prepared');
   });
   it('uses programmatic exact text for C without generating a new logo', async () => {
     const t = await setup();
@@ -554,19 +513,13 @@ describe('executed artwork standard', () => {
 });
 
 describe('operator-selected artwork methods', () => {
-  it('executes a selected redraw only after failed repair and source eligibility checks', async () => {
-    const t = await setup([47, 60, 91]);
+  it.each([0, 95])('executes explicitly selected reconstruction without a quality prerequisite: %s', async score => {
+    const t = await setup([score, score]);
     const result = await prepareStandardArtwork({ ...t.request, artworkMethod: 'redraw' }, t.services);
     expect(result.draft.preprocessing.routingReport?.executedMethod).toBe('redraw');
-    expect(t.fidelity).toHaveBeenCalledTimes(1);
-    expect(t.inspect).toHaveBeenCalledTimes(1);
-    expect(t.generate).toHaveBeenCalledTimes(1);
-  });
-  it('does not substitute A silently when the operator selected B', async () => {
-    const t = await setup([90, 90]);
-    await expect(prepareStandardArtwork({ ...t.request, artworkMethod: 'redraw' }, t.services)).rejects.toThrow('未执行重绘');
-    expect(t.generate).not.toHaveBeenCalled();
-    expect(t.services.saveReport).not.toHaveBeenCalled();
+    expect(t.fidelity).not.toHaveBeenCalled();
+    expect(t.inspect).not.toHaveBeenCalled();
+    expect(t.generate).toHaveBeenCalledOnce();
   });
   it('rejects a preservation selection that would discard the requested text before processing', async () => {
     const t = await setup();
@@ -595,6 +548,7 @@ it('blocks legacy whole-image generation before paid measurement until a final p
 
 const objectAssessment = { version: 'artwork-source-v1' as const, kind: 'artwork-on-object' as const,
   targetDescription: '图二衣袋上方的红色弧形中文和中心医疗标志', needsReconstruction: true,
+  recognizedContent: { text: [], layout: '上方弧形文字', colors: ['红色'], structure: '医疗标志' },
   evidence: ['衣料上有蓝色花纹，红色刺绣受褶皱和透视影响'], uncertainDetails: ['原文字个别笔画不清'] };
 function verifyReconstruction(t: Awaited<ReturnType<typeof setup>>, status: 'passed' | 'failed' | 'uncertain' = 'passed') {
   t.services.verifyEdits = vi.fn<StandardArtworkServices['verifyEdits']>(async (source, result, requirements) => ({
@@ -639,8 +593,7 @@ describe('reconstruction of artwork photographed on objects', () => {
     t.services.verifyEdits = vi.fn(async () => { throw new TypeError('fetch failed', { cause: Object.assign(new Error('private host'), { code: 'ECONNRESET' }) }); });
     const result = await prepareStandardArtwork({ ...t.request, sourceAssessment: objectAssessment }, t.services);
     const warnings = result.draft.preprocessing.routingReport?.contentReview?.warnings.join(' ');
-    expect(warnings).toContain('连接被中途断开');
-    expect(warnings).toContain('仍可保存和编辑');
+    expect(warnings).toContain('自动核对未完成，请人工核查');
     expect(warnings).not.toContain('private');
     expect(t.generate).toHaveBeenCalledOnce();
     expect(t.services.saveReport).toHaveBeenCalledOnce();

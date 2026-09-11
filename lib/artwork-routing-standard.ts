@@ -1,6 +1,6 @@
 /** Business routing rules shared by the production UI and processing callers. */
 export const ARTWORK_ROUTING_STANDARD = {
-  version: 'artwork-routing-v3',
+  version: 'artwork-routing-v4',
   clarityMinimum: 80,
   directScaleMaximum: 1.25,
   repairLimit: 1,
@@ -12,17 +12,17 @@ export type ArtworkMethod = 'preserve' | 'redraw' | 'compose' | 'generate';
 export type ArtworkIntentKind = 'preserve' | 'compose' | 'generate' | 'unknown';
 export type ArtworkRuleCheck = { label: string; value: string; state: 'pass' | 'fail' | 'pending' };
 
-const { clarityMinimum, directScaleMaximum, repairLimit } = ARTWORK_ROUTING_STANDARD;
+export const ARTWORK_PIXEL_PROTOCOL = 'foreground-native-pixels-v1';
 
 export const ARTWORK_METHODS: Record<ArtworkMethod, { code: string; label: string; criteria: string[]; operation: string }> = {
   preserve: {
     code: 'A', label: '原图保真',
-    criteria: ['目标已是独立平面图案，原结构与排版可直接沿用；明确保留整图时按原图处理', `清晰度 ≥ ${clarityMinimum} 且目标放大 ≤ ${directScaleMaximum} 倍：直接去底`, `清晰度 < ${clarityMinimum} 或目标放大 > ${directScaleMaximum} 倍：先保真修复 ${repairLimit} 次，再评分`],
+    criteria: ['目标已是独立平面图案，原结构与排版可直接沿用；明确保留整图时按原图处理', '按有效主体像素和实际使用尺寸判断是否需要放大', '像素不足或确认存在模糊、压缩损伤时，最多保真增强一次；仍不足只提醒'],
     operation: '只去底、去杂点；需要时保真增强，不重新设计。',
   },
   redraw: {
     code: 'B', label: '原设计重建',
-    criteria: ['保留原设计；目标位于实物表面或需要校正透视、褶皱时，直接重建独立图案', `独立低清 Logo 先保真修复 ${repairLimit} 次，仍未达标且满足纯色条件时重建`, '先生成图案，再去底并核对文字、标志与载体残留', '纯色净化仅适用于已确认的纯色平面图案，保留设计本身的白色与渐变'],
+    criteria: ['保留原设计；目标位于实物表面或需要校正透视、褶皱时，直接重建独立图案', '低清本身只触发保真增强；仅实拍还原或明确重建要求使用模型', '先生成图案，再去底并核对文字、标志与载体残留', '纯色净化仅适用于已确认的纯色平面图案，保留设计本身的白色与渐变'],
     operation: '按原设计重建独立图案，再去底并核对内容。',
   },
   compose: {
@@ -38,7 +38,7 @@ export const ARTWORK_METHODS: Record<ArtworkMethod, { code: string; label: strin
 };
 
 export type ArtworkClarityMeasurement = {
-  score: number;
+  score: number | null;
   protocol: string;
 };
 
@@ -47,12 +47,14 @@ export type ArtworkQualityMeasurement = ArtworkClarityMeasurement & {
   rawBlur?: number;
   sha256: string;
   checkedAt: string;
-  vqscore: number;
+  vqscore: number | null;
   noise: number | null;
   compressionArtifacts: number | null;
   subjectWidth: number;
   subjectHeight: number;
   requiredScale: number;
+  targetLongEdge?: number;
+  targetBasis?: string;
 };
 
 /** Verified with identical current/blurred inputs; this is a conversion, not a provider clarity score. */
@@ -62,18 +64,19 @@ export function clarityFromStandardBlur(blur: number) {
 }
 
 export function artworkClarityLabel(quality: ArtworkClarityMeasurement | null | undefined) {
-  if (!quality) return '未检测';
+  if (!quality) return '未记录';
+  if (quality.protocol === ARTWORK_PIXEL_PROTOCOL) return '按实际像素处理，未调用评分';
   if (quality.protocol !== ARTWORK_ROUTING_STANDARD.scoreProtocol) {
-    return `旧评分口径待更新（原始 blur ${Number.isFinite(quality.score) ? quality.score.toFixed(2) : '无效'}）`;
+    return `旧评分口径待更新（原始 blur ${quality.score !== null && Number.isFinite(quality.score) ? quality.score.toFixed(2) : '无效'}）`;
   }
-  return `${quality.score.toFixed(2)} 分（换算）`;
+  return `${quality.score?.toFixed(2) ?? '未记录'} 分（历史换算）`;
 }
 
 export type ArtworkRoutingReport = {
   contentReview?: { verification?: import('./artwork-model-edits').ArtworkEditVerification; warnings: string[] };
   sourceSelection?: import('./server/artwork-source-selection').ArtworkSourceSelectionReceipt;
   timings?: import('./artwork-progress').ArtworkTiming[];
-  version: typeof ARTWORK_ROUTING_STANDARD.version | 'artwork-routing-v2';
+  version: typeof ARTWORK_ROUTING_STANDARD.version | 'artwork-routing-v3' | 'artwork-routing-v2';
   runId: string;
   requestHash: string;
   sourceSha256: string;
@@ -143,17 +146,11 @@ export type ArtworkRoutingDecision = {
 
 export function validArtworkClarity(value: ArtworkClarityMeasurement | null): number | null {
   return value?.protocol === ARTWORK_ROUTING_STANDARD.scoreProtocol
-    && Number.isFinite(value.score) && value.score >= 0 && value.score <= 100 ? value.score : null;
+    && value.score !== null && Number.isFinite(value.score) && value.score >= 0 && value.score <= 100 ? value.score : null;
 }
 
 function validScale(value: number | null) {
   return value !== null && Number.isFinite(value) && value > 0 ? value : null;
-}
-
-function scoreCheck(label: string, value: ArtworkClarityMeasurement | null): ArtworkRuleCheck {
-  const score = validArtworkClarity(value);
-  return { label, value: score === null ? value ? value.protocol !== ARTWORK_ROUTING_STANDARD.scoreProtocol ? '旧口径，待同尺度复测' : '评分无效，需重新检测' : '未检测' : `${score.toFixed(2)} / 100 · 标准 ≥ ${clarityMinimum}`,
-    state: score === null ? 'pending' : score >= ARTWORK_ROUTING_STANDARD.clarityMinimum ? 'pass' : 'fail' };
 }
 
 /** Unknown evidence never counts as a passed condition. This function makes no API calls. */
@@ -188,26 +185,14 @@ export function decideArtworkMethod(facts: ArtworkRoutingFacts): ArtworkRoutingD
       : finish(method, 'review', 'review', '方案类型已判断；补齐具体修改要求后才能执行。');
   }
 
-  const sourceScore = validArtworkClarity(facts.sourceClarity);
   const sourceScale = validScale(facts.requiredScale);
-  checks.push(scoreCheck('原图清晰度', facts.sourceClarity));
-  checks.push({ label: '目标放大', value: sourceScale === null ? '未检测有效图案像素' : `${sourceScale.toFixed(2)} 倍 · 直接使用 ≤ 1.25 倍`, state: sourceScale === null ? 'pending' : sourceScale <= ARTWORK_ROUTING_STANDARD.directScaleMaximum ? 'pass' : 'fail' });
-  if (facts.repair.attempts < ARTWORK_ROUTING_STANDARD.repairLimit) {
-    if (sourceScore === null || sourceScale === null) return finish('preserve', 'pending', 'inspect', '先检测原图清晰度和有效像素，再决定直接去底或保真修复。');
-    return sourceScore >= ARTWORK_ROUTING_STANDARD.clarityMinimum && sourceScale <= ARTWORK_ROUTING_STANDARD.directScaleMaximum
-      ? finish('preserve', 'ready', 'clean', '清晰度与有效像素均达标，直接去底。')
-      : finish('preserve', 'ready', 'repair-once', '原图未满足直接使用标准，先保真修复 1 次。');
+  checks.push({ label: '有效像素', value: sourceScale === null ? '处理前读取主体尺寸' : `目标放大 ${sourceScale.toFixed(2)} 倍；仅作增强依据`, state: sourceScale === null ? 'pending' : 'pass' });
+  if (facts.repair.attempts >= ARTWORK_ROUTING_STANDARD.repairLimit) {
+    return finish('preserve', 'ready', 'clean', '已完成一次保真增强；保留实际结果，尺寸或内容疑点作为人工核查提醒。');
   }
-
-  const repairedScore = validArtworkClarity(facts.repair.clarity);
-  const repairedScale = validScale(facts.repair.requiredScale);
-  checks.push(scoreCheck('修复后清晰度', facts.repair.clarity));
-  checks.push({ label: '修复后放大', value: repairedScale === null ? '未检测' : `${repairedScale.toFixed(2)} 倍 · 标准 ≤ 1.25 倍`, state: repairedScale === null ? 'pending' : repairedScale <= ARTWORK_ROUTING_STANDARD.directScaleMaximum ? 'pass' : 'fail' });
-  if (repairedScore === null || repairedScale === null) return finish('preserve', 'pending', 'inspect', '已有修复记录，但缺少修复后的同尺度评分；先复测，不重复修复或直接重绘。');
-  if (repairedScore >= ARTWORK_ROUTING_STANDARD.clarityMinimum && repairedScale <= ARTWORK_ROUTING_STANDARD.directScaleMaximum) return finish('preserve', 'ready', 'clean', '保真修复后已达标，沿用修复结果。');
-  if (facts.strictPreservation) return finish('preserve', 'review', 'review', '修复未达标，且已指定严格保真；需要更清晰原图或人工处理。');
-  checks.push({ label: '重绘适用性', value: facts.redrawEligibility === 'verified-flat-readable' ? '纯色平面图案，文字和图形已确认，无白色前景' : facts.redrawEligibility === 'ineligible' ? '不适用纯色图案重绘净化' : '待核对纯色类型、原文字与图形', state: facts.redrawEligibility === 'verified-flat-readable' ? 'pass' : facts.redrawEligibility === 'ineligible' ? 'fail' : 'pending' });
-  return facts.redrawEligibility === 'verified-flat-readable'
-    ? finish('redraw', 'ready', 'redraw', '保真修复仍未达标，且满足纯色图案重绘条件。')
-    : finish('redraw', 'review', 'review', '修复仍未达标；重绘适用条件未全部通过，不能自动重绘。');
+  if (sourceScale === null) return finish('preserve', 'pending', 'inspect', '先读取主体实际尺寸，再判断是否需要保真增强。');
+  const damaged = facts.sourceAssessment?.defects?.some(defect => defect.confirmed && ['blur', 'compression'].includes(defect.kind));
+  return sourceScale > 1 || damaged
+    ? finish('preserve', 'ready', 'repair-once', '主体像素不足或已识别模糊、压缩损伤，执行一次保真增强。')
+    : finish('preserve', 'ready', 'clean', '主体像素足够且没有已确认的清晰度问题，直接处理图案。');
 }

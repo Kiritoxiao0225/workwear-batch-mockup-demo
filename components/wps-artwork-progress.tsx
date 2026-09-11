@@ -3,8 +3,8 @@ import type { ArtworkTiming } from '@/lib/artwork-progress';
 
 const labels: Record<string, string> = {
   clientQueue: '页面排队', snapshotCheck: '核对制作要求', inputImages: '读取素材',
-  sourceQuality: '检查原图清晰度', generation: '生成图案（含排队）', cutout: '去除背景',
-  resultQuality: '检查成品清晰度', fidelity: '修复原图', inspection: '检查能否重画',
+  sourcePixels: '读取原主体像素', resultPixels: '读取结果像素', sourceQuality: '历史原图评分', generation: '生成图案（含排队）', cutout: '去除背景',
+  resultQuality: '检查成品清晰度', fidelity: '修复原图', inspection: '识别目标内容与问题',
   referenceColor: '读取参考图颜色', editVerification: '检查修改是否正确',
   filePersistence: '保存生成文件', layerUploads: '保存图层', layout: '排版',
   flattenedUpload: '上传排版图', save: '保存到任务',

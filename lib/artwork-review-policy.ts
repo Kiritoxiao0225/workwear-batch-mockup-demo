@@ -1,6 +1,8 @@
 import type { ArtworkEditCheck, ArtworkEditVerification } from './artwork-model-edits';
 
-export const ARTWORK_REVIEW_POLICY_VERSION = 'artwork-review-v2';
+export const ARTWORK_REVIEW_POLICY_VERSION = 'artwork-review-v3';
+export const ARTWORK_UNCERTAIN_WARNING = '可能会不一致，请人工核查';
+export const ARTWORK_INSPECTION_UNAVAILABLE_WARNING = '自动核对未完成，请人工核查';
 export type ArtworkReviewCategory = 'text' | 'color' | 'flatness' | 'structure' | 'layout' | 'background' | 'other';
 export type ArtworkReviewImpact = 'none' | 'minor' | 'material' | 'unknown';
 
@@ -16,7 +18,7 @@ export function artworkReviewDecision(verification: ArtworkEditVerification) {
   const issues = verification.checks.filter(artworkMaterialIssue);
   const reminders = verification.checks.filter(check => (check.status !== 'passed' || check.impact === 'minor') && !artworkMaterialIssue(check));
   const warnings = [...issues, ...reminders];
-  const messages = (checks: ArtworkEditCheck[]) => [...new Set(checks.map(check => check.evidence.trim()
+  const messages = (checks: ArtworkEditCheck[]) => [...new Set(checks.map(check => check.status === 'uncertain' ? ARTWORK_UNCERTAIN_WARNING : check.evidence.trim()
     .replace(/\bSOURCE\b/giu, '原图').replace(/\bRESULT\b/giu, '这次图案').replace(/[。；;\s]+$/u, '')))];
   return { version: ARTWORK_REVIEW_POLICY_VERSION, issues, warnings,
     issueMessages: messages(issues), warningMessages: messages(warnings) };

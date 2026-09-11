@@ -90,7 +90,7 @@ export function artworkRequirementFacts(input: ArtworkRequirementInput): Artwork
   };
 }
 
-export const STANDARD_ARTWORK_PROMPT_VERSION = 'artwork-standard-prompts-v15';
+export const STANDARD_ARTWORK_PROMPT_VERSION = 'artwork-standard-prompts-v16';
 export function artworkPromptHash(text: string) {
   let hash = 0x811c9dc5;
   for (let index = 0; index < text.length; index++) hash = Math.imul(hash ^ text.charCodeAt(index), 0x01000193);
@@ -128,7 +128,11 @@ export function standardArtworkPrompts(input: Omit<ArtworkPreparationRequest, 'i
   const textOperation = artworkTextOperation(input);
   const removeText = textOperation === 'replace' ? artworkTextRemovalPrompt(input) : null;
   const reconstruct = input.sourceAssessment ? artworkReconstructionPrompt(input.sourceAssessment, input.primaryImageLabel, input) : null;
-  const resolved = { generate: artworkSeparationPrompt(generate), redraw: artworkSeparationPrompt(redraw),
+  const sourceContent = input.primaryImageRole !== 'reference' && input.sourceAssessment ? [
+    `【原图具体内容】${JSON.stringify(input.sourceAssessment.recognizedContent ?? null)}。只将 certain=true 的内容视为可辨；客户明确文字优先，不确定位置不得猜字。`,
+    `【原图实际问题】${JSON.stringify(input.sourceAssessment.defects ?? [])}。先按客户要求修改对应位置，保留未要求修改的内容。`,
+  ].join('\n') : '';
+  const resolved = { generate: artworkSeparationPrompt([generate, sourceContent].filter(Boolean).join('\n')), redraw: artworkSeparationPrompt(redraw),
     reconstruct: reconstruct ? artworkSeparationPrompt(reconstruct) : null,
     styledTexts: styledTexts.map(text => ({ ...text, prompt: artworkSeparationPrompt(text.prompt) })) };
   const hash = artworkPromptHash(JSON.stringify({ version: STANDARD_ARTWORK_PROMPT_VERSION, route: input.processingRoute, ...(input.artworkMethod ? { artworkMethod: input.artworkMethod } : {}), sourceSelection: input.sourceAssessment?.selection, ...resolved, textOperation, removeText, imageMapping: canonical.imageMapping }));
