@@ -71,7 +71,7 @@ export function WpsMockupPreview({ version, units, open, adjust, disabled, pause
           {visible && <Image alt={title} fill sizes="400px" src={visible.objectUrl} unoptimized />}
           {notice && <span className="wps-preview-status" role="status">{notice}</span>}
         </button>
-        {failed && <div role="alert"><p>{failed.message}</p><p>已保存的图案和制作状态仍保留。</p>{failed.message.includes(MISSING_BODY_SCALE_MESSAGE) && <a href="/products" target="_blank" rel="noreferrer">到素材库核对腋点</a>}<button type="button" onClick={() => setRetry(value => value + 1)}>重新读取预览</button></div>}
+        {failed && <div role="alert"><p>{failed.message}</p><p>已保存的图案和制作状态仍保留。</p>{failed.message.includes(MISSING_BODY_SCALE_MESSAGE) && <a href="/products">到素材库核对腋点</a>}<button type="button" onClick={() => setRetry(value => value + 1)}>重新读取预览</button></div>}
       </>}
     <small>点击图片放大查看</small>
     <button className="wps-position-adjust" type="button" disabled={disabled} onClick={adjust}>调整位置</button>
