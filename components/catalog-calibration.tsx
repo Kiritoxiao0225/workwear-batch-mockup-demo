@@ -125,7 +125,9 @@ export function CatalogCalibration({ detail, preview, style, user, close, saved,
   const [drawingPositionKey, setDrawingPositionKey] = useState<PositionKey | null>(null);
   const [manualBoundaries, setManualBoundaries] = useState<Set<string>>(new Set());
   const [selectedKey, setSelectedKey] = useState<PositionKey | null>(null);
-  const [reviewedViews, setReviewedViews] = useState<Set<string>>(new Set());
+  const [reviewed, setReviewed] = useState(false);
+  const savingRef = useRef(false);
+  const [saveNotice, setSaveNotice] = useState('');
   const dirtyRef = useRef(new Set<string>());
   const [specs, setSpecs] = useState<Record<string, PlacementStandard>>(() => Object.fromEntries(detail.views.map(v => [v.id, v.latest?.specification ?? preview.faces.find(f => f.viewId === v.id)!.specification])));
   const [activeId, setActiveId] = useState(detail.views[0].id);
@@ -153,7 +155,7 @@ export function CatalogCalibration({ detail, preview, style, user, close, saved,
         setSpecs(current => ({ ...current, [recognized.viewId]: recognized.specification }));
         setRecognizedFaces(current => ({ ...current, [recognized.viewId]: { hasFrame: recognized.hasFrame, basis: recognized.basis } }));
         if (recognized.hasFrame) { dirtyRef.current.add(recognized.viewId); setDirtyViews(new Set(dirtyRef.current)); }
-        setReviewedViews(current => { const next = new Set(current); next.delete(recognized.viewId); return next; });
+        setReviewed(false); setSaveNotice('');
         setLayer('placement');
       } catch (error) { if (active) setError(`自动识别未完成：${error instanceof Error ? error.message : String(error)}。可重试或手动框选。`); }
       finally { if (active) setRecognizing(false); }
@@ -171,12 +173,16 @@ export function CatalogCalibration({ detail, preview, style, user, close, saved,
   const historical = view.history.find(v => v.id === historyId);
   const spec = historical?.specification ?? specs[activeId];
   const editable = user.role !== 'viewer' && detail.isCurrent && !historical && !busy && !recognizing;
-  function change(next: PlacementStandard, id = activeId) { setSpecs(current => ({ ...current, [id]: next })); dirtyRef.current.add(id); setDirtyViews(new Set(dirtyRef.current)); setReviewedViews(current => { const next = new Set(current); next.delete(id); return next; }); }
+  function change(next: PlacementStandard, id = activeId) { setSpecs(current => ({ ...current, [id]: next })); dirtyRef.current.add(id); setDirtyViews(new Set(dirtyRef.current)); setReviewed(false); setSaveNotice(''); }
   function selectView(id: string) { setActiveId(id); setHistoryId(''); }
   const currentPosition = spec.positions.find(p => p.key === selectedKey) ?? spec.positions[0];
   const canReuse = !dirty && !busy && !historical && detail.isCurrent && detail.views.some(v => v.latest?.status === 'confirmed' && v.latest.origin === 'manual' && v.latest.id === v.confirmedId);
   const currentSuggestion = preview.faces.find(f => f.viewId === view.id)!;
   const needsBoundary = !view.latest && !currentSuggestion.frame && !manualBoundaries.has(view.id) && !recognizedFaces[view.id]?.hasFrame;
+  const facesLabel = detail.views.length > 1 ? '正反面' : detail.views[0].face === 'front' ? '正面' : '背面';
+  const missingBoundaries = detail.views.filter(v => !v.latest && !preview.faces.find(f => f.viewId === v.id)?.frame && !manualBoundaries.has(v.id) && !recognizedFaces[v.id]?.hasFrame);
+  const incompleteFaces = detail.views.filter(v => missingBoundaries.includes(v) || !specs[v.id]?.positions.length);
+  const confirmationIssue = incompleteFaces.length ? `请先补全${incompleteFaces.map(v => v.face === 'front' ? '正面' : '背面').join('、')}的衣服边界和位置标记。` : '';
   function finishBoundary(id: string, box: Box) {
     try {
       if (drawingPositionKey) {
@@ -197,13 +203,19 @@ export function CatalogCalibration({ detail, preview, style, user, close, saved,
     setLayer('placement');
   }
   async function save(confirm: boolean) {
-    setBusy(true); setError('');
+    if (savingRef.current) return;
+    savingRef.current = true; setBusy(true); setError(''); setSaveNotice('');
+    let savedResponse = false;
     try {
-      const response = await fetchApi('/api/catalog/standards', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ viewId: view.id, assetVersionId: detail.assetVersionId, expectedRevision: view.revision, specification: spec, confirm }) });
+      const response = await fetchApi('/api/catalog/standards', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ assetVersionId: detail.assetVersionId, confirm,
+        views: detail.views.map(v => ({ viewId: v.id, expectedRevision: v.revision, specification: specs[v.id] })) }) });
       await readApiJson(response, '保存位置失败');
-      dirtyRef.current.delete(activeId); setDirtyViews(new Set(dirtyRef.current)); await saved(detail.id);
-    } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
-    finally { setBusy(false); }
+      savedResponse = true;
+      dirtyRef.current.clear(); setDirtyViews(new Set()); setReviewed(false);
+      await saved(detail.id);
+      setSaveNotice(confirm ? `${facesLabel}位置已一起确认，可应用到同款其他颜色。` : `${facesLabel}草稿已一起保存。`);
+    } catch (error) { setError(`${savedResponse ? `${facesLabel}已保存，但页面未能重新读取：` : ''}${error instanceof Error ? error.message : String(error)}`); }
+    finally { savingRef.current = false; setBusy(false); }
   }
   function dismiss() { if (dirty && !window.confirm('尚有未保存的位置修改，确认关闭？')) return; close(); }
   if (reuse) return <CatalogReuse variantId={detail.id} close={() => setReuse(false)} saved={() => saved(detail.id)} />;
@@ -232,7 +244,7 @@ export function CatalogCalibration({ detail, preview, style, user, close, saved,
       </fieldset>
       <details><summary>原图与底图版本</summary><button type="button" className="button" onClick={() => setImagePreview(true)}>放大查看衣服</button><p className="cal-hint">原文件按名称匹配，仅作来源候选；未冒充逐面人工复核结果。</p>{detail.sources.map((source, i) => <a className="cal-source-link" key={`${source.url}-${i}`} href={source.url} target="_blank" rel="noreferrer">{source.filename} ↗</a>)}{detail.versions.map(v => <p className="cal-hint" key={v.id}><button type="button" className="button" onClick={() => { if (!dirty || window.confirm('切换底图版本将放弃未保存修改，继续？')) loadVersion(v.id); }}>底图 v{v.version}{v.id === detail.assetVersionId ? ' · 正在查看' : ''}</button> · {v.sha256.slice(0, 12)}</p>)}<p className="cal-hint">{detail.sha256}</p>{user.role !== 'viewer' && detail.isCurrent && <button type="button" className="button" onClick={() => { if (!dirty || window.confirm('将放弃尚未保存的校准修改，继续上传新版底图？')) replace(); }}>上传新版底图</button>}</details>
     </aside></div>
-    <footer className="catalog-dialog-foot cal-confirm-footer"><div className="cal-confirm-copy">{historical || !detail.isCurrent ? <span>历史版本只读</span> : <><label className="catalog-check"><input type="checkbox" checked={reviewedViews.has(activeId)} disabled={!editable || needsBoundary || !spec.positions.length || drawingBoundaryId !== null} onChange={event => setReviewedViews(current => { const next = new Set(current); if (event.target.checked) next.add(activeId); else next.delete(activeId); return next; })} />已核对{view.face === 'front' ? '正面' : '背面'}衣服边界、位置点和避让区域</label><small>正反面分别保存；确认后可应用到同款其他颜色。</small></>}</div><div><button className="button" disabled={!editable || needsBoundary || drawingBoundaryId !== null} onClick={() => void save(false)} type="button">{busy ? '保存中…' : `保存${view.face === 'front' ? '正面' : '背面'}草稿`}</button><button className="button primary" disabled={!editable || needsBoundary || !spec.positions.length || drawingBoundaryId !== null || !reviewedViews.has(activeId)} onClick={() => void save(true)} type="button">确认{view.face === 'front' ? '正面' : '背面'}位置</button>{user.role !== 'viewer' && style.colors.length > 1 && <button className="button" type="button" disabled={!canReuse} title="确认至少一面的位置后，查看同款其他颜色的套用预览" onClick={() => setReuse(true)}>应用到同款其他颜色</button>}</div></footer>
+    <footer className="catalog-dialog-foot cal-confirm-footer"><div className="cal-confirm-copy">{historical || !detail.isCurrent ? <span>历史版本只读</span> : <><label className="catalog-check"><input type="checkbox" checked={reviewed} disabled={!editable || !!confirmationIssue || drawingBoundaryId !== null} onChange={event => setReviewed(event.target.checked)} />已核对{facesLabel}衣服边界、位置点和避让区域</label><small>{confirmationIssue || `一次保存${facesLabel}的全部调整；确认后可应用到同款其他颜色。`}</small>{saveNotice && <small role="status">{saveNotice}</small>}</>}</div><div><button className="button" disabled={!editable || missingBoundaries.length > 0 || drawingBoundaryId !== null} onClick={() => void save(false)} type="button">{busy ? '保存中…' : `保存${facesLabel}草稿`}</button><button className="button primary" disabled={!editable || !!confirmationIssue || drawingBoundaryId !== null || !reviewed} onClick={() => void save(true)} type="button">确认{facesLabel}位置</button>{user.role !== 'viewer' && style.colors.length > 1 && <button className="button" type="button" disabled={!canReuse} title="确认位置后，查看同款其他颜色的套用预览" onClick={() => setReuse(true)}>应用到同款其他颜色</button>}</div></footer>
 
 
   </section>{imagePreview && <CatalogImagePreview items={[detail]} initialId={detail.id} close={() => setImagePreview(false)} />}</div>;

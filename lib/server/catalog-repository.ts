@@ -120,26 +120,52 @@ export async function catalogDetail(variantId: string, assetVersionId?: string):
   };
 }
 export const saveStandardSchema = z.object({ viewId: z.uuid(), assetVersionId: z.uuid(), expectedRevision: z.number().int().nonnegative(), confirm: z.boolean(), specification: standardSchema }).strict();
+export const saveStandardBatchSchema = z.object({
+  assetVersionId: z.uuid(), confirm: z.boolean(),
+  views: z.array(saveStandardSchema.omit({ assetVersionId: true, confirm: true })).min(1).max(2),
+}).strict();
 export async function savePlacementStandard(raw: unknown, actor: CatalogUser) {
-  if (actor.role === 'viewer') throw new CatalogHttpError(403, '当前账号只有查看权限');
   const input = saveStandardSchema.parse(raw);
+  const result = await saveStandards([input], actor, false);
+  return { variantId: result.variantId, ...result.standards[0] };
+}
+export async function savePlacementStandardBatch(raw: unknown, actor: CatalogUser) {
+  const input = saveStandardBatchSchema.parse(raw);
+  return saveStandards(input.views.map(view => ({ ...view, assetVersionId: input.assetVersionId, confirm: input.confirm })), actor, true);
+}
+async function saveStandards(inputs: z.infer<typeof saveStandardSchema>[], actor: CatalogUser, allFaces: boolean) {
+  if (actor.role === 'viewer') throw new CatalogHttpError(403, '当前账号只有查看权限');
+  if (new Set(inputs.map(input => input.viewId)).size !== inputs.length) throw new CatalogHttpError(400, '同一个面不能重复保存');
+  const assetVersionId = inputs[0].assetVersionId;
   return catalogTransaction(async client => {
-    const owner = await client.query('SELECT v.style_id FROM garment_views g JOIN garment_asset_versions a ON a.id=g.asset_version_id JOIN garment_variants v ON v.id=a.variant_id WHERE g.id=$1', [input.viewId]);
-    if (!owner.rowCount) throw new CatalogHttpError(404, `视图不存在：${input.viewId}`);
+    const owner = await client.query('SELECT v.style_id FROM garment_asset_versions a JOIN garment_variants v ON v.id=a.variant_id WHERE a.id=$1', [assetVersionId]);
+    if (!owner.rowCount) throw new CatalogHttpError(404, '底图不存在');
     await client.query('SELECT id FROM garment_styles WHERE id=$1 FOR UPDATE', [owner.rows[0].style_id]);
-    const result = await client.query('SELECT g.*,a.variant_id,v.current_asset_version_id FROM garment_views g JOIN garment_asset_versions a ON a.id=g.asset_version_id JOIN garment_variants v ON v.id=a.variant_id WHERE g.id=$1 FOR UPDATE OF g,v', [input.viewId]);
-    const view = result.rows[0];
-    if (!view) throw new CatalogHttpError(404, `视图不存在：${input.viewId}`);
-    if (view.asset_version_id !== input.assetVersionId || view.current_asset_version_id !== input.assetVersionId) throw new CatalogHttpError(409, '底图已经换版，请重新打开当前商品后校准');
-    if (view.revision !== input.expectedRevision) throw new CatalogHttpError(409, `该视图已被更新：当前 revision ${view.revision}，提交 revision ${input.expectedRevision}。请重新读取后合并修改。`);
-    if (input.confirm) {
-      try { assertConfirmedStandard(input.specification, view.face); }
-      catch (error) { throw new CatalogHttpError(422, error instanceof Error ? error.message : String(error)); }
+    const result = await client.query('SELECT g.*,a.variant_id,v.current_asset_version_id FROM garment_views g JOIN garment_asset_versions a ON a.id=g.asset_version_id JOIN garment_variants v ON v.id=a.variant_id WHERE g.asset_version_id=$1 ORDER BY g.id FOR UPDATE OF g,v', [assetVersionId]);
+    if (allFaces && (result.rows.length !== inputs.length || inputs.some(input => !result.rows.some(view => view.id === input.viewId)))) {
+      throw new CatalogHttpError(422, '请一起提交这张底图的所有面；本次未保存');
     }
-    const id = randomUUID(); const revision = view.revision + 1;
-    await client.query("INSERT INTO placement_standard_versions(id,view_id,revision,status,specification,origin,created_by) VALUES($1,$2,$3,$4,$5,'manual',$6)", [id, view.id, revision, input.confirm ? 'confirmed' : 'draft', input.specification, actor.id]);
-    await client.query('UPDATE garment_views SET revision=$2,latest_standard_id=$3,confirmed_standard_id=CASE WHEN $4 THEN $3 ELSE confirmed_standard_id END WHERE id=$1', [view.id, revision, id, input.confirm]);
-    await client.query('INSERT INTO audit_events(id,actor_id,action,entity_id,details) VALUES($1,$2,$3,$4,$5)', [randomUUID(), actor.id, input.confirm ? 'standard.confirm' : 'standard.saveDraft', id, { viewId: view.id, assetVersionId: input.assetVersionId, revision }]);
-    return { variantId: view.variant_id as string, standardId: id, revision };
+    // Validate every face before writing; the transaction also rolls back any database failure.
+    for (const input of inputs) {
+      const view = result.rows.find(view => view.id === input.viewId);
+      if (!view) throw new CatalogHttpError(404, `视图不存在：${input.viewId}`);
+      const face = view.face === 'front' ? '正面' : '背面';
+      if (view.current_asset_version_id !== assetVersionId) throw new CatalogHttpError(409, '底图已经换版，请重新打开当前商品后校准；本次未保存');
+      if (view.revision !== input.expectedRevision) throw new CatalogHttpError(409, `${face}已被更新，请重新打开后核对；本次未保存任何面`);
+      if (input.confirm) {
+        try { assertConfirmedStandard(input.specification, view.face); }
+        catch (error) { throw new CatalogHttpError(422, `${face}：${error instanceof Error ? error.message : String(error)}；本次未保存任何面`); }
+      }
+    }
+    const standards = [];
+    for (const input of inputs) {
+      const view = result.rows.find(view => view.id === input.viewId)!;
+      const id = randomUUID(); const revision = view.revision + 1;
+      await client.query("INSERT INTO placement_standard_versions(id,view_id,revision,status,specification,origin,created_by) VALUES($1,$2,$3,$4,$5,'manual',$6)", [id, view.id, revision, input.confirm ? 'confirmed' : 'draft', input.specification, actor.id]);
+      await client.query('UPDATE garment_views SET revision=$2,latest_standard_id=$3,confirmed_standard_id=CASE WHEN $4 THEN $3 ELSE confirmed_standard_id END WHERE id=$1', [view.id, revision, id, input.confirm]);
+      await client.query('INSERT INTO audit_events(id,actor_id,action,entity_id,details) VALUES($1,$2,$3,$4,$5)', [randomUUID(), actor.id, input.confirm ? 'standard.confirm' : 'standard.saveDraft', id, { viewId: view.id, assetVersionId, revision }]);
+      standards.push({ standardId: id, revision });
+    }
+    return { variantId: result.rows[0].variant_id as string, standards };
   });
 }

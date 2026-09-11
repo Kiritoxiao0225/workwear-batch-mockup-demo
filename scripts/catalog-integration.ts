@@ -1,4 +1,5 @@
 import { verifyBodyCalibrationIntegration } from '../lib/testing/body-calibration-integration';
+import { verifyBatchConfirmationIntegration } from '../lib/testing/catalog-batch-confirmation-integration';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
@@ -237,6 +238,8 @@ try {
   assert(newColor.calibrationFaces!.every(face => face.status === 'unmarked' && face.positions.length === 0));
   pass('卡片逐面状态及位置名称、新草稿与旧确认区分、待校准筛选包含再次修改的颜色');
 
+  await verifyBatchConfirmationIntegration(actor, spec, picture);
+  pass('正反面一起保存和确认、缺面和跨色拒绝、任一面冲突及第二面写入故障全部回滚、并发去重与单面兼容');
   await verifyBodyCalibrationIntegration(actor, spec, picture);
   pass('后补腋点确认恢复旧任务测宽、草稿和款色底图隔离、历史基准固定、人工位置与确认保留');
 
