@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { createCanvas, loadImage, GlobalFonts, type Canvas, type SKRSContext2D } from '@napi-rs/canvas';
 import { artworkCanvasBounds, artworkGraphicBounds, artworkGraphicFrame, artworkTextLayers, assertArtworkDraft,
-  createLegacyArtworkDraft, inferredArtworkTextArc, type ArtworkDraft, type ArtworkGraphicLayer, type ArtworkTextLayer } from '@/lib/artwork-editor';
+  createLegacyArtworkDraft, inferredArtworkTextArc, artworkGraphicLayers, type ArtworkDraft, type ArtworkGraphicLayer, type ArtworkTextLayer } from '@/lib/artwork-editor';
 import { artworkLayers, recolorArtworkPixels, wholeGraphicGeometry, addArtworkText } from '@/lib/artwork-layers';
 import { spreadArtworkInk } from '@/lib/artwork-ink-spread';
 import { artworkTextFont, measureArtworkText } from '@/lib/artwork-text-metrics';
@@ -107,12 +107,42 @@ export async function renderServerArtwork(draft: ArtworkDraft) {
 }
 export async function prepareServerPrintedArtwork(draft: ArtworkDraft, unit: Pick<ProductionUnit, 'placement'>) {
   if (!unit.placement) throw new Error('缺少印花位置，无法确定图文字高');
-  const fitted = fitArtworkForPrint(draft, unit.placement, serverArtworkTextLayout);
+  const fitted = fitArtworkForPrint(await visibleAutomaticArtwork(draft), unit.placement, serverArtworkTextLayout);
   const rendered = await renderServerArtwork(fitted.draft);
   const size = printSizeCm(fitted.placement, rendered.contentBounds.width / rendered.contentBounds.height);
   const heights = printedTextHeights(rendered.letters, rendered.contentBounds.height, size.height);
   return { ...fitted, rendered, summary: fitted.needsReview || heights.some(group => group.small)
     ? '自动排版后的小字尺寸需要核对。' : `已自动安排图文大小：整组 ${size.width.toFixed(1)} × ${size.height.toFixed(1)} cm。` };
+}
+
+/** Automatic spacing uses painted pixels, never transparent padding from a model output.
+ * Manual/custom layouts and flattened brand artwork retain their existing geometry. */
+export async function visibleAutomaticArtwork(original: ArtworkDraft): Promise<ArtworkDraft> {
+  if (original.mode !== 'structured' || original.layout.preset === 'custom'
+    || (!original.text && !original.extraGraphics?.some(layer => layer.role === 'styledText'))) return original;
+  const draft = structuredClone(original);
+  for (const graphic of artworkGraphicLayers(draft).filter(layer => layer.visible !== false)) {
+    if (graphic.rotation || graphic.inkSpread) continue;
+    const image = await load(graphic.sourceUrl);
+    const canvas = createCanvas(image.width, image.height), ctx = canvas.getContext('2d');
+    ctx.drawImage(image, 0, 0);
+    const pixels = ctx.getImageData(0, 0, image.width, image.height).data;
+    let left = image.width, top = image.height, right = -1, bottom = -1;
+    // Almost invisible cutout residue must not turn back into layout whitespace.
+    // Keep the original raster intact; an entirely faint graphic uses its full alpha.
+    for (const threshold of [16, 1]) {
+      for (let y = 0; y < image.height; y++) for (let x = 0; x < image.width; x++) if (pixels[(y * image.width + x) * 4 + 3] >= threshold) {
+        left = Math.min(left, x); top = Math.min(top, y); right = Math.max(right, x); bottom = Math.max(bottom, y);
+      }
+      if (right >= left) break;
+    }
+    if (right < left) throw new Error('自动排版的图片图层没有可见内容');
+    const previous = graphic.sourceBounds ?? { left: 0, top: 0, width: image.width, height: image.height };
+    const width = right - left + 1, height = bottom - top + 1;
+    graphic.width *= width / previous.width; graphic.height *= height / previous.height;
+    graphic.sourceBounds = { left, top, width, height };
+  }
+  return draft;
 }
 export async function serverProductionTextColor(unit: ProductionUnit) {
   if (!unit.garment || !unit.placement) throw new Error('请先选择衣服与印花位置，以便自动选择字色');

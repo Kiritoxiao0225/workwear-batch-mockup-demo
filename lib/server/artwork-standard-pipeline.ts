@@ -486,8 +486,12 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
       model = generated.model;
       usedPrompt = [usedPrompt, text.prompt].filter(Boolean).join('\n\n');
     }
-    const vertical = draft.layout.preset === 'vertical' || draft.layout.preset === 'verticalReverse';
+    const preset = draft.layout.preset;
+    const vertical = preset === 'vertical' || preset === 'verticalReverse';
     draft = createHybridArtworkDraft({ primaryGraphic: draft.graphic, styledTexts, sequence: componentPlan.sequence, preprocessing: draft.preprocessing });
+    // Retain the requested direction so the print fitter can arrange visible
+    // component edges instead of treating equally spaced centers as a manual layout.
+    draft.layout.preset = preset;
     if (vertical) {
       const maximumHeight = 1024 / (componentPlan.sequence.length + 1) * .8;
       const position = (graphic: typeof draft.graphic) => {

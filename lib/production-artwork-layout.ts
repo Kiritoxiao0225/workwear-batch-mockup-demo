@@ -62,6 +62,13 @@ function arrangedDraft(original: ArtworkDraft, factor: number, measure: MeasureT
   text.fontSize = Math.min(300, text.fontSize * factor);
   text.letterSpacing *= factor;
   const graphic = graphicBounds(draft.graphic);
+  if ((draft.layout.preset === 'vertical' || draft.layout.preset === 'verticalReverse')
+    && text.arc.mode === 'none' && [...text.value.trim()].length <= 4) {
+    const current = measure(text).bounds;
+    const shortTextScale = Math.max(1, graphic.width * .55 / Math.max(1, current.width));
+    text.fontSize = Math.min(300, text.fontSize * shortTextScale);
+    text.letterSpacing *= shortTextScale;
+  }
   const bounds = measure(text).bounds;
   const gap = 32;
   // Preserve explicit direction and letter styling. Only allocate size and spacing.
@@ -94,6 +101,33 @@ function arrangedDraft(original: ArtworkDraft, factor: number, measure: MeasureT
 export function fitArtworkForPrint(original: ArtworkDraft, placement: ProductionPlacement, measure: MeasureText): PrintedArtworkLayout {
   assertArtworkDraft(original);
   const unchanged = (summary: string, needsReview = true): PrintedArtworkLayout => ({ draft: original, placement, summary, needsReview });
+  if (!original.text && original.layout.preset !== 'custom' && original.extraGraphics?.length
+    && original.extraGraphics.every(layer => layer.role === 'styledText' && layer.visible !== false && !layer.rotation)
+    && !original.graphic.rotation && original.graphic.visible !== false) {
+    const draft = structuredClone(original);
+    const vertical = draft.layout.preset === 'vertical' || draft.layout.preset === 'verticalReverse';
+    const layers = [draft.graphic, ...draft.extraGraphics!].sort((a, b) => vertical ? a.y - b.y : a.x - b.x);
+    for (const layer of layers) {
+      const scale = layer.role === 'styledText' ? Math.min(130 / layer.height, 500 / layer.width)
+        : Math.min(500 / layer.width, 500 / layer.height);
+      layer.width *= scale; layer.height *= scale;
+    }
+    const gap = 32;
+    const length = layers.reduce((sum, layer) => sum + (vertical ? layer.height : layer.width), 0) + gap * (layers.length - 1);
+    const cross = Math.max(...layers.map(layer => vertical ? layer.width : layer.height));
+    const scale = Math.min(1, 880 / length, 880 / cross);
+    let cursor = 512 - length * scale / 2;
+    for (const layer of layers) {
+      layer.width *= scale; layer.height *= scale;
+      const extent = vertical ? layer.height : layer.width;
+      layer.x = vertical ? 512 : cursor + extent / 2;
+      layer.y = vertical ? cursor + extent / 2 : 512;
+      cursor += extent + gap * scale;
+    }
+    draft.layout.gap = gap * scale;
+    assertArtworkDraft(draft);
+    return { draft, placement, needsReview: true, summary: '已按可见图形边缘紧凑排版，保留特殊字形独立图层；实际字高仍需人工核对。' };
+  }
   if (!original.text || original.extraGraphics?.length || original.extraTexts?.length || original.layout.preset === 'custom') {
     return unchanged(original.mode === 'legacyFlattened' || original.extraGraphics?.some(graphic => graphic.role === 'styledText')
       ? '制作要求已包含上衣字高约束；合并图或特殊字形需核对实际小字，未冒充自动测量通过。'
