@@ -406,7 +406,6 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
     graphicDecision = decideArtworkMethod(graphicFacts);
     if (facts.intent === 'preserve') decision = graphicDecision;
   }
-  if (graphicQuality.requiredScale > 1) reviewWarnings.push(`当前主体 ${graphicQuality.subjectWidth}×${graphicQuality.subjectHeight}px，参考目标 ${graphicQuality.targetLongEdge ?? 1000}px；继续放大会损失细节，请人工核查。`);
   const executedMethod: ArtworkMethod = facts.intent === 'compose' ? 'compose' : graphicMethod;
   const graphicRemovals = artworkGraphicRemovals(request);
   if (executedMethod === 'compose' && graphicRemovals.length) {
@@ -514,6 +513,7 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
     }
     operations.push('C 程序生成准确文字与组合排版');
   }
+  if (graphicQuality.requiredScale > 1) reviewWarnings.push(`最终主体 ${graphicQuality.subjectWidth}×${graphicQuality.subjectHeight}px，参考目标 ${graphicQuality.targetLongEdge ?? 1000}px；像素仍低于参考值，可继续使用，请人工核查细节。`);
   const actualPromptHash = usedPrompt ? artworkPromptHash(usedPrompt) : prompts.hash;
   const report: ArtworkRoutingReport = { version: ARTWORK_ROUTING_STANDARD.version, runId, requestHash: prompts.hash, sourceSha256: artworkSha256(originalSourceBytes), sourceSelection: selectedSource.receipt, decision, graphicDecision, executedMethod, graphicMethod,
     facts, source, repair, graphic: graphicQuality, reviewReasons, operations, model, prompt: usedPrompt, promptHash: actualPromptHash, timings: [...timings], ...(redraw ? { redraw } : {}),

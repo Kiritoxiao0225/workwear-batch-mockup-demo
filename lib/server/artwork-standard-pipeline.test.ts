@@ -111,6 +111,23 @@ describe('executed artwork standard', () => {
       expect(t.services.verifyText).toHaveBeenCalledOnce();
       expect(t.services.saveReport).toHaveBeenCalledOnce();
     });
+  it('uses the final edited graphic for pixel warnings, not an undersized intermediate enhancement', async () => {
+    const t = await setup();
+    const finalGraphic = await sharp(await sample(true)).resize({ width: 2400 }).png().toBuffer();
+    t.generate.mockResolvedValue({ bytes: finalGraphic, model: 'test-editor' });
+    t.services.cutout = vi.fn(async () => finalGraphic);
+    t.services.verifyEdits = vi.fn<StandardArtworkServices['verifyEdits']>(async (source, output, requirements) => ({
+      version: 'artwork-edit-check-v1', sourceSha256: artworkSha256(source), outputSha256: artworkSha256(output), model: 'test',
+      checks: requirements.map(requirement => ({ requirement, status: 'passed', evidence: '指定内容已删除' })),
+    }));
+    const result = await prepareStandardArtwork({ ...t.request, printPlacement: { key: 'leftChest', sizeMode: 'widthCm', widthCm: 12.7 },
+      instruction: '删除牙齿内部眼睛和嘴巴，上方加文字“小景是牙医”', exactText: '小景是牙医' }, t.services);
+    const report = result.draft.preprocessing.routingReport!;
+    expect(report.repair!.requiredScale).toBeGreaterThan(1);
+    expect(report.graphic.requiredScale).toBeLessThan(1);
+    expect(report.contentReview?.warnings ?? []).toEqual([]);
+    expect(t.fidelity).toHaveBeenCalledOnce();
+  });
   it('clears the old lettering before adding replacement text, keeping one graphic layer', async () => {
     const t = await setup();
     const cleared = await sharp(Buffer.from('<svg width="1200" height="900"><path fill="#b41230" d="M100 100h900v300H100z"/></svg>')).png().toBuffer();
