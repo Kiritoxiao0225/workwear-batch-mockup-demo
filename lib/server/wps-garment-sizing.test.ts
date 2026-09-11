@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import sharp from 'sharp';
 import { torsoWidthRatio, withGarmentBodyScale, withProductionPreviewGeometry } from './wps-garment-sizing';
 import { garmentFixture } from '@/lib/testing/production-garment-fixture';
@@ -7,6 +7,9 @@ import { emptyWpsProductionState, importTaskReviews } from '@/lib/wps-production
 import { productionActionAssertion, productionActionSnapshot } from '@/lib/production-artwork-snapshot';
 import { readCatalogFile } from './catalog-files';
 import type { GarmentBinding } from '@/lib/production-garment';
+import { readConfirmedBodyScales } from './catalog-body-calibration';
+vi.mock('./catalog-body-calibration', async original => ({ ...await original<typeof import('./catalog-body-calibration')>(), readConfirmedBodyScales: vi.fn() }));
+beforeEach(() => { vi.resetAllMocks(); vi.mocked(readConfirmedBodyScales).mockResolvedValue(new Map()); });
 const crop = { x: 0, y: 0, width: 1, height: 1 };
 vi.mock('./catalog-files', () => ({ readCatalogFile: vi.fn(), fileSha256: vi.fn() }));
 describe('garment body scale evidence', () => {
@@ -53,4 +56,37 @@ describe('garment body scale evidence', () => {
     expect(checked.views[0].bodyScale?.widthRatio).toBeCloseTo(.48);
     expect(checked.views[0].standard?.specification.measuredWidthCm).toBeNull();
   });
+});
+
+it('fills only missing width evidence from a later confirmation and preserves task snapshots and manual placement', async () => {
+  const state = importTaskReviews(emptyWpsProductionState(), taskReviewFixture());
+  const garment: GarmentBinding = garmentFixture();
+  garment.views.forEach(view => { delete view.bodyScale; view.standard = null; });
+  state.units[0].garment = garment;
+  state.units[0].placement!.manual = { centerX: .61, centerY: .39, width: .12 };
+  const before = structuredClone(state);
+  const id = '00000000-0000-4000-8000-000000000090';
+  vi.mocked(readConfirmedBodyScales).mockResolvedValue(new Map(garment.views.map(view => [view.id, { widthRatio: .42, basis: 'confirmed-armpits', standardId: id }])));
+  const result = await withProductionPreviewGeometry(state);
+  expect(result.units[0].garment!.views.every(view => view.bodyScale?.standardId === id && view.standard === null)).toBe(true);
+  expect(result.units[0].placement).toEqual(before.units[0].placement);
+  expect(result.units[0].artwork).toEqual(before.units[0].artwork);
+  expect(result.mockupVersions).toBe(state.mockupVersions);
+  expect(state).toEqual(before);
+  expect(readCatalogFile).not.toHaveBeenCalled();
+});
+it('leaves confirmed placements and existing usable scales untouched', async () => {
+  const state = importTaskReviews(emptyWpsProductionState(), taskReviewFixture());
+  state.units.forEach(unit => { unit.garment = garmentFixture(); });
+  const fixed = state.units[0];
+  fixed.garment!.views.forEach(view => { delete view.bodyScale; view.standard = null; });
+  fixed.gateA = { actor: 'confirmed', confirmedAt: '2026-09-11T00:00:00.000Z', fingerprint: fixed.planFingerprint };
+  const result = await withProductionPreviewGeometry(state);
+  expect(result.units).toEqual(state.units);
+  expect(readConfirmedBodyScales).not.toHaveBeenCalled();
+});
+it('rejects a missing pinned calibration rather than silently selecting newer evidence', async () => {
+  const garment: GarmentBinding = garmentFixture();
+  garment.views[0].bodyScale = { widthRatio: .42, basis: 'confirmed-armpits', standardId: '00000000-0000-4000-8000-000000000090' };
+  await expect(withGarmentBodyScale(garment)).rejects.toThrow('校准记录与底图不一致');
 });

@@ -124,3 +124,20 @@ describe('unchanged render cache hits', () => {
     expect(transactionQuery.mock.calls.some(([sql]) => sql.includes('INSERT INTO production_renders'))).toBe(true);
   });
 });
+
+it('renders new geometry after catalog calibration even when the task itself was not saved', async () => {
+  const state = fixture(), before = structuredClone(state);
+  query.mockResolvedValue({ rowCount: 0, rows: [] });
+  vi.mocked(renderProductionMockup).mockResolvedValue(Buffer.from('preview'));
+  let widthRatio = .45;
+  vi.mocked(productionPreviewUnits).mockImplementation(async units => units.map(unit => ({ ...unit, garment: {
+    ...unit.garment!, views: unit.garment!.views.map(view => ({ ...view, bodyScale: { widthRatio, basis: 'confirmed-armpits' } })),
+  } })));
+  await prepareProductionPreview(state.mockupVersions[0], state.units);
+  const first = query.mock.calls[0][1][0];
+  widthRatio = .6;
+  await prepareProductionPreview(state.mockupVersions[0], state.units);
+  expect(query.mock.calls[1][1][0]).not.toBe(first);
+  expect(renderProductionMockup).toHaveBeenCalledTimes(2);
+  expect(state).toEqual(before);
+});

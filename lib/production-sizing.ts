@@ -3,9 +3,16 @@ import type { ProductionPlacement } from './wps-production';
 
 export const MOCKUP_BODY_WIDTH_CM = 55;
 export const MOCKUP_SIZE_POLICY = 'body-55-v1' as const;
+export const MISSING_BODY_SCALE_MESSAGE = '无法确定衣身宽度，请到素材库核对并确认该面左右腋点，再重新读取预览';
+export class GarmentBodyScaleError extends Error {
+  constructor() { super(MISSING_BODY_SCALE_MESSAGE); }
+}
 export const bodyScaleSchema = z.object({
   widthRatio: z.number().positive().max(1),
   basis: z.enum(['confirmed-armpits', 'alpha-torso-v1']),
+  // An independently adopted width keeps its immutable catalog confirmation.
+  // It does not replace the task's placement standard or its manual positions.
+  standardId: z.uuid().optional(),
 }).strict();
 
 export function defaultPrintSize(placement: Pick<ProductionPlacement, 'key' | 'catalogPosition'>) {

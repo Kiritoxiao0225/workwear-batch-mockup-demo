@@ -1,3 +1,4 @@
+import { verifyBodyCalibrationIntegration } from '../lib/testing/body-calibration-integration';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
@@ -235,6 +236,9 @@ try {
   const newColor = pendingStyles.items.find(style => style.id === reference.styleId)!.colors.find(color => color.id === uploadedColor.variantId)!;
   assert(newColor.calibrationFaces!.every(face => face.status === 'unmarked' && face.positions.length === 0));
   pass('卡片逐面状态及位置名称、新草稿与旧确认区分、待校准筛选包含再次修改的颜色');
+
+  await verifyBodyCalibrationIntegration(actor, spec, picture);
+  pass('后补腋点确认恢复旧任务测宽、草稿和款色底图隔离、历史基准固定、人工位置与确认保留');
 
   const stored = await catalogDatabase().query("SELECT id,object_key FROM files WHERE status='ready' LIMIT 1");
   const actual = await readCatalogFile(stored.rows[0].id); assert.equal(fileSha256(actual.bytes), actual.file.sha256);

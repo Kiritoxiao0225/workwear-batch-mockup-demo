@@ -8,7 +8,7 @@ import { taskReviewFixture } from '@/lib/testing/task-review-fixture';
 import { garmentFixture } from '@/lib/testing/production-garment-fixture';
 import { artworkQualityFixture } from '@/lib/testing/artwork-quality-fixture';
 import { attachProductionArtwork, confirmProductionArtwork, emptyWpsProductionState, importTaskReviews, updateProductionPlan, type ArtworkValidation, type WpsProductionState } from '@/lib/wps-production';
-import { initialTaskPlacement } from '@/lib/production-preview';
+import { initialTaskPlacement, productionPreviewCalibrationKey } from '@/lib/production-preview';
 import { printSizeCm } from '@/lib/production-sizing';
 
 vi.mock('./wps-production-store', () => ({ mutateWpsProductionState: vi.fn(), readWpsProductionState: vi.fn(), ProductionRevisionConflictError: class extends Error {} }));
@@ -170,4 +170,17 @@ describe('saving the garment position canvas', () => {
     expect(stored.units[0].gateB?.fingerprint).toBe(sha);
     expect(stored.records).toEqual(records);
   });
+});
+
+it('refuses to confirm a size using a calibration that changed after the canvas opened', async () => {
+  prepareBothArtworks();
+  const entries = updates().map(entry => ({ ...entry, expectedCalibration: productionPreviewCalibrationKey([stored.units.find(unit => unit.id === entry.unitId)!]) }));
+  const before = structuredClone(stored);
+  vi.mocked(withGarmentBodyScale).mockImplementation(async garment => ({ ...garment, views: garment.views.map(view => ({ ...view,
+    bodyScale: { widthRatio: .4, basis: 'confirmed-armpits', standardId: '00000000-0000-4000-8000-000000000090' },
+  })) }));
+  const response = await POST(request(entries, true, true));
+  expect(response.status).toBe(409);
+  expect((await response.json()).error).toContain('衣身宽度校准已更新');
+  expect(stored).toEqual(before);
 });

@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
 import { CatalogHttpError } from './catalog-auth';
+import { GarmentBodyScaleError } from '@/lib/production-sizing';
 
 export function catalogError(error: unknown) {
-  const status = error instanceof CatalogHttpError ? error.status : error instanceof ZodError || error instanceof SyntaxError ? 400 : 500;
+  const status = error instanceof CatalogHttpError ? error.status : error instanceof GarmentBodyScaleError ? 422 : error instanceof ZodError || error instanceof SyntaxError ? 400 : 500;
   const message = error instanceof ZodError ? error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('；') : error instanceof Error ? error.message : String(error);
   return NextResponse.json({ error: message }, { status, headers: { 'Cache-Control': 'no-store' } });
 }

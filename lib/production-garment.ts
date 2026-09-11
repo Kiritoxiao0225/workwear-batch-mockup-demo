@@ -1,4 +1,4 @@
-import { bodyScaleSchema, MOCKUP_BODY_WIDTH_CM, MOCKUP_SIZE_POLICY, printSizeCm } from './production-sizing';
+import { bodyScaleSchema, MOCKUP_BODY_WIDTH_CM, MOCKUP_SIZE_POLICY, printSizeCm, MISSING_BODY_SCALE_MESSAGE, GarmentBodyScaleError } from './production-sizing';
 import { bindPrintSizeRequest } from './print-size-request';
 import type { PlacementKey } from '@/lib/types';
 import { z } from 'zod';
@@ -97,7 +97,7 @@ export function garmentPlacementIssue(garment: GarmentBinding | null | undefined
   const face = placement.key === 'back' ? 'back' : 'front';
   const view = garment.views.find(view => view.face === face);
   if (!view) return `该衣服缺少${face === 'front' ? '正面' : '背面'}底图`;
-  if (placement.sizePolicy === MOCKUP_SIZE_POLICY && !view.bodyScale) return '无法确定衣身宽度，请在素材库核对左右腋点后更新位置标准';
+  if (placement.sizePolicy === MOCKUP_SIZE_POLICY && !view.bodyScale) return MISSING_BODY_SCALE_MESSAGE;
   if (placement.manual) {
     const parsed = taskPlacementSchema.safeParse(placement.manual);
     if (!parsed.success) return `本次图案位置无效：${JSON.stringify(placement.manual)}`;
@@ -113,7 +113,7 @@ export function garmentPlacementIssue(garment: GarmentBinding | null | undefined
 // Shared by browser overlay and Sharp: full image -> face crop -> garment frame -> position.
 export function productionPlacementGeometry(garment: GarmentBinding, placement: ProductionPlacement, aspectRatio = 1) {
   const issue = garmentPlacementIssue(garment, placement);
-  if (issue) throw new Error(issue);
+  if (issue) throw issue === MISSING_BODY_SCALE_MESSAGE ? new GarmentBodyScaleError() : new Error(issue);
   if (!Number.isFinite(aspectRatio) || aspectRatio <= 0) throw new Error(`图案宽高比无效：${aspectRatio}`);
   const view = garment.views.find(view => view.face === (placement.key === 'back' ? 'back' : 'front'))!;
   if (placement.manual) {

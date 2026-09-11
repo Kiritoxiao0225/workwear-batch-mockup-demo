@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { artworkQualityFixture } from '@/lib/testing/artwork-quality-fixture';
 import { garmentFixture } from '@/lib/testing/production-garment-fixture';
-import { initialTaskPlacement, taskPlacementAnchor, productionArtworkStage, productionPreviewRevision, reuseProductionGeometry } from '@/lib/production-preview';
+import { initialTaskPlacement, taskPlacementAnchor, productionArtworkStage, productionPreviewRevision, productionPreviewCalibrationKey, reuseProductionGeometry } from '@/lib/production-preview';
 import { taskReviewFixture } from '@/lib/testing/task-review-fixture';
 import {
   attachProductionArtwork,
@@ -161,4 +161,12 @@ describe('garment position markers', () => {
     expect(taskPlacementAnchor(candidate)).toEqual({ centerX: .61, centerY: .32 });
     expect(initialTaskPlacement(candidate, { width: 1, height: 1 }).manual).toMatchObject(taskPlacementAnchor(candidate));
   });
+});
+
+it('re-reads a newly calibrated preview without changing the persisted task revision guard', () => {
+  const state = initialState(); state.units[0].garment = garmentFixture();
+  const before = productionPreviewCalibrationKey(state.units), revision = productionPreviewRevision(state.mockupVersions[0], state.units);
+  state.units[0].garment.views[0].bodyScale = { widthRatio: .4, basis: 'confirmed-armpits', standardId: '00000000-0000-4000-8000-000000000090' };
+  expect(productionPreviewCalibrationKey(state.units)).not.toBe(before);
+  expect(productionPreviewRevision(state.mockupVersions[0], state.units)).toBe(revision);
 });

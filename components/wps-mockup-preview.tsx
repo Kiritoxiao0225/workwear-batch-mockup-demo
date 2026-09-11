@@ -5,7 +5,8 @@ import { useEffect, useState } from 'react';
 import type { ProductionMockupVersion, ProductionUnit } from '@/lib/wps-production';
 import { WPS_COMPOSITOR_VERSION } from '@/lib/confirmation-frame';
 import { useProjectSession } from '@/components/project-session';
-import { productionPreviewRevision } from '@/lib/production-preview';
+import { productionPreviewRevision, productionPreviewCalibrationKey } from '@/lib/production-preview';
+import { MISSING_BODY_SCALE_MESSAGE } from '@/lib/production-sizing';
 import { readProductionPreview } from '@/lib/client/production-preview-queue';
 
 export function WpsMockupPreview({ version, units, open, adjust, disabled, paused, composing }: {
@@ -20,7 +21,7 @@ export function WpsMockupPreview({ version, units, open, adjust, disabled, pause
   const session = useProjectSession();
   const [retry, setRetry] = useState(0);
   const output = version.output?.compositorVersion === WPS_COMPOSITOR_VERSION ? version.output : null;
-  const previewUrl = `/api/catalog/production-preview?versionId=${encodeURIComponent(version.id)}&revision=${encodeURIComponent(productionPreviewRevision(version, units))}&retry=${retry}`;
+  const previewUrl = `/api/catalog/production-preview?versionId=${encodeURIComponent(version.id)}&revision=${encodeURIComponent(productionPreviewRevision(version, units))}&calibration=${encodeURIComponent(productionPreviewCalibrationKey(units))}&retry=${retry}`;
   const url = `${previewUrl}&size=card`;
   const fullUrl = output?.url ?? previewUrl;
   const title = `${version.garment?.styleCode} · ${version.garment?.colorName} · ${version.variantLabel} · ${output ? '客户效果图' : '带框预览（未定稿）'}`;
@@ -70,7 +71,7 @@ export function WpsMockupPreview({ version, units, open, adjust, disabled, pause
           {visible && <Image alt={title} fill sizes="400px" src={visible.objectUrl} unoptimized />}
           {notice && <span className="wps-preview-status" role="status">{notice}</span>}
         </button>
-        {failed && <div role="alert"><p>{failed.message}</p><p>已保存的图案和制作状态仍保留。</p><button type="button" onClick={() => setRetry(value => value + 1)}>重新读取预览</button></div>}
+        {failed && <div role="alert"><p>{failed.message}</p><p>已保存的图案和制作状态仍保留。</p>{failed.message.includes(MISSING_BODY_SCALE_MESSAGE) && <a href="/products" target="_blank" rel="noreferrer">到素材库核对腋点</a>}<button type="button" onClick={() => setRetry(value => value + 1)}>重新读取预览</button></div>}
       </>}
     <small>点击图片放大查看</small>
     <button className="wps-position-adjust" type="button" disabled={disabled} onClick={adjust}>调整位置</button>

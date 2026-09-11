@@ -3,15 +3,16 @@ import { bodyScaleSchema } from '@/lib/production-sizing';
 import type { WpsProductionState } from '@/lib/wps-production';
 
 import { loadBodyGeometry } from './catalog-body-geometry';
+import { confirmedArmpitScale, readConfirmedBodyScales } from './catalog-body-calibration';
 export { torsoWidthRatio } from './catalog-body-geometry';
 
 export async function withGarmentBodyScale(garment: GarmentBinding): Promise<GarmentBinding> {
-  const confirmed = garment.views.map(view => {
-    const spec = view.standard?.specification;
-    const left = spec?.landmarks.find(point => point.key === 'leftArmpit');
-    const right = spec?.landmarks.find(point => point.key === 'rightArmpit');
-    if (!left || !right || !spec) return null;
-    return bodyScaleSchema.parse({ widthRatio: Math.abs(right.point.x - left.point.x) * spec.garmentFrame.width, basis: 'confirmed-armpits' });
+  const confirmed = garment.views.map(view => confirmedArmpitScale(view.standard?.specification));
+  const requested = garment.views.filter((view, index) => view.bodyScale?.standardId || (!view.bodyScale && !confirmed[index]));
+  const catalog = await readConfirmedBodyScales(garment, requested);
+  garment.views.forEach((view, index) => {
+    if (view.bodyScale?.standardId && !catalog.has(view.id)) throw new Error('已采用的衣身宽度校准记录与底图不一致，请重新核对');
+    if (catalog.has(view.id)) confirmed[index] = catalog.get(view.id)!;
   });
   const widths = confirmed.some(value => !value) ? await loadBodyGeometry({ fileId: garment.imageUrl.split('/').at(-1)!, sha256: garment.sha256, width: garment.width, height: garment.height, crops: garment.views.map(view => view.crop) }) : [];
   return { ...garment, views: garment.views.map((view, i) => {
@@ -30,7 +31,8 @@ export async function withProductionPreviewGeometry(state: WpsProductionState): 
   const prepared = new Map<string, Promise<GarmentBinding>>();
   const results = await Promise.allSettled(state.units.map(async unit => {
     const garment = unit.garment;
-    if (!garment || garment.views.every(view => view.bodyScale)) return unit;
+    const fixed = unit.gateA || state.mockupVersions.some(version => version.unitIds.includes(unit.id) && (version.finalConfirmation || version.output));
+    if (!garment || fixed || garment.views.every(view => view.bodyScale)) return unit;
     const key = JSON.stringify(garment);
     if (!prepared.has(key)) prepared.set(key, withGarmentBodyScale(garment));
     return { ...unit, garment: await prepared.get(key)! };

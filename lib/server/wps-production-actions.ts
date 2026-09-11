@@ -15,7 +15,7 @@ import { assertProductionArtworkSnapshot, ProductionArtworkConflictError, produc
 import { MOCKUP_SIZE_POLICY } from '@/lib/production-sizing';
 import { bindPrintSizeRequest } from '@/lib/print-size-request';
 import { taskPlacementSchema } from '@/lib/production-garment';
-import { placementPreview } from '@/lib/production-preview';
+import { placementPreview, productionPreviewCalibrationKey } from '@/lib/production-preview';
 import { assertArtworkDraft } from '@/lib/artwork-editor';
 import { z } from 'zod';
 import { prepareCatalogReviews, verifyGarmentBinding } from '@/lib/server/wps-production-garments';
@@ -286,7 +286,8 @@ export async function POST(request: Request) {
         const entry = objectValue(raw);
         const placement = planPatch({ placement: entry.placement }).placement;
         if (!placement?.manual) throw new Error('请在衣服上核对位置');
-        return { unitId: textValue(entry.unitId, 'unitId'), placement };
+        return { unitId: textValue(entry.unitId, 'unitId'), placement,
+          expectedCalibration: z.string().max(4096).optional().parse(entry.expectedCalibration) };
       });
       if (new Set(updates.map(update => update.unitId)).size !== updates.length) throw new Error('不能重复保存同一位置');
       return NextResponse.json(await mutate(revision, async state => {
@@ -297,7 +298,7 @@ export async function POST(request: Request) {
         // Reuse only identical bindings inside this attempt; a CAS retry creates
         // fresh checks. File integrity is still checked for every artwork.
         const garments = new Map<string, Promise<NonNullable<ProductionUnit['garment']>>>();
-        const inspect = async ({ unitId, placement }: typeof updates[number]) => {
+        const inspect = async ({ unitId, placement, expectedCalibration }: typeof updates[number]) => {
           const unit = state.units.find(unit => unit.id === unitId);
           if (!unit?.garment) throw new ProductionTransitionError('请先选择衣服款式和颜色');
           const binding = unit.garment;
@@ -310,6 +311,9 @@ export async function POST(request: Request) {
             garments.get(key)!,
             unit.artwork ? validateProductionArtwork(unit.artwork.url) : null,
           ]);
+          if (expectedCalibration !== undefined && expectedCalibration !== productionPreviewCalibrationKey([{ ...unit, garment }])) {
+            throw new ProductionArtworkConflictError('衣身宽度校准已更新，尚未保存本次位置；请重新打开位置画布核对');
+          }
           if (validation && validation.sha256 !== unit.artwork!.validation.sha256) throw new ProductionTransitionError('图案文件已变化，请重新确认图案');
           placement.sizePolicy = MOCKUP_SIZE_POLICY;
           placement = bindPrintSizeRequest(state.records.find(record => record.source.recordId === unit.sourceRecordId)!.source.requirementText, placement);

@@ -1,5 +1,5 @@
 import type { ArtworkValidation, ProductionMockupVersion, ProductionPlacement, ProductionUnit, WpsProductionState } from '@/lib/wps-production';
-import { MOCKUP_SIZE_POLICY, MOCKUP_BODY_WIDTH_CM, printSizeCm } from './production-sizing';
+import { MOCKUP_SIZE_POLICY, MOCKUP_BODY_WIDTH_CM, printSizeCm, GarmentBodyScaleError } from './production-sizing';
 import { catalogPositionKey, productionPlacementGeometry, type GarmentBinding } from '@/lib/production-garment';
 import { artworkBlockingAmbiguities, artworkProcessingRoute } from '@/lib/task-review-analysis';
 import { WPS_COMPOSITOR_VERSION } from './confirmation-frame';
@@ -32,6 +32,14 @@ export function productionPreviewRevision(version: ProductionMockupVersion, unit
       .map(unit => [unit.id, unit.updatedAt, unit.artwork?.url ?? null, unit.artwork?.validation.sha256 ?? null])]);
 }
 
+/** Calibration can change without a task save. Re-read its preview while keeping
+ * the task revision guard based on persisted state, not read-only hydration.
+ */
+export function productionPreviewCalibrationKey(units: ProductionUnit[]) {
+  return JSON.stringify([...units].sort((a, b) => a.id.localeCompare(b.id)).map(unit => [unit.id,
+    unit.garment?.views.map(view => view.bodyScale?.standardId ?? null)]));
+}
+
 export function artworkContentBounds(validation: ArtworkDimensions) {
   return validation.contentBounds ?? { left: 0, top: 0, width: validation.width, height: validation.height };
 }
@@ -44,7 +52,7 @@ export function initialTaskPlacement(unit: ProductionUnit, validation: ArtworkDi
   const view = unit.garment.views.find(view => view.face === (unit.placement!.key === 'back' ? 'back' : 'front'));
   if (!view) throw new Error('缺少当前印花面的衣服图片');
   const placement = { ...unit.placement, sizePolicy: MOCKUP_SIZE_POLICY };
-  if (!view.bodyScale) throw new Error('无法确定衣身宽度，请在素材库核对左右腋点后更新位置标准');
+  if (!view.bodyScale) throw new GarmentBodyScaleError();
   const width = printSizeCm(placement, artworkAspectRatio(validation)).width / MOCKUP_BODY_WIDTH_CM * view.bodyScale.widthRatio;
   return { ...placement, manual: { ...taskPlacementAnchor(unit), width } };
 }

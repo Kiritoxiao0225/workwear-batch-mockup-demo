@@ -59,3 +59,13 @@ it('rejects an obsolete image request rather than labeling new pixels with its o
   expect(prepareProductionPreview).not.toHaveBeenCalled();
   expect(after).not.toHaveBeenCalled();
 });
+
+it('reports missing body calibration as actionable 422 without persisting a render', async () => {
+  const t = await setup();
+  const { GarmentBodyScaleError } = await import('../production-sizing');
+  vi.mocked(prepareProductionPreview).mockRejectedValue(new GarmentBodyScaleError());
+  const response = await GET(new NextRequest(t.url));
+  expect(response.status).toBe(422);
+  expect((await response.json()).error).toContain('确认该面左右腋点');
+  expect(after).not.toHaveBeenCalled();
+});

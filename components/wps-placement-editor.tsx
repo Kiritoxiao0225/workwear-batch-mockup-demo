@@ -2,7 +2,7 @@
 import { useRef, useState, type PointerEvent } from 'react';
 import type { ProductionPlacement, ProductionUnit } from '@/lib/wps-production';
 import { MOCKUP_SIZE_POLICY, defaultPrintSize, printSizeCm } from '@/lib/production-sizing';
-import { artworkAspectRatio, artworkContentBounds, initialTaskPlacement, placementPreview } from '@/lib/production-preview';
+import { artworkAspectRatio, artworkContentBounds, initialTaskPlacement, placementPreview, productionPreviewCalibrationKey } from '@/lib/production-preview';
 import { WpsTextSizeNotice } from '@/components/wps-text-size-notice';
 import { productionPositionLabel } from '@/lib/production-garment';
 import { PLACEMENT_DEFAULTS, PLACEMENT_LABELS } from '@/lib/mockup';
@@ -10,13 +10,14 @@ import { artworkAcceptanceIssues } from '@/lib/artwork-acceptance';
 import { PLACEMENT_KEYS, type PlacementKey } from '@/lib/types';
 import { bindPrintSizeRequest } from '@/lib/print-size-request';
 
-export type PlacementUpdate = { unitId: string; placement: ProductionPlacement };
+export type PlacementUpdate = { unitId: string; placement: ProductionPlacement; expectedCalibration?: string };
 type Props = { unit: ProductionUnit; versionUnits: ProductionUnit[]; requirementText?: string; busy: boolean; composing?: boolean; error: string | null; edit: (unit: ProductionUnit) => void; close: () => void; save: (updates: PlacementUpdate[], confirmWholeVersion: boolean) => Promise<void> };
 
 export function WpsPlacementEditor({ unit: openingUnit, versionUnits, requirementText, busy, composing, error, edit, close, save }: Props) {
   const garment = openingUnit.garment!;
   const [activeId, setActiveId] = useState(openingUnit.id);
   const unit = versionUnits.find(candidate => candidate.id === activeId) ?? openingUnit;
+  const activeGarment = unit.garment ?? garment;
   const dimensions = unit.artwork?.validation ?? { width: 1, height: 1 };
   const [drafts, setDrafts] = useState<Record<string, ProductionPlacement>>({});
   const [inputError, setInputError] = useState<string | null>(null);
@@ -28,14 +29,14 @@ export function WpsPlacementEditor({ unit: openingUnit, versionUnits, requiremen
     const value = candidate.placement ?? { key: 'frontCenter' as const, ...PLACEMENT_DEFAULTS.frontCenter, sizeMode: 'standard' as const, templateVersion: 'catalog-v1' as const };
     return requirementText === undefined ? value : bindPrintSizeRequest(requirementText, value);
   };
-  const initial = (candidate: ProductionUnit) => initialTaskPlacement({ ...candidate, garment, placement: basePlacement(candidate) }, candidate.artwork?.validation ?? { width: 1, height: 1 });
+  const initial = (candidate: ProductionUnit) => initialTaskPlacement({ ...candidate, garment: candidate.garment ?? garment, placement: basePlacement(candidate) }, candidate.artwork?.validation ?? { width: 1, height: 1 });
   const placement = drafts[unit.id] ?? initial(unit);
   const aspectRatio = artworkAspectRatio(dimensions);
   const size = printSizeCm(placement, aspectRatio);
   const requested = placement.requestedSize;
   const sizeLocked = Boolean(requested && !placement.sizeOverride);
   const defaults = defaultPrintSize(placement);
-  const face = garment.views.find(view => view.face === (placement.key === 'back' ? 'back' : 'front'))!;
+  const face = activeGarment.views.find(view => view.face === (placement.key === 'back' ? 'back' : 'front'))!;
   const svgRef = useRef<SVGSVGElement>(null);
   const dragging = useRef<{ mode: 'move' | 'resize'; x: number; y: number; centerX: number; centerY: number; widthCm: number; radius: number; anchorX: number; anchorY: number } | null>(null);
   const change = (next: ProductionPlacement) => { setInputError(null); setDrafts(current => ({ ...current, [unit.id]: next })); };
@@ -58,21 +59,23 @@ export function WpsPlacementEditor({ unit: openingUnit, versionUnits, requiremen
   const selectPosition = (value: string) => {
     const [key, catalogPosition] = value.split(':') as [PlacementKey, ProductionPlacement['catalogPosition']];
     const next: ProductionPlacement = { ...placement, key, catalogPosition, manual: undefined, offsetX: 0, offsetY: 0, rotation: 0 };
-    change(initialTaskPlacement({ ...unit, garment, placement: requirementText === undefined ? next : bindPrintSizeRequest(requirementText, next) }, dimensions));
+    change(initialTaskPlacement({ ...unit, garment: activeGarment, placement: requirementText === undefined ? next : bindPrintSizeRequest(requirementText, next) }, dimensions));
   };
   let placementError: string | null = null;
-  try { placementPreview(garment, placement, dimensions); } catch (error) { placementError = error instanceof Error ? error.message : String(error); }
+  try { placementPreview(activeGarment, placement, dimensions); } catch (error) { placementError = error instanceof Error ? error.message : String(error); }
   const complete = versionUnits.every(candidate => candidate.artwork?.validation.valid && candidate.artwork.recipeFingerprint === candidate.recipeFingerprint && !artworkAcceptanceIssues(candidate.artwork.validation).length);
   const submit = (confirmWholeVersion: boolean) => {
     const updates: Record<string, ProductionPlacement> = {};
     for (const candidate of versionUnits) {
       try {
         const value = drafts[candidate.id] ?? initial(candidate);
-        placementPreview(garment, value, candidate.artwork?.validation ?? { width: 1, height: 1 });
+        placementPreview(candidate.garment ?? garment, value, candidate.artwork?.validation ?? { width: 1, height: 1 });
         updates[candidate.id] = value;
       } catch (error) { setActiveId(candidate.id); setInputError(error instanceof Error ? error.message : String(error)); return; }
     }
-    void save(Object.entries(updates).map(([unitId, placement]) => ({ unitId, placement })), confirmWholeVersion);
+    void save(Object.entries(updates).map(([unitId, placement]) => ({ unitId, placement,
+      expectedCalibration: productionPreviewCalibrationKey([versionUnits.find(candidate => candidate.id === unitId)!]),
+    })), confirmWholeVersion);
   };
   return <div className="wps-review-backdrop"><section className="wps-review-dialog wps-placement-dialog" role="dialog" aria-modal="true" aria-labelledby="wps-placement-title">
     <header><div><small>同一件衣服 · 正反面一起调整</small><h2 id="wps-placement-title">{garment.styleCode} · {garment.colorName}</h2></div><button disabled={busy} onClick={close} type="button">关闭</button></header>
@@ -86,7 +89,7 @@ export function WpsPlacementEditor({ unit: openingUnit, versionUnits, requiremen
           const selected = candidate.id === unit.id;
           const candidateDimensions = candidate.artwork?.validation ?? { width: 1, height: 1 };
           let candidatePlacement: ProductionPlacement, geometry;
-          try { candidatePlacement = selected ? placement : drafts[candidate.id] ?? initial(candidate); geometry = placementPreview(garment, candidatePlacement, candidateDimensions); }
+          try { candidatePlacement = selected ? placement : drafts[candidate.id] ?? initial(candidate); geometry = placementPreview(candidate.garment ?? garment, candidatePlacement, candidateDimensions); }
           catch { return null; }
           const content = artworkContentBounds(candidateDimensions);
           const endDrag = () => { dragging.current = null; };
@@ -129,7 +132,7 @@ export function WpsPlacementEditor({ unit: openingUnit, versionUnits, requiremen
       <div className="wps-placement-dimensions"><label>宽度（cm）<input aria-label="图案宽度（cm）" type="number" min="1" max="50" step="0.1" disabled={busy || sizeLocked} value={Number(size.width.toFixed(2))} onChange={event => resize('widthCm', Number(event.target.value))}/></label><label>高度（cm）<input aria-label="图案高度（cm）" type="number" min="0.1" max="100" step="0.1" disabled={busy || sizeLocked} value={Number(size.height.toFixed(2))} onChange={event => resize('heightCm', Number(event.target.value))}/></label></div>
       <small>宽高等比例联动 · 衣身按 55 cm 换算</small>
       <label>旋转 {placement.rotation}°<input aria-label="Logo 旋转" type="range" min="-45" max="45" disabled={busy} value={placement.rotation} onChange={event => change({ ...placement, rotation: Number(event.target.value) })}/></label>
-      <button type="button" disabled={busy} onClick={() => change({ ...initialTaskPlacement({ ...unit, garment, placement: { ...placement, manual: undefined, offsetX: 0, offsetY: 0, rotation: 0, sizeMode: 'standard', sizeOverride: false } }, dimensions) })}>{requested ? '恢复默认位置与客户尺寸' : '恢复默认位置与尺寸'}</button>
+      <button type="button" disabled={busy} onClick={() => change({ ...initialTaskPlacement({ ...unit, garment: activeGarment, placement: { ...placement, manual: undefined, offsetX: 0, offsetY: 0, rotation: 0, sizeMode: 'standard', sizeOverride: false } }, dimensions) })}>{requested ? '恢复默认位置与客户尺寸' : '恢复默认位置与尺寸'}</button>
       <small>{requested ? '客户尺寸优先，仅在上衣贴图时等比缩放；不重新制作或抠图。' : `未指定尺寸时，默认装入 ${defaults.width} × ${defaults.height} cm 范围`}</small>
       {unit.artwork && <><button disabled={busy} type="button" onClick={() => edit(unit)}>编辑这个图案</button><details><summary>小字检查</summary><WpsTextSizeNotice unit={unit} placement={placement} edit={() => edit(unit)}/></details></>}
       <details><summary>位置参考说明</summary><p>{face.standard ? '已有位置标准，系统会检查可印范围和已标记禁区。' : '本款暂无通用标准，请目视避开领口、门襟、口袋和缝线。'}</p><p>当前操作只修改本次任务的位置。</p></details>
