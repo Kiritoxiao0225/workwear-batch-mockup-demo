@@ -1,0 +1,71 @@
+name: Workwear reliability verification
+
+on:
+  push:
+    branches: [fix/wps-production-reliability-20260911]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workwear-reliability-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CI: 'true'
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Archive exact tracked source for isolated inspection
+        run: |
+          mkdir -p "$RUNNER_TEMP/workwear-source"
+          git rev-parse HEAD > "$RUNNER_TEMP/workwear-source/commit.txt"
+          git archive --format=tar.gz HEAD > "$RUNNER_TEMP/workwear-source/repository.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: workwear-source-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/workwear-source
+          retention-days: 3
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies (no production credentials)
+        id: install
+        run: npm ci
+      - name: Lint
+        id: lint
+        continue-on-error: true
+        run: npm run lint
+      - name: Full TypeScript check
+        id: types
+        continue-on-error: true
+        run: npm run typecheck
+      - name: Repository tests
+        id: tests
+        continue-on-error: true
+        run: npm test
+      - name: Production build without live service credentials
+        id: build
+        continue-on-error: true
+        run: npm run build
+      - name: Require all checks to pass
+        if: always()
+        env:
+          INSTALL: ${{ steps.install.outcome }}
+          LINT: ${{ steps.lint.outcome }}
+          TYPES: ${{ steps.types.outcome }}
+          TESTS: ${{ steps.tests.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+        run: |
+          printf 'install=%s lint=%s typecheck=%s tests=%s build=%s\n' "$INSTALL" "$LINT" "$TYPES" "$TESTS" "$BUILD"
+          test "$INSTALL" = success && test "$LINT" = success && test "$TYPES" = success && test "$TESTS" = success && test "$BUILD" = success
