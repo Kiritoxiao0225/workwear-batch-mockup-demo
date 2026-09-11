@@ -1,0 +1,48 @@
+name: Apply verified WPS repair on isolated branch
+on:
+  push:
+    branches: [fix/wps-production-reliability-20260911]
+    paths: [.github/repair/READY]
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.ref == 'refs/heads/fix/wps-production-reliability-20260911'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Verify and atomically apply the locally tested source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/fix/wps-production-reliability-20260911
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 - <<'PY'
+          import base64, bz2, hashlib, pathlib, subprocess
+          expected = '337acd6df6d5324570636954baf22a417b3bbdb14a57ee7bb701d978bed620a3'
+          root = pathlib.Path('.github/repair')
+          parts = sorted(root.glob('part-*.b64'))
+          assert len(parts) == 4, 'Incomplete repair payload'
+          compressed = base64.b64decode(''.join(p.read_text().strip() for p in parts), validate=True)
+          patch = bz2.decompress(compressed)
+          assert len(patch) == 211986 and hashlib.sha256(patch).hexdigest() == expected, 'Repair payload hash mismatch'
+          out = pathlib.Path('/tmp/verified-workwear.patch')
+          out.write_bytes(patch)
+          stats = subprocess.check_output(['git', 'apply', '--numstat', '-z', str(out)])
+          paths = [row.split(b'\t', 2)[2].decode() for row in stats.split(b'\0') if row]
+          assert len(paths) == 47 and len(set(paths)) == 47, 'Unexpected file count'
+          assert all(p.startswith(('app/', 'components/', 'lib/', 'scripts/', 'docs/')) and '..' not in pathlib.PurePosixPath(p).parts for p in paths), 'Unexpected patch target'
+          subprocess.run(['git', 'apply', '--check', '--index', str(out)], check=True)
+          subprocess.run(['git', 'apply', '--index', str(out)], check=True)
+          PY
+          git diff --cached --check
+          git rm -r .github/repair
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: integrate verified WPS requirements, recovery, final review and order overview'
+          git push origin HEAD:refs/heads/fix/wps-production-reliability-20260911
+          git rev-parse HEAD >> "$GITHUB_STEP_SUMMARY"
