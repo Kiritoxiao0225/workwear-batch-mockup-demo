@@ -1,3 +1,4 @@
+import { parseArtworkFontReference } from '@/lib/artwork-font-reference';
 import { inspectFinalArtwork } from './artwork-final-review';
 import { buildArtworkReview, manualArtworkReview, REVIEW_CATEGORIES, reviewForAttachment } from '@/lib/artwork-review-ledger';
 import { conditionalJson } from './conditional-json';
@@ -55,7 +56,7 @@ import {
 import { composeProductionMockup, validateProductionArtwork } from '@/lib/server/wps-production-assets';
 import {
   assertGptImage2Configured,
-  buildGptImage2Request,
+  prepareGptImage2Request,
   createGptImage2Task,
   downloadGptImage2Result,
   queryGptImage2Task,
@@ -105,6 +106,7 @@ function planPatch(value: unknown): ProductionPlanPatch {
   if ('garmentLabel' in raw) patch.garmentLabel = textValue(raw.garmentLabel, 'patch.garmentLabel');
   if ('variantLabel' in raw) patch.variantLabel = textValue(raw.variantLabel, 'patch.variantLabel');
   if ('materialId' in raw) patch.materialId = raw.materialId === null ? null : textValue(raw.materialId, 'patch.materialId');
+  if ('fontReference' in raw) patch.fontReference = parseArtworkFontReference(raw.fontReference);
   if ('referenceMaterialIds' in raw) patch.referenceMaterialIds = stringArray(raw.referenceMaterialIds, 'patch.referenceMaterialIds');
   if ('ambiguities' in raw) patch.ambiguities = stringArray(raw.ambiguities, 'patch.ambiguities');
   if ('sourceScope' in raw) patch.sourceScope = textValue(raw.sourceScope, 'patch.sourceScope') as ProductionPlanPatch['sourceScope'];
@@ -446,7 +448,7 @@ export async function POST(request: Request) {
       if (!unit) throw new Error(`找不到定制单元：${unitId}`);
       const record = current.records.find((candidate) => candidate.source.recordId === unit.sourceRecordId);
       if (!record) throw new Error(`${unitId} 引用了不存在的 WPS 记录：${unit.sourceRecordId}`);
-      const providerRequest = buildGptImage2Request(record, unit);
+      const providerRequest = await prepareGptImage2Request(record, unit);
       assertGptImage2Configured();
       const attemptId = randomUUID();
       const estimatedCostCny = numberValue(body.estimatedCostCny, 'estimatedCostCny');

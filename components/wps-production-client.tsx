@@ -1,4 +1,6 @@
 'use client';
+import { WpsFontReference } from './wps-font-reference';
+import { resolveFontReferenceText, fontReferenceInput } from '@/lib/artwork-font-reference';
 import { WpsArtworkChecklist } from './wps-artwork-checklist';
 import { currentArtworkReview, buildArtworkReview, artworkReviewSummary } from '@/lib/artwork-review-ledger';
 import { WpsArtworkCorrection } from '@/components/wps-artwork-correction';
@@ -84,11 +86,11 @@ type WpsSyncResponse = {
   totalRecords: number;
 };
 
-type PlanForm = Pick<ProductionUnit, 'referenceMaterialIds' | 'sourceScope' | 'textMode' | 'exactText' | 'layoutNote' | 'instruction' | 'route' | 'generationPrompt'> & { materialId: string; ambiguities: string };
+type PlanForm = Pick<ProductionUnit, 'fontReference' | 'referenceMaterialIds' | 'sourceScope' | 'textMode' | 'exactText' | 'layoutNote' | 'instruction' | 'route' | 'generationPrompt'> & { materialId: string; ambiguities: string };
 
 function artworkPrompt(unit: ProductionUnit, source: SourceTaskRecord) {
   return standardArtworkPrompts({
-    sourceRequirementText: source.requirementText, instruction: unit.instruction, generationPrompt: unit.generationPrompt, sourceAssessment: productionArtworkRouting(unit, source).facts.sourceAssessment,
+    fontReference: fontReferenceInput(source, unit), sourceRequirementText: source.requirementText, instruction: unit.instruction, generationPrompt: unit.generationPrompt, sourceAssessment: productionArtworkRouting(unit, source).facts.sourceAssessment,
     exactText: unit.textMode === 'replace' ? unit.exactText : '', layoutNote: unit.layoutNote,
     sourceScope: unit.sourceScope, artworkMethod: unit.artworkMethod,
     processingRoute: unit.route === 'deterministic' ? 'fidelity' : unit.route === 'blocked' || unit.route === 'gpt-image-2' ? 'auto' : unit.route,
@@ -107,7 +109,7 @@ function artworkPreparationIssue(unit: ProductionUnit, source: SourceTaskRecord)
   if (unit.textMode === 'replace' && !unit.exactText.trim() && productionArtworkRouting(unit, source).facts.intent !== 'generate') return '请先填写要添加或替换的准确文字。';
   if (unit.referenceMaterialIds.length > 15) return '图案处理最多使用 15 张额外参考图，请先修改要求。';
   const routing = productionArtworkRouting({ ...unit, artwork: null }, source);
-  if (routing.facts.intent === 'generate' && !unit.generationPrompt?.trim()) return '请先在修改要求中整理生图提示词，再制作图案。';
+  if (routing.facts.intent === 'generate' && !unit.generationPrompt?.trim() && !unit.fontReference) return '请先在修改要求中整理生图提示词，再制作图案。';
   if (routing.decision.state === 'review') return routing.facts.blockers.join('；') || routing.decision.reason;
   try { artworkPrompt(unit, source); } catch (error) { return error instanceof Error ? error.message : String(error); }
   return null;
@@ -174,7 +176,7 @@ async function pngFile(dataUrl: string, fileName: string) {
 }
 
 function formForUnit(unit: ProductionUnit): PlanForm {
-  return { materialId: unit.materialId ?? '', referenceMaterialIds: unit.referenceMaterialIds,
+  return { fontReference: unit.fontReference, materialId: unit.materialId ?? '', referenceMaterialIds: unit.referenceMaterialIds,
     sourceScope: unit.sourceScope, textMode: unit.textMode, exactText: unit.exactText,
     layoutNote: unit.layoutNote, instruction: unit.instruction, generationPrompt: unit.generationPrompt ?? '', route: unit.route,
     ambiguities: unit.ambiguities.join('\n') };
@@ -586,9 +588,9 @@ export function WpsProductionClient() {
     try {
       const result = await responseJson(await fetchApi('/api/wps-production/prompt', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
-        body: JSON.stringify({ unitId: editingUnit.id, expectedUnitSnapshot: productionArtworkSnapshot(editingUnit, editingRecord.source) }),
-      })) as { generationPrompt: string; materialId: string | null; referenceMaterialIds: string[]; ambiguities: string[] };
-      if (!controller.signal.aborted) setPlanForm(current => current ? { ...current, generationPrompt: result.generationPrompt,
+        body: JSON.stringify({ unitId: editingUnit.id, expectedUnitSnapshot: productionArtworkSnapshot(editingUnit, editingRecord.source), draft: planForm }),
+      })) as { fontReference?: ProductionUnit['fontReference']; generationPrompt: string; materialId: string | null; referenceMaterialIds: string[]; ambiguities: string[] };
+      if (!controller.signal.aborted) setPlanForm(current => current ? { ...current, fontReference: result.fontReference ?? null, generationPrompt: result.generationPrompt,
         materialId: result.materialId ?? '', referenceMaterialIds: result.referenceMaterialIds, ambiguities: result.ambiguities.join('\n') } : current);
     } catch (error) {
       if (!controller.signal.aborted) setError(error instanceof Error ? error.message : String(error));
@@ -607,7 +609,7 @@ export function WpsProductionClient() {
     const state = await runAction(`plan:${editingUnitId}`, {
       action: 'updatePlan', ...planSnapshot.current, unitId: editingUnitId,
       patch: {
-        materialId: planForm.materialId || null, referenceMaterialIds: planForm.referenceMaterialIds,
+        fontReference: planForm.fontReference ?? null, materialId: planForm.materialId || null, referenceMaterialIds: planForm.referenceMaterialIds,
         sourceScope: planForm.sourceScope, textMode: planForm.textMode, exactText: planForm.exactText,
         layoutNote: planForm.layoutNote, instruction: planForm.instruction, generationPrompt: planForm.generationPrompt ?? '',
         routeEvidence: '人工修正制作要求',
@@ -784,7 +786,7 @@ export function WpsProductionClient() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' },
           body: JSON.stringify({
-            sourceRequirementText: record.source.requirementText,
+            fontReference: fontReferenceInput(record.source, unit), sourceRequirementText: record.source.requirementText,
             printPlacement: artworkPrintPlacement(unit.placement),
             instruction: unit.instruction, generationPrompt: unit.generationPrompt, sourceAssessment: productionArtworkRouting(unit, record.source).facts.sourceAssessment,
             exactText: unit.textMode === 'replace' ? unit.exactText : '',
@@ -1169,6 +1171,7 @@ export function WpsProductionClient() {
                 return { requirements: <><div className="wps-requirements"><section>
                       <div className="wps-requirement-title"><strong>{positionLabel}</strong><button className="wps-text-button" type="button" disabled={Boolean(unitBlocked)} title={unitBlocked ?? undefined} onClick={editRequest}>{isSharedArtwork(shared) ? '单独修改要求' : '修改要求'}</button></div>
                       <p className="wps-requirement-instruction">{unit.instruction}</p>
+                      <WpsFontReference source={record.source} reference={unit.fontReference} disabled={Boolean(unitBlocked)} edit={editRequest} />
                       {unit.exactText && !unit.instruction.includes(unit.exactText) && <p className="wps-requirement-exact-text"><span>文字</span>{unit.exactText}</p>}
                       <div className="wps-requirement-materials"><span>{textOnly ? '纯文字 · 无需素材' : isReferenceTextArtwork(unit) ? '文字标识 · 图片作样式参考' : <>素材 {unit.materialId ? `图${record.source.materials.findIndex(material => material.id === unit.materialId) + 1}` : '待选择'}</>}</span>
                       {unit.referenceMaterialIds.length > 0 && <span>仅作参考 {unit.referenceMaterialIds.map(id => `图${record.source.materials.findIndex(material => material.id === id) + 1}`).join('、')}</span>}</div>
@@ -1275,6 +1278,7 @@ export function WpsProductionClient() {
                   {sharedPanel ? groupIndex === 0 && unitIndex === 0 && <td className="wps-shared-production-cell" colSpan={2} rowSpan={units.length}>
                     <WpsSharedArtworks state={production} recordId={record.source.recordId} busy={unitBusyReason} make={unit => void produceArtwork(unit)} edit={editArtwork}
                       preview={(url, title) => setPreview({ url, title })}
+                      editRequirements={target => { planSnapshot.current = productionActionSnapshot(production, { action: 'updatePlan', unitId: target.id }); setError(null); setEditingUnitId(target.id); setPlanForm(formForUnit(target)); }}
                       action={input => runAction(`shared:${input.unitId}`, input)} renderUnit={renderUnitContent}
                       feedback={id => actionFeedback[id]} refresh={refreshActionState}
                       error={id => artworkErrors[id] || cloudJobs.find(job => job.unitId === id && !['queued', 'running', 'completed', 'cancelled'].includes(job.status))?.error || ''}
@@ -1300,6 +1304,14 @@ export function WpsProductionClient() {
         <section className="wps-plan-evidence"><div><b>WPS 原文</b><p>{editingRecord.source.requirementText}</p></div><div><b>附件</b><div>{editingRecord.source.materials.map((material, index) => { const url = material.previewUrl ?? material.url; return <WpsMaterialImage key={material.id} src={url} alt={material.description} label={`图${index + 1}`} sizes="70px" open={() => url && setPreview({ url, title: `图${index + 1} · ${material.description}` })} />; })}</div></div></section>
         <section className="wps-plan-fields">
           <label><span>主要内容素材</span><select disabled={planningPrompt} value={planForm.materialId} onChange={(event) => setPlanForm({ ...planForm, materialId: event.target.value })}><option value="">无内容图片（文字制作）</option>{editingRecord.source.materials.map((material, index) => <option key={material.id} value={material.id}>图{index + 1} · {material.description}</option>)}</select></label>
+          <div className="wide"><WpsFontReference source={editingRecord.source} reference={planForm.fontReference} disabled={planningPrompt} change={fontReference => setPlanForm({ ...planForm, fontReference,
+            instruction: resolveFontReferenceText(planForm.instruction, fontReferenceInput(editingRecord.source, { fontReference })),
+            layoutNote: resolveFontReferenceText(planForm.layoutNote, fontReferenceInput(editingRecord.source, { fontReference })),
+            materialId: fontReference?.materialId === planForm.materialId ? '' : planForm.materialId,
+            textMode: fontReference ? 'replace' : planForm.textMode,
+            referenceMaterialIds: [...new Set([...planForm.referenceMaterialIds.filter(id => id !== planForm.fontReference?.materialId), ...(fontReference ? [fontReference.materialId] : [])])],
+            generationPrompt: '',
+          })}/></div>
           <label className="wide"><span>模型提示词（整理和保存不会切换处理方式）</span><textarea rows={9} maxLength={4000} disabled={planningPrompt} placeholder="根据 WPS 原文和图片整理，或直接填写完整生图要求。图片使用 WPS 图号，例如图5、图4。" value={planForm.generationPrompt ?? ''} onChange={(event) => setPlanForm({ ...planForm, generationPrompt: event.target.value })} /></label>
           {planForm.generationPrompt && <details className="wide"><summary>整图生成时使用的正文与图片对应关系</summary><pre style={{ whiteSpace: 'pre-wrap' }}>{(() => {
             try { return artworkPrompt({ ...editingUnit, ...planForm, ambiguities: editingUnit.ambiguities, materialId: planForm.materialId || null }, editingRecord.source).generate; }
@@ -1311,7 +1323,7 @@ export function WpsProductionClient() {
           <label><span>准确文字</span><input disabled={planningPrompt} value={planForm.exactText} onChange={(event) => setPlanForm({ ...planForm, exactText: event.target.value })} /></label>
           <label className="wide"><span>制作要求</span><textarea disabled={planningPrompt} rows={3} value={planForm.instruction} onChange={event => setPlanForm({ ...planForm, instruction: event.target.value })} /></label>
           <label className="wide"><span>参考区域、字体与排版要求</span><textarea disabled={planningPrompt} rows={3} value={planForm.layoutNote} onChange={event => setPlanForm({ ...planForm, layoutNote: event.target.value })} /></label>
-          <fieldset className="wide"><legend>一同发送的参考素材（用途写在提示词中）</legend>{editingRecord.source.materials.filter((material) => material.id !== planForm.materialId).map((material) => <label key={material.id}><input disabled={planningPrompt} checked={planForm.referenceMaterialIds.includes(material.id)} onChange={(event) => setPlanForm({ ...planForm, referenceMaterialIds: event.target.checked ? [...planForm.referenceMaterialIds, material.id] : planForm.referenceMaterialIds.filter((id) => id !== material.id) })} type="checkbox" />图{editingRecord.source.materials.indexOf(material) + 1} · {material.description}</label>)}</fieldset>
+          <fieldset className="wide"><legend>一同发送的参考素材（用途写在提示词中）</legend>{editingRecord.source.materials.filter((material) => material.id !== planForm.materialId).map((material) => <label key={material.id}><input disabled={planningPrompt || material.id === planForm.fontReference?.materialId} checked={planForm.referenceMaterialIds.includes(material.id)} onChange={(event) => setPlanForm({ ...planForm, referenceMaterialIds: event.target.checked ? [...planForm.referenceMaterialIds, material.id] : planForm.referenceMaterialIds.filter((id) => id !== material.id) })} type="checkbox" />图{editingRecord.source.materials.indexOf(material) + 1} · {material.description}</label>)}</fieldset>
           <label className="wide"><span>仍未解决的歧义（每行一项；全部解决后清空）</span><textarea disabled={planningPrompt} rows={2} value={planForm.ambiguities} onChange={(event) => setPlanForm({ ...planForm, ambiguities: event.target.value })} /></label>
 
         </section>

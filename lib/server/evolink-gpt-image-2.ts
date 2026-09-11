@@ -1,3 +1,7 @@
+import { artworkInputSelection } from '@/lib/artwork-reference';
+import { fontReferenceInput, fontReferenceRequirement } from '@/lib/artwork-font-reference';
+import { cropFontReference } from './artwork-font-reference';
+import { readProductionFile } from './production-storage';
 import { usesProductionCloud, saveProductionFile } from './production-storage';
 import { artworkPrintInstruction, artworkPrintPlacement } from '@/lib/production-artwork-layout';
 import { createHash, randomUUID } from 'node:crypto';
@@ -109,13 +113,14 @@ async function evolinkJson(url: string, init: RequestInit, timeoutMs: number) {
   return body;
 }
 
-export function buildGptImage2Request(record: ProductionRecord, unit: ProductionUnit) {
+export function buildGptImage2Request(record: ProductionRecord, unit: ProductionUnit, fontCropUrl?: string) {
   if (unit.route !== 'gpt-image-2') throw new Error(`定制单元 ${unit.id} 不是 GPT Image 2 路线`);
-  const materialIds = [unit.materialId, ...unit.referenceMaterialIds].filter((value): value is string => Boolean(value));
+  const selection = artworkInputSelection(record.source, unit);
+  const materialIds = [selection.primary?.id, ...selection.referenceMaterialIds].filter((value): value is string => Boolean(value));
   const imageUrls = materialIds.map((materialId) => {
     const material = record.source.materials.find((candidate) => candidate.id === materialId);
     if (!material) throw new Error(`定制单元 ${unit.id} 引用了不存在的素材：${materialId}`);
-    const sourceUrl = material.url ?? material.previewUrl;
+    const sourceUrl = materialId === unit.fontReference?.materialId && fontCropUrl ? fontCropUrl : material.url ?? material.previewUrl;
     if (!sourceUrl) throw new Error(`素材 ${materialId} 没有可供 EvoLink 下载的 URL`);
     return absoluteInputUrl(sourceUrl);
   });
@@ -128,7 +133,9 @@ export function buildGptImage2Request(record: ProductionRecord, unit: Production
     `本单元制作要求：${unit.instruction}`,
     unit.exactText ? `准确文字必须逐字保留：${unit.exactText}` : '没有新增准确文字。',
     unit.layoutNote ? `字体与版式参考要求：${unit.layoutNote}` : '',
-    `输入图1是必须进入成品的内容素材；${unit.referenceMaterialIds.length > 0 ? '后续输入图仅作为明确要求的字体或版式参考，不得复制其中人物、衣服或背景。' : '没有额外风格参考图。'}`,
+    ...materialIds.map((id, index) => `输入图${index + 1} = WPS 图${record.source.materials.findIndex(material => material.id === id) + 1}（${index === 0 && selection.primaryImageRole === 'content' ? '内容素材' : '参考素材'}）`),
+    fontReferenceRequirement(fontReferenceInput(record.source, unit), unit.exactText),
+    selection.primaryImageRole === 'reference' ? '所有输入图片仅作样式参考；文字内容以准确文字为准，不复制参考图旧字、人物、衣服或背景。' : '主要内容图按本单元要求保留，其他图片仅参考点名属性。',
     artworkPrintInstruction(artworkPrintPlacement(unit.placement)),
     '只输出一张完整 PNG，保留有效 Alpha 透明通道。',
   ].filter(Boolean).join('\n');
@@ -147,6 +154,18 @@ export function buildGptImage2Request(record: ProductionRecord, unit: Production
       ? { callback_url: process.env.EVOLINK_CALLBACK_URL }
       : {}),
   };
+}
+
+export async function prepareGptImage2Request(record: ProductionRecord, unit: ProductionUnit) {
+  assertGptImage2Configured();
+  const reference = fontReferenceInput(record.source, unit);
+  if (!reference?.region) return buildGptImage2Request(record, unit);
+  const material = record.source.materials.find(item => item.id === unit.fontReference!.materialId)!;
+  const url = material.url ?? material.previewUrl;
+  if (!url) throw new Error('字体参考图片不可读取');
+  const bytes = await cropFontReference(await readProductionFile(url), reference);
+  const cropped = await saveProductionFile(bytes, '字体参考裁片.png');
+  return buildGptImage2Request(record, unit, cropped.url);
 }
 
 export async function createGptImage2Task(request: ReturnType<typeof buildGptImage2Request>) {

@@ -1,3 +1,4 @@
+import { fontReferenceInput } from '@/lib/artwork-font-reference';
 import { artworkIntent, describeArtworkComposition } from '@/lib/task-review-artwork';
 import type { SourceTaskRecord } from '@/lib/batch-task-review';
 import type { ProductionUnit } from '@/lib/wps-production';
@@ -13,7 +14,7 @@ export function productionArtworkRouting(unit: ProductionUnit, source: SourceTas
   const primaryIndex = source.materials.findIndex(material => material === selection.primary);
   const actual = unit.artwork?.recipeFingerprint === unit.recipeFingerprint ? unit.artwork.draft?.preprocessing : undefined;
   const report = actual?.routingReport;
-  const facts = artworkRequirementFacts({ sourceAssessment: unit.sourceAssessment ?? report?.facts.sourceAssessment, generationPrompt: unit.generationPrompt, instruction: unit.instruction, layoutNote: unit.layoutNote,
+  const facts = artworkRequirementFacts({ fontReference: fontReferenceInput(source, unit), sourceAssessment: unit.sourceAssessment ?? report?.facts.sourceAssessment, generationPrompt: unit.generationPrompt, instruction: unit.instruction, layoutNote: unit.layoutNote,
     sourceRequirementText: source.requirementText, printPlacement: unit.placement ?? undefined,
     artworkMethod: unit.artworkMethod,
     exactText: unit.textMode === 'replace' ? unit.exactText : '', sourceScope: unit.sourceScope,
@@ -43,7 +44,7 @@ export function productionRecipe(unit: ProductionUnit, source: SourceTaskRecord)
   unit = { ...unit, route: artworkProcessingRoute(unit) };
   const selection = artworkInputSelection(source, unit);
   const primaryIndex = source.materials.findIndex(material => material === selection.primary);
-  const input = { instruction: unit.instruction, exactText: unit.textMode === 'replace' ? unit.exactText : '', layoutNote: unit.layoutNote,
+  const input = { fontReference: fontReferenceInput(source, unit), instruction: unit.instruction, exactText: unit.textMode === 'replace' ? unit.exactText : '', layoutNote: unit.layoutNote,
     primaryImageLabel: primaryIndex < 0 ? '待选择的主要素材' : `图${primaryIndex + 1}`,
     referenceImageLabels: selection.referenceMaterialIds.map(id => { const index = source.materials.findIndex(material => material.id === id); return index < 0 ? `缺失参考素材 ${id}` : `图${index + 1}`; }),
   };

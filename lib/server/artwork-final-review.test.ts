@@ -57,3 +57,18 @@ it('reference-only inputs stay references when checking the final combined image
   expect(vi.mocked(verifyArtworkModelEdits).mock.calls[0][2][0]).toContain('仅作样式参考，不复制其原文字或图形');
   expect(vi.mocked(verifyArtworkModelEdits).mock.calls[0][2][0]).toContain('明确文字：康悦');
 });
+
+it('checks the target font against the designated reference rather than the content Logo', async () => {
+  const { unit, source, ledger } = fixture();
+  source.materials.push({ ...source.materials[0], id: 'font-ref', url: '/uploads/logos/font-ref.png' });
+  unit.fontReference = { materialId: 'font-ref', origin: 'manual', description: '粗体方字', evidence: '人工指定', region: null };
+  unit.referenceMaterialIds = ['font-ref'];
+  const fontBytes = Buffer.from('font reference pixels');
+  vi.mocked(readProductionFile).mockImplementation(async url => url.endsWith('font-ref.png') ? fontBytes : final);
+  vi.mocked(verifyArtworkModelEdits).mockImplementation(async (original, _final, requirements) => ({ version: 'artwork-edit-check-v1', sourceSha256: sha256, outputSha256: sha256, model: 'test',
+    checks: requirements.map(requirement => ({ requirement, status: original === fontBytes ? 'failed' : 'passed', evidence: original === fontBytes ? '目标字笔画偏细' : '符合' })) }));
+  const next = await inspectFinalArtwork(unit, source, '/uploads/logos/final.png', ledger, ['text']);
+  expect(verifyArtworkModelEdits).toHaveBeenCalledTimes(2);
+  expect(vi.mocked(verifyArtworkModelEdits).mock.calls[1][0]).toBe(fontBytes);
+  expect(next.items.find(item => item.id === 'text')).toMatchObject({ status: 'failed', evidence: '目标字笔画偏细' });
+});

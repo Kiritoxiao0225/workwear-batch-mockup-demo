@@ -1,3 +1,4 @@
+import { resolveFontReferenceText, fontReferenceInput, fontReferenceRequirement, type ArtworkFontReference } from './artwork-font-reference';
 import { compileGenerationPrompt } from '@/lib/artwork-generation-prompt';
 
 /** Canonical image numbers are for matching only; the customer's source text stays intact. */
@@ -39,6 +40,7 @@ export function plainSourcePlacementText(requirement: string, placement: string 
 }
 
 export type ArtworkContentPlan = {
+  fontReference?: ArtworkFontReference | null;
   materialId: string | null; referenceMaterialIds?: string[]; textMode?: string | null; exactText?: string;
   instruction?: string; layoutNote?: string;
 };
@@ -55,7 +57,7 @@ export function currentArtworkAmbiguities(plan: ArtworkContentPlan & { ambiguiti
 /** The first transport image may be a reference; its explicit role must travel with it. */
 export function artworkInputSelection<T extends { id: string }>(source: { materials: T[] }, plan: ArtworkContentPlan) {
   const referenceOnly = isReferenceTextArtwork(plan);
-  const primaryId = referenceOnly ? source.materials.find(material => plan.referenceMaterialIds!.includes(material.id))?.id ?? plan.referenceMaterialIds![0] : plan.materialId;
+  const primaryId = referenceOnly ? plan.fontReference?.materialId ?? source.materials.find(material => plan.referenceMaterialIds!.includes(material.id))?.id ?? plan.referenceMaterialIds![0] : plan.materialId;
   const primaryIndex = source.materials.findIndex(material => material.id === primaryId);
   return {
     primary: source.materials[primaryIndex],
@@ -66,7 +68,7 @@ export function artworkInputSelection<T extends { id: string }>(source: { materi
 }
 
 export function isTextOnlyArtwork(plan: ArtworkContentPlan) {
-  if (plan.materialId || plan.referenceMaterialIds?.length || plan.textMode !== 'replace' || !plan.exactText?.trim()) return false;
+  if (plan.fontReference || plan.materialId || plan.referenceMaterialIds?.length || plan.textMode !== 'replace' || !plan.exactText?.trim()) return false;
   const instructions = `${plan.instruction ?? ''}\n${plan.layoutNote ?? ''}`.replaceAll(plan.exactText, '');
   return !artworkImageNumbers(instructions).length && !/(?:参考|仿照).*(?:字体|字形)|(?:字体|字形).*(?:参考|仿照)|书法|手写|特殊字形/u.test(instructions);
 }
@@ -82,8 +84,16 @@ export function artworkSourceSelections(text: string, imageNumber: number) {
 export function artworkPlanIssues(source: { requirementText: string; materials: Array<{ id: string }> }, plan: {
   materialId: string | null; referenceMaterialIds: string[]; instruction: string; layoutNote: string; generationPrompt?: string;
   sourceScope: string; placement: { key: string } | null;
-  textMode?: string | null; exactText?: string;
+  textMode?: string | null; exactText?: string; fontReference?: ArtworkFontReference | null;
 }) {
+  const font = plan.fontReference && source.materials.some(material => material.id === plan.fontReference!.materialId) ? fontReferenceInput(source, plan) : undefined;
+  if (font?.origin === 'manual') plan = { ...plan, instruction: resolveFontReferenceText(plan.instruction, font), layoutNote: resolveFontReferenceText(plan.layoutNote, font), generationPrompt: plan.generationPrompt ? resolveFontReferenceText(plan.generationPrompt, font) : undefined };
+  if (plan.fontReference) {
+    if (!source.materials.some(material => material.id === plan.fontReference!.materialId)) return ['字体参考素材已不存在'];
+    if (!plan.referenceMaterialIds.includes(plan.fontReference.materialId)) return ['字体参考图尚未绑定为参考素材'];
+    if (plan.materialId === plan.fontReference.materialId) return ['字体参考不能同时作为主要内容图'];
+    if (plan.textMode !== 'replace' || !plan.exactText?.trim()) return ['仿字体需要填写准确文字'];
+  }
   if (isTextOnlyArtwork(plan)) {
     const fields = artworkPlacementFields(source.requirementText);
     const scoped = fields.flatMap((field, index) => ARTWORK_PLACEMENT_ALIASES[field[1]] === plan.placement?.key
@@ -102,7 +112,7 @@ export function artworkPlanIssues(source: { requirementText: string; materials: 
   }
   const selection = artworkInputSelection(source, plan);
   return [...new Set([...issues, ...artworkReferenceIssues({
-    ...plan, sourceRequirementText: source.requirementText, printPlacement: plan.placement,
+    ...plan, fontReference: font, layoutNote: [plan.layoutNote, fontReferenceRequirement(fontReferenceInput(source, plan), plan.exactText ?? '')].filter(Boolean).join('\n'), sourceRequirementText: source.requirementText, printPlacement: plan.placement,
     primaryImageRole: referenceOnly ? 'reference' : 'content',
     primaryImageLabel: selection.primaryImageLabel,
     referenceImages: selection.referenceMaterialIds.map(id => ({ label: `图${source.materials.findIndex(material => material.id === id) + 1}` })),
@@ -143,7 +153,8 @@ export function artworkReferenceEvidence(text: string): ArtworkReferenceEvidence
   });
 }
 
-export function artworkReferenceIssues(input: { generationPrompt?: string; instruction: string; layoutNote: string; primaryImageLabel: string; primaryImageRole?: 'content' | 'reference'; referenceImages: Array<{ label: string }>; sourceRequirementText?: string; printPlacement?: { key: string } | null; sourceScope?: string }) {
+export function artworkReferenceIssues(input: { generationPrompt?: string; instruction: string; layoutNote: string; primaryImageLabel: string; primaryImageRole?: 'content' | 'reference'; referenceImages: Array<{ label: string }>; sourceRequirementText?: string; printPlacement?: { key: string } | null; sourceScope?: string; fontReference?: import('./artwork-font-reference').FontReferenceInput }) {
+  if (input.fontReference?.origin === 'manual') input = { ...input, instruction: resolveFontReferenceText(input.instruction, input.fontReference), layoutNote: resolveFontReferenceText(input.layoutNote, input.fontReference), sourceRequirementText: input.sourceRequirementText ? resolveFontReferenceText(input.sourceRequirementText, input.fontReference) : undefined };
   if (input.generationPrompt?.trim()) {
     try {
       compileGenerationPrompt(input.generationPrompt, [

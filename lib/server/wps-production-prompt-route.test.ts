@@ -49,6 +49,29 @@ describe('focused prompt endpoint', () => {
     expect(JSON.stringify(state)).toBe(before);
     expect(planArtworkGenerationPrompt).toHaveBeenCalledWith(state.records[0].source, expect.objectContaining({ id: state.units[0].id, instruction: state.units[0].instruction, exactText: state.units[0].exactText, layoutNote: state.units[0].layoutNote, artworkMethod: state.units[0].artworkMethod }));
   });
+  it('uses unsaved exact text and font selection without writing the source or saved plan', async () => {
+    const before = JSON.stringify(state);
+    const fontReference = { materialId: state.records[0].source.materials[0].id, region: null, description: '粗体字', evidence: '人工指定', origin: 'manual' as const };
+    vi.mocked(planArtworkGenerationPrompt).mockResolvedValueOnce({ fontReference, generationPrompt: '制作新文字，字体参考图1。', primaryImageLabel: null, referenceImageLabels: ['图1'], ambiguities: [], model: 'test', provider: 'cliproxy' });
+    const response = await POST(new Request('http://localhost/api/wps-production/prompt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ unitId: state.units[0].id, expectedUnitSnapshot: productionArtworkSnapshot(state.units[0], state.records[0].source), draft: { exactText: '新文字', textMode: 'replace', fontReference } }) }));
+    expect(response.status).toBe(200);
+    expect(planArtworkGenerationPrompt).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ exactText: '新文字', fontReference }));
+    expect((await response.json()).fontReference).toEqual(fontReference);
+    expect(JSON.stringify(state)).toBe(before);
+  });
+  it('previews the same font-first image order used by the worker even when the planner returns another order', async () => {
+    const source = state.records[0].source;
+    source.materials.push({ ...source.materials[0], id: 'font-second' });
+    state.units[0].textMode = 'replace'; state.units[0].exactText = '目标文字';
+    const fontReference = { materialId: 'font-second', region: null, description: '方形粗字', evidence: '人工指定', origin: 'manual' as const };
+    vi.mocked(listWpsSourceTaskRecords).mockResolvedValueOnce({ records: [structuredClone(source)] } as Awaited<ReturnType<typeof listWpsSourceTaskRecords>>);
+    vi.mocked(planArtworkGenerationPrompt).mockResolvedValueOnce({ fontReference, generationPrompt: '目标文字字体参考图2，排版参考图1。', primaryImageLabel: null, referenceImageLabels: ['图1', '图2'], ambiguities: [], model: 'test', provider: 'cliproxy' });
+    const response = await POST(request());
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result.finalPrompt).toContain('输入图1 = WPS 图2（参考素材）');
+    expect(result.finalPrompt).toContain('输入图2 = WPS 图1（参考素材）');
+  });
   it('rejects a stale unit before any inference', async () => {
     expect((await POST(request('stale'))).status).toBe(409);
     expect(planArtworkGenerationPrompt).not.toHaveBeenCalled();

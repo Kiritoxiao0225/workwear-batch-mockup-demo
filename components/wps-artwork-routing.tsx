@@ -1,3 +1,4 @@
+import { fontReferenceInput } from '@/lib/artwork-font-reference';
 import { artworkInputSelection } from '@/lib/artwork-reference';
 import { ARTWORK_METHODS, type ArtworkMethod } from '@/lib/artwork-routing-standard';
 import { productionArtworkRouting, productionRecipe } from '@/lib/production-recipe';
@@ -10,7 +11,7 @@ export function WpsArtworkMethodSelector({ unit, source, busy, change }: { unit:
   const routing = productionArtworkRouting({ ...unit, artworkMethod: 'auto', route: 'auto' }, source);
   const selected = unit.artworkMethod ?? ({ deterministic: 'preserve', hybrid: 'compose', model: 'generate' } as const)[unit.route as 'deterministic' | 'hybrid' | 'model'] ?? 'auto';
   const recommendation = routing.decision.method ? ARTWORK_METHODS[routing.decision.method].label : null;
-  const input = { sourceAssessment: unit.sourceAssessment ?? routing.facts.sourceAssessment, generationPrompt: unit.generationPrompt, sourceRequirementText: source.requirementText, printPlacement: unit.placement ?? undefined, instruction: unit.instruction, layoutNote: unit.layoutNote, exactText: unit.textMode === 'replace' ? unit.exactText : '', primaryImageLabel: artworkInputSelection(source, unit).primaryImageLabel, primaryImageRole: artworkInputSelection(source, unit).primaryImageRole, sourceScope: unit.sourceScope, processingRoute: 'auto' as const, referenceImages: artworkInputSelection(source, unit).referenceMaterialIds.map(id => ({ label: `图${source.materials.findIndex(material => material.id === id) + 1}` })) };
+  const input = { fontReference: fontReferenceInput(source, unit), sourceAssessment: unit.sourceAssessment ?? routing.facts.sourceAssessment, generationPrompt: unit.generationPrompt, sourceRequirementText: source.requirementText, printPlacement: unit.placement ?? undefined, instruction: unit.instruction, layoutNote: unit.layoutNote, exactText: unit.textMode === 'replace' ? unit.exactText : '', primaryImageLabel: artworkInputSelection(source, unit).primaryImageLabel, primaryImageRole: artworkInputSelection(source, unit).primaryImageRole, sourceScope: unit.sourceScope, processingRoute: 'auto' as const, referenceImages: artworkInputSelection(source, unit).referenceMaterialIds.map(id => ({ label: `图${source.materials.findIndex(material => material.id === id) + 1}` })) };
   return <div className="wps-method-selector"><label>处理方式<select aria-label={`${unit.id} 处理方式`} disabled={busy} value={unit.route === 'gpt-image-2' ? 'gpt-image-2' : selected} onChange={event => change(event.target.value as ArtworkMethodChoice)}>
     {ARTWORK_METHOD_OPTIONS.map(method => {
       const issue = artworkMethodIssue(input, method);

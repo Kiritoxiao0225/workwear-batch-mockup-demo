@@ -1,3 +1,4 @@
+import { parseArtworkFontReference } from '@/lib/artwork-font-reference';
 import { usesProductionCloud } from './production-storage';
 import { assertSharedArtworks } from '@/lib/shared-artwork';
 import { printSizeRequestSchema } from '@/lib/print-size-request';
@@ -101,6 +102,7 @@ export function assertWpsProductionState(value: unknown): asserts value is WpsPr
     if (!['blocked', 'pendingPlanConfirmation', 'pendingArtwork', 'pendingArtworkConfirmation', 'artworkApproved', 'failed'].includes(unit.status as string)) {
       throw new Error(`state.units[${index}].status 无效`);
     }
+    parseArtworkFontReference(unit.fontReference);
     stringArray(unit.referenceMaterialIds, `state.units[${index}].referenceMaterialIds`);
     stringArray(unit.ambiguities, `state.units[${index}].ambiguities`);
     if (!Array.isArray(unit.attempts)) throw new Error(`state.units[${index}].attempts 必须是数组`);

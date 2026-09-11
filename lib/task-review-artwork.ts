@@ -1,3 +1,4 @@
+import { resolveFontReferenceText, fontReferenceInputSchema, fontReferenceRequirement, type FontReferenceInput } from './artwork-font-reference';
 import { parseArtworkSourceAssessment } from './artwork-source-assessment';
 import { artworkTextOperation } from './artwork-text-contract';
 import { compileGenerationPrompt, parseGenerationPrompt } from './artwork-generation-prompt';
@@ -70,6 +71,7 @@ export type ArtworkCompositionDescription = {
 };
 
 export type ArtworkPreparationRequest = {
+  fontReference?: FontReferenceInput;
   correction?: { baseRunId: string; image: LogoStudioInputImage; issues: import('./artwork-correction').ArtworkCorrectionIssue[] };
   cutoutMode?: import('@/lib/artwork-cutout').ArtworkCutoutMode;
   generationPrompt?: string;
@@ -111,6 +113,7 @@ export type CanonicalArtworkModelPrompt = {
 };
 
 export type CanonicalArtworkModelPromptInput = {
+  fontReference?: FontReferenceInput;
   sourceAssessment?: import('./artwork-source-assessment').ArtworkSourceAssessment;
   primaryImageRole?: 'content' | 'reference';
   generationPrompt?: string;
@@ -218,6 +221,11 @@ export function artworkModelInputLabels(input: Pick<
 export function buildCanonicalArtworkModelPrompt(
   input: CanonicalArtworkModelPromptInput,
 ): CanonicalArtworkModelPrompt {
+  if (input.fontReference?.origin === 'manual') input = { ...input, instruction: resolveFontReferenceText(input.instruction, input.fontReference), layoutNote: resolveFontReferenceText(input.layoutNote, input.fontReference), generationPrompt: input.generationPrompt ? resolveFontReferenceText(input.generationPrompt, input.fontReference) : undefined };
+  const fontRequirement = fontReferenceRequirement(input.fontReference, input.exactText);
+  if (input.fontReference && !input.generationPrompt && input.primaryImageRole === 'reference') {
+    input = { ...input, generationPrompt: `${input.instruction}\n${input.layoutNote}\n只输出独立平面文字图案。` };
+  }
   const instruction = input.instruction.trim();
   if (!instruction) throw new Error('canonical artwork prompt 缺少制作要求');
   const sourceRequirementText = input.sourceRequirementText.trim();
@@ -232,13 +240,13 @@ export function buildCanonicalArtworkModelPrompt(
       sourceLabel,
       modelInputLabel: `图${index + 1}`,
       role: contentSource ? 'content' : 'reference',
-      requirement: input.generationPrompt?.trim() ? '具体取材和用途按生图提示词执行。' : contentSource
+      requirement: input.fontReference?.label === sourceLabel ? `字体参考${input.fontReference.region ? '裁片' : ''}：${input.fontReference.description}` : input.generationPrompt?.trim() ? '具体取材和用途按生图提示词执行。' : contentSource
         ? '必须进入最终成品；保留客户指定的主体内容、品牌识别结构及其原有颜色。除非客户明确要求该 Logo 改色，否则禁止跟随参考图或新增文字统一改色。'
         : '只参考任务明确点名的属性：字体/字形、文字颜色、排版分别执行；未点名的属性不自动套用。先定位照片中被参考的印花区域；不得复制人物、衣服、场景、背景或无关文字。',
     };
   });
   if (input.generationPrompt?.trim()) {
-    const compiled = compileGenerationPrompt(input.generationPrompt, imageMapping);
+    const compiled = [compileGenerationPrompt(input.generationPrompt, imageMapping), fontRequirement].filter(Boolean).join('\n');
     const prompt = input.primaryImageRole === 'reference'
       ? `${compiled}\n\n【文字内容与参考边界】唯一允许出现的文字为 ${JSON.stringify(exactText)}，逐字准确。所有输入图片仅供字形、颜色或排版参考；不复制其原文字、标识内容、人物、服装、场景或界面。`
       : artworkTextOperation(input) === 'replace'
@@ -359,7 +367,7 @@ export function parseArtworkPreparationRequest(value: unknown): ArtworkPreparati
     ? '图1'
     : imageLabel(input.primaryImageLabel, 'primaryImageLabel');
   if (input.primaryImageRole !== undefined && input.primaryImageRole !== 'content' && input.primaryImageRole !== 'reference') throw new Error('primaryImageRole 必须是 content 或 reference');
-  if (input.primaryImageRole === 'reference' && (!exactText.trim() || !parseGenerationPrompt(input.generationPrompt))) throw new Error('primaryImageRole 为 reference 时必须填写准确文字与生图提示词');
+  if (input.primaryImageRole === 'reference' && (!exactText.trim() || (!input.fontReference && !parseGenerationPrompt(input.generationPrompt)))) throw new Error('primaryImageRole 为 reference 时必须填写准确文字与生图提示词');
   if (input.referenceImages !== undefined && !Array.isArray(input.referenceImages)) {
     throw new Error('referenceImages 必须是数组');
   }
@@ -380,7 +388,10 @@ export function parseArtworkPreparationRequest(value: unknown): ArtworkPreparati
   });
   const parsedImages = [input.image, ...referenceCandidates.map(candidate => candidate.image)].map(image => parseLogoStudioRequest({ instruction: input.instruction, images: [image] }));
   const parsed = { instruction: parsedImages[0].instruction, images: parsedImages.map(result => result.images[0]) };
+  const fontReference = input.fontReference == null ? undefined : fontReferenceInputSchema.parse(input.fontReference);
+  if (fontReference && (!exactText || (fontReference.label === primaryImageLabel ? input.primaryImageRole !== 'reference' : !referenceLabels.has(fontReference.label)))) throw new Error('字体参考必须绑定到参考图片，并填写准确文字');
   return {
+    fontReference,
     sourceRequirementText,
     generationPrompt: parseGenerationPrompt(input.generationPrompt),
     sourceAssessment: parseArtworkSourceAssessment(input.sourceAssessment),
@@ -440,8 +451,8 @@ const ROUTE_LABELS: Record<ArtworkProcessingRoute, string> = {
   model: '模型生成',
 };
 
-export function artworkIntent(request: Pick<ArtworkPreparationRequest, 'instruction' | 'layoutNote' | 'exactText' | 'primaryImageLabel'> & { referenceImages: Array<{ label: string }> }) {
-  const requirement = `${request.instruction}\n${request.layoutNote}`;
+export function artworkIntent(request: Pick<ArtworkPreparationRequest, 'instruction' | 'layoutNote' | 'exactText' | 'primaryImageLabel'> & { fontReference?: FontReferenceInput; referenceImages: Array<{ label: string }> }) {
+  const requirement = `${request.instruction}\n${request.layoutNote}${request.fontReference ? `\n字体参考 WPS ${request.fontReference.label}` : ''}`;
   const hasReference = request.referenceImages.length > 0;
   const hasStyleReference = hasReference
     && request.exactText.length > 0

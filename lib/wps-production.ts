@@ -1,3 +1,4 @@
+import { parseArtworkFontReference } from '@/lib/artwork-font-reference';
 import { buildArtworkReview, manualArtworkReview, reviewForAttachment, type ArtworkReviewLedger } from './artwork-review-ledger';
 import type { BrowserLogoTextVerification } from '@/lib/client/browser-logo-ocr';
 import { autoLinkSharedArtworks, sharedArtworkGroups } from './shared-artwork';
@@ -147,6 +148,7 @@ export type ProductionUnit = {
   placement: ProductionPlacement | null;
   materialId: string | null;
   referenceMaterialIds: string[];
+  fontReference?: import('./artwork-font-reference').ArtworkFontReference | null;
   sourceScope: SourceScope;
   textMode: TextMode | null;
   exactText: string;
@@ -226,6 +228,7 @@ export type ProductionPlanPatch = Partial<Pick<
   | 'garmentLabel'
   | 'variantLabel'
   | 'referenceMaterialIds'
+  | 'fontReference'
   | 'sourceScope'
   | 'textMode'
   | 'exactText'
@@ -298,10 +301,11 @@ function defaultPlacement(key: PlacementKey | null): ProductionPlacement | null 
 
 function recipeFingerprint(unit: Pick<
   ProductionUnit,
-  'materialId' | 'referenceMaterialIds' | 'sourceScope' | 'textMode' | 'exactText' | 'layoutNote' | 'instruction' | 'route' | 'artworkMethod' | 'generationPrompt' | 'sourceAssessment'
+  'materialId' | 'referenceMaterialIds' | 'fontReference' | 'sourceScope' | 'textMode' | 'exactText' | 'layoutNote' | 'instruction' | 'route' | 'artworkMethod' | 'generationPrompt' | 'sourceAssessment'
 >) {
   return sha256(JSON.stringify({
     materialId: unit.materialId,
+    ...(unit.fontReference ? { fontReference: parseArtworkFontReference(unit.fontReference) } : {}),
     referenceMaterialIds: [...new Set(unit.referenceMaterialIds)].sort(),
     sourceScope: unit.sourceScope,
     textMode: unit.textMode,
@@ -489,6 +493,7 @@ function fromReviewUnit(review: TaskReview, unit: GenerationUnit, previous: Prod
       sharedArtworkVersion: previous?.sharedArtworkVersion ?? 0,
     } : {}),
     referenceMaterialIds: [...new Set(unit.referenceMaterialIds)],
+    ...(unit.fontReference ? { fontReference: parseArtworkFontReference(unit.fontReference) } : {}),
     sourceScope: unit.sourceScope,
     textMode: unit.textMode,
     exactText: unit.exactText,
@@ -710,6 +715,7 @@ export function updateProductionPlan(
     const next: ProductionUnit = {
       ...unit,
       ...patch,
+      ...('fontReference' in patch ? { fontReference: parseArtworkFontReference(patch.fontReference) } : {}),
       productCode: patch.garment === undefined ? unit.productCode : patch.garment?.styleCode ?? null,
       placement: patch.placement === undefined ? unit.placement : checkedPlacement(patch.placement?.templateVersion === 'catalog-v1'
         ? bindPrintSizeRequest(state.records.find(record => record.source.recordId === unit.sourceRecordId)!.source.requirementText, patch.placement)
@@ -737,11 +743,11 @@ export function updateProductionPlan(
     if (['materialId', 'sourceScope', 'instruction', 'layoutNote'].some(key =>
       key in patch && JSON.stringify(next[key as keyof ProductionUnit]) !== JSON.stringify(unit[key as keyof ProductionUnit]))) next.sourceAssessment = undefined;
     // Legacy metadata edits cannot silently reuse a prompt authored for different inputs.
-    if (!('generationPrompt' in patch) && ['materialId', 'referenceMaterialIds', 'sourceScope', 'textMode', 'exactText', 'instruction', 'layoutNote'].some(key =>
+    if (!('generationPrompt' in patch) && ['materialId', 'referenceMaterialIds', 'fontReference', 'sourceScope', 'textMode', 'exactText', 'instruction', 'layoutNote'].some(key =>
       key in patch && JSON.stringify(next[key as keyof ProductionUnit]) !== JSON.stringify(unit[key as keyof ProductionUnit]))) next.generationPrompt = undefined;
     // Validate content edits before changing fingerprints, artwork or gates.
     // Position-only updates remain available while an old recipe needs repair.
-    if (['generationPrompt', 'materialId', 'referenceMaterialIds', 'sourceScope', 'instruction', 'layoutNote', 'textMode', 'exactText'].some(key => key in patch)) {
+    if (['generationPrompt', 'materialId', 'referenceMaterialIds', 'fontReference', 'sourceScope', 'instruction', 'layoutNote', 'textMode', 'exactText'].some(key => key in patch)) {
       const source = state.records.find(record => record.source.recordId === unit.sourceRecordId)!.source;
       const issues = artworkPlanIssues(source, next);
       if (issues.length) throw new ProductionTransitionError(`制作方案尚不完整：${issues.join('；')}`);

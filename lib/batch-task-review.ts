@@ -61,6 +61,7 @@ export type GenerationUnit = {
   placement: PlacementKey | null;
   logo: LogoSelection;
   referenceMaterialIds: string[];
+  fontReference?: import('./artwork-font-reference').ArtworkFontReference | null;
   sourceScope: SourceScope;
   processingRoute?: ArtworkProcessingRouteMode;
   textMode: TextMode | null;

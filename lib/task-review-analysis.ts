@@ -1,3 +1,4 @@
+import { parseArtworkFontReference, FONT_REFERENCE_ANALYSIS_RULES } from '@/lib/artwork-font-reference';
 import { ARTWORK_SOURCE_ASSESSMENT_RULES, parseArtworkSourceAssessment } from './artwork-source-assessment';
 import { parseGenerationPrompt, GENERATION_PROMPT_WRITING_RULES } from './artwork-generation-prompt';
 import { garmentRequestSchema } from '@/lib/production-garment';
@@ -324,13 +325,17 @@ function pairGarmentVersions(source: SourceTaskRecord, units: GenerationUnit[]) 
 export function normalizeTaskReview(review: TaskReview): TaskReview {
   const normalizedUnits = review.units.filter(unit => !emptySourcePlacement(review.source.requirementText, unit.placement)).map(raw => {
     const literalText = plainSourcePlacementText(review.source.requirementText, raw.placement);
-    const repaired = literalText && (!raw.exactText.trim() || raw.exactText.trim() === literalText)
+    const repaired = !raw.fontReference && literalText && (!raw.exactText.trim() || raw.exactText.trim() === literalText)
       ? { ...raw, logo: { ...raw.logo, materialId: null }, referenceMaterialIds: [], textMode: 'replace' as const, exactText: literalText,
         instruction: raw.instruction, generationPrompt: '', sourceScope: 'subject' as const }
       : raw;
-    const unit = keepExplicitReferenceMaterials(review.source, repaired);
+    const bound = repaired.fontReference ? { ...repaired,
+      logo: repaired.logo.materialId === repaired.fontReference.materialId ? { ...repaired.logo, materialId: null, url: null } : repaired.logo,
+      referenceMaterialIds: [...new Set([...repaired.referenceMaterialIds, repaired.fontReference.materialId])],
+    } : repaired;
+    const unit = keepExplicitReferenceMaterials(review.source, bound);
     if (isTextOnlyArtwork({ ...unit, materialId: unit.logo.materialId })) { unit.generationPrompt = ''; unit.processingRoute = 'fidelity'; }
-    const references = [...new Set(unit.referenceMaterialIds)].filter(id => id !== unit.logo.materialId);
+    const references = [...new Set([...unit.referenceMaterialIds, ...(unit.fontReference ? [unit.fontReference.materialId] : [])])].filter(id => id !== unit.logo.materialId);
     const checks = artworkPlanIssues(review.source, { ...unit, materialId: unit.logo.materialId, referenceMaterialIds: references, placement: unit.placement ? { key: unit.placement } : null });
     return {
       ...unit,
@@ -410,7 +415,7 @@ ${productOptions}
 - 对“按照图N做 / 参考样式”，必须实际观察图片，在 generationPrompt 指定区域和可见特征，保留 referenceMaterialIds；仅对无法判断且影响内容的歧义提示核对。
 - “图一前三排 / 前三行 / 上半部分”等局部取用要求必须完整保留在 generationPrompt，sourceScope=custom；内容源与参考源分别记录，参考图文字不能替换内容源文字。
 - 图三、图3、图 3、图３指同一张素材。原文明示的扇形、字体、颜色、排版等参考要求必须保留在对应单元，referenceMaterialIds 必须包含对应素材；不能因为参考图不进入成品就漏传给制作模型。
-- referenceMaterialIds 只能放原文在该生成单元中明确写作“参考图N”或“按照图N”的素材，不得把同一行的其他 Logo 图随意当参考图。
+- referenceMaterialIds 放原文在该单元中明确要求的参考素材，或按 fontReference 规则有具体视觉依据的字体参考；不得把其他位置的 Logo 随意当参考。
 
 ${ARTWORK_SOURCE_ASSESSMENT_RULES}
 
@@ -421,10 +426,11 @@ ${ARTWORK_SOURCE_ASSESSMENT_RULES}
 - 改色只作用于 instruction 指定的主体，不能把被删除的背景一起改色。
 
 只返回 JSON，格式严格如下：
+${FONT_REFERENCE_ANALYSIS_RULES}
 ${GENERATION_PROMPT_WRITING_RULES.replace('每个单元必须输出 generationPrompt：一份可直接用于生图的完整提示词正文，约 150–800 字，最长 4000 字。', '每个独立 artwork 只写一次 generationPrompt。简单 Logo 通常 60–250 字足够，复杂图案按实际需要补全，最长 4000 字；不为凑字数重复要求。纯文字且无样式参考时 generationPrompt=""。')}
 
 summary 只写一句概括，不重复逐项内容；instruction 保留操作、exactText 保留准确新增文字、layoutNote 保留观察，不在这些字段重复整篇 generationPrompt。共同图案的 sourceAssessment 也只写一次。每件衣服至少被一个 artwork 引用；禁止输出额外的 units、garmentLabel、productCode、garmentRequest 字段。
-{"records":[{"recordId":"源记录ID","summary":"一句概括","garments":[{"id":"g1","styleCode":"原文完整货号","colorText":"原文衣服色名","sizeText":""}],"artworks":[{"id":"a1","garmentIds":["g1"],"variantLabel":"版本1","placement":"frontCenter|leftChest|rightChest|back|leftSleeve|rightSleeve|null","logoMaterialId":null,"referenceMaterialIds":[],"sourceScope":"subject|subjectWithFrame|wholeImage|custom","textMode":"keep|replace|none|null","exactText":"","layoutNote":"","instruction":"完整操作与作用范围","generationPrompt":"独立图案的制作提示词","ambiguities":[]}]}]}
+{"records":[{"recordId":"源记录ID","summary":"一句概括","garments":[{"id":"g1","styleCode":"原文完整货号","colorText":"原文衣服色名","sizeText":""}],"artworks":[{"id":"a1","garmentIds":["g1"],"variantLabel":"版本1","placement":"frontCenter|leftChest|rightChest|back|leftSleeve|rightSleeve|null","logoMaterialId":null,"referenceMaterialIds":[],"fontReference":null,"sourceScope":"subject|subjectWithFrame|wholeImage|custom","textMode":"keep|replace|none|null","exactText":"","layoutNote":"","instruction":"完整操作与作用范围","generationPrompt":"独立图案的制作提示词","ambiguities":[]}]}]}
 
 待拆解源记录：
 ${JSON.stringify(sourceRows)}`;
@@ -461,6 +467,7 @@ function parsedUnit(
       url: textMode === 'keep' && parsedSourceScope === 'wholeImage' ? logoMaterial?.url ?? null : null,
       name: logoMaterial?.name ?? '',
     },
+    fontReference: parseArtworkFontReference(unit.fontReference),
     referenceMaterialIds: textList(unit.referenceMaterialIds, `${source.recordId}.units[${index}].referenceMaterialIds`),
     sourceScope: parsedSourceScope,
     sourceAssessment: assessment && logoMaterialId ? { ...assessment, materialId: logoMaterialId } : undefined,

@@ -1,3 +1,5 @@
+import { fontReferenceRequirement } from '@/lib/artwork-font-reference';
+import { cropArtworkFontInput } from './artwork-font-reference';
 import { artworkCorrectionPrompt } from '@/lib/artwork-correction';
 import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
@@ -107,6 +109,7 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
   let prompts = standardArtworkPrompts(request);
   if (request.expectedPromptVersion && request.expectedPromptVersion !== prompts.version) throw new Error('页面制作要求版本已过期，请刷新后重试');
   if (request.expectedPromptHash && request.expectedPromptHash !== prompts.hash) throw new Error('页面显示的制作要求与服务端不一致，已停止处理');
+  request = await cropArtworkFontInput(request);
   const initialFacts = artworkRequirementFacts(request);
   const initialDecision = decideArtworkMethod(initialFacts);
   const inspectSelectionFirst = initialFacts.sourceAssessmentRequired && initialFacts.intent === 'compose'
@@ -136,14 +139,16 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
   const modelEdits = request.primaryImageRole === 'reference' ? [] : artworkModelEdits(request);
   let decision = decideArtworkMethod(facts);
   if (decision.state === 'review') throw new Error(`${decision.reason} ${facts.blockers.join('；')}`);
-  if (decision.method === 'generate' && !request.generationPrompt?.trim() && !request.correction) throw new Error('请先整理生图提示词，再制作图案');
+  if (decision.method === 'generate' && !request.generationPrompt?.trim() && !request.fontReference && !request.correction) throw new Error('请先整理生图提示词，再制作图案');
   const reconstructSource = Boolean(facts.reconstructSource);
   const modelPreparation = decision.method === 'generate' || reconstructSource;
-  let modelPrompt = artworkSeparationPrompt(request.correction ? artworkCorrectionPrompt(request.correction.issues, `${request.instruction}\n${request.layoutNote}\n准确文字：${request.exactText}`, request.primaryImageRole) : (decision.method === 'generate' ? prompts.generate : prompts.reconstruct) ?? '');
+  let modelPrompt = artworkSeparationPrompt(request.correction ? artworkCorrectionPrompt(request.correction.issues, `${request.instruction}\n${request.layoutNote}\n准确文字：${request.exactText}\n${fontReferenceRequirement(request.fontReference, request.exactText)}`, request.primaryImageRole) : (decision.method === 'generate' ? prompts.generate : prompts.reconstruct) ?? '');
   if (request.correction) prompts = { ...prompts, imageMapping: [
     { sourceLabel: request.primaryImageLabel, modelInputLabel: '图1', role: request.primaryImageRole ?? 'content', requirement: '客户原素材，依指定角色使用' },
     { sourceLabel: '当前已保存图案', modelInputLabel: '图2', role: 'content', requirement: '保留正确部分，只修正已选问题' },
+    ...request.referenceImages.map((image, index) => ({ sourceLabel: image.label, modelInputLabel: `图${index + 3}`, role: 'reference' as const, requirement: image.label === request.fontReference?.label ? '字体参考裁片' : '按制作要求参考' })),
   ] };
+  if (request.correction && request.fontReference) modelPrompt += `\n图片对应：${prompts.imageMapping.map(image => `输入${image.modelInputLabel} = WPS ${image.sourceLabel}（${image.requirement}）`).join('；')}`;
   if (reconstructSource && decision.method !== 'generate') prompts = { ...prompts,
     imageMapping: prompts.imageMapping.filter(mapping => mapping.sourceLabel === request.primaryImageLabel)
       .map(mapping => ({ ...mapping, modelInputLabel: '图1' })) };
@@ -232,7 +237,7 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
     const results = await Promise.allSettled([
       services.measure(sourceBytes),
       (async () => {
-        let images = request.correction ? [request.image.dataUrl, request.correction.image.dataUrl] : reconstructSource && decision.method !== 'generate' ? [request.image.dataUrl] : prompts.imageMapping.map(mapping => mapping.sourceLabel === request.primaryImageLabel ? request.image.dataUrl : request.referenceImages.find(reference => reference.label === mapping.sourceLabel)!.image.dataUrl);
+        let images = request.correction ? [request.image.dataUrl, request.correction.image.dataUrl, ...request.referenceImages.map(image => image.image.dataUrl)] : reconstructSource && decision.method !== 'generate' ? [request.image.dataUrl] : prompts.imageMapping.map(mapping => mapping.sourceLabel === request.primaryImageLabel ? request.image.dataUrl : request.referenceImages.find(reference => reference.label === mapping.sourceLabel)!.image.dataUrl);
         if (services.resumeGenerationInput) {
           const originalImages = images.map(image => image === request.image.dataUrl ? originalSourceDataUrl : image);
           const resumed = await services.resumeGenerationInput(modelPrompt!, images, { background: 'auto' }, originalImages);
@@ -473,7 +478,7 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
     const styledTexts = [];
     for (const [index, text] of prompts.styledTexts.entries()) {
       progress(`正在制作并核对文字“${text.text}”…`);
-      const generated = await prepareComponent(text.prompt, request.referenceImages.map(reference => reference.image.dataUrl), `styled-text-${index}`, async bytes => {
+      const generated = await prepareComponent(text.prompt, request.referenceImages.filter(reference => !request.fontReference || reference.label === request.fontReference.label).map(reference => reference.image.dataUrl), `styled-text-${index}`, async bytes => {
         const verification = await timed('textComponentVerification', () => services.verifyText(bytes, text.text));
         if (verification.outputSha256 !== artworkSha256(bytes) || verification.targetText !== text.text) throw new Error('文字组件核对没有对应当前图片与目标文字');
         textComposition.components.push(verification);

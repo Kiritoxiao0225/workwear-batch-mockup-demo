@@ -6,7 +6,7 @@ import { artworkSha256 } from './artwork-quality';
 import { prepareStandardArtwork, standardArtworkServices, type StandardArtworkServices } from './artwork-standard-pipeline';
 
 describe('reference-only lettering through the model pipeline', () => {
-  it('sends every input only as reference and saves the generated cutout without extracting source graphics', async () => {
+  it.each([false, true])('sends only references and the actual font crop when selected (%s)', async withFontCrop => {
     const source = await sharp({ create: { width: 300, height: 400, channels: 3, background: '#db314f' } }).png().toBuffer();
     const output = await sharp(Buffer.from('<svg width="1000" height="600"><rect x="100" y="100" width="800" height="300" fill="black"/></svg>')).png().toBuffer();
     const whiteOutput = await sharp(output).flatten({ background: '#fff' }).png().toBuffer();
@@ -14,6 +14,7 @@ describe('reference-only lettering through the model pipeline', () => {
     const request = parseArtworkPreparationRequest({
       image: { dataUrl: dataUrl(source), mimeType: 'image/png', fileName: 'reference.png' },
       primaryImageLabel: '图2', primaryImageRole: 'reference',
+      ...(withFontCrop ? { fontReference: { label: '图2', origin: 'manual', description: '中间文字', evidence: '人工圈选', region: { x: .2, y: .25, width: .6, height: .25 } } } : {}),
       referenceImages: [{ label: '图1', image: { dataUrl: dataUrl(source), mimeType: 'image/png', fileName: 'second-reference.png' } }],
       instruction: '按图2的样式制作 XJY 与享聚源，排版参考图1。', exactText: 'XJY\n享聚源',
       sourceRequirementText: '左胸:XJY 享聚源，参考图2样式及图1排版',
@@ -34,6 +35,11 @@ describe('reference-only lettering through the model pipeline', () => {
     expect(prompt).toContain('输入图2 = WPS 图1（参考素材）');
     expect(prompt).not.toContain('内容素材');
     expect(images).toHaveLength(2);
+    if (withFontCrop) {
+      const cropped = await sharp(Buffer.from(images[0].split(',')[1], 'base64')).metadata();
+      expect(cropped.width).toBe(180); expect(cropped.height).toBe(100);
+      expect(images[1]).toBe(dataUrl(source));
+    }
     expect(fidelity).not.toHaveBeenCalled();
     expect(verifyEdits).not.toHaveBeenCalled();
     expect(cutout).toHaveBeenCalledOnce();

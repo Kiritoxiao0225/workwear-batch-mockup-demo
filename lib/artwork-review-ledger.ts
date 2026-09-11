@@ -13,13 +13,13 @@ const labels: Record<ReviewCategory, string> = { text: '文字', color: '颜色'
 export const reviewStateLabels: Record<ReviewState, string> = { passed: '检查符合', failed: '待修正', uncertain: '待人工核查', pending: '待核查', accepted: '已接受差异', confirmed: '人工核对符合' };
 const key = (value: unknown) => JSON.stringify(value, (_key, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b))) : v);
 export const reviewDraftKey = (draft?: ArtworkDraft) => draft ? key(JSON.parse(artworkPixelFingerprint(draft))) : '';
-const requirementKey = (unit: ProductionUnit) => key([unit.instruction, unit.layoutNote, unit.exactText, unit.materialId, unit.referenceMaterialIds, unit.textMode, unit.sourceScope]);
+const requirementKey = (unit: ProductionUnit) => key([unit.instruction, unit.layoutNote, unit.exactText, unit.materialId, unit.referenceMaterialIds, ...(unit.fontReference ? [unit.fontReference] : []), unit.textMode, unit.sourceScope]);
 const placementKey = (unit: ProductionUnit) => key([unit.placement, unit.garment?.assetVersionId]);
 
 function baseItems(unit: ProductionUnit): ArtworkReviewItem[] {
   const brief = `${unit.instruction}\n${unit.layoutNote}`.trim();
   return REVIEW_CATEGORIES.map(id => ({ id, label: labels[id], status: 'pending', evidence: '尚未核对当前结果',
-    requirement: id === 'text' && unit.exactText ? `准确文字：${unit.exactText}` : id === 'size'
+    requirement: id === 'text' && unit.exactText ? `准确文字：${unit.exactText}${unit.fontReference ? `；字形按已绑定字体参考的指定区域：${unit.fontReference.description}` : ''}` : id === 'size'
       ? `按当前印花尺寸：${unit.placement?.sizeMode === 'heightCm' ? `${unit.placement.heightCm} cm 高` : unit.placement?.sizeMode === 'widthCm' ? `${unit.placement.widthCm} cm 宽` : '位置标准尺寸'}，核对上衣后实际大小`
       : id === 'position' ? `核对当前 ${unit.placement?.key ?? '未选位置'} 的上衣预览、中心和旋转` : `${labels[id]}：${brief}` }));
 }

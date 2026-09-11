@@ -51,6 +51,7 @@ export function sharedArtworkFixed(state: WpsProductionState, unitId: string) {
 // This deliberately omits prose only for a visible suggestion; never auto-link by this key.
 export function sharedArtworkCandidateKey(unit: ProductionUnit) {
   return JSON.stringify([unit.sourceRecordId, unit.materialId, [...unit.referenceMaterialIds].sort(), unit.sourceScope,
+    ...(unit.fontReference ? [unit.fontReference] : []),
     unit.textMode, unit.exactText, unit.layoutNote, unit.variantLabel, unit.route, unit.artworkMethod ?? 'auto', unit.cutoutMode ?? 'auto']);
 }
 export function sharedArtworkSuggestions(state: WpsProductionState, recordId: string) {

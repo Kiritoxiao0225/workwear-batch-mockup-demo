@@ -1,4 +1,5 @@
 'use client';
+import { WpsFontReference } from './wps-font-reference';
 import { productionThumbnailUrl } from '@/lib/production-file-url';
 import { useState, type ReactNode } from 'react';
 import type { ProductionUnit, WpsProductionState } from '@/lib/wps-production';
@@ -11,6 +12,7 @@ type Props = {
   busy: (id: string) => string | null;
   make: (unit: ProductionUnit) => void; edit: (unit: ProductionUnit) => void;
   preview: (url: string, title: string) => void;
+  editRequirements?: (unit: ProductionUnit) => void;
   action: (input: Record<string, unknown>) => Promise<unknown>;
   progress: (id: string) => string;
   error: (id: string) => string;
@@ -18,7 +20,7 @@ type Props = {
   refresh: (id: string) => Promise<void>;
   renderUnit: (unit: ProductionUnit, shared?: boolean) => { requirements: ReactNode; artwork: ReactNode };
 };
-export function WpsSharedArtworks({ state, recordId, busy, make, edit, preview, action, progress, error, feedback, refresh, renderUnit }: Props) {
+export function WpsSharedArtworks({ state, recordId, busy, make, edit, preview, action, progress, error, feedback, refresh, renderUnit, editRequirements }: Props) {
   const [chosen, setChosen] = useState<Record<string, string>>({});
   const [additional, setAdditional] = useState<Record<string, string[]>>({});
   const groups = sharedArtworkGroups(state).filter(group => group.sourceRecordId === recordId);
@@ -60,6 +62,7 @@ export function WpsSharedArtworks({ state, recordId, busy, make, edit, preview, 
         <div className="wps-shared-requirement">
           <div className="wps-shared-title"><strong>{unit.placement ? productionPositionLabel(unit.placement) : '图稿'}</strong><span>{shared ? `${members.length} 处${group.automatic ? '自动' : ''}共用` : group.derivedFrom ? '独立版式' : '单独制作'}</span></div>
           <p className="wps-shared-instruction">{unit.instruction}</p>
+          <WpsFontReference source={state.records.find(record => record.source.recordId === recordId)!.source} reference={unit.fontReference} disabled={Boolean(reason)} edit={editRequirements ? () => editRequirements(source) : undefined}/>
           {unit.exactText && !unit.instruction.includes(unit.exactText) && <p>{unit.exactText}</p>}
           {shared && <details className="wps-shared-scope"><summary>应用到 {names.length} 件衣服</summary><ul>{members.map(member => <li key={member.id}>{label(member)}</li>)}</ul></details>}
           {unit.layoutNote && <details><summary>排版要求</summary><p>{unit.layoutNote}</p></details>}

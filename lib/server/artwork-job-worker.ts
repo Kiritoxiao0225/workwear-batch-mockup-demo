@@ -1,3 +1,4 @@
+import { fontReferenceInput } from '@/lib/artwork-font-reference';
 import { buildArtworkReview } from '@/lib/artwork-review-ledger';
 import { inspectFinalArtwork } from './artwork-final-review';
 import { fidelityModelImage } from './model-image-input';
@@ -60,7 +61,7 @@ export async function processArtworkJob(job: ArtworkJob) {
         });
         const images = await Promise.all(materials.map((material, i) => modelInput(inputImageUrls[i], material.name || `图${i + 1}.png`)));
         const request = parseArtworkPreparationRequest({ sourceRequirementText: source.requirementText, printPlacement: artworkPrintPlacement(unit.placement),
-          instruction: unit.instruction, generationPrompt: unit.generationPrompt, sourceAssessment: productionArtworkRouting(unit, source).facts.sourceAssessment,
+          fontReference: fontReferenceInput(source, unit), instruction: unit.instruction, generationPrompt: unit.generationPrompt, sourceAssessment: productionArtworkRouting(unit, source).facts.sourceAssessment,
           exactText: unit.textMode === 'replace' ? unit.exactText : '', layoutNote: unit.layoutNote,
           image: images[0], primaryImageLabel: selection.primaryImageLabel, primaryImageRole: selection.primaryImageRole,
           referenceImages: materials.slice(1).map((material, i) => ({ label: `图${source.materials.findIndex(item => item.id === material.id) + 1}`, image: images[i + 1] })),

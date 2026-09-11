@@ -367,3 +367,14 @@ it('persists visual source evidence separately from exact customer text and bind
   expect(review.units[0].sourceAssessment).toMatchObject({ kind: 'artwork-on-object', materialId: 'material-1', uncertainDetails: ['首字看不清'] });
   expect(review.units[0].exactText).toBe('');
 });
+
+it('parses and keeps a visually inferred back font reference despite an empty font field', () => {
+  const source = sourceRecord('左胸:logo 后背:测试文字 字体: 颜色: 工艺: 尺寸:');
+  const raw = JSON.parse(analysisContent({ logoMaterialId: null, textMode: 'replace', exactText: '测试文字', instruction: '后背制作测试文字', layoutNote: '' }));
+  raw.records[0].units[0].placement = 'back';
+  raw.records[0].units[0].fontReference = { materialId: 'material-2', origin: 'visual', description: '照片上部文字，笔画粗、字形方正', evidence: '图2展示后背文字区域', region: { x: .1, y: .2, width: .8, height: .25 } };
+  const [review] = parseTaskReviewAnalysis([source], JSON.stringify(raw));
+  expect(review.units[0].fontReference?.materialId).toBe('material-2');
+  expect(review.units[0].referenceMaterialIds).toContain('material-2');
+  expect(review.units[0].exactText).toBe('测试文字');
+});
