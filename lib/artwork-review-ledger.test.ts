@@ -83,6 +83,13 @@ describe('version-bound artwork review', () => {
     expect(() => manualArtworkReview(complete, ['color'], 'accepted', '', 'ok')).toThrow();
     expect(() => manualArtworkReview(complete, ['color'], 'accepted', '测试', '')).toThrow();
   });
+  it('retains review history when changed requirements move the old image into previousArtwork', () => {
+    const { unit, artwork, validation, draft } = fixture();
+    const changedUnit = { ...unit, instruction: '新要求：白色文字', artwork: null, previousArtwork: artwork };
+    const review = reviewForAttachment(changedUnit, { ...validation, sha256: 'b'.repeat(64) }, draft);
+    expect(review.history.at(-1)!.items[0].actor).toBe('测试员');
+    expect(review.items.every(item => item.status === 'pending')).toBe(true);
+  });
   it('does not inherit another garment position’s human decisions', () => {
     const { unit, artwork } = fixture();
     const other = { ...unit, placement: { ...unit.placement!, offsetX: 2 }, artwork: null };

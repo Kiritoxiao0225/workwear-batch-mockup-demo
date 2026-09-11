@@ -94,7 +94,7 @@ export async function processArtworkJob(job: ArtworkJob) {
           return { draft: fitted.draft, url: file.url, automaticWidthCm: fitted.automaticWidthCm, summary: fitted.summary };
         });
         const { validation, draft: verified } = await validateProductionArtworkDraft(layout.url, layout.draft, unit.artwork?.validation, unit.artwork?.draft);
-        const review = buildArtworkReview(unit, validation, verified, unit.artwork ?? undefined);
+        const review = buildArtworkReview(unit, validation, verified, unit.artwork ?? unit.previousArtwork ?? undefined);
         validation.review = await artworkJobStep('final-review-v1', 'inspection', { sha256: validation.sha256,
           draftKey: review.draftKey, requirements: review.requirementKey, source },
           () => inspectFinalArtwork(unit, source, layout.url, review));

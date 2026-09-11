@@ -78,7 +78,7 @@ export function reviewForAttachment(unit: ProductionUnit, validation: ArtworkVal
   const supplied = validation.review;
   if (supplied && supplied.sha256 === validation.sha256 && supplied.draftKey === reviewDraftKey(draft)
     && supplied.requirementKey === requirementKey(unit) && supplied.placementKey === placementKey(unit)) return structuredClone(supplied);
-  const next = buildArtworkReview(unit, validation, draft, unit.artwork ?? undefined);
+  const next = buildArtworkReview(unit, validation, draft, unit.artwork ?? unit.previousArtwork ?? undefined);
   if (supplied && supplied.sha256 === validation.sha256 && supplied.draftKey === reviewDraftKey(draft) && supplied.requirementKey === requirementKey(unit)) {
     next.items = next.items.map(item => {
       const checked = supplied.items.find(other => other.id === item.id);
