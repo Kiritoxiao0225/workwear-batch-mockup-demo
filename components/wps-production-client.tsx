@@ -17,12 +17,11 @@ import { createProductionTextDraft, productionTextColor, requestedProductionText
 import { artworkBlockingAmbiguities, artworkProcessingRoute } from '@/lib/task-review-analysis';
 import { productionFileId } from '@/lib/production-file-url';
 
-import Image from 'next/image';
 import { WpsMaterialImage } from '@/components/wps-material-image';
+import { WpsArtworkPreview } from '@/components/wps-artwork-preview';
 import { WpsCutoutControls, CutoutTaskStatus, cutoutInputDataUrl, cutoutRequest, type CutoutSession } from '@/components/wps-cutout-controls';
 import { useArtworkCutoutSessions } from '@/hooks/use-artwork-cutout-sessions';
 import { CUTOUT_ROUTE_LABELS, cutoutFeeLabel, type ArtworkCutoutMode, type ArtworkCutoutResult } from '@/lib/artwork-cutout';
-import { productionThumbnailUrl } from '@/lib/production-file-url';
 import { ConditionalJsonReader } from '@/lib/client/conditional-json';
 import { WpsSharedArtworks } from '@/components/wps-shared-artworks';
 import { sharedActionCompleted, sharedArtworkStatus, productionActionError, type ProductionActionFeedback } from '@/lib/shared-artwork-status';
@@ -1188,7 +1187,7 @@ export function WpsProductionClient() {
                     {unit.route !== 'gpt-image-2' && unit.sourceScope !== 'wholeImage' && <WpsCutoutControls compact key={`${unit.id}:${unit.materialId}`} mode={unit.cutoutMode ?? 'auto'} sourceUrl={record.source.materials.find(material => material.id === unit.materialId)?.url ?? record.source.materials.find(material => material.id === unit.materialId)?.previewUrl} generated={Boolean(productionArtworkRouting(unit, record.source).facts.reconstructSource) || productionArtworkRouting(unit, record.source).decision.method === 'generate'} busy={Boolean(unitBlocked)} change={mode => { void runAction(`cutoutMode:${unit.id}`, { action: 'updatePlan', unitId: unit.id, patch: { cutoutMode: mode } }); }} />}
                     </div>}
                     {!sharedView && <div className="wps-artwork-current">
-                      {unit.artwork ? <button className="wps-artwork-preview" aria-label={`编辑${unit.garmentLabel} ${placement ? productionPositionLabel(placement) : ''}图案`} disabled={Boolean(unitBlocked)} title={unitBlocked ?? undefined} onPointerEnter={() => { if (unit.artwork?.draft) preloadArtworkDraft(unit.artwork.draft); }} onFocus={() => { if (unit.artwork?.draft) preloadArtworkDraft(unit.artwork.draft); }} onClick={() => editArtwork(unit)} type="button"><Image alt={unit.artwork.name} fill sizes="200px" src={productionThumbnailUrl(unit.artwork.url)} unoptimized/></button> : !nativeCandidate && !artworkProgress[unit.id]?.preview && <div className="wps-artwork-placeholder">{positionLabel}图案将在这里显示</div>}
+                      {unit.artwork ? <WpsArtworkPreview src={unit.artwork.url} alt={unit.artwork.name} aria-label={`编辑${unit.garmentLabel} ${placement ? productionPositionLabel(placement) : ''}图案`} disabled={Boolean(unitBlocked)} title={unitBlocked ?? undefined} onPointerEnter={() => { if (unit.artwork?.draft) preloadArtworkDraft(unit.artwork.draft); }} onFocus={() => { if (unit.artwork?.draft) preloadArtworkDraft(unit.artwork.draft); }} onClick={() => editArtwork(unit)} /> : !nativeCandidate && !artworkProgress[unit.id]?.preview && <div className="wps-artwork-placeholder">{positionLabel}图案将在这里显示</div>}
                       {unit.artwork && <div className="wps-artwork-caption"><small>点击图案编辑</small><button type="button" className="wps-text-button" disabled={inspectingId === unit.id} onClick={() => void openArtworkReview(unit)}>{textOnly ? '查看文字图案' : '原图与抠图结果'}</button>{unit.route !== 'gpt-image-2' && issues.length === 0 && <button type="button" className="wps-artwork-redo" disabled={preparationDisabled || Boolean(activeAttempt)} title={unitBlocked ?? preparationIssue ?? '按当前要求重新制作，可能产生费用；上次图案保留供对照。'} onClick={prepare}>{submittingArtwork ? '正在提交…' : queueJob ? queueJob.status === 'queued' ? '已加入队列' : '正在重做…' : '重做图案'}</button>}{unit.artwork.draft?.preprocessing.cutout && <small>{CUTOUT_ROUTE_LABELS[unit.artwork.draft.preprocessing.cutout.route]} · {cutoutFeeLabel(unit.artwork.draft.preprocessing.cutout)}</small>}</div>}
                     </div>}
                     {sharedView && unit.artwork && unit.route !== 'gpt-image-2' && <button type="button" disabled={preparationDisabled || Boolean(activeAttempt)} onClick={prepare} title="按当前要求重新制作，可能产生费用">{isSharedArtwork(shared) ? '重新制作共用稿' : '重新制作图案'}</button>}

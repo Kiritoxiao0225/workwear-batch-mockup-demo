@@ -29,7 +29,8 @@ export function reuseProductionGeometry(incoming: WpsProductionState, previous: 
 export function productionPreviewRevision(version: ProductionMockupVersion, units: ProductionUnit[]) {
   return JSON.stringify([WPS_COMPOSITOR_VERSION, version.garment?.assetVersionId, version.garment?.sha256,
     units.filter(unit => version.unitIds.includes(unit.id)).sort((a, b) => a.id.localeCompare(b.id))
-      .map(unit => [unit.id, unit.updatedAt, unit.artwork?.url ?? null, unit.artwork?.validation.sha256 ?? null])]);
+      .map(unit => [unit.id, unit.updatedAt, unit.artwork?.url ?? null, unit.artwork?.validation.sha256 ?? null,
+        unit.placement?.requestedSize ?? null, unit.placement?.requestedSizeIssue ?? null])]);
 }
 
 /** Calibration can change without a task save. Re-read its preview while keeping

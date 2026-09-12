@@ -9,6 +9,7 @@ import { queueReplacedFiles } from './production-replaced-files';
 import { garmentFixture } from '../testing/production-garment-fixture';
 import { taskReviewFixture } from '../testing/task-review-fixture';
 import { attachProductionArtwork, emptyWpsProductionState, importTaskReviews } from '../wps-production';
+import { recoverProductionPrintSizes } from '../print-size-request';
 
 vi.mock('./catalog-database', () => ({ catalogDatabase: vi.fn(), catalogTransaction: vi.fn() }));
 vi.mock('./catalog-files', () => ({ readCatalogFile: vi.fn(), fileSha256: (value: string) => createHash('sha256').update(value).digest('hex') }));
@@ -32,6 +33,22 @@ beforeEach(() => {
   vi.mocked(catalogTransaction).mockImplementation(async work => work({ query: transactionQuery }));
   vi.mocked(productionPreviewUnits).mockImplementation(async units => units);
   vi.mocked(readCatalogFile).mockResolvedValue({ file: { id: 'cached' }, bytes: Buffer.from('verified cached image') });
+});
+
+it('publishes a recovered size preview against the same derived geometry under the state lock', async () => {
+  const original = fixture();
+  original.records[0].source.requirementText = '正面宽9，领口往下18cm';
+  const placement = original.units[0].placement!;
+  delete placement.requestedSize;
+  placement.requestedSizeIssue = '“正面宽9”未注明单位，请核对后填写自定义尺寸';
+  const state = recoverProductionPrintSizes(original);
+  expect(state.units[0].placement?.requestedSize?.valueCm).toBe(9);
+  query.mockResolvedValue({ rowCount: 1, rows: [{ file_id: 'cached', is_current: false }] });
+  transactionQuery.mockImplementation(async (sql: string) => ({ rowCount: 1,
+    rows: sql.includes('FROM production_states') ? [{ state_jsonb: original }] : [] }));
+  await savedProductionRender(state.mockupVersions[0], state.units);
+  expect(transactionQuery.mock.calls.some(([sql]) => sql.includes('INSERT INTO production_renders'))).toBe(true);
+  expect(original.units[0].placement?.requestedSizeIssue).toContain('未注明单位');
 });
 
 describe('preview before durable storage', () => {

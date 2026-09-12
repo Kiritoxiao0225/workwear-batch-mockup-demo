@@ -1,4 +1,5 @@
 import type { WpsProductionState } from '@/lib/wps-production';
+import { recoverProductionPrintSizes, type PrintSizeRecoveryState } from '@/lib/print-size-request';
 import { isDeepStrictEqual } from 'node:util';
 import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './catalog-database';
 import { productionFileReferences, productionStateKey } from './production-storage';
@@ -29,11 +30,16 @@ export async function readCloudProductionState(): Promise<WpsProductionState> {
 export async function readCloudProductionPreviewState(versionId: string, client: CatalogQueryClient = catalogDatabase(), lock = false) {
   const row = (await client.query(`SELECT jsonb_build_object(
     'mockupVersions', COALESCE((SELECT jsonb_agg(v) FROM jsonb_array_elements(s.state_jsonb->'mockupVersions') v WHERE v->>'id'=$2), '[]'::jsonb),
+    'records', COALESCE((SELECT jsonb_agg(jsonb_build_object('source', jsonb_build_object(
+      'recordId', r->'source'->>'recordId', 'requirementText', r->'source'->>'requirementText'
+    ))) FROM jsonb_array_elements(s.state_jsonb->'records') r WHERE r->'source'->>'recordId' IN (
+      SELECT v->>'sourceRecordId' FROM jsonb_array_elements(s.state_jsonb->'mockupVersions') v WHERE v->>'id'=$2
+    )), '[]'::jsonb),
     'units', COALESCE((SELECT jsonb_agg(u) FROM jsonb_array_elements(s.state_jsonb->'units') u WHERE u->>'id' IN (
       SELECT jsonb_array_elements_text(v->'unitIds') FROM jsonb_array_elements(s.state_jsonb->'mockupVersions') v WHERE v->>'id'=$2
     )), '[]'::jsonb)
   ) AS state_jsonb FROM production_states s WHERE s.state_key=$1${lock ? ' FOR UPDATE OF s' : ''}`, [productionStateKey(), versionId])).rows[0];
-  return row ? row.state_jsonb as Pick<WpsProductionState, 'mockupVersions' | 'units'> : null;
+  return row ? recoverProductionPrintSizes(row.state_jsonb as PrintSizeRecoveryState) : null;
 }
 
 export async function readCloudProductionSourceOrder(): Promise<string[]> {

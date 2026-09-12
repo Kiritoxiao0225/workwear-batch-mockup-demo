@@ -19,6 +19,8 @@ import { taskReviewFixture } from '../lib/testing/task-review-fixture';
 import { createLegacyArtworkDraft } from '../lib/artwork-editor';
 import { artworkPixelFingerprint } from '../lib/artwork-save-fingerprint';
 import { productionArtworkSnapshot } from '../lib/production-artwork-snapshot';
+import { recoverProductionPrintSizes } from '../lib/print-size-request';
+import { productionPreviewRevision } from '../lib/production-preview';
 import { createCatalogUser, loginCatalog } from '../lib/server/catalog-auth';
 import { POST } from '../lib/server/wps-production-actions';
 import { saveArtworkRoutingReport, readArtworkRoutingReport, saveArtworkGenerationReceipt, saveArtworkRunImage } from '../lib/server/artwork-routing-records';
@@ -99,10 +101,31 @@ try {
   const previewState = await readCloudProductionPreviewState(previewVersion.id);
   assert.deepEqual(previewState, JSON.parse(JSON.stringify({
     mockupVersions: [previewVersion], units: projectionFixture.units.filter(unit => previewVersion.unitIds.includes(unit.id)),
+    records: projectionFixture.records.filter(record => record.source.recordId === previewVersion.sourceRecordId)
+      .map(({ source }) => ({ source: { recordId: source.recordId, requirementText: source.requirementText } })),
   })));
   assert.ok(previewState!.units.length < projectionFixture.units.length);
   assert.deepEqual(await catalogTransaction(client => readCloudProductionPreviewState(previewVersion.id, client, true)), previewState);
-  assert.deepEqual(await readCloudProductionPreviewState('missing-version'), { mockupVersions: [], units: [] });
+  assert.deepEqual(await readCloudProductionPreviewState('missing-version'), { mockupVersions: [], units: [], records: [] });
+  const legacySizeState = structuredClone(projectionFixture);
+  const legacySizeUnit = legacySizeState.units.find(unit => previewVersion.unitIds.includes(unit.id))!;
+  legacySizeState.records.find(record => record.source.recordId === legacySizeUnit.sourceRecordId)!.source.requirementText =
+    '左胸宽9（位置：领口往下约18cm、门襟往左约9cm）';
+  legacySizeUnit.placement = { ...legacySizeUnit.placement!, key: 'leftChest', templateVersion: 'catalog-v1', sizeMode: 'standard',
+    requestedSizeIssue: '“左胸宽9”未注明单位，请核对后填写自定义尺寸' };
+  process.env.WPS_PRODUCTION_STATE_KEY = 'size-recovery-test';
+  await catalogTransaction(client => writeCloudProductionState(client, legacySizeState));
+  const pageSizeState = recoverProductionPrintSizes(await readCloudProductionState());
+  const previewSizeStates = await Promise.all(Array.from({ length: 5 }, () => readCloudProductionPreviewState(previewVersion.id)));
+  for (const preview of previewSizeStates) {
+    assert.equal(preview!.records.length, 1);
+    assert.equal(preview!.units[0].placement!.requestedSize!.valueCm, 9);
+    assert.equal(preview!.units[0].placement!.requestedSizeIssue, undefined);
+    assert.equal(productionPreviewRevision(previewVersion, preview!.units), productionPreviewRevision(previewVersion, pageSizeState.units));
+  }
+  assert.deepEqual(await catalogTransaction(client => readCloudProductionPreviewState(previewVersion.id, client, true)), previewSizeStates[0]);
+  assert.deepEqual(await readCloudProductionState(), JSON.parse(JSON.stringify(legacySizeState)));
+  pass('旧草稿缺单位按原文恢复为9厘米；页面、5次并发预览与发布锁回读一致，原状态及revision不变');
   process.env.WPS_PRODUCTION_STATE_KEY = 'integration';
   assert.deepEqual(await readCloudProductionSourceOrder(), state.sourceRecordOrder);
   process.env.WPS_PRODUCTION_STATE_KEY = 'another-workspace';

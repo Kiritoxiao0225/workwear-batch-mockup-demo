@@ -35,6 +35,28 @@ describe('customer dimensions apply only when placing the transparent artwork', 
   it.each(['后背宽8', '正面高35cm\n后背宽8', '正面高35cm 后背宽8 左胸宽80mm'])('does not invent units from another line or mixed units: %s', text => {
     expect(parsePrintSizeRequest(text, 'back').issue).toContain('未注明单位');
   });
+  it.each([
+    ['货号：002HM 左胸:图一 宽9（位置：领口往下约18cm、门襟往左约9cm）标注在效果图上', 9],
+    ['左胸宽9，距领口18厘米、距门襟9公分', 9],
+    ['左胸宽90，领口下180毫米、门襟左90mm', 9],
+    ['左胸宽9，向下约18 CM、左移9cm', 9],
+    ['左胸宽9cm，往下180mm', 9],
+  ])('uses a consistent position-distance unit without borrowing its value: %s', (text, valueCm) => {
+    expect(parsePrintSizeRequest(text, 'leftChest').request).toMatchObject({ axis: 'widthCm', valueCm,
+      inferredUnit: !text.includes('宽9cm') });
+  });
+  it.each([
+    '左胸宽9，往下18cm、往左90mm',
+    '左胸宽9\n往下18cm', '左胸宽9\r往下18cm',
+    '左胸宽9；往下18cm', '往下18cm。左胸宽9',
+    '左胸宽9，文字“18cm”', '左胸宽9，数量18',
+  ])('does not infer units from conflicting or unrelated context: %s', text => {
+    expect(parsePrintSizeRequest(text, 'leftChest').issue).toContain('未注明单位');
+  });
+  it.each(['左胸宽9英寸，往下18cm', '左胸宽9in，往下18cm', '左胸宽9寸，往下18cm', '左胸宽9米，往下18cm'])(
+    'does not replace an explicit unsupported unit with a nearby cm: %s', text => {
+      expect(parsePrintSizeRequest(text, 'leftChest').issue).toContain('单位暂不支持');
+    });
   it('does not silently choose between conflicting garments or stretch incompatible dimensions', () => {
     expect(parsePrintSizeRequest('A款正面高35cm B款正面高20cm', 'frontCenter').issue).toContain('多条尺寸');
     expect(parsePrintSizeRequest('正面宽20cm 高35cm', 'frontCenter').issue).toContain('多条尺寸');

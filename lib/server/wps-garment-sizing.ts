@@ -1,6 +1,7 @@
 import type { GarmentBinding } from '@/lib/production-garment';
 import { bodyScaleSchema } from '@/lib/production-sizing';
 import type { WpsProductionState } from '@/lib/wps-production';
+import { recoverProductionPrintSizes } from '@/lib/print-size-request';
 
 import { loadBodyGeometry } from './catalog-body-geometry';
 import { confirmedArmpitScale, readConfirmedBodyScales } from './catalog-body-calibration';
@@ -28,6 +29,7 @@ export async function withGarmentBodyScale(garment: GarmentBinding): Promise<Gar
  * their missing scale, so their editor still reports the sizing problem.
  */
 export async function withProductionPreviewGeometry(state: WpsProductionState): Promise<WpsProductionState> {
+  state = recoverProductionPrintSizes(state);
   const prepared = new Map<string, Promise<GarmentBinding>>();
   const results = await Promise.allSettled(state.units.map(async unit => {
     const garment = unit.garment;

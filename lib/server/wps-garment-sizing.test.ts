@@ -13,6 +13,18 @@ beforeEach(() => { vi.resetAllMocks(); vi.mocked(readConfirmedBodyScales).mockRe
 const crop = { x: 0, y: 0, width: 1, height: 1 };
 vi.mock('./catalog-files', () => ({ readCatalogFile: vi.fn(), fileSha256: vi.fn() }));
 describe('garment body scale evidence', () => {
+  it('returns recovered draft dimensions even when body scale needs no hydration', async () => {
+    const state = importTaskReviews(emptyWpsProductionState(), taskReviewFixture());
+    state.records[0].source.requirementText = '左胸宽9，领口往下18cm、门襟往左9cm';
+    const unit = state.units[0];
+    unit.garment = garmentFixture();
+    unit.placement = { ...unit.placement!, key: 'leftChest', templateVersion: 'catalog-v1', sizeMode: 'standard',
+      requestedSizeIssue: '“左胸宽9”未注明单位，请核对后填写自定义尺寸' };
+    const result = await withProductionPreviewGeometry(state);
+    expect(result.units[0].placement?.requestedSize).toMatchObject({ valueCm: 9, inferredUnit: true });
+    expect(unit.placement.requestedSizeIssue).toContain('未注明单位');
+    expect(readCatalogFile).not.toHaveBeenCalled();
+  });
   it('prepares legacy task geometry without changing saved snapshots or hiding a failed garment', async () => {
     const state = importTaskReviews(emptyWpsProductionState(), taskReviewFixture());
     const garment: GarmentBinding = garmentFixture();

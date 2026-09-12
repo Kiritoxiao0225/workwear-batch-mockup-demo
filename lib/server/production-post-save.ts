@@ -2,6 +2,7 @@ import { readCloudProductionState } from './production-cloud-state';
 import { savedProductionRender } from './production-render-cache';
 import { cleanupReplacedFiles } from './production-replaced-files';
 import { sharedArtworkForUnit } from '@/lib/shared-artwork';
+import { recoverProductionPrintSizes } from '@/lib/print-size-request';
 
 const changesPicture = new Set(['submitArtwork', 'saveArtworkDraft', 'updatePlan', 'confirmPlan',
   'placeArtwork', 'savePlacements', 'selectGarment', 'pollGptImage2', 'confirmArtwork', 'returnUnit', 'linkSharedArtwork', 'applySharedArtwork', 'confirmSharedArtwork']);
@@ -36,7 +37,7 @@ export async function finishProductionSave(body: Record<string, unknown> = {}) {
     // Let that foreground request own rendering, instead of starting a rival.
     const composingNext = body.action === 'savePlacements' && body.confirmWholeVersion === true;
     if (changesPicture.has(String(body.action)) && !composingNext) {
-      const state = await readCloudProductionState();
+      const state = recoverProductionPrintSizes(await readCloudProductionState());
       const unitIds = new Set([body.unitId, ...(Array.isArray(body.updates)
         ? body.updates.map(update => update?.unitId) : [])]);
       for (const id of sharedArtworkForUnit(state, String(body.unitId))?.unitIds ?? []) unitIds.add(id);

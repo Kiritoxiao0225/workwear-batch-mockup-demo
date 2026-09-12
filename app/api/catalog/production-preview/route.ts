@@ -8,6 +8,7 @@ import { readCloudProductionPreviewState } from '@/lib/server/production-cloud-s
 import { renderProductionPreview } from '@/lib/server/wps-production-assets';
 import { prepareProductionPreview } from '@/lib/server/production-render-cache';
 import { productionPreviewRevision } from '@/lib/production-preview';
+import { recoverProductionPrintSizes } from '@/lib/print-size-request';
 import sharp from 'sharp';
 
 export const runtime = 'nodejs';
@@ -20,7 +21,7 @@ export async function GET(request: NextRequest) {
     await catalogUser(request);
     const versionId = request.nextUrl.searchParams.get('versionId');
     if (!versionId) throw new CatalogHttpError(400, `versionId 不能为空，实际值：${versionId}`);
-    const state = usesProductionCloud() ? await readCloudProductionPreviewState(versionId) : await readWpsProductionState();
+    const state = usesProductionCloud() ? await readCloudProductionPreviewState(versionId) : recoverProductionPrintSizes(await readWpsProductionState());
     if (!state) throw new Error('云端生产状态尚未初始化；请先完成迁移');
     const version = state.mockupVersions.find(version => version.id === versionId);
     if (!version) throw new CatalogHttpError(404, `找不到效果图版本：${versionId}`);

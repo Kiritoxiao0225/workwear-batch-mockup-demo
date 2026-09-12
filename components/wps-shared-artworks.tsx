@@ -1,6 +1,6 @@
 'use client';
 import { WpsFontReference } from './wps-font-reference';
-import { productionThumbnailUrl } from '@/lib/production-file-url';
+import { WpsArtworkPreview } from './wps-artwork-preview';
 import { useState, type ReactNode } from 'react';
 import type { ProductionUnit, WpsProductionState } from '@/lib/wps-production';
 import { isSharedArtwork, latestSharedArtwork, sharedArtworkCandidateKey, sharedArtworkFixed, sharedArtworkGroups, sharedArtworkSuggestions, sharedArtworkUnit } from '@/lib/shared-artwork';
@@ -74,11 +74,10 @@ export function WpsSharedArtworks({ state, recordId, busy, make, edit, preview, 
           <details className="wps-shared-history"><summary>要求与版本记录</summary>{content.requirements}{group.versions.map(item => <p key={item.number}>v{item.number} · {new Date(item.createdAt).toLocaleString('zh-CN')} · {item.automaticTextColor ? '文字随衣服适配颜色' : '固定配色'}</p>)}</details>
         </div>
         <div className="wps-shared-making">
-          <div className="wps-shared-thumbnails">{(variants.length ? variants : unit.artwork ? [unit] : []).map(variant => <button key={variant.id} className="wps-shared-thumbnail" type="button" onClick={() => preview(variant.artwork!.url, `${label(variant)} · 已保存的图案`)} title={`放大查看${label(variant)}的实际图案`}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={productionThumbnailUrl(variant.artwork!.url)} alt={`${label(variant)}的图稿配色`} />
+          <div className="wps-shared-thumbnails">{(variants.length ? variants : unit.artwork ? [unit] : []).map(variant => <div key={variant.id} className="wps-shared-thumbnail">
+            <WpsArtworkPreview src={variant.artwork!.url} alt={`${label(variant)}的图稿配色`} onClick={() => preview(variant.artwork!.url, `${label(variant)} · 已保存的图案`)} title={`放大查看${label(variant)}的实际图案`} />
             {variants.length > 1 && <small>{variant.garment?.colorName || variant.garmentLabel}</small>}
-          </button>)}</div>
+          </div>)}</div>
           <div className={`wps-shared-design-state ${status.complete && version ? 'complete' : ''}`} role="status" aria-live="polite">
             <strong>{operation?.status === 'unknown' ? '本次操作结果待核实' : reason || working || (version ? status.complete ? `${shared ? '共用' : ''}图案已确认` : `图稿已保存 · v${version.number}` : `待制作${shared ? '共用' : ''}图案`)}</strong>
             <span>{operation?.status === 'unknown' ? '上次读取：' : ''}{status.summary}</span>

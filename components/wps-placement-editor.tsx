@@ -121,7 +121,7 @@ export function WpsPlacementEditor({ unit: openingUnit, versionUnits, requiremen
     </div><aside>
       <label className="wps-position-select">印花位置<select aria-label="印花位置" disabled={busy} value={placement.key === 'back' ? `back:${placement.catalogPosition ?? 'backCenter'}` : placement.key} onChange={event => selectPosition(event.target.value)}>{PLACEMENT_KEYS.filter(key => garment.views.some(view => view.face === (key === 'back' ? 'back' : 'front'))).flatMap(key => key === 'back' ? [<option key="back" value="back:backCenter">后背居中</option>, <option key="upperBack" value="back:upperBack">后背上方</option>] : [<option key={key} value={key}>{PLACEMENT_LABELS[key]}</option>])}</select></label>
       {(requested || placement.requestedSizeIssue) && <div className="wps-size-request">
-        {requested && <p><strong>客户要求：{requested.axis === 'heightCm' ? '高' : '宽'} {requested.valueCm} cm</strong><br/><small>原文：{requested.evidence}{requested.inferredUnit ? '（单位由同一句尺寸推定为 cm）' : ''}</small></p>}
+        {requested && <p><strong>客户要求：{requested.axis === 'heightCm' ? '高' : '宽'} {requested.valueCm} cm</strong><br/><small>原文：{requested.evidence}{requested.inferredUnit ? '（单位已根据同一句尺寸或位置距离补全，按厘米显示）' : ''}</small></p>}
         {placement.requestedSizeIssue && <p>{placement.requestedSizeIssue}</p>}
         <label><input type="checkbox" checked={Boolean(placement.sizeOverride)} disabled={busy} onChange={event => {
           const next = { ...placement, sizeOverride: event.target.checked, sizeMode: 'widthCm' as const, widthCm: size.width, heightCm: undefined };
