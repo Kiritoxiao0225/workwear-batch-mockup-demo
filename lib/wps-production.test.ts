@@ -467,7 +467,8 @@ describe('saved generation prompt', () => {
     expect(next.artwork).toBeNull();
     expect(next.previousArtwork).toEqual(original.artwork);
     expect(changed.units.filter(unit => unit.id !== id)).toEqual(state.units.filter(unit => unit.id !== id));
-    expect(() => updateProductionPlan(state, id, { generationPrompt: '参考图99制作' })).toThrow('未附上的图99');
+    // 候选修复统一了阻塞文案：同一语义（引用未绑定图号必须在保存前拦截），新文案来自 compileArtworkRequirements 的 PROMPT_IMAGE_MISSING。
+    expect(() => updateProductionPlan(state, id, { generationPrompt: '参考图99制作' })).toThrow('制作要求引用图99，但本次没有传入该图');
   });
   it.each(['auto', 'preserve', 'redraw', 'compose', 'generate'] as const)('saving a prompt leaves the selected %s method unchanged', artworkMethod => {
     const review = taskReviewFixture()[0];

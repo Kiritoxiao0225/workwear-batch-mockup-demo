@@ -54,8 +54,9 @@ it('reference-only inputs stay references when checking the final combined image
   unit.materialId = null; unit.referenceMaterialIds = [source.materials[0].id]; unit.textMode = 'replace'; unit.exactText = '康悦';
   vi.mocked(verifyArtworkModelEdits).mockImplementation(async (_a, _b, requirements) => ({ version: 'artwork-edit-check-v1', sourceSha256: sha256, outputSha256: sha256, model: 'test', checks: requirements.map(requirement => ({ requirement, status: 'uncertain', evidence: '字形看不清' })) }));
   await inspectFinalArtwork(unit, source, '/uploads/logos/final.png', ledger, ['text']);
-  expect(vi.mocked(verifyArtworkModelEdits).mock.calls[0][2][0]).toContain('仅作样式参考，不复制其原文字或图形');
-  expect(vi.mocked(verifyArtworkModelEdits).mock.calls[0][2][0]).toContain('明确文字：康悦');
+  // 候选修复重写了逐来源核对提示词：参考图声明改为角色化表述，准确文字统一为「准确新增文字」。
+  expect(vi.mocked(verifyArtworkModelEdits).mock.calls[0][2][0]).toContain('图1仅提供样式参考，不要求复制它原有的文字、标志、衣服或背景');
+  expect(vi.mocked(verifyArtworkModelEdits).mock.calls[0][2][0]).toContain('准确新增文字：康悦');
 });
 
 it('checks the target font against the designated reference rather than the content Logo', async () => {
@@ -65,10 +66,14 @@ it('checks the target font against the designated reference rather than the cont
   unit.referenceMaterialIds = ['font-ref'];
   const fontBytes = Buffer.from('font reference pixels');
   vi.mocked(readProductionFile).mockImplementation(async url => url.endsWith('font-ref.png') ? fontBytes : final);
-  vi.mocked(verifyArtworkModelEdits).mockImplementation(async (original, _final, requirements) => ({ version: 'artwork-edit-check-v1', sourceSha256: sha256, outputSha256: sha256, model: 'test',
+  // 候选修复要求核对回执的 sourceSha256 必须等于实际送检原图的字节哈希（逐来源对照同一最终图）。
+  const bytesSha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+  vi.mocked(verifyArtworkModelEdits).mockImplementation(async (original, _final, requirements) => ({ version: 'artwork-edit-check-v1', sourceSha256: bytesSha(original), outputSha256: sha256, model: 'test',
     checks: requirements.map(requirement => ({ requirement, status: original === fontBytes ? 'failed' : 'passed', evidence: original === fontBytes ? '目标字笔画偏细' : '符合' })) }));
   const next = await inspectFinalArtwork(unit, source, '/uploads/logos/final.png', ledger, ['text']);
   expect(verifyArtworkModelEdits).toHaveBeenCalledTimes(2);
   expect(vi.mocked(verifyArtworkModelEdits).mock.calls[1][0]).toBe(fontBytes);
-  expect(next.items.find(item => item.id === 'text')).toMatchObject({ status: 'failed', evidence: '目标字笔画偏细' });
+  // 候选修复为逐来源对照同一最终图：文字项的证据带来源前缀（[图1]=内容Logo 符合；[图2]=字体参考 偏细）。
+  expect(next.items.find(item => item.id === 'text')).toMatchObject({ status: 'failed' });
+  expect(next.items.find(item => item.id === 'text')?.evidence).toContain('目标字笔画偏细');
 });

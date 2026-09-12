@@ -362,7 +362,8 @@ describe('executed artwork standard', () => {
   });
   it.each(['auto', 'compose', 'generate'] as const)('rejects missing references before any paid work even with method %s', async artworkMethod => {
     const t = await setup();
-    await expect(prepareStandardArtwork({ ...t.request, artworkMethod, instruction: '使用图1，后背排版和字体颜色参考图三', exactText: '志愿者' }, t.services)).rejects.toThrow('未绑定');
+    // 候选修复统一了阻塞文案（PROMPT_IMAGE_MISSING），语义不变：引用未绑定图号必须在付费前拦截。
+    await expect(prepareStandardArtwork({ ...t.request, artworkMethod, instruction: '使用图1，后背排版和字体颜色参考图三', exactText: '志愿者' }, t.services)).rejects.toThrow('但本次没有传入该图');
     expect(t.measure).not.toHaveBeenCalled();
     expect(t.generate).not.toHaveBeenCalled();
     expect(t.fidelity).not.toHaveBeenCalled();

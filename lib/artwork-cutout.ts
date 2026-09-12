@@ -8,6 +8,8 @@ export type ArtworkCutoutDecision = {
   version: 'artwork-cutout-v1' | 'artwork-cutout-v2' | 'artwork-cutout-v3' | typeof ARTWORK_CUTOUT_VERSION;
 };
 export type ArtworkCutoutReceipt = ArtworkCutoutDecision & {
+  protection?: import('./artwork-protection').ArtworkProtectionPolicy;
+  reusedFrom?: string;
   jobKey: string;
   mode: ArtworkCutoutMode;
   sourceSha256: string;

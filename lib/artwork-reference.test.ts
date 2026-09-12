@@ -11,7 +11,8 @@ describe('reference identity and routing evidence', () => {
   it('keeps layout, font and color independently and rejects a derived instruction that lost two of them', () => {
     expect(artworkReferenceEvidence('排版，字体和颜色参考图3')).toMatchObject([{ attributes: ['layout', 'font', 'color'] }]);
     expect(artworkReferenceEvidence('只参考图3颜色')).toMatchObject([{ attributes: ['color'] }]);
-    expect(artworkReferenceIssues({ ...input, sourceRequirementText: source, printPlacement: { key: 'back' }, instruction: '保留图2，排版参考图3', referenceImages: [{ label: '图3' }] }).join(' ')).toContain('未完整保留');
+    // 候选修复统一了漏图阻塞文案（REQUIRED_IMAGE_MISSING），语义不变：派生说明丢掉的原图引用必须阻塞。
+    expect(artworkReferenceIssues({ ...input, sourceRequirementText: source, printPlacement: { key: 'back' }, instruction: '保留图2，排版参考图3', referenceImages: [{ label: '图3' }] }).join(' ')).toContain('原文要求使用图1（成品内容），但制作输入未绑定该图');
   });
   it.each(['图三', '图3', '图 3', '图３', '图片三'])('resolves %s to the same reference and whole-layout route', label => {
     const request = { ...input, instruction: `下方加图二，后背排版和字体颜色参考${label}`, referenceImages: [{ label: '图3' }] };
@@ -46,8 +47,9 @@ describe('reference identity and routing evidence', () => {
   });
   it('blocks an omitted source reference even when the derived instruction also lost it', () => {
     const issues = artworkReferenceIssues({ ...input, sourceRequirementText: source, printPlacement: { key: 'back' } });
-    expect(issues.join(' ')).toContain('原文要求参考图3');
-    expect(issues.join(' ')).toContain('未完整保留');
+    // 候选修复统一了漏图阻塞文案（REQUIRED_IMAGE_MISSING），语义不变：原文引用的图号未绑定必须阻塞。
+    expect(issues.join(' ')).toContain('原文要求使用图3（字体参考），但制作输入未绑定该图');
+    expect(issues.join(' ')).toContain('原文要求使用图1（成品内容），但制作输入未绑定该图');
   });
   it.each(['后脖', '后领', '后领口', '后颈', '后背上方', '背面'])('keeps %s references out of the front position', placement => {
     const requirement = `301SRX-黑色\n正面 图一\n${placement}  图一前三排  按照图二做\n正面高35cm 后背宽8`;

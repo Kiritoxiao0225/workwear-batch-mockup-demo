@@ -1,5 +1,7 @@
+import { protectExplicitArtwork } from './artwork-explicit-protection';
+import type { ArtworkProtectionPolicy } from '@/lib/artwork-protection';
 import type { ArtworkCutoutReceipt } from '@/lib/artwork-cutout';
-import { artworkJobStep } from './artwork-job-runtime';
+import { artworkJobStep, currentCutoutRecovery } from './artwork-job-runtime';
 import { createHash, randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import type { ArtworkCutoutMode, ArtworkCutoutResult } from '@/lib/artwork-cutout';
@@ -24,9 +26,11 @@ function errorText(error: unknown) { return error instanceof Error ? error.messa
 async function checkedProviderOutput(bytes: Buffer, job: StoredCutout, services: CutoutServices) {
   const metadata = await sharp(bytes).metadata();
   if (metadata.width && metadata.height) job.candidate = { url: inline(bytes), width: metadata.width, height: metadata.height, missingRegions: [] };
-  await validateCutoutOutput(bytes);
   const source = Buffer.from(job.receipt.sourceUrl.split(',')[1], 'base64');
-  const protectedResult = await protectArtworkBadges(source, bytes);
+  const explicit = await protectExplicitArtwork(source, bytes, job.receipt.protection);
+  const protectedResult = await protectArtworkBadges(source, explicit.bytes);
+  await validateCutoutOutput(protectedResult.bytes);
+  if (explicit.protectedPanels) job.receipt.reasons.push(`按明确要求保留 ${explicit.protectedPanels} 个完整红色矩形底形及其原字`);
   if (job.candidate) job.candidate.url = inline(protectedResult.bytes);
   // Retain the paid provider output before a potentially slow visual inspection.
   await saveCutoutJob(job);
@@ -104,7 +108,7 @@ export async function queryArtworkCutout(key: string, services: CutoutServices =
   } catch (error) { return { ...publicResult(job), error: `查询或下载暂未完成：${errorText(error)}；继续查询同一任务` }; }
 }
 
-export async function startArtworkCutout(source: Buffer, mode: ArtworkCutoutMode = 'auto', options: { retryOf?: string; services?: CutoutServices } = {}): Promise<ArtworkCutoutResult> {
+export async function startArtworkCutout(source: Buffer, mode: ArtworkCutoutMode = 'auto', options: { retryOf?: string; services?: CutoutServices; protection?: ArtworkProtectionPolicy } = {}): Promise<ArtworkCutoutResult> {
   if (!['auto', 'standard', 'meitu'].includes(mode)) throw new Error('不支持的抠图方式');
   await assertCutoutStoreReady();
   const services = options.services ?? cutoutServices;
@@ -112,8 +116,29 @@ export async function startArtworkCutout(source: Buffer, mode: ArtworkCutoutMode
   const sourceSha256 = sha(bytes);
   const previous = options.retryOf ? await readCutoutJob(options.retryOf) : null;
   if (options.retryOf && (!previous || previous.status !== 'failed' || previous.receipt.sourceSha256 !== sourceSha256)) throw new Error('只有已明确失败的同图任务可以重试；处理中的任务请继续查询');
-  const key = sha(JSON.stringify([productionStateKey(), sha(process.env.MEITU_OPENAPI_ACCESS_KEY || 'unconfigured'), sha(process.env.MEDIAKIT_API_KEY || 'unconfigured'), MEITU_CUTOUT_VERSION, ARTWORK_CUTOUT_VERSION, mode, sourceSha256, previous?.requestId ?? '']));
+  const baseKey = sha(JSON.stringify([productionStateKey(), sha(process.env.MEITU_OPENAPI_ACCESS_KEY || 'unconfigured'), sha(process.env.MEDIAKIT_API_KEY || 'unconfigured'), MEITU_CUTOUT_VERSION, ARTWORK_CUTOUT_VERSION, mode, sourceSha256, previous?.requestId ?? '']));
+  const protection = options.protection?.keepRedPanels ? options.protection : undefined;
+  const key = protection ? sha(JSON.stringify([baseKey, protection])) : baseKey;
   const found = await readCutoutJob(key);
+  if (!found && protection) {
+    const reusable = await readCutoutJob(baseKey);
+    if (reusable) {
+      // Changing a local preservation rule must not repurchase a provider result.
+      const reusableUrl = reusable.url ?? reusable.candidate?.url;
+      if (!reusableUrl || !['completed', 'failed'].includes(reusable.status)) return publicResult(reusable);
+      const repaired: StoredCutout = { ...reusable, status: 'pending', phase: 'ready', requestId: randomUUID(),
+        url: undefined, error: undefined, updatedAt: new Date().toISOString(),
+        receipt: { ...reusable.receipt, jobKey: key, protection, reusedFrom: baseKey, route: 'reuse',
+          actualCredits: 0, estimatedCredits: 0, cacheHit: false, reasons: [...reusable.receipt.reasons, '复用已保存供应商结果，仅本地恢复明确保留的底形，本次不重新付费'] } };
+      if (!await claimCutoutJob(repaired)) return queryArtworkCutout(key, services);
+      try {
+        const checked = await checkedProviderOutput(Buffer.from(reusableUrl.split(',')[1], 'base64'), repaired, services);
+        repaired.url = inline(checked); repaired.status = 'completed'; repaired.phase = 'finished';
+        repaired.receipt.outputSha256 = sha(checked); repaired.receipt.completedAt = new Date().toISOString();
+      } catch (error) { repaired.status = 'failed'; repaired.phase = 'finished'; repaired.error = errorText(error); }
+      await saveCutoutJob(repaired); return publicResult(repaired);
+    }
+  }
   // A new user-requested processing run may retry a proven local failure. Keep
   // the old job for audit and use the existing retry key to deduplicate clicks.
   // Queries and uncertain/paid failures never enter this branch.
@@ -123,14 +148,15 @@ export async function startArtworkCutout(source: Buffer, mode: ArtworkCutoutMode
   if (found) return found.status === 'completed' ? publicResult(found, true) : queryArtworkCutout(key, services);
   const decision = await analyzeArtworkCutout(bytes, mode);
   const job: StoredCutout = { status: 'pending', phase: 'ready', requestId: randomUUID(), updatedAt: new Date().toISOString(), receipt: {
-    ...decision, jobKey: key, mode, sourceSha256, sourceUrl: inline(bytes), actualCredits: decision.route === 'meitu' || decision.route === 'volcano' ? null : 0, cacheHit: false,
+    ...decision, jobKey: key, mode, sourceSha256, sourceUrl: inline(bytes), ...(protection ? { protection } : {}), actualCredits: decision.route === 'meitu' || decision.route === 'volcano' ? null : 0, cacheHit: false,
   } };
   if (!await claimCutoutJob(job)) return queryArtworkCutout(key, services);
   if (decision.route === 'reuse' || decision.route === 'standard') {
     try {
       const profile = await inspectArtworkSource(bytes);
-      const result = decision.route === 'reuse' ? bytes : profile.backgroundColor ? await removeFlatArtworkBackground(bytes, profile.backgroundColor) : null;
-      if (!result) throw new Error('标准抠图无法确定背景颜色');
+      const initial = decision.route === 'reuse' ? bytes : profile.backgroundColor ? await removeFlatArtworkBackground(bytes, profile.backgroundColor) : null;
+      if (!initial) throw new Error('标准抠图无法确定背景颜色');
+      const result = (await protectExplicitArtwork(bytes, initial, protection)).bytes;
       await validateCutoutOutput(result);
       job.url = inline(result); job.status = 'completed'; job.phase = 'finished';
       job.receipt.completedAt = new Date().toISOString(); job.receipt.outputSha256 = sha(result);
@@ -176,11 +202,17 @@ export async function startArtworkCutout(source: Buffer, mode: ArtworkCutoutMode
 export class ArtworkCutoutPendingError extends Error {
   constructor(public result: ArtworkCutoutResult) { super(result.error || '抠图仍在处理中，可继续查询本次任务'); }
 }
-export async function cutoutArtworkForPipeline(bytes: Buffer, mode: ArtworkCutoutMode = 'auto'): Promise<{ bytes: Buffer; receipt: ArtworkCutoutReceipt }> {
-  return artworkJobStep('cutout', 'cutout', { bytes, mode }, () => pipelineCutout(bytes, mode));
+export async function cutoutArtworkForPipeline(bytes: Buffer, mode: ArtworkCutoutMode = 'auto', protection?: ArtworkProtectionPolicy): Promise<{ bytes: Buffer; receipt: ArtworkCutoutReceipt }> {
+  const applied = protection?.keepRedPanels ? protection : undefined;
+  const requested = currentCutoutRecovery();
+  const sourceHash = requested ? sha(await sharp(bytes, { limitInputPixels: 25_000_000 }).rotate().png().toBuffer()) : null;
+  const recovery = requested?.sourceSha256 === sourceHash ? requested : undefined;
+  const actualMode = recovery?.mode ?? mode;
+  return artworkJobStep('cutout', 'cutout', { bytes, mode: actualMode, ...(applied ? { protection: applied } : {}),
+    ...(recovery ? { retryOf: recovery.failedKey } : {}) }, () => pipelineCutout(bytes, actualMode, applied, recovery?.failedKey));
 }
-async function pipelineCutout(bytes: Buffer, mode: ArtworkCutoutMode) {
-  let result = await startArtworkCutout(bytes, mode);
+async function pipelineCutout(bytes: Buffer, mode: ArtworkCutoutMode, protection?: ArtworkProtectionPolicy, retryOf?: string) {
+  let result = await startArtworkCutout(bytes, mode, { protection, retryOf });
   const deadline = Date.now() + 60000;
   while (result.status === 'pending' && Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 1500));

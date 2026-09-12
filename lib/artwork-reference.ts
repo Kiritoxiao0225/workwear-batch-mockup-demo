@@ -1,3 +1,4 @@
+import { dependencyIssues, contentImageLabels } from './artwork-reliability';
 import { resolveFontReferenceText, fontReferenceInput, fontReferenceRequirement, type ArtworkFontReference } from './artwork-font-reference';
 import { compileGenerationPrompt } from '@/lib/artwork-generation-prompt';
 
@@ -135,7 +136,7 @@ export function artworkReferenceEvidence(text: string): ArtworkReferenceEvidence
     return images.flatMap((match, index) => {
       const before = clause.slice(index ? images[index - 1].index! + images[index - 1][0].length : 0, match.index);
       const after = clause.slice(match.index! + match[0].length, images[index + 1]?.index ?? clause.length);
-      const forward = /(?:参考|参照|按照|仿照|依照|按)\s*(?:WPS\s*)?$/iu.test(before);
+      const forward = /(?:参考|参照|按照|仿照|依照|按|照|仿|学)\s*(?:WPS\s*)?$/iu.test(before);
       const backward = /^[^图]{0,24}(?:参考|参照)(?!\s*$)/u.test(after)
         || /^[^图]{0,24}(?:参考|参照)\s*$/u.test(after) && index === images.length - 1;
       const context = `${before}\n${after}`;
@@ -155,6 +156,8 @@ export function artworkReferenceEvidence(text: string): ArtworkReferenceEvidence
 
 export function artworkReferenceIssues(input: { generationPrompt?: string; instruction: string; layoutNote: string; primaryImageLabel: string; primaryImageRole?: 'content' | 'reference'; referenceImages: Array<{ label: string }>; sourceRequirementText?: string; printPlacement?: { key: string } | null; sourceScope?: string; fontReference?: import('./artwork-font-reference').FontReferenceInput }) {
   if (input.fontReference?.origin === 'manual') input = { ...input, instruction: resolveFontReferenceText(input.instruction, input.fontReference), layoutNote: resolveFontReferenceText(input.layoutNote, input.fontReference), sourceRequirementText: input.sourceRequirementText ? resolveFontReferenceText(input.sourceRequirementText, input.fontReference) : undefined };
+  const requiredImages = dependencyIssues(input);
+  if (requiredImages.length) return requiredImages;
   if (input.generationPrompt?.trim()) {
     try {
       compileGenerationPrompt(input.generationPrompt, [
@@ -179,7 +182,9 @@ export function artworkReferenceIssues(input: { generationPrompt?: string; instr
   const original = artworkReferenceEvidence(scoped);
   if (input.sourceRequirementText) {
     const allSourceReferences = artworkReferenceEvidence(input.sourceRequirementText);
+    const contentLabels = new Set(contentImageLabels(input));
     for (const label of bound) {
+      if (contentLabels.has(label)) continue; // Additional content sources are not style-only references.
       const number = artworkImageNumbers(label)[0];
       if (label === primary) continue;
       if (allSourceReferences.some(item => item.number === number) && !original.some(item => item.number === number)) {

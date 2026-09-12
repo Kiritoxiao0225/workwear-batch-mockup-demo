@@ -249,7 +249,7 @@ async function requestVisionContent(content: Array<Record<string, unknown>>, lab
 
 async function performAnalysis(records: SourceTaskRecord[], config: ReturnType<typeof analysisConfiguration>, options: AnalysisOptions) {
   const catalog = await measure(options, 'catalog', () => productionCatalogStyles());
-  const prompt = buildTaskReviewPrompt(records, catalog);
+  const prompt = buildTaskReviewPrompt(records, catalog) + '\n【不可遗漏的材料与作用范围】每个印花位置单独核对原文里的所有图号。图1+图2代表两个内容来源时，两个都必须绑定：主要图放logo.materialId，其他内容图可由兼容字段referenceMaterialIds运输，但instruction必须明确它们也是成品内容，不可写成仅参考。字体、颜色、版式参考也放referenceMaterialIds，并明确只参考哪个区域和属性，不复制无关文字。每个原文的取材、保留底形、白字保留、局部改色和准确新增文字都必须进入instruction；generationPrompt不能代替这些执行字段。存在多款或多位置时，不在位置之间猜测或共用；无法唯一归属写ambiguities。';
   const { content, ...metadata } = await requestVisionModel(records, config, prompt, options);
   const reviews = await measure(options, 'expand', () => parseTaskReviewAnalysis(records, content));
   if (reviews.some(review => review.units.some(unit => !unit.generationPrompt && !isTextOnlyArtwork({ ...unit, materialId: unit.logo.materialId })))) throw new Error('需求解析没有返回完整生图提示词，请重新分析');
@@ -270,7 +270,7 @@ ${GENERATION_PROMPT_WRITING_RULES}
 ${FONT_REFERENCE_ANALYSIS_RULES}
 当前 fontReference 为 manual 时必须原样保留；当前明确为 null 时不自行重新指定，使用现有其他要求。
 选择本单元真正需要的主要内容素材和参考素材；不要混入其他服装或印花位置的素材。目标单元中的 placement 是上衣位置，衣服款式和颜色不是图案配色指令。
-primaryImageLabel 只选一张主要内容图；准确文字仅借用图片样式、不提取原图内容时设为 null，所有样式图列入 referenceImageLabels，不能强行指定内容图。referenceImageLabels 只列额外需要的参考图，不能重复主要图，也不能重复其他参考图；没有额外参考图时必须是空数组 []，不要填 null、空字符串或占位符“图N”。素材图号必须存在，不能为填满字段而引入另一版图案。正文出现的所有图号，包括排除性描述中的图号，都必须在已选主要图或参考图中；不选入的图片不会送给生图模型，正文不要引用其编号，需要排除时直接说明不包含哪些文字或元素。
+primaryImageLabel 只选一张主要内容图；准确文字仅借用图片样式、不提取原图内容时设为 null，所有样式图列入 referenceImageLabels，不能强行指定内容图。referenceImageLabels 是兼容运输字段，额外内容图与样式参考图均可列入；额外内容图必须在正文标明是必须进入成品的内容来源，不得误写成仅参考。不能重复主要图，也不能重复其他参考图；没有额外参考图时必须是空数组 []，不要填 null、空字符串或占位符“图N”。素材图号必须存在，不能为填满字段而引入另一版图案。正文出现的所有图号，包括排除性描述中的图号，都必须在已选主要图或参考图中；不选入的图片不会送给生图模型，正文不要引用其编号，需要排除时直接说明不包含哪些文字或元素。
 仅返回 JSON 对象，示例（没有额外参考图）：{"generationPrompt":"完整提示词正文","primaryImageLabel":"图1","referenceImageLabels":[],"fontReference":null,"ambiguities":[]}`;
   const config = analysisConfiguration();
   return analysisQueue.run(randomUUID(), async () => {

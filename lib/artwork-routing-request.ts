@@ -1,3 +1,4 @@
+import { withSourceRequirements, compileArtworkRequirements, compiledRequirementPrompt, contentImageLabels, authoredArtworkInstruction } from './artwork-reliability';
 import { resolveFontReferenceText, fontReferenceRequirement } from './artwork-font-reference';
 import { artworkIntent, buildCanonicalArtworkModelPrompt, describeArtworkComposition, type ArtworkPreparationRequest } from '@/lib/task-review-artwork';
 import { inferredArtworkColor } from '@/lib/artwork-editor';
@@ -35,6 +36,7 @@ export function artworkEditColor(requirement: string) {
 }
 
 export function artworkRequirementFacts(input: ArtworkRequirementInput): ArtworkRoutingFacts {
+  input = withSourceRequirements(input);
   if (input.fontReference?.origin === 'manual') input = { ...input, instruction: resolveFontReferenceText(input.instruction, input.fontReference), layoutNote: resolveFontReferenceText(input.layoutNote, input.fontReference), generationPrompt: input.generationPrompt ? resolveFontReferenceText(input.generationPrompt, input.fontReference) : undefined };
   const selected = input.artworkMethod;
   if (selected && selected !== 'auto') {
@@ -59,7 +61,7 @@ export function artworkRequirementFacts(input: ArtworkRequirementInput): Artwork
   const graphicRemovals = artworkGraphicRemovals(input);
   const localEdit = Boolean(input.exactText.trim()) || graphicRemovals.length > 0 || intent.selectiveComposition || colorEdit || /(?:换成|改成|改为|换色|替换|新增|加上|加字|添加文字|调整.{0,6}(?:排版|间距|对齐))/u.test(requirement);
   const referenceText = input.primaryImageRole === 'reference';
-  const generate = referenceText || input.processingRoute === 'model' || redesign || wholeReference || modelEdits.length > 0;
+  const generate = referenceText || input.processingRoute === 'model' || redesign || wholeReference || modelEdits.length > 0 || contentImageLabels(input).length > 1;
   const compose = input.processingRoute === 'hybrid' || localEdit;
   const blockers: string[] = artworkReferenceIssues(input);
   if (referenceText && !input.exactText.trim()) blockers.push('缺少准确文字');
@@ -93,7 +95,7 @@ export function artworkRequirementFacts(input: ArtworkRequirementInput): Artwork
   };
 }
 
-export const STANDARD_ARTWORK_PROMPT_VERSION = 'artwork-standard-prompts-v17';
+export const STANDARD_ARTWORK_PROMPT_VERSION = 'artwork-standard-prompts-v18';
 export function artworkPromptHash(text: string) {
   let hash = 0x811c9dc5;
   for (let index = 0; index < text.length; index++) hash = Math.imul(hash ^ text.charCodeAt(index), 0x01000193);
@@ -101,8 +103,18 @@ export function artworkPromptHash(text: string) {
 }
 
 export function standardArtworkPrompts(input: Omit<ArtworkPreparationRequest, 'image' | 'enhancementMode' | 'referenceImages'> & { referenceImages: Array<{ label: string }> }) {
+  input = withSourceRequirements(input);
+  const requirementContract = compileArtworkRequirements(input);
+  // When the user authored a generation prompt, that prompt is the execution body; stale legacy
+  // instruction/layoutNote rows must not leak into the model prompt as extra requirements.
+  const evidenceContract = input.generationPrompt?.trim()
+    ? compileArtworkRequirements({ ...input, instruction: '', layoutNote: '' }) : requirementContract;
   if (input.fontReference) input = { ...input, layoutNote: `${input.layoutNote}\n字体参考 WPS ${input.fontReference.label} 的指定文字区域：${input.fontReference.description}` };
-  const canonical = buildCanonicalArtworkModelPrompt({ ...input, referenceImageLabels: input.referenceImages.map(reference => reference.label) });
+  const canonical = buildCanonicalArtworkModelPrompt({ ...input, sourceRequirementText: requirementContract.scopedSource || input.sourceRequirementText, referenceImageLabels: input.referenceImages.map(reference => reference.label) });
+  canonical.imageMapping = canonical.imageMapping.map(image => {
+    const roles = requirementContract.inputs.find(item => item.sourceLabel === image.sourceLabel)?.roles ?? [];
+    return roles.includes('content') ? { ...image, role: 'content' as const, requirement: '本位置必须进入成品的内容素材' } : image;
+  });
   const modelEdits = input.primaryImageRole === 'reference' ? [] : artworkModelEdits(input);
   const generate = modelEdits.length ? [canonical.prompt,
     '【原图局部编辑必须执行】',
@@ -130,14 +142,20 @@ export function standardArtworkPrompts(input: Omit<ArtworkPreparationRequest, 'i
     `本组件的文字样式属性：${JSON.stringify(artworkTextStyle(input))}。空属性沿用普通清晰文字，不自行增加图案。`,
     '本次只输出上述准确文字，整体图文组合由程序完成。纯白背景，完整居中，保留留白，不生成衣服、场景或水印。',
   ].join('\n') }));
-  const textOperation = artworkTextOperation(input);
+  // Text operation resolves from the authored instruction of THIS version; the appended
+  // source-evidence section must not leak a different operation requested by the source order.
+  const textOperation = artworkTextOperation({ ...input, instruction: authoredArtworkInstruction(input.instruction) });
   const removeText = textOperation === 'replace' ? artworkTextRemovalPrompt(input) : null;
   const reconstruct = input.sourceAssessment ? artworkReconstructionPrompt(input.sourceAssessment, input.primaryImageLabel, input) : null;
   const sourceContent = input.primaryImageRole !== 'reference' && input.sourceAssessment ? [
     `【原图具体内容】${JSON.stringify(input.sourceAssessment.recognizedContent ?? null)}。只将 certain=true 的内容视为可辨；客户明确文字优先，不确定位置不得猜字。`,
     `【原图实际问题】${JSON.stringify(input.sourceAssessment.defects ?? [])}。先按客户要求修改对应位置，保留未要求修改的内容。`,
   ].join('\n') : '';
-  const resolved = { generate: artworkSeparationPrompt([generate, sourceContent].filter(Boolean).join('\n')), redraw: artworkSeparationPrompt(redraw),
+  const contractPrompt = compiledRequirementPrompt(evidenceContract);
+  const resolved = { generate: artworkSeparationPrompt([
+    contentImageLabels(input).length > 1
+      ? ['制作一张独立二维完整图案，不生成衣服、人物或场景。', input.generationPrompt || input.instruction].join('\n')
+      : generate, sourceContent, contractPrompt].filter(Boolean).join('\n')), redraw: artworkSeparationPrompt(redraw),
     reconstruct: reconstruct ? artworkSeparationPrompt(reconstruct) : null,
     styledTexts: styledTexts.map(text => ({ ...text, prompt: artworkSeparationPrompt(text.prompt) })) };
   const hash = artworkPromptHash(JSON.stringify({ version: STANDARD_ARTWORK_PROMPT_VERSION, route: input.processingRoute, ...(input.fontReference ? { fontReference: input.fontReference } : {}), ...(input.artworkMethod ? { artworkMethod: input.artworkMethod } : {}), sourceSelection: input.sourceAssessment?.selection, ...resolved, textOperation, removeText, imageMapping: canonical.imageMapping }));

@@ -27,7 +27,7 @@ export function orderWpsSourceRecords(order: readonly string[], incoming: Source
 }
 
 // Status and row location may change without changing the artwork brief.
-function materialEvidenceUrl(value: string | null | undefined) {
+export function materialEvidenceUrl(value: string | null | undefined) {
   if (!value) return value;
   try {
     const url = new URL(value);

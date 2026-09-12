@@ -13,7 +13,12 @@ const request = () => parseArtworkPreparationRequest({ sourceRequirementText: 'P
 describe('single generation prompt contract', () => {
   it('preserves authored content and actual labels while resolving staging-background conflicts', () => {
     const prompt = standardArtworkPrompts(request());
-    expect(prompt.generate).toBe(artworkSeparationPrompt(`【输入图片对应关系】正文图号均为 WPS 原图号。\n输入图1 = WPS 图5（内容素材）\n输入图2 = WPS 图4（参考素材）\n\n${body}`));
+    // 候选修复在生成提示词后追加【当前印花位置的执行要求；保留原文证据】小节（compiledRequirementPrompt），
+    // 作者正文与图片映射保持不变；这里改为断言正文仍然完整、证据小节存在且不引入旧模板内容。
+    const authored = artworkSeparationPrompt(`【输入图片对应关系】正文图号均为 WPS 原图号。\n输入图1 = WPS 图5（内容素材）\n输入图2 = WPS 图4（参考素材）\n\n${body}`).split('\n【前景与临时底色】')[0];
+    expect(prompt.generate.startsWith(authored)).toBe(true);
+    expect(prompt.generate).toContain('【当前印花位置的执行要求；保留原文证据】');
+    expect(prompt.generate).toContain('POLO：研+图5+2026【参考图四】');
     expect(prompt.generate).not.toContain('旧模板');
     expect(artworkRequirementFacts(request())).toMatchObject({ intent: 'generate', blockers: [], editSpecification: 'complete' });
   });

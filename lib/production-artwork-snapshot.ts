@@ -1,6 +1,6 @@
 import type { SourceTaskRecord } from '@/lib/batch-task-review';
 import type { ProductionUnit, WpsProductionState } from '@/lib/wps-production';
-import { wpsSourceEvidence } from '@/lib/wps-source';
+import { wpsSourceEvidence, materialEvidenceUrl } from '@/lib/wps-source';
 import { sharedArtworkForUnit } from './shared-artwork';
 
 /** Compare only this task and its source, so unrelated completed jobs can be saved. */
@@ -12,7 +12,7 @@ export function productionArtworkSnapshot(unit: ProductionUnit, source: SourceTa
     ...(unit.sharedArtworkId ? { shared: [unit.sharedArtworkId, unit.sharedArtworkVersion ?? 0] } : {}),
     source: wpsSourceEvidence(source),
     // Include preview-only assets too; a changed source must never be hidden by a fallback.
-    previews: source.materials.map(material => [material.id, material.originalPreviewUrl ?? material.previewUrl ?? null]),
+    previews: source.materials.map(material => [material.id, materialEvidenceUrl(material.originalPreviewUrl ?? material.previewUrl ?? null)]),
   });
 }
 
@@ -39,8 +39,12 @@ function sameSnapshot(actual: string, expected: string) {
   const canonical = (snapshot: string) => {
     const value = JSON.parse(snapshot);
     if (value && Array.isArray(value.units)) value.units = value.units.map((unit: unknown) => typeof unit === 'string' ? JSON.parse(unit) : unit);
-    return JSON.stringify(value, (_key, entry) => entry && typeof entry === 'object' && !Array.isArray(entry)
-      ? Object.fromEntries(Object.entries(entry).sort(([left], [right]) => left.localeCompare(right))) : entry);
+    return JSON.stringify(value, (_key, rawEntry) => {
+      const entry = _key === 'previews' && Array.isArray(rawEntry)
+        ? rawEntry.map((pair: unknown) => Array.isArray(pair) && pair.length === 2
+          ? [pair[0], materialEvidenceUrl(pair[1] as string | null)] : pair) : rawEntry;
+      return entry && typeof entry === 'object' && !Array.isArray(entry)
+      ? Object.fromEntries(Object.entries(entry).sort(([left], [right]) => left.localeCompare(right))) : entry; });
   };
   try { return canonical(actual) === canonical(expected); } catch { return false; }
 }

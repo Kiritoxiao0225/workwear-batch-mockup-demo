@@ -70,7 +70,7 @@ export async function prepareProductionPreview(version: ProductionMockupVersion,
   if (hit.rowCount) {
     const cached = await readCatalogFile(hit.rows[0].file_id);
     return { bytes: cached.bytes, persist: async () => {
-      if (!hit.rows[0].is_current) await publishCurrent(version, originalUnits, hash, hit.rows[0].file_id);
+      if (!await publishCurrent(version, originalUnits, hash, hit.rows[0].file_id)) throw new Error('合成期间要求或位置已变化，旧预览没有发布为当前结果');
     } };
   }
   // A concurrent writer may own the durable claim. Do not make the preview wait
@@ -96,7 +96,9 @@ export async function savedProductionRender(version: ProductionMockupVersion, or
       // Complete both before returning, without serializing OSS and SQL waits.
       const [cached] = await Promise.all([
         readCatalogFile(hit.rows[0].file_id),
-        hit.rows[0].is_current ? Promise.resolve() : publishCurrent(version, originalUnits, hash, hit.rows[0].file_id),
+        publishCurrent(version, originalUnits, hash, hit.rows[0].file_id).then(current => {
+          if (!current) throw new Error('合成期间要求或位置已变化，请读取最新效果图');
+        }),
       ]);
       return cached;
     }
@@ -109,7 +111,7 @@ export async function savedProductionRender(version: ProductionMockupVersion, or
       const saved = await saveProductionFile(png, `${version.id}.png`);
       await catalogDatabase().query(`INSERT INTO production_render_cache(input_hash,file_id) VALUES($1,$2)
         ON CONFLICT(input_hash) DO UPDATE SET file_id=EXCLUDED.file_id`, [hash, saved.id]);
-      await publishCurrent(version, originalUnits, hash, saved.id);
+      if (!await publishCurrent(version, originalUnits, hash, saved.id)) throw new Error('合成期间要求或位置已变化，旧图已保留但没有作为当前效果图返回');
       return { file: { id: saved.id, sha256: saved.sha256, width: saved.width, height: saved.height,
         byte_length: saved.byteLength, mime_type: saved.mimeType }, bytes: png };
     } finally { await catalogDatabase().query('DELETE FROM production_operations WHERE operation_key=$1 AND owner=$2', [operationKey, owner]); }

@@ -1,3 +1,5 @@
+import { withSourceRequirements, compileArtworkRequirements, contentImageLabels } from '@/lib/artwork-reliability';
+import { artworkProtectionPolicy } from '@/lib/artwork-protection';
 import { fontReferenceRequirement } from '@/lib/artwork-font-reference';
 import { cropArtworkFontInput } from './artwork-font-reference';
 import { artworkCorrectionPrompt } from '@/lib/artwork-correction';
@@ -67,6 +69,9 @@ async function generatedCutout(bytes: Buffer, services: StandardArtworkServices)
 
 /** One fidelity enhancement when needed. Content inspection is advisory at every stage. */
 export async function prepareStandardArtwork(request: ArtworkPreparationRequest, services: StandardArtworkServices = standardArtworkServices, onProgress?: (event: ArtworkProgressEvent) => void): Promise<ArtworkPreparationResponse> {
+  request = withSourceRequirements(request);
+  const contractIssues = compileArtworkRequirements(request).issues;
+  if (contractIssues.length) throw new Error(contractIssues.map(issue => issue.message).join('；'));
   const started = performance.now();
   const timings: ArtworkTiming[] = [];
   const progress = (message: string, generationFinished = false) => onProgress?.({ type: 'progress', message, generationFinished });
@@ -92,7 +97,7 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
   const originalCutout = services.cutout;
   services = { ...services, cutout: async (bytes, options) => {
     if (originalCutout !== routedCutout) return originalCutout(bytes, options);
-    const result = await cutoutArtworkForPipeline(bytes, request.cutoutMode);
+    const result = await cutoutArtworkForPipeline(bytes, request.cutoutMode, artworkProtectionPolicy(request.instruction, request.layoutNote));
     cutoutReceipt = result.receipt;
     cutoutRuns.push(result.receipt);
     return result.bytes;
@@ -139,7 +144,7 @@ export async function prepareStandardArtwork(request: ArtworkPreparationRequest,
   const modelEdits = request.primaryImageRole === 'reference' ? [] : artworkModelEdits(request);
   let decision = decideArtworkMethod(facts);
   if (decision.state === 'review') throw new Error(`${decision.reason} ${facts.blockers.join('；')}`);
-  if (decision.method === 'generate' && !request.generationPrompt?.trim() && !request.fontReference && !request.correction) throw new Error('请先整理生图提示词，再制作图案');
+  if (decision.method === 'generate' && !request.generationPrompt?.trim() && !request.fontReference && !request.correction && contentImageLabels(request).length < 2) throw new Error('请先整理生图提示词，再制作图案');
   const reconstructSource = Boolean(facts.reconstructSource);
   const modelPreparation = decision.method === 'generate' || reconstructSource;
   let modelPrompt = artworkSeparationPrompt(request.correction ? artworkCorrectionPrompt(request.correction.issues, `${request.instruction}\n${request.layoutNote}\n准确文字：${request.exactText}\n${fontReferenceRequirement(request.fontReference, request.exactText)}`, request.primaryImageRole) : (decision.method === 'generate' ? prompts.generate : prompts.reconstruct) ?? '');
