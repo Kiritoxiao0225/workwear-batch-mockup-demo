@@ -5,6 +5,9 @@ import { createRequire } from 'node:module';
 createRequire(import.meta.url)('@next/env').loadEnvConfig(process.cwd());
 const { artworkJobsEnabled, claimArtworkJob, heartbeatArtworkWorker } = await import('../lib/server/artwork-job-store');
 const { processArtworkJob } = await import('../lib/server/artwork-job-worker');
+const { recoverProductionRenders } = await import('../lib/server/production-render-recovery');
+const { WORKWEAR_LOGIC_VERSION } = await import('../lib/artwork-reliability');
+let renderRecovery: Promise<void> | null = null, nextRenderRecovery = 0;
 const { wpsAnalysisJobsEnabled, claimWpsAnalysis, heartbeatWpsAnalysis } = await import('../lib/server/wps-analysis-jobs');
 const { processWpsAnalysis, discoverWpsAnalysis } = await import('../lib/server/wps-analysis-worker');
 const analysisRunning = new Set<Promise<void>>();
@@ -21,12 +24,18 @@ let lastHeartbeat = Date.now();
 const health = process.env.PORT ? createServer((_request, response) => {
   const ready = !stopping && Date.now() - lastHeartbeat < 30_000;
   response.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json' });
-  response.end(JSON.stringify({ ready, running: running.size }));
+  response.end(JSON.stringify({ ready, running: running.size, logicVersion: WORKWEAR_LOGIC_VERSION, commit: process.env.WORKWEAR_BUILD_COMMIT ?? null }));
 }).listen(Number(process.env.PORT), '0.0.0.0') : undefined;
 console.log('[artwork-worker] ready: generation 6, cutout 2, quality 1');
 const heartbeat = setInterval(() => { void Promise.all([heartbeatArtworkWorker(owner), ...(wpsAnalysisJobsEnabled() ? [heartbeatWpsAnalysis(owner)] : [])]).then(() => { lastHeartbeat = Date.now(); }).catch(error => console.error('[artwork-worker] heartbeat failed', error instanceof Error ? error.name : 'Error')); }, 10_000);
 try {
   while (!stopping) {
+    if (!renderRecovery && Date.now() >= nextRenderRecovery) {
+      nextRenderRecovery = Date.now() + 30_000;
+      renderRecovery = recoverProductionRenders(2).then(() => undefined)
+        .catch(error => console.error('[render-recovery]', error instanceof Error ? error.name : 'Error'))
+        .finally(() => { renderRecovery = null; });
+    }
     if (wpsAnalysisJobsEnabled()) {
       if (!discovery && Date.now() >= nextDiscovery) {
         nextDiscovery = Date.now() + 30_000;
@@ -46,5 +55,5 @@ try {
     const work = processArtworkJob(job).catch(error => console.error('[artwork-worker] job interrupted', { id: job.id, name: error instanceof Error ? error.name : 'Error' })).finally(() => running.delete(work));
     running.add(work);
   }
-  await Promise.allSettled([...running, ...analysisRunning, ...(discovery ? [discovery] : [])]);
+  await Promise.allSettled([...running, ...analysisRunning, ...(discovery ? [discovery] : []), ...(renderRecovery ? [renderRecovery] : [])]);
 } finally { health?.close(); clearInterval(heartbeat); await closeCatalogDatabase(); }

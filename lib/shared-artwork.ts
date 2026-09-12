@@ -1,3 +1,4 @@
+import { fullArtworkContentKey } from './artwork-reliability';
 import type { ProductionArtwork, ProductionUnit, WpsProductionState } from './wps-production';
 
 export type SharedArtworkVersion = { number: number; artwork: ProductionArtwork; automaticTextColor: boolean; createdAt: string };
@@ -108,7 +109,7 @@ export function bindSharedArtwork(state: WpsProductionState, sourceUnitId: strin
     const unit = state.units.find(unit => unit.id === unitId);
     if (!unit || unit.sourceRecordId !== source.sourceRecordId) throw new Error('只能关联同一订单内的位置');
     if (unit.sharedArtworkId && unit.sharedArtworkId !== existing?.id) throw new Error('该位置已使用其他共用图稿，请先单独拆出');
-    if (unit.id !== source.id && sharedArtworkCandidateKey(unit) !== sharedArtworkCandidateKey(source)) throw new Error('图稿的素材、取材、文字或版式不同，不能直接共用；请另建版本');
+    if (unit.id !== source.id && fullArtworkContentKey(unit) !== fullArtworkContentKey(source)) throw new Error('图稿的素材、取材、文字或版式不同，不能直接共用；请另建版本');
     if (unit.attempts.some(attempt => ['submitted', 'processing', 'unknownSubmission'].includes(attempt.status))) throw new Error('已有制作任务尚未结束');
     return unit;
   });

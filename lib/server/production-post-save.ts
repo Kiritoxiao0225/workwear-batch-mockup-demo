@@ -1,5 +1,5 @@
 import { readCloudProductionState } from './production-cloud-state';
-import { savedProductionRender } from './production-render-cache';
+import { trackedProductionRender } from './production-render-recovery';
 import { cleanupReplacedFiles } from './production-replaced-files';
 import { sharedArtworkForUnit } from '@/lib/shared-artwork';
 import { recoverProductionPrintSizes } from '@/lib/print-size-request';
@@ -45,7 +45,7 @@ export async function finishProductionSave(body: Record<string, unknown> = {}) {
       for (const version of versions) {
         const units = version.unitIds.map(id => state.units.find(unit => unit.id === id)!);
         if (!version.garment || !units.some(unit => unit?.artwork && unit.placement && unit.garment)) continue;
-        try { await savedProductionRender(version, units); }
+        try { await trackedProductionRender(version, units); }
         catch (error) { console.error('效果图更新失败；保留当前成品，打开预览时可重试', error); }
       }
     }

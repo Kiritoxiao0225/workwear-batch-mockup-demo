@@ -1,3 +1,5 @@
+import { assertActiveSourceStatus } from '@/lib/artwork-reliability';
+import { preflightResolvedArtworkUnit, verifyArtworkInputFiles, verifyLiveArtworkSource } from '@/lib/server/artwork-preflight';
 import { currentArtworkReview } from '@/lib/artwork-review-ledger';
 import { artworkCorrectionIssues } from '@/lib/artwork-correction';
 import { readArtworkRoutingReport } from '@/lib/server/artwork-routing-records';
@@ -17,9 +19,9 @@ import { assertProductionSharedSnapshot, productionSharedSnapshot } from '@/lib/
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
-export const maxDuration = 60;
+export const maxDuration = 300;
 const inputSchema = z.union([
-  z.object({ action: z.literal('enqueue'), units: z.array(z.object({ unitId: z.string().min(1), snapshot: z.string().min(1).max(100_000), sharedSnapshot: z.string().min(1).max(10_000_000).optional(), correction: z.object({ baseRunId: z.string().min(1).max(64), issueIds: z.array(z.string().max(40)).min(1).max(30) }).optional() })).min(1).max(100) }),
+  z.object({ action: z.literal('enqueue'), target: z.enum(['artwork', 'mockup']).optional(), units: z.array(z.object({ unitId: z.string().min(1), snapshot: z.string().min(1).max(100_000), sharedSnapshot: z.string().min(1).max(10_000_000).optional(), correction: z.object({ baseRunId: z.string().min(1).max(64), issueIds: z.array(z.string().max(40)).min(1).max(30) }).optional() })).min(1).max(100) }),
   z.object({ action: z.enum(['cancel', 'retry']), id: z.string().uuid() }),
 ]);
 function failure(error: unknown) {
@@ -45,6 +47,8 @@ export async function POST(request: Request) {
     }
     let state = await readWpsProductionState();
     const results = [];
+    const verifiedInputs = new Map<string, Promise<void>>();
+    const verifiedSources = new Map<string, Promise<void>>();
     for (const requested of body.units) {
       try {
         assertProductionArtworkSnapshot(state, requested.unitId, requested.snapshot);
@@ -65,6 +69,11 @@ export async function POST(request: Request) {
           unit = state.units.find(candidate => candidate.id === unitId)!;
         }
         const source = state.records.find(record => record.source.recordId === unit.sourceRecordId)!.source;
+        if (source.wpsSource) assertActiveSourceStatus(source.wpsSource.status);
+        await verifyLiveArtworkSource(source, verifiedSources);
+        const preflight = await preflightResolvedArtworkUnit(unit, source, body.target ?? 'artwork');
+        if (preflight.blockers.length) throw new Error(preflight.blockers.join('；'));
+        await verifyArtworkInputFiles(source, unit, verifiedInputs);
         const issues = artworkPlanIssues(source, unit);
         if (issues.length) throw new Error(issues.join('；'));
         if (unit.attempts.some(attempt => ['submitted', 'processing', 'unknownSubmission'].includes(attempt.status))) throw new Error('已有制作任务未结束');
@@ -82,7 +91,7 @@ export async function POST(request: Request) {
           if (issues.length !== ids.size) throw new Error('选中的核对问题不属于当前图案');
           correction = { baseRunId, url: unit.artwork.url, issues };
         }
-        const queued = await enqueueArtworkJob({ unit, source, ...(correction ? { correction } : {}), ...(sharedArtworkForUnit(state, unit.id)
+        const queued = await enqueueArtworkJob({ unit, source, requirementContract: preflight.contract, ...(correction ? { correction } : {}), ...(sharedArtworkForUnit(state, unit.id)
           ? { sharedSnapshot: productionSharedSnapshot(state, unit.id) } : {}) }, productionArtworkSnapshot(unit, source));
         results.push({ unitId: unit.id, ...queued });
       } catch (error) { results.push({ unitId: requested.unitId, error: error instanceof Error ? error.message : String(error) }); }

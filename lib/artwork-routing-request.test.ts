@@ -36,7 +36,7 @@ describe('requirement-driven artwork methods', () => {
   });
   it('does not let an authored prompt hide a missing reference from the source order', () => {
     expect(artworkRequirementFacts(input({ sourceRequirementText: '左胸：图1，整体排版参考图2', printPlacement: { key: 'leftChest' } as ArtworkRequirementInput['printPlacement'],
-      generationPrompt: '使用图1，保留原图案。' })).blockers.join(' ')).toContain('原文要求参考图2');
+      generationPrompt: '使用图1，保留原图案。' })).blockers.join(' ')).toContain('原文要求使用图2（参考依据），但制作输入未绑定该图');
   });
   it('keeps cropping as C and requests the missing crop instead of generating a new design', () => {
     expect(artworkRequirementFacts(input({ instruction: '取用图1前三排', sourceScope: 'custom', generationPrompt: '仅取图1前三排内容，纯白背景。' })))

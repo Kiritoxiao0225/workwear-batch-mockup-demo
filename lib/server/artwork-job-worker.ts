@@ -1,6 +1,8 @@
+import { assertActiveSourceStatus, WORKWEAR_LOGIC_VERSION, FINAL_EVIDENCE_VERSION } from '@/lib/artwork-reliability';
+import { preflightArtworkUnit, verifyLiveArtworkSource } from './artwork-preflight';
 import { fontReferenceInput } from '@/lib/artwork-font-reference';
 import { buildArtworkReview } from '@/lib/artwork-review-ledger';
-import { inspectFinalArtwork } from './artwork-final-review';
+import { inspectFinalArtwork, finalArtworkEvidenceKey } from './artwork-final-review';
 import { fidelityModelImage } from './model-image-input';
 import { assertProductionSharedSnapshot } from '@/lib/production-artwork-snapshot';
 import { prepareSharedArtwork, commitSharedArtwork, type ArtworkAttachment } from './shared-artwork';
@@ -42,6 +44,13 @@ export async function processArtworkJob(job: ArtworkJob) {
       assertProductionArtworkSnapshot(current, job.unit_id, job.snapshot);
       if (job.input.sharedSnapshot) assertProductionSharedSnapshot(current, job.unit_id, job.input.sharedSnapshot);
       const { unit, source } = job.input;
+      const liveSource = current.records.find(record => record.source.recordId === unit.sourceRecordId)?.source;
+      if (liveSource?.wpsSource) assertActiveSourceStatus(liveSource.wpsSource.status);
+      await verifyLiveArtworkSource(source);
+      const preflight = preflightArtworkUnit(unit, source, 'artwork');
+      if (preflight.blockers.length) throw new Error(preflight.blockers.join('；'));
+      if (job.input.requirementContract && job.input.requirementContract.key !== preflight.contract.key) throw new Error('制作要求规则已变化，请核对原任务；本次不自动重新购买图案');
+      await catalogDatabase().query("UPDATE artwork_jobs SET input=jsonb_set(input,'{executionBuild}',$3::jsonb,true) WHERE id=$1 AND owner=$2 AND status='running' AND lease_until>now()", [job.id, job.owner, { logicVersion: WORKWEAR_LOGIC_VERSION, commit: process.env.WORKWEAR_BUILD_COMMIT ?? null }]);
       const textOnly = isTextOnlyArtwork(unit);
       const issue = artworkPlanIssues(source, unit).join('；');
       if (issue) throw new Error(issue);
@@ -96,8 +105,8 @@ export async function processArtworkJob(job: ArtworkJob) {
         });
         const { validation, draft: verified } = await validateProductionArtworkDraft(layout.url, layout.draft, unit.artwork?.validation, unit.artwork?.draft);
         const review = buildArtworkReview(unit, validation, verified, unit.artwork ?? unit.previousArtwork ?? undefined);
-        validation.review = await artworkJobStep('final-review-v1', 'inspection', { sha256: validation.sha256,
-          draftKey: review.draftKey, requirements: review.requirementKey, source },
+        validation.review = await artworkJobStep(`final-review-${FINAL_EVIDENCE_VERSION}`, 'inspection', { sha256: validation.sha256,
+          draftKey: review.draftKey, requirements: review.requirementKey, source, evidenceKey: await finalArtworkEvidenceKey(unit, source) },
           () => inspectFinalArtwork(unit, source, layout.url, review));
         const service = textOnly ? 'deterministic' : artworkProcessingRoute(unit);
         if (service === 'blocked') throw new Error('制作路线仍待核对');

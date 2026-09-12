@@ -5,47 +5,101 @@ import { applyFinalArtworkReview, type ArtworkReviewLedger, type ReviewCategory 
 import { artworkInputSelection } from '@/lib/artwork-reference';
 import type { SourceTaskRecord } from '@/lib/batch-task-review';
 import type { ProductionUnit } from '@/lib/wps-production';
+import type { ArtworkEditCheck, ArtworkEditVerification } from '@/lib/artwork-model-edits';
 import { readProductionFile } from './production-storage';
 import { verifyArtworkModelEdits } from './artwork-content-inspection';
+import { compileArtworkRequirements, FINAL_EVIDENCE_VERSION, canonicalJson, safeErrorText } from '@/lib/artwork-reliability';
+const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+const roleLabels: Record<string, string> = { content: '成品内容', font: '字体', color: '配色', layout: '排版', reference: '样式' };
 
-/** One final-image check, no generation, scoring, or implicit retry on page reads. */
+function requirementInput(unit: ProductionUnit, source: SourceTaskRecord) {
+  const selection = artworkInputSelection(source, unit);
+  return { selection, contract: compileArtworkRequirements({ sourceRequirementText: source.requirementText,
+    instruction: unit.instruction, layoutNote: unit.layoutNote, exactText: unit.exactText, generationPrompt: unit.generationPrompt,
+    primaryImageLabel: selection.primaryImageLabel, primaryImageRole: selection.primaryImageRole,
+    referenceImages: selection.referenceMaterialIds.map(id => ({ label: `图${source.materials.findIndex(m => m.id === id) + 1}` })),
+    printPlacement: unit.placement, sourceScope: unit.sourceScope, fontReference: fontReferenceInput(source, unit) }) };
+}
+/** Include actual source bytes in the checkpoint, not just expiring URLs or guessed OCR. */
+export async function finalArtworkEvidenceKey(unit: ProductionUnit, source: SourceTaskRecord) {
+  const { selection, contract } = requirementInput(unit, source);
+  const ids = [...new Set([selection.primary?.id, ...selection.referenceMaterialIds].filter(Boolean))];
+  const materials = [];
+  for (const id of ids) {
+    const m = source.materials.find(item => item.id === id);
+    try { materials.push({ id, sha256: m?.url ? sha(await readProductionFile(m.url)) : null }); }
+    catch { materials.push({ id, sha256: null }); }
+  }
+  return canonicalJson({ checker: FINAL_EVIDENCE_VERSION, contract: contract.key, font: unit.fontReference, materials });
+}
+
+/** Inspect every required source against the SAME final bytes. Saving is not approval. */
 export async function inspectFinalArtwork(unit: ProductionUnit, source: SourceTaskRecord, url: string, ledger: ArtworkReviewLedger,
   selected?: ReviewCategory[], inspect = verifyArtworkModelEdits): Promise<ArtworkReviewLedger> {
-  const items = ledger.items.filter(item => !['size', 'position'].includes(item.id) && (selected ? selected.includes(item.id) : ['pending', 'uncertain'].includes(item.status)));
+  const extended = ledger as ArtworkReviewLedger & { evidenceVersion?: string; evidenceKey?: string };
+  const items = ledger.items.filter(item => !['size', 'position'].includes(item.id) && (selected ? selected.includes(item.id)
+    : !item.actor && (['pending', 'uncertain'].includes(item.status) || extended.evidenceVersion !== FINAL_EVIDENCE_VERSION)));
   if (!items.length) return ledger;
+  const checks: ArtworkEditCheck[] = [];
+  const models = new Set<string>(), hashes: string[] = [];
+  const uncertain = (category: ReviewCategory, requirement: string, evidence: string): ArtworkEditCheck => ({
+    category: category as ArtworkEditCheck['category'], requirement, status: 'uncertain', impact: 'unknown', evidence,
+  });
   try {
-    const selection = artworkInputSelection(source, unit);
-    const originalUrl = selection.primary?.url ?? selection.primary?.previewUrl;
-    // Without original evidence, do not pretend a self-comparison proves conformity.
-    if (!originalUrl) throw new Error('没有可对照的原始素材，请人工核对');
-    const [original, final] = await Promise.all([readProductionFile(originalUrl), readProductionFile(url)]);
-    if (createHash('sha256').update(final).digest('hex') !== ledger.sha256) throw new Error('最终图片已变化');
-    const role = selection.primaryImageRole === 'reference' ? '图1仅作样式参考，不复制其原文字或图形。' : `图1为客户原始素材 ${selection.primaryImageLabel}，只核对本位置指定区域。`;
-    const requirements = items.map(item => `【${item.label}】${role} 图2是已经完成所有删字、加字、改色、抠图、排版的最终图案。${item.requirement}。完整要求：${unit.instruction}\n${unit.layoutNote}\n明确文字：${unit.exactText || '以指定原图为准'}。明确要求优先于原图；原图白色前景和强调色必须保留。请列出具体位置、当前情况、预期及修正办法。看不清记 uncertain，不猜字，不以缺少几何测量为错版，不用中间步骤的限制判断最终图。`);
-    const result = await inspect(original, final, requirements);
-    // Text/font checks must compare with the designated font, not the chest Logo.
-    const textIndex = items.findIndex(item => item.id === 'text');
-    if (unit.fontReference && textIndex >= 0) {
-      const reference = fontReferenceInput(source, unit)!;
-      const material = source.materials.find(item => item.id === unit.fontReference!.materialId)!;
-      const referenceUrl = material.url ?? material.previewUrl;
-      if (!referenceUrl) throw new Error('字体参考图片不可读取');
-      const bytes = await cropFontReference(await readProductionFile(referenceUrl), reference);
-      const fontCheck = await inspect(bytes, final, [`图1是指定的字体参考区域，图2是最终图案。核对准确目标文字和笔画粗细、字形宽窄、收笔等是否符合参考。${fontReferenceRequirement(reference, unit.exactText)} 本次核对输入图号以上句为准；看不清记 uncertain。`]);
-      if (fontCheck.outputSha256 !== ledger.sha256 || fontCheck.checks.length !== 1) throw new Error('字体核对没有对应当前最终图案');
-      result.checks[textIndex] = { ...fontCheck.checks[0], category: 'text' };
+    const final = await readProductionFile(url);
+    if (sha(final) !== ledger.sha256) throw new Error('最终图片已变化，不能沿用此核对记录');
+    const { selection, contract } = requirementInput(unit, source);
+    const ids = [...new Set([selection.primary?.id, ...selection.referenceMaterialIds].filter((id): id is string => !!id))];
+    for (const id of ids) {
+      const material = source.materials.find(item => item.id === id)!;
+      const label = `图${source.materials.findIndex(item => item.id === id) + 1}`;
+      const roles = contract.inputs.find(item => item.sourceLabel === label)?.roles ?? ['reference'];
+      const font = id === unit.fontReference?.materialId ? fontReferenceInput(source, unit) : undefined;
+      const relevant = items.filter(item => roles.includes('content') || item.id === 'text' && (roles.includes('font') || !!font)
+        || item.id === 'color' && roles.includes('color') || item.id === 'layout' && roles.includes('layout')
+        || roles.includes('reference') && ['text', 'color', 'layout'].includes(item.id));
+      if (!relevant.length) continue;
+      try {
+        if (!material.url) throw new Error('缺少可读取的原始素材');
+        let original = await readProductionFile(material.url);
+        if (font) original = await cropFontReference(original, font);
+        hashes.push(sha(original));
+        const requirements = relevant.map(item => [
+          `【${item.label}】核对输入图1 = WPS ${label}${font ? '的指定字体裁片' : ''}；输入图2 = 当前完整最终图案。`,
+          roles.includes('content') ? '图1提供本位置的成品内容。只核对它应贡献的内容，不因最终图包含其他内容素材或新增文字而误判。'
+            : `图1仅提供${roles.map(role => roleLabels[role] ?? role).join('、')}参考，不要求复制它原有的文字、标志、衣服或背景。`,
+          item.requirement, font ? fontReferenceRequirement(font, unit.exactText) : '',
+          `本位置原文：${contract.scopedSource}`, `执行要求：${unit.instruction}\n${unit.layoutNote}`,
+          `准确新增文字：${unit.exactText || '未指定新增文字，保留指定内容原图可辨文字'}`,
+          '只评价当前这一项目。按明确要求处理背景、取材和局部改色；不是所有底色都应删除。看不清或证据不足记uncertain，不猜字、不替其他材料做判断。',
+        ].filter(Boolean).join('\n'));
+        const result = await inspect(original, final, requirements);
+        if (result.outputSha256 !== ledger.sha256 || result.sourceSha256 !== sha(original) || result.checks.length !== relevant.length) throw new Error('核对回执的图片或项目数量不匹配');
+        models.add(result.model);
+        result.checks.forEach((check, i) => checks.push({ ...check, category: relevant[i].id as ArtworkEditCheck['category'], evidence: `[${label}] ${check.evidence}` }));
+      } catch (error) {
+        // An explicit earlier failure (e.g. 应白色，实际深蓝) must not be downgraded to
+        // uncertain by a repeat check that could not run; only pending/uncertain verdicts soften.
+        for (const item of relevant) checks.push(item.status === 'failed'
+          ? { category: item.id as ArtworkEditCheck['category'], requirement: item.requirement, status: 'failed', impact: 'unknown', evidence: `${item.evidence}；复核未完成：${safeErrorText(error)}` }
+          : uncertain(item.id, item.requirement, `[${label}] 本项核对未完成：${safeErrorText(error)}`));
+      }
     }
-    if (result.checks.length !== items.length) throw new Error('核对项目不完整');
-    // The inspector returns checks in requirement order. Bind to our selected category, not its guess.
-    result.checks = result.checks.map((check, index) => ({ ...check, category: items[index].id as 'text' | 'color' | 'structure' | 'layout' | 'background' }));
-    return applyFinalArtworkReview(ledger, result, items.map(item => item.id));
+    for (const issue of contract.issues) for (const item of items) checks.push(uncertain(item.id, item.requirement, issue.message));
+    for (const item of items) if (!checks.some(check => check.category === item.id)) checks.push(uncertain(item.id, item.requirement, '没有对应的原始证据；不能以最终图片自证符合，请人工核对'));
+    const verification: ArtworkEditVerification = { version: 'artwork-edit-check-v1', sourceSha256: hashes[0] ?? '',
+      inputSha256: [...hashes, ledger.sha256], outputSha256: ledger.sha256, model: [...models].join(' / ') || 'unavailable',
+      inspectionVersion: FINAL_EVIDENCE_VERSION, checks };
+    const next = applyFinalArtworkReview(ledger, verification, items.map(item => item.id)) as typeof extended;
+    next.evidenceVersion = FINAL_EVIDENCE_VERSION;
+    next.evidenceKey = canonicalJson({ contract: contract.key, inputSha256: hashes, outputSha256: ledger.sha256 });
+    return next;
   } catch (error) {
     const next = structuredClone(ledger);
     next.history.push({ sha256: ledger.sha256, at: ledger.updatedAt, items: ledger.items });
     next.updatedAt = new Date().toISOString();
     next.items = next.items.map(item => items.some(target => target.id === item.id) ? { ...item,
-      status: item.status === 'failed' ? 'failed' : 'uncertain',
-      evidence: `${item.evidence}；本次核对未完成：${error instanceof Error ? error.message : String(error)}` } : item);
+      status: item.status === 'failed' ? 'failed' : 'uncertain', evidence: `${item.evidence}；核对未完成：${safeErrorText(error)}` } : item);
     return next;
   }
 }

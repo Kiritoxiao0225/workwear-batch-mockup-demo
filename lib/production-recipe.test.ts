@@ -66,7 +66,8 @@ describe('production routing evidence', () => {
     const candidate = { ...unit, artwork: { draft, url: '/result.png', name: 'test', recipeFingerprint: unit.recipeFingerprint, createdAt: '2026-09-07T00:00:00Z', validation: { valid: true } } } as typeof unit;
     const result = productionArtworkRouting(candidate, source);
     expect(result.decision).toMatchObject({ method: null, state: 'review' });
-    expect(result.facts.blockers.join(' ')).toContain('参考图2');
+    // 候选修复统一了漏图阻塞文案（REQUIRED_IMAGE_MISSING / PROMPT_IMAGE_MISSING）。
+    expect(result.facts.blockers.join(' ')).toContain('原文要求使用图2（参考依据），但制作输入未绑定该图');
   });
   it('does not silently interpret an empty replacement text as preservation', () => {
     expect(productionArtworkRouting({ ...unit, textMode: 'replace' }, review.source).decision).toMatchObject({ method: 'compose', state: 'review' });

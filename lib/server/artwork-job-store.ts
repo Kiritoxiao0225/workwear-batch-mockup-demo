@@ -1,3 +1,4 @@
+import { artworkBusinessStep, recoveryForJob, safeErrorText, assertActiveSourceStatus } from '@/lib/artwork-reliability';
 import { randomUUID } from 'node:crypto';
 import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './catalog-database';
 import { productionFileReferences, productionStateKey, usesProductionCloud } from './production-storage';
@@ -10,7 +11,7 @@ import { ARTWORK_EDIT_INSPECTION_VERSION } from '@/lib/artwork-model-edits';
 import { readCloudProductionState } from './production-cloud-state';
 
 export const artworkJobsEnabled = () => usesProductionCloud() && process.env.ARTWORK_DURABLE_JOBS === '1';
-export type ArtworkJobInput = { correction?: { baseRunId: string; url: string; issues: import('@/lib/artwork-correction').ArtworkCorrectionIssue[] }; unit: ProductionUnit; source: SourceTaskRecord; sharedSnapshot?: string };
+export type ArtworkJobInput = { cutoutRecovery?: { requestId: string; failedKey: string; sourceSha256: string; mode: import('@/lib/artwork-cutout').ArtworkCutoutMode; requestedAt: string }; cutoutRecoveryHistory?: unknown[]; requirementContract?: import('@/lib/artwork-reliability').ArtworkRequirementContract; executionBuild?: { logicVersion: string; commit: string | null }; correction?: { baseRunId: string; url: string; issues: import('@/lib/artwork-correction').ArtworkCorrectionIssue[] }; unit: ProductionUnit; source: SourceTaskRecord; sharedSnapshot?: string };
 export type ArtworkJob = { id: string; state_key: string; unit_id: string; snapshot: string; input: ArtworkJobInput; status: ArtworkJobStatus; owner: string; attempt: number };
 export async function retainJobFiles(client: CatalogQueryClient, id: string, value: unknown) {
   const ids = [...new Set(productionFileReferences(value).map(ref => ref.id))].sort();
@@ -58,7 +59,7 @@ export async function readArtworkJobs(): Promise<ArtworkJobsResponse> {
          AND r.kind='generation' AND NOT (r.record_json ? 'component'))
        AND NOT EXISTS(SELECT 1 FROM artwork_job_steps s WHERE s.job_id=j.id AND s.stage='inspection' AND s.status='completed'
          AND s.result->>'inspectionVersion'=$2)) AS recheck_available,
-      COALESCE((SELECT jsonb_agg(jsonb_build_object('stage',s.stage,'status',s.status,'error',s.error,'durationMs',
+      COALESCE((SELECT jsonb_agg(jsonb_build_object('stepKey',s.step_key,'stage',s.stage,'status',s.status,'error',s.error,'durationMs',
        CASE WHEN s.finished_at IS NULL THEN NULL ELSE ROUND(EXTRACT(EPOCH FROM(s.finished_at-s.started_at))*1000) END) ORDER BY s.started_at)
        FROM artwork_job_steps s WHERE s.job_id=j.id),'[]'::jsonb) AS steps
       FROM artwork_jobs j WHERE j.state_key=$1 AND (j.status IN ('queued','running','unknown') OR
@@ -68,9 +69,11 @@ export async function readArtworkJobs(): Promise<ArtworkJobsResponse> {
   ]);
   return { enabled: true, workerOnline: !!workers.rowCount, jobs: jobs.rows.map(row => {
     const steps = (row.steps as ArtworkJobsResponse['jobs'][number]['steps']).map(step => ({ ...step,
-      error: step.stage === 'inspection' && step.error ? artworkInspectionFailure(new Error(step.error)) : null }));
+      label: artworkBusinessStep(step.stepKey ?? '', step.stage),
+      error: step.error ? safeErrorText(step.stage === 'inspection' ? artworkInspectionFailure(new Error(step.error)) : step.error) : null }));
     const inspectionError = steps.find(step => step.stage === 'inspection' && step.status === 'failed' && step.error)?.error;
     return { id: row.id, unitId: row.unit_id, status: row.status, message: row.message, recheckAvailable: Boolean(row.recheck_available),
+      recovery: recoveryForJob({ status: row.status, candidate: row.candidate, steps, error: row.error, recheckAvailable: Boolean(row.recheck_available) }),
       error: row.status === 'failed' && row.candidate?.stage === 'edit-review' && inspectionError
         ? `图案已生成，${inspectionError}这张图还没保存成品，可复用已生成图片继续核对。` : row.error,
       candidate: row.candidate, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString(), steps };
@@ -118,6 +121,10 @@ export async function changeArtworkJob(id: string, action: 'cancel' | 'retry') {
       if (job.status !== 'queued') throw new Error('只可取消尚未开始的任务');
       await client.query("UPDATE artwork_jobs SET status='cancelled',message='已取消排队',updated_at=now() WHERE id=$1", [id]);
     } else {
+      if (job.input?.source?.wpsSource) assertActiveSourceStatus(job.input.source.wpsSource.status);
+      const storedSteps = (await client.query('SELECT stage,status,error,step_key AS "stepKey" FROM artwork_job_steps WHERE job_id=$1 ORDER BY started_at', [id])).rows;
+      const recovery = recoveryForJob({ status: job.status, candidate: job.candidate, error: job.error, steps: storedSteps as Array<{ stage: string; status: string; error?: string }>, recheckAvailable: job.status === 'review' });
+      if (recovery.action === 'changeCutoutMethod') throw new Error(recovery.reason + '；请查看保留的候选，选择其他抠图方式或上传处理好的图案，不要重复普通续做');
       if (job.status === 'review' && job.candidate?.stage === 'edit-review') {
         const receipt = (await client.query("SELECT record_json FROM artwork_run_records WHERE state_key=$1 AND run_id::text=$2 AND kind='generation'", [productionStateKey(), job.candidate.runId])).rows[0]?.record_json;
         const inspected = await client.query("SELECT 1 FROM artwork_job_steps WHERE job_id=$1 AND stage='inspection' AND status='completed' AND result->>'inspectionVersion'=$2", [id, ARTWORK_EDIT_INSPECTION_VERSION]);

@@ -9,6 +9,8 @@ import type { InspectionRetryNotice } from './artwork-inspection-retry';
 
 const context = new AsyncLocalStorage<{ job: ArtworkJob; pending: Map<string, Promise<unknown>>; held?: ArtworkStage }>();
 export const hasArtworkJobContext = () => !!context.getStore();
+/** Explicit, consented retry applies only to the failed source, without altering generation input. */
+export const currentCutoutRecovery = () => context.getStore()?.job.input.cutoutRecovery;
 export function inArtworkJob<T>(job: ArtworkJob, task: () => Promise<T>) { return context.run({ job, pending: new Map() }, task); }
 export const artworkStepHash = (value: unknown): string => createHash('sha256').update(JSON.stringify(value, (_key, item) =>
   item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item) ?? 'null').digest('hex');

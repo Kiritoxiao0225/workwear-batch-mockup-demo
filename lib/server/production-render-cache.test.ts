@@ -71,7 +71,8 @@ describe('preview before durable storage', () => {
     vi.mocked(renderProductionMockup).mockResolvedValue(Buffer.from('new pixels'));
     vi.mocked(saveProductionFile).mockResolvedValue({ id: 'new-file' } as Awaited<ReturnType<typeof saveProductionFile>>);
     const preview = await prepareProductionPreview(state.mockupVersions[0], state.units);
-    await preview.persist();
+    // 候选修复强化发布失败语义（对应验收 A33）：合成期间输入变化时，旧图保留但不作为当前效果图返回，persist 显式报错。
+    await expect(preview.persist()).rejects.toThrow('合成期间要求或位置已变化，旧图已保留但没有作为当前效果图返回');
     expect(renderProductionMockup).toHaveBeenCalledOnce();
     expect(saveProductionFile).toHaveBeenCalledWith(preview.bytes, expect.any(String));
     expect(queueReplacedFiles).toHaveBeenCalledWith(expect.anything(), ['new-file']);
@@ -91,13 +92,16 @@ describe('preview before durable storage', () => {
   });
 });
 describe('unchanged render cache hits', () => {
-  it('reads verified bytes without republishing an already-current image', async () => {
+  it('reads verified bytes while re-verifying the current input under a lock', async () => {
     query.mockResolvedValue({ rowCount: 1, rows: [{ file_id: 'cached', is_current: true }] });
     const state = fixture();
+    // 候选修复把 is_current 命中也改为锁下复核（读标记与返回之间存在并发换图窗口），指针幂等重发布同一文件。
+    transactionQuery.mockImplementation(async (sql: string) => ({ rowCount: 1, rows: sql.includes('FROM production_states') ? [{ state_jsonb: state }] : [] }));
     const result = await savedProductionRender(state.mockupVersions[0], state.units);
     expect(result.bytes.toString()).toBe('verified cached image');
     expect(readCatalogFile).toHaveBeenCalledWith('cached');
-    expect(catalogTransaction).not.toHaveBeenCalled();
+    expect(catalogTransaction).toHaveBeenCalledOnce();
+    expect(transactionQuery.mock.calls.some(([sql]) => sql.includes('FOR UPDATE'))).toBe(true);
   });
   it('still checks latest input under a lock before publishing a different pointer', async () => {
     query.mockResolvedValue({ rowCount: 1, rows: [{ file_id: 'cached', is_current: false }] });
@@ -127,7 +131,8 @@ describe('unchanged render cache hits', () => {
     const state = fixture(), latest = structuredClone(state);
     latest.units[0].placement!.widthCm += 1;
     transactionQuery.mockResolvedValue({ rowCount: 1, rows: [{ state_jsonb: latest }] });
-    await savedProductionRender(state.mockupVersions[0], state.units);
+    // 候选修复：迟到的缓存结果不再静默返回，必须显式报错并提示读取最新效果图（A33）。
+    await expect(savedProductionRender(state.mockupVersions[0], state.units)).rejects.toThrow('合成期间要求或位置已变化，请读取最新效果图');
     expect(transactionQuery).toHaveBeenCalledOnce();
     expect(queueReplacedFiles).toHaveBeenCalledWith(expect.anything(), ['cached']);
   });

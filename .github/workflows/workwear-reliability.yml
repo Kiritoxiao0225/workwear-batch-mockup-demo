@@ -1,0 +1,71 @@
+# Verifies the actual committed source (no payload decoding, no push, no secrets).
+# The four integration scripts run in a separate isolated job: each creates its own
+# temporary PostgreSQL instance and object directory and forbids real network calls.
+name: Workwear actual-source verification
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: ['fix/**']
+permissions:
+  contents: read
+concurrency:
+  group: workwear-source-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      CI: 'true'
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Assert new routes actually exist in this source and build
+        shell: bash
+        run: |
+          node --input-type=module - <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const routes = ['/wps-production/overview/page', '/api/wps-production/diagnostics/route', '/api/wps-production/preflight/route', '/api/wps-production/reanalyze/route', '/api/wps-production/recompose/route', '/api/wps-production/recover-cutout/route'];
+          const manifest = JSON.parse(fs.readFileSync('.next/server/app-paths-manifest.json', 'utf8'));
+          for (const route of routes) {
+            assert(fs.existsSync(`app${route}.ts`) || fs.existsSync(`app${route}.tsx`), `Missing source: ${route}`);
+            assert(Object.hasOwn(manifest, route), `Missing built route: ${route}`);
+          }
+          JS
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      # Each script boots its own embedded PostgreSQL on 127.0.0.1 with a random port inside a
+      # temp directory and replaces globalThis.fetch to forbid any real network / paid service.
+      - run: npm run test:production-storage
+      - run: npm run test:artwork-jobs
+      - run: npm run test:shared-artwork
+      - run: npm run test:reliability

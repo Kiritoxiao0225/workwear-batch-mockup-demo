@@ -60,7 +60,8 @@ describe('accurate lettering with reference images only', () => {
     expect(productionArtworkRouting(unit, { ...source, materials: [] }).decision.state).toBe('review');
     const unreadable = { ...source, materials: source.materials.map(material => ({ ...material, url: null, previewUrl: null })) };
     expect(productionArtworkRouting(unit, unreadable).decision.state).toBe('review');
-    expect(artworkPlanIssues(source, { ...unit, generationPrompt: '参考图2制作准确文字' }).join()).toContain('未附上的图2');
+    // 候选修复统一了提示词漏图阻塞文案（PROMPT_IMAGE_MISSING），语义不变。
+    expect(artworkPlanIssues(source, { ...unit, generationPrompt: '参考图2制作准确文字' }).join()).toContain('制作要求引用图2，但本次没有传入该图');
   });
 
   it('carries the first reference as a reference through request parsing, model mapping and prompt locking', () => {
@@ -80,7 +81,9 @@ describe('accurate lettering with reference images only', () => {
     expect(prompts.hash).not.toBe(standardArtworkPrompts({ ...parsed, primaryImageRole: 'content' }).hash);
     expect(artworkMethodIssue(parsed, 'preserve')).toBeTruthy();
     expect(artworkMethodIssue(parsed, 'compose')).toBeTruthy();
-    expect(artworkMethodIssue(parsed, 'generate')).toBeNull();
+    // 候选修复新增保护（与其自带测试「不确定位置不静默读取所有位置」一致）：本输入未携带印花位置，
+    // 而原文同时包含左胸与后背两个位置分支，不能静默读取所有位置的要求，generate 也必须先明确分支。
+    expect(artworkMethodIssue(parsed, 'generate')).toContain('原文包含多个款式或位置分支');
     expect(() => parseArtworkPreparationRequest({ ...input, exactText: '' })).toThrow('准确文字');
     expect(() => parseArtworkPreparationRequest({ ...input, generationPrompt: '' })).toThrow('生图提示词');
   });

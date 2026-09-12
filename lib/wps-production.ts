@@ -1,3 +1,4 @@
+import { WORKWEAR_LOGIC_VERSION } from '@/lib/artwork-reliability';
 import { parseArtworkFontReference } from '@/lib/artwork-font-reference';
 import { buildArtworkReview, manualArtworkReview, reviewForAttachment, type ArtworkReviewLedger } from './artwork-review-ledger';
 import type { BrowserLogoTextVerification } from '@/lib/client/browser-logo-ocr';
@@ -131,6 +132,8 @@ export type ProductionAttempt = {
 };
 
 export type ProductionUnit = {
+  analysisLogicVersion?: string;
+  requirementHistory?: Array<{ savedAt: string; reason: string; snapshot: Record<string, unknown> }>;
   sharedArtworkId?: string;
   sharedArtworkDetached?: boolean;
   sharedArtworkVersion?: number;
@@ -207,6 +210,9 @@ export type ProductionMockupVersion = {
 };
 
 export type WpsProductionState = {
+  renderOutcomes?: Record<string, import('./production-render-outcome').ProductionRenderOutcome>;
+  analysisProposals?: import('./artwork-analysis-proposal').ArtworkAnalysisProposal[];
+  archivedRequirements?: Array<{ recordId: string; archivedAt: string; reason: string; source: SourceTaskRecord; units: ProductionUnit[]; versions: ProductionMockupVersion[] }>;
   sharedArtworks?: import('./shared-artwork').SharedArtwork[];
   schemaVersion: typeof WPS_PRODUCTION_SCHEMA_VERSION;
   revision: number;
@@ -478,6 +484,8 @@ function fromReviewUnit(review: TaskReview, unit: GenerationUnit, previous: Prod
     ? unit.ambiguities.join('；') || '主要素材尚未指定。'
     : '沿用图案处理流程：自动判断保真、混合或模型生成；可修改路线、文字与排版，生成后需人工确认。';
   const candidate: ProductionUnit = {
+    analysisLogicVersion: WORKWEAR_LOGIC_VERSION,
+    ...(previous?.requirementHistory ? { requirementHistory: previous.requirementHistory } : {}),
     id: unit.id,
     sourceRecordId: review.source.recordId,
     garmentLabel: unit.garmentLabel,
@@ -605,6 +613,12 @@ export function upsertTaskReviews(
     const previous = current.records.find((record) => record.source.recordId === review.source.recordId);
     return previous && wpsSourceEvidence(previous.source) !== wpsSourceEvidence(review.source);
   }).map((review) => review.source.recordId));
+  const archivedRequirements = [...(current.archivedRequirements ?? []), ...[...changedSources].map(recordId => ({
+    recordId, archivedAt: now.toISOString(), reason: 'WPS原文或素材变化前的完整制作快照',
+    source: current.records.find(record => record.source.recordId === recordId)!.source,
+    units: current.units.filter(unit => unit.sourceRecordId === recordId),
+    versions: current.mockupVersions.filter(version => version.sourceRecordId === recordId),
+  }))];
   const previousById = new Map(current.units.filter((unit) => !changedSources.has(unit.sourceRecordId)).map((unit) => [unit.id, unit]));
   const incomingUnits = reviews.flatMap((review) => review.units.map((unit) => fromReviewUnit(
     review,
@@ -629,6 +643,7 @@ export function upsertTaskReviews(
     revision: current.revision + 1,
     records,
     units,
+    archivedRequirements,
     sharedArtworks: sharedArtworkGroups({ ...current, units }),
     mockupVersions: reconcileVersions(units, current.mockupVersions, now).map(version =>
       !incomingRecordIds.has(version.sourceRecordId) ? current.mockupVersions.find(previous => previous.id === version.id) ?? version : version),
@@ -758,6 +773,11 @@ export function updateProductionPlan(
     next.planFingerprint = planFingerprint(next);
     if (next.planFingerprint !== unit.planFingerprint) next.gateA = null;
     if (next.recipeFingerprint !== unit.recipeFingerprint) {
+      const oldUnit = { ...unit };
+      delete oldUnit.requirementHistory;
+      next.requirementHistory = [...(unit.requirementHistory ?? []), { savedAt: now.toISOString(),
+        reason: '内容要求修改前的图稿、确认及效果图', snapshot: { unit: oldUnit,
+          versions: state.mockupVersions.filter(version => version.unitIds.includes(unit.id)) } }];
       next.sharedArtworkDetached = Boolean(unit.sharedArtworkId || unit.sharedArtworkDetached);
       next.sharedArtworkId = undefined;
       next.sharedArtworkVersion = undefined;
