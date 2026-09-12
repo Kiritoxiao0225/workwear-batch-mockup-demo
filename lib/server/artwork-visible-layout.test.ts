@@ -14,6 +14,7 @@ function paddedDraft() {
     exactText: '康悦', instruction: '图上字下', layoutNote: '', enhancement: 'none', backgroundRemoval: 'general' });
 }
 describe('visible artwork spacing', () => {
+  // Two complete PNG renders exceed the default 5 seconds on the Linux CI runner.
   it('spaces ordinary lettering from visible Logo edges and keeps the source pixels unchanged', async () => {
     const before = paddedDraft();
     const fitted = await prepareServerPrintedArtwork(before, { placement });
@@ -25,7 +26,7 @@ describe('visible artwork spacing', () => {
     const twice = await prepareServerPrintedArtwork(fitted.draft, { placement: fitted.placement });
     expect(twice.draft).toEqual(fitted.draft);
     expect(before.graphic.sourceBounds).toBeUndefined();
-  });
+  }, 20_000);
   it('leaves manually positioned and flattened artwork untouched', async () => {
     for (const draft of [{ ...paddedDraft(), layout: { preset: 'custom', gap: 40, groupAlign: 'center' } },
       { ...paddedDraft(), mode: 'legacyFlattened' }] as ArtworkDraft[]) {

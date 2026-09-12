@@ -727,6 +727,7 @@ describe('MediaKit artwork preparation adapter', () => {
     expect(calls.some((call) => call.url.endsWith('/remove-image-background'))).toBe(false);
   });
 
+  // Keep the full-size customer fixture: decode, crop and 2x enhancement need more time on CI.
   it('crops the real oversized green canvas before professional logo enhancement', async () => {
     const source = await sharp('public/task-review-originals/row1-1.png').png().toBuffer();
     let uploadedSubject: Buffer | null = null;
@@ -809,7 +810,7 @@ describe('MediaKit artwork preparation adapter', () => {
       generative_enhance_mode: 'fidelity_first',
     });
     expect(calls.some((call) => call.url.endsWith('/remove-image-background'))).toBe(false);
-  });
+  }, 20_000);
 
   it('pads the real 147x64 wordmark before professional fidelity enhancement', async () => {
     const source = await sharp('public/task-review-originals/row2-5.png').png().toBuffer();
