@@ -77,3 +77,38 @@ it('checks the target font against the designated reference rather than the cont
   expect(next.items.find(item => item.id === 'text')).toMatchObject({ status: 'failed' });
   expect(next.items.find(item => item.id === 'text')?.evidence).toContain('目标字笔画偏细');
 });
+
+it.each([
+  ['全部背景去除，圆内也透明', 'all-background'],
+  ['仅去除外围白色背景，保留徽章底色', 'exterior'],
+  ['保留原图案', 'legacy'],
+] as const)('records the same explicit background contract in final review: %s', async (instruction, scope) => {
+  const { unit, source, ledger } = fixture(); unit.instruction = instruction;
+  unit.generationPrompt = '纯白背景输出；清除图案外围白色背景，保留内部留白';
+  if (scope === 'legacy') unit.generationPrompt = '';
+  vi.mocked(verifyArtworkModelEdits).mockImplementation(async (_a, _b, requirements) => ({ version: 'artwork-edit-check-v1', sourceSha256: sha256, outputSha256: sha256, model: 'test',
+    checks: requirements.map(requirement => ({ requirement, status: 'passed', evidence: '按明确范围逐项核对符合' })) }));
+  const next = await inspectFinalArtwork(unit, source, '/uploads/logos/final.png', ledger, ['background']);
+  expect(next.items.find(item => item.id === 'background')?.status).toBe('passed');
+  const scoped = next as typeof next & { backgroundContractKey: string };
+  expect(JSON.parse(scoped.backgroundContractKey).scope).toBe(scope);
+  expect(next.sha256).toBe(ledger.sha256); expect(next.history).toHaveLength(1);
+  // Reviewing the background is not confirmation of placement or the other four content items.
+  expect(next.items.filter(item => item.id !== 'background').map(item => item.status)).toEqual(ledger.items.filter(item => item.id !== 'background').map(item => item.status));
+});
+it('ambiguous inner background stays uncertain even when a model claims passed, without changing final bytes', async () => {
+  const { unit, source, ledger } = fixture(); unit.instruction = '去除素材白色背景';
+  vi.mocked(verifyArtworkModelEdits).mockImplementation(async (_a, _b, requirements) => ({ version: 'artwork-edit-check-v1', sourceSha256: sha256, outputSha256: sha256, model: 'test',
+    checks: requirements.map(requirement => ({ requirement, status: 'passed', evidence: '模型认为背景符合' })) }));
+  const next = await inspectFinalArtwork(unit, source, '/uploads/logos/final.png', ledger, ['background']);
+  expect(next.items.find(item => item.id === 'background')).toMatchObject({ status: 'uncertain', evidence: expect.stringContaining('范围未明确') });
+  expect(next.sha256).toBe(sha256); expect(ledger.items.find(item => item.id === 'background')?.status).toBe('pending');
+});
+it('a scope-version recheck leaves manually confirmed background and accepted registered-mark differences untouched', async () => {
+  const { unit, source, ledger } = fixture(); unit.instruction = '全部背景去除，圆内也透明';
+  for (const item of ledger.items) { item.status = 'confirmed'; item.actor = 'operator'; item.note = '已核对当前像素'; }
+  const structure = ledger.items.find(item => item.id === 'structure')!;
+  structure.status = 'accepted'; structure.evidence = '模型提示 R 标记可能变粗，人工未确认细微变化';
+  const next = await inspectFinalArtwork(unit, source, '/uploads/logos/final.png', ledger);
+  expect(next).toEqual(ledger); expect(verifyArtworkModelEdits).not.toHaveBeenCalled();
+});

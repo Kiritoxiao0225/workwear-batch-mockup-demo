@@ -1,6 +1,7 @@
 'use client';
 
 import Image from 'next/image';
+import { usePreviewBackground, WpsPreviewBackgroundControls } from './wps-preview-background';
 import { productionThumbnailUrl } from '@/lib/production-file-url';
 import { useEffect, useState } from 'react';
 import { imageFailureReason } from '@/lib/client/api-response';
@@ -13,6 +14,8 @@ type Props = {
   label?: string;
   sizes: string;
   large?: boolean;
+  /** View-only controls for full-resolution source/artwork, never customer composites. */
+  viewingBackground?: boolean;
   open?: () => void;
 };
 
@@ -21,7 +24,9 @@ export function WpsMaterialImage(props: Props) {
   return <MaterialImageAttempt key={props.src} {...props} />;
 }
 
-function MaterialImageAttempt({ src, alt, label, sizes, large = false, open }: Props) {
+function MaterialImageAttempt({ src, alt, label, sizes, large = false, viewingBackground = false, open }: Props) {
+  const background = usePreviewBackground();
+  const selectableBackground = large && viewingBackground;
   const [status, setStatus] = useState<'loading' | 'loaded' | 'waiting' | 'failed'>('loading');
   const [attempt, setAttempt] = useState({ count: 0, nonce: '' });
   const [failure, setFailure] = useState('');
@@ -56,15 +61,20 @@ function MaterialImageAttempt({ src, alt, label, sizes, large = false, open }: P
     : status === 'waiting' ? `准备重试 ${attempt.count + 1}/3`
       : status === 'loading' ? (attempt.count ? `重试 ${attempt.count}/3` : '加载中…') : '';
 
-  return <button type="button" className={`wps-material-image${large ? ' wps-material-image-large' : ''}`}
+  const image = <button type="button" className={`wps-material-image${large ? ' wps-material-image-large' : ''}`}
+    style={selectableBackground ? { background: background.cssBackground } : undefined}
+    data-preview-background={selectableBackground ? background.selected : undefined}
     disabled={!src} aria-label={status === 'failed' ? `${alt}，${message}` : alt}
     title={message || alt} data-load-state={src ? status : 'missing'}
     onClick={() => status === 'failed' ? retry() : open?.()}>
     {imageSrc && <Image key={`${attempt.nonce}:${attempt.count}`} src={imageSrc} alt={alt} fill sizes={sizes} unoptimized
       style={{ opacity: status === 'loaded' ? 1 : 0 }}
-      onLoad={() => setStatus('loaded')}
+      onLoad={event => { setStatus('loaded'); if (selectableBackground) background.inspect(event.currentTarget); }}
       onError={() => setStatus(attempt.count < RETRY_DELAYS.length ? 'waiting' : 'failed')} />}
     {message && <i className="wps-material-image-status" role="status">{message}</i>}
     {label && <span>{label}</span>}
   </button>;
+  return selectableBackground ? <div className="wps-material-viewer">{image}
+    <div className="wps-material-viewer-controls"><WpsPreviewBackgroundControls alt={alt} value={background.background} onChange={background.setBackground} /><small>仅改变查看底色，不改变原图</small></div>
+  </div> : image;
 }

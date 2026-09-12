@@ -1,3 +1,4 @@
+import { ARTWORK_BACKGROUND_VERSION, artworkBackgroundContract, artworkBackgroundRequirement } from '@/lib/artwork-background-contract';
 import { fontReferenceInput, fontReferenceRequirement } from '@/lib/artwork-font-reference';
 import { cropFontReference } from './artwork-font-reference';
 import { createHash } from 'node:crypto';
@@ -30,15 +31,17 @@ export async function finalArtworkEvidenceKey(unit: ProductionUnit, source: Sour
     try { materials.push({ id, sha256: m?.url ? sha(await readProductionFile(m.url)) : null }); }
     catch { materials.push({ id, sha256: null }); }
   }
-  return canonicalJson({ checker: FINAL_EVIDENCE_VERSION, contract: contract.key, font: unit.fontReference, materials });
+  return canonicalJson({ checker: FINAL_EVIDENCE_VERSION, background: artworkBackgroundContract(unit), contract: contract.key, font: unit.fontReference, materials });
 }
 
 /** Inspect every required source against the SAME final bytes. Saving is not approval. */
 export async function inspectFinalArtwork(unit: ProductionUnit, source: SourceTaskRecord, url: string, ledger: ArtworkReviewLedger,
   selected?: ReviewCategory[], inspect = verifyArtworkModelEdits): Promise<ArtworkReviewLedger> {
-  const extended = ledger as ArtworkReviewLedger & { evidenceVersion?: string; evidenceKey?: string };
+  const background = artworkBackgroundContract(unit);
+  const backgroundKey = canonicalJson(background);
+  const extended = ledger as ArtworkReviewLedger & { evidenceVersion?: string; evidenceKey?: string; backgroundContractKey?: string; backgroundContractVersion?: string };
   const items = ledger.items.filter(item => !['size', 'position'].includes(item.id) && (selected ? selected.includes(item.id)
-    : !item.actor && (['pending', 'uncertain'].includes(item.status) || extended.evidenceVersion !== FINAL_EVIDENCE_VERSION)));
+    : !item.actor && (['pending', 'uncertain'].includes(item.status) || extended.evidenceVersion !== FINAL_EVIDENCE_VERSION || item.id === 'background' && extended.backgroundContractKey !== backgroundKey)));
   if (!items.length) return ledger;
   const checks: ArtworkEditCheck[] = [];
   const models = new Set<string>(), hashes: string[] = [];
@@ -68,15 +71,18 @@ export async function inspectFinalArtwork(unit: ProductionUnit, source: SourceTa
           `【${item.label}】核对输入图1 = WPS ${label}${font ? '的指定字体裁片' : ''}；输入图2 = 当前完整最终图案。`,
           roles.includes('content') ? '图1提供本位置的成品内容。只核对它应贡献的内容，不因最终图包含其他内容素材或新增文字而误判。'
             : `图1仅提供${roles.map(role => roleLabels[role] ?? role).join('、')}参考，不要求复制它原有的文字、标志、衣服或背景。`,
-          item.requirement, font ? fontReferenceRequirement(font, unit.exactText) : '',
+          item.id === 'background' ? artworkBackgroundRequirement(background) : item.requirement, font ? fontReferenceRequirement(font, unit.exactText) : '',
           `本位置原文：${contract.scopedSource}`, `执行要求：${unit.instruction}\n${unit.layoutNote}`,
           `准确新增文字：${unit.exactText || '未指定新增文字，保留指定内容原图可辨文字'}`,
+          artworkBackgroundRequirement(background),
           '只评价当前这一项目。按明确要求处理背景、取材和局部改色；不是所有底色都应删除。看不清或证据不足记uncertain，不猜字、不替其他材料做判断。',
         ].filter(Boolean).join('\n'));
         const result = await inspect(original, final, requirements);
         if (result.outputSha256 !== ledger.sha256 || result.sourceSha256 !== sha(original) || result.checks.length !== relevant.length) throw new Error('核对回执的图片或项目数量不匹配');
         models.add(result.model);
-        result.checks.forEach((check, i) => checks.push({ ...check, category: relevant[i].id as ArtworkEditCheck['category'], evidence: `[${label}] ${check.evidence}` }));
+        result.checks.forEach((check, i) => checks.push({ ...check,
+          status: relevant[i].id === 'background' && background.scope === 'ambiguous' && check.status === 'passed' ? 'uncertain' : check.status,
+          category: relevant[i].id as ArtworkEditCheck['category'], evidence: `[${label}] ${check.evidence}${relevant[i].id === 'background' && background.scope === 'ambiguous' ? '；背景内外范围未明确，需要人工核对' : ''}` }));
       } catch (error) {
         // An explicit earlier failure (e.g. 应白色，实际深蓝) must not be downgraded to
         // uncertain by a repeat check that could not run; only pending/uncertain verdicts soften.
@@ -92,6 +98,7 @@ export async function inspectFinalArtwork(unit: ProductionUnit, source: SourceTa
       inspectionVersion: FINAL_EVIDENCE_VERSION, checks };
     const next = applyFinalArtworkReview(ledger, verification, items.map(item => item.id)) as typeof extended;
     next.evidenceVersion = FINAL_EVIDENCE_VERSION;
+    next.backgroundContractKey = backgroundKey; next.backgroundContractVersion = ARTWORK_BACKGROUND_VERSION;
     next.evidenceKey = canonicalJson({ contract: contract.key, inputSha256: hashes, outputSha256: ledger.sha256 });
     return next;
   } catch (error) {

@@ -1,3 +1,5 @@
+import { artworkProtectionPolicy, type ArtworkProtectionPolicy } from '@/lib/artwork-protection';
+import { assertArtworkMask } from './artwork-panel-mask';
 import { downloadArtworkResult } from './artwork-result-download';
 import { artworkJobStep, withArtworkStage, hasArtworkJobContext } from './artwork-job-runtime';
 import { artworkPrintInstruction } from '@/lib/production-artwork-layout';
@@ -17,7 +19,6 @@ import {
 import {
   applyArtworkAlphaMask,
   alphaMaskReport,
-  assertUsableArtworkMask,
   createArtworkRecolorMask,
   inspectArtworkSource,
   mediaKitStandardInputSize,
@@ -239,10 +240,11 @@ async function normalizedGraphic(
   bytes: Buffer,
   requireTransparentBackground: boolean,
   strictMaskQuality: boolean,
+  protection?: ArtworkProtectionPolicy,
 ) {
   const maskQuality = requireTransparentBackground ? await alphaMaskReport(bytes) : null;
   if (maskQuality) {
-    if (strictMaskQuality) assertUsableArtworkMask(maskQuality);
+    if (strictMaskQuality) await assertArtworkMask(bytes, protection);
     else if (maskQuality.visibleRatio < 0.005) throw new Error('透明图案没有足够的可见主体像素');
   }
   const normalized = requireTransparentBackground
@@ -608,10 +610,6 @@ export async function prepareTaskArtwork(
   const evaluationBytes = croppedSubjectInput?.imageBytes ?? sourceBytes;
   const evaluationWidth = croppedSubjectInput?.width ?? sourceProfile.width;
   const evaluationHeight = croppedSubjectInput?.height ?? sourceProfile.height;
-  const sourceFileId = await uploadImage(
-    evaluationBytes,
-    croppedSubjectInput ? 'image/png' : request.image.mimeType,
-  );
   const quality: ArtworkQualityEvaluation | null = options && 'measuredQuality' in options ? options.measuredQuality : null;
   const preserveGeometry = requiresBrandGeometryPreservation(request, sourceProfile.kind);
   const override = explicitEnhancement(request.enhancementMode);
@@ -631,6 +629,8 @@ export async function prepareTaskArtwork(
       || Math.max(evaluationWidth, evaluationHeight) > 2048)) {
     throw new Error(`专业保真增强要求短边≥256px且长边≤2048px，当前增强输入 ${evaluationWidth}×${evaluationHeight}px`);
   }
+  // Reuse/geometry-only paths do not need an upload or any provider call.
+  const sourceFileId = enhancement === 'none' ? request.image.dataUrl : await uploadImage(evaluationBytes, croppedSubjectInput ? 'image/png' : request.image.mimeType);
   const enhancementInputUrl = enhancement === 'standard'
     ? await standardEnhancementInput(
         evaluationBytes,
@@ -645,7 +645,7 @@ export async function prepareTaskArtwork(
   let backgroundRemoval: 'none' | 'edge-connected' | 'product' = 'none';
   const fineStrokeGraphic = sourceProfile.kind === 'flat-background'
     && Math.min(subjectBounds.width, subjectBounds.height) < 128;
-  const decisionRule = `${override ? `人工指定增强模式 ${override}；` : ''}${recommendation.decisionRule}${croppedSubjectInput ? `；增强前已按全部前景安全裁剪为 ${evaluationWidth}×${evaluationHeight}px` : ''}${fineStrokeGraphic ? '；细字图形已加固 Alpha 笔画' : ''}`;
+  const decisionRule = `${override ? `人工指定增强模式 ${override}；` : ''}${recommendation.decisionRule}${croppedSubjectInput ? `；增强前已按全部前景安全裁剪为 ${evaluationWidth}×${evaluationHeight}px` : ''}${fineStrokeGraphic ? '；保留细字原 Alpha，不自动加粗或清除小连通域' : ''}`;
   let graphicBytes: Buffer<ArrayBufferLike> = sourceBytes;
   let strictMaskQuality = false;
 
@@ -704,7 +704,7 @@ export async function prepareTaskArtwork(
     }
   } else {
     if (shouldRemoveBackground) {
-      const graphicResultUrl = await transparentImageUrl(preparedImageUrl);
+      const graphicResultUrl = await transparentImageUrl(enhancement === 'none' ? await uploadImage(sourceBytes, request.image.mimeType) : preparedImageUrl);
       graphicBytes = await downloadResult(graphicResultUrl, 'MediaKit 商品主体透明图层');
       backgroundRemoval = 'product';
       strictMaskQuality = true;
@@ -714,7 +714,7 @@ export async function prepareTaskArtwork(
   }
 
   let edgeRefinement: string | undefined;
-  if (shouldRemoveBackground && (sourceProfile.kind === 'flat-background' || sourceProfile.kind === 'transparent')) {
+  if (shouldRemoveBackground && enhancement !== 'none' && !options?.cutout && sourceProfile.kind === 'flat-background') {
     const refined = await refineCircularArtworkEdge(graphicBytes, sourceProfile.backgroundColor ?? undefined);
     if (refined.report.applied) {
       graphicBytes = refined.bytes;
@@ -726,6 +726,7 @@ export async function prepareTaskArtwork(
     graphicBytes,
     requireTransparentBackground,
     strictMaskQuality,
+    artworkProtectionPolicy(request.instruction, request.layoutNote, request),
   );
   const recolorMaskBytes = request.sourceScope === 'wholeImage'
     ? null

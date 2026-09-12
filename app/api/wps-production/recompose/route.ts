@@ -1,3 +1,4 @@
+import { productionPreviewFixed } from '@/lib/production-preview';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { productionUser } from '@/lib/server/production-storage';
@@ -25,8 +26,8 @@ export async function POST(request: Request) {
         if (units.some(unit => !unit?.artwork)) throw new Error('还有位置没有保存图稿，不能当完整效果图合成');
         const source = state.records.find(record => record.source.recordId === version.sourceRecordId)?.source;
         if (!source) throw new Error('原始订单已不存在');
-        const checks = await Promise.all(units.map(unit => preflightResolvedArtworkUnit(unit, source, 'mockup')));
-        const issue = checks.flatMap(check => check.garmentIssue ? [check.garmentIssue] : []).join('；');
+        const checks = await Promise.all(units.map(unit => preflightResolvedArtworkUnit(unit, source, 'preview', { fixed: productionPreviewFixed(unit, [version]) })));
+        const issue = checks.flatMap(check => [check.garmentIssue, check.artworkIssue].filter(Boolean)).join('；');
         if (issue) throw new Error(issue);
         const before = units.map(unit => unit.artwork!.validation.sha256);
         const result = await trackedProductionRender(version, units);

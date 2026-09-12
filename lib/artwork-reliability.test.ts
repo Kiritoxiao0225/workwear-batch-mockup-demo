@@ -136,3 +136,57 @@ describe('image dependency roles', () => {
     expect(labels).not.toContain('图2026');
   });
 });
+
+describe('B3 explicit per-image versions', () => {
+  const text = '货号:JSH-JSD33-淡蓝-L 左胸：图一图二各做一版 只要logo，下面的字都改成康悦';
+  it.each(['图1', '图2'])('%s only needs its own explicitly selected version', primary => {
+    const contract = compileArtworkRequirements(input(text, { primaryImageLabel: primary, instruction: `${primary}版，只要logo，下面的字改成康悦` }));
+    expect(contract.issues).toEqual([]);
+    expect(contract.inputs).toEqual([{ sourceLabel: primary, inputLabel: '图1', roles: ['content'] }]);
+    expect(imageLabels(contract.scopedSource)).toEqual([primary]);
+    expect(contract.scopedSource).toContain('康悦');
+    expect(contract.sourceText).toBe(text);
+  });
+  it('handles a legacy prompt repeating the alternatives without requiring the other version', () => {
+    const contract = compileArtworkRequirements(input(text, { primaryImageLabel: '图2', instruction: text, generationPrompt: text }));
+    expect(contract.issues).toEqual([]);
+    expect(imageLabels(contract.instruction)).toEqual(['图2']);
+  });
+  it.each(['图一和图二各做一版', '图1、图2分别制作一版', '图1+2各出1版'])('supports the explicit list %s', list => {
+    expect(dependencyIssues(input(`左胸：${list}，只要logo`))).toEqual([]);
+  });
+  it('preserves additional shared font references and their roles', () => {
+    const contract = compileArtworkRequirements(input('左胸：图1图2各做一版，字体参考图3', {
+      primaryImageLabel: '图2', instruction: '图2的logo，字体参考图3', referenceImages: [{ label: '图3' }],
+    }));
+    expect(contract.issues).toEqual([]);
+    expect(contract.dependencies.map(dep => `${dep.label}:${dep.role}`)).toEqual(['图2:content', '图3:font']);
+    expect(dependencyIssues(input('左胸：图1图2各做一版，字体参考图3')).join('；')).toContain('图3');
+  });
+  it('still rejects joint compositions, extra missing inputs and an unselected version', () => {
+    expect(dependencyIssues(input('左胸：图一图二合在一起，只要logo')).join('；')).toContain('图2');
+    expect(dependencyIssues(input(text, { instruction: '图1版，再加图3' })).join('；')).toContain('图3');
+    expect(dependencyIssues(input(text, { primaryImageLabel: '图3', instruction: '图3版' })).join('；')).toContain('分支');
+  });
+  it('keeps content plus style-only reference and same-image multi-position contracts', () => {
+    const styled = compileArtworkRequirements(input('左胸：图1内容，图2仅风格参考', {
+      instruction: '图1内容，图2仅风格参考', referenceImages: [{ label: '图2' }],
+    }));
+    expect(styled.issues).toEqual([]);
+    expect(styled.inputs[1].roles).toEqual(['reference']);
+    for (const placement of ['leftChest', 'back']) {
+      expect(dependencyIssues(input('两件衣服同稿。左胸：图1；后背：图1', { printPlacement: { key: placement } }))).toEqual([]);
+    }
+  });
+});
+
+it('B3 scopes only the alternative clause, preserving exact surrounding text and punctuation', () => {
+  const source = '左胸：图一图二各做一版，文字“ＡＢＣ／康悦”不要改变。';
+  const contract = compileArtworkRequirements(input(source));
+  expect(contract.scopedSource).toContain('，文字“ＡＢＣ／康悦”不要改变。');
+  expect(contract.sourceText).toBe(source);
+});
+
+it("B3 does not narrow a negated per-image alternative", () => {
+  expect(dependencyIssues(input("左胸：不要图1图2各做一版，要合在一起")).join("；")).toContain("图2");
+});

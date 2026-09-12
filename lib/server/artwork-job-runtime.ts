@@ -26,6 +26,20 @@ export async function reportArtworkInspectionRetry(notice: InspectionRetryNotice
   });
 }
 
+/** Before a newly localized component, do not turn a changed pixel/prompt hash
+ * into a new paid call while an older result from this job has not been replayed.
+ * Components already completed/replayed in THIS execution may be followed by the
+ * next component. This adds no write, migration, retry or ownership bypass. */
+export async function assertArtworkComponentSubmissionSafe(prompt: string, images: string[], settings: { background?: 'auto' | 'transparent' }) {
+  const current = context.getStore();
+  if (!current) return;
+  const key = `generate:${artworkStepHash([prompt, images, settings])}`;
+  const steps = (await catalogDatabase().query("SELECT step_key,status FROM artwork_job_steps WHERE job_id=$1 AND stage='generation'", [current.job.id])).rows;
+  if (steps.some(step => ['running', 'unknown'].includes(step.status))) throw new ArtworkGenerationUnknownError('已有生图提交结果尚未确定，局部修改不得重新付费提交');
+  if (steps.some(step => step.step_key === key && step.status === 'completed')) return;
+  if (steps.some(step => step.status === 'completed' && !current.pending.has(step.step_key))) throw new Error('已有未重放的生图结果，与当前局部编辑输入不一致；保留候选，不自动重新生图');
+}
+
 /** A resumed full-image job keeps its paid prompt even after a code/template upgrade. */
 export async function resumeArtworkGenerationPrompt(prompt: string, images: string[], settings: { background?: 'auto' | 'transparent' }) {
   const current = context.getStore();

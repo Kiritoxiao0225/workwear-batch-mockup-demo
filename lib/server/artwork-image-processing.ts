@@ -1,4 +1,5 @@
 import sharp from 'sharp';
+import { estimateArtworkBackground } from './artwork-foreground-integrity';
 
 export type ArtworkSourceKind =
   | 'transparent'
@@ -209,6 +210,7 @@ function connectedBackgroundPixels(
   width: number,
   height: number,
   backgroundColor: RgbColor,
+  backgroundAtPixel?: (index: number) => RgbColor,
 ) {
   const totalPixels = width * height;
   const connected = new Uint8Array(totalPixels);
@@ -220,7 +222,7 @@ function connectedBackgroundPixels(
     if (connected[index]) return;
     const offset = index * 4;
     if (data[offset + 3] === 0
-      || squaredColorDistance(data[offset], data[offset + 1], data[offset + 2], backgroundColor) <= maximumDistance) {
+      || squaredColorDistance(data[offset], data[offset + 1], data[offset + 2], backgroundAtPixel?.(index) ?? backgroundColor) <= maximumDistance) {
       connected[index] = 1;
       queue[queued] = index;
       queued += 1;
@@ -250,7 +252,17 @@ function connectedBackgroundPixels(
 export async function removeFlatArtworkBackground(bytes: Buffer, backgroundColor: RgbColor) {
   const { data, width, height } = await decodedRgba(bytes);
   const output = Buffer.from(data);
-  const connected = connectedBackgroundPixels(data, width, height, backgroundColor);
+  // Reuse the supported perimeter model, rejecting foreground outliers. Fit once;
+  // a flat field keeps the existing constant-colour fast path. A gradient changes
+  // both connectivity and alpha estimation, so a darker edge is not left opaque.
+  const field = estimateArtworkBackground(data, width, height);
+  const gradient = field && Math.hypot(...field.coefficients.map(([x, y]) => Math.abs(x) + Math.abs(y))) > BACKGROUND_CORE_DISTANCE ? field : null;
+  const backgroundAtPixel = gradient ? (index: number): RgbColor => {
+    const x = (index % width) / Math.max(1, width - 1), y = Math.floor(index / width) / Math.max(1, height - 1);
+    const channel = (c: number) => Math.max(0, Math.min(255, gradient.coefficients[c][0] * x + gradient.coefficients[c][1] * y + gradient.coefficients[c][2]));
+    return { r: channel(0), g: channel(1), b: channel(2) };
+  } : undefined;
+  const connected = connectedBackgroundPixels(data, width, height, backgroundColor, backgroundAtPixel);
   for (let index = 0; index < connected.length; index += 1) {
     if (!connected[index]) continue;
     const offset = index * 4;
@@ -259,7 +271,7 @@ export async function removeFlatArtworkBackground(bytes: Buffer, backgroundColor
       output[offset],
       output[offset + 1],
       output[offset + 2],
-      backgroundColor,
+      backgroundAtPixel?.(index) ?? backgroundColor,
     ));
     const retainedAlpha = distance <= BACKGROUND_CORE_DISTANCE
       ? 0
@@ -333,35 +345,11 @@ function clampedByte(value: number) {
   return Math.max(0, Math.min(255, Math.round(value)));
 }
 
-function removeTinyAlphaIslands(alpha: Buffer, width: number, height: number) {
-  const visible = new Uint8Array(alpha.length);
-  for (let index = 0; index < alpha.length; index += 1) {
-    visible[index] = alpha[index] > 12 ? 1 : 0;
-  }
-  const components = connectedCandidateComponents(visible, width, height);
-  const minimumComponentSize = Math.max(4, Math.ceil(components.largestCount * 0.0002));
-  const cleaned = Buffer.from(alpha);
-  for (let index = 0; index < cleaned.length; index += 1) {
-    const label = components.labels[index];
-    if (label === 0 || components.counts[label] < minimumComponentSize) cleaned[index] = 0;
-  }
-  return cleaned;
-}
-
-function strengthenFineStrokeAlpha(alpha: Buffer) {
-  const strengthened = Buffer.from(alpha);
-  for (let index = 0; index < strengthened.length; index += 1) {
-    if (strengthened[index] <= 12 || strengthened[index] >= 240) continue;
-    strengthened[index] = clampedByte((strengthened[index] - 8) * 1.7);
-  }
-  return strengthened;
-}
-
 export async function applyArtworkAlphaMask(
   imageBytes: Buffer,
   maskSourceBytes: Buffer,
   backgroundColor?: RgbColor,
-  strengthenSoftStrokes = false,
+  _strengthenSoftStrokes = false,
 ) {
   const imageMetadata = await sharp(imageBytes).metadata();
   const maskMetadata = await sharp(maskSourceBytes).metadata();
@@ -384,17 +372,14 @@ export async function applyArtworkAlphaMask(
     .extractChannel(3)
     .raw()
     .toBuffer({ resolveWithObject: true });
-  const cleanedAlpha = removeTinyAlphaIslands(
-    resizedAlpha,
-    imageMetadata.width,
-    imageMetadata.height,
-  );
-  const outputAlpha = strengthenSoftStrokes
-    ? strengthenFineStrokeAlpha(cleanedAlpha)
-    : cleanedAlpha;
+  // A registered mark, thin line or weak antialiased stroke is not disposable
+  // noise. Keep all supplied alpha samples; no island pruning, gap filling or
+  // automatic thickening. The legacy argument remains accepted for callers.
+  void _strengthenSoftStrokes;
+  const outputAlpha = resizedAlpha;
   const output = Buffer.alloc(imageMetadata.width * imageMetadata.height * 4);
   for (let pixel = 0; pixel < outputAlpha.length; pixel += 1) {
-    const alpha = outputAlpha[pixel] <= 12 ? 0 : outputAlpha[pixel];
+    const alpha = outputAlpha[pixel];
     const sourceOffset = pixel * 3;
     const outputOffset = pixel * 4;
     if (alpha === 0) continue;

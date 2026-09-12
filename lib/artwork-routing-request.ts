@@ -8,6 +8,7 @@ import { artworkReferenceColors } from '@/lib/artwork-reference-color';
 import { artworkModelEdits, artworkGraphicRemovals } from '@/lib/artwork-model-edits';
 import { needsArtworkReconstruction, artworkReconstructionPrompt } from './artwork-source-assessment';
 import { artworkTextOperation, artworkTextRemovalPrompt, artworkTextStyle } from './artwork-text-contract';
+import { artworkBackgroundContract, artworkBackgroundRequirement } from './artwork-background-contract';
 import { artworkSeparationPrompt } from './artwork-generation-background';
 
 export type ArtworkRequirementInput = Pick<ArtworkPreparationRequest, 'fontReference' | 'sourceAssessment' | 'primaryImageRole' | 'artworkMethod' | 'instruction' | 'layoutNote' | 'exactText' | 'primaryImageLabel' | 'sourceScope' | 'processingRoute'> & Partial<Pick<ArtworkPreparationRequest, 'sourceRequirementText' | 'printPlacement' | 'generationPrompt'>> & { referenceImages: Array<{ label: string }> };
@@ -95,7 +96,7 @@ export function artworkRequirementFacts(input: ArtworkRequirementInput): Artwork
   };
 }
 
-export const STANDARD_ARTWORK_PROMPT_VERSION = 'artwork-standard-prompts-v18';
+export const STANDARD_ARTWORK_PROMPT_VERSION = 'artwork-standard-prompts-v19';
 export function artworkPromptHash(text: string) {
   let hash = 0x811c9dc5;
   for (let index = 0; index < text.length; index++) hash = Math.imul(hash ^ text.charCodeAt(index), 0x01000193);
@@ -151,12 +152,13 @@ export function standardArtworkPrompts(input: Omit<ArtworkPreparationRequest, 'i
     `【原图具体内容】${JSON.stringify(input.sourceAssessment.recognizedContent ?? null)}。只将 certain=true 的内容视为可辨；客户明确文字优先，不确定位置不得猜字。`,
     `【原图实际问题】${JSON.stringify(input.sourceAssessment.defects ?? [])}。先按客户要求修改对应位置，保留未要求修改的内容。`,
   ].join('\n') : '';
-  const contractPrompt = compiledRequirementPrompt(evidenceContract);
+  const backgroundRequirement = artworkBackgroundRequirement(artworkBackgroundContract(input));
+  const contractPrompt = [compiledRequirementPrompt(evidenceContract), '【背景范围合同：本位置明确范围优先于旧通用提示】', backgroundRequirement].join('\n');
   const resolved = { generate: artworkSeparationPrompt([
     contentImageLabels(input).length > 1
       ? ['制作一张独立二维完整图案，不生成衣服、人物或场景。', input.generationPrompt || input.instruction].join('\n')
-      : generate, sourceContent, contractPrompt].filter(Boolean).join('\n')), redraw: artworkSeparationPrompt(redraw),
-    reconstruct: reconstruct ? artworkSeparationPrompt(reconstruct) : null,
+      : generate, sourceContent, contractPrompt].filter(Boolean).join('\n'), input.sourceScope === 'wholeImage'), redraw: artworkSeparationPrompt(`${redraw}\n${backgroundRequirement}`, input.sourceScope === 'wholeImage'),
+    reconstruct: reconstruct ? artworkSeparationPrompt(`${reconstruct}\n${backgroundRequirement}`, input.sourceScope === 'wholeImage') : null,
     styledTexts: styledTexts.map(text => ({ ...text, prompt: artworkSeparationPrompt(text.prompt) })) };
   const hash = artworkPromptHash(JSON.stringify({ version: STANDARD_ARTWORK_PROMPT_VERSION, route: input.processingRoute, ...(input.fontReference ? { fontReference: input.fontReference } : {}), ...(input.artworkMethod ? { artworkMethod: input.artworkMethod } : {}), sourceSelection: input.sourceAssessment?.selection, ...resolved, textOperation, removeText, imageMapping: canonical.imageMapping }));
   return { version: STANDARD_ARTWORK_PROMPT_VERSION, hash, ...resolved, textOperation, removeText, imageMapping: canonical.imageMapping };

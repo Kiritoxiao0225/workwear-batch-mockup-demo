@@ -1,6 +1,8 @@
 /** The staging background is a removable technical surface, never a reason to
  * change the foreground ink. Existing saved briefs need the same normalization. */
-export function artworkSeparationPrompt(prompt: string) {
+export function artworkSeparationPrompt(prompt: string, preserveWholeImage = false) {
+  if (prompt.includes('【整图背景保留】')) return prompt;
+  if (preserveWholeImage) return `${prompt.split('\n【前景与临时底色】')[0]}\n【整图背景保留】本位置明确 sourceScope=wholeImage，画布与内部背景均属于要保留的内容；不更换临时底色、不执行去底。此范围优先于旧模板中的纯白背景或后续抠图说明。只修改客户点名内容；范围冲突保留疑点，不擅自重新选择背景。`;
   if (prompt.includes('【前景与临时底色】')) return prompt;
   const normalized = prompt
     .replace(/(?:纯白色?|白色|白底)\s*(?:背景|底色)(?:\s*[（(]?\s*#FFFFFF\s*[）)]?)?/giu, '与全部前景可分离的纯色临时背景')

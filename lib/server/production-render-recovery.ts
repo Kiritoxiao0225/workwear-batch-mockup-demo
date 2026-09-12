@@ -1,3 +1,4 @@
+import { productionPreviewFixed } from '@/lib/production-preview';
 import { savedProductionRender } from './production-render-cache';
 import { readWpsProductionState, mutateWpsProductionState } from './wps-production-store';
 import { WPS_COMPOSITOR_VERSION, type ProductionMockupVersion, type ProductionUnit, type WpsProductionState } from '@/lib/wps-production';
@@ -48,8 +49,8 @@ export async function recoverProductionRenders(limit = 2) {
     const { units, key } = currentInput(state, version.id);
     if (!units.length || units.some(unit => !unit.artwork) || !renderNeedsRecovery(state.renderOutcomes?.[version.id], key)) continue;
     if (!state.renderOutcomes?.[version.id] && version.output?.composeFingerprint === version.composeFingerprint && version.output) continue;
-    const checks = await Promise.all(units.map(unit => preflightResolvedArtworkUnit(unit, source, 'mockup')));
-    if (checks.some(check => check.garmentIssue)) continue;
+    const checks = await Promise.all(units.map(unit => preflightResolvedArtworkUnit(unit, source, 'preview', { fixed: productionPreviewFixed(unit, [version]) })));
+    if (checks.some(check => check.garmentIssue || check.artworkIssue)) continue;
     eligible.push(version);
     if (eligible.length >= Math.max(1, Math.min(10, limit))) break;
   }

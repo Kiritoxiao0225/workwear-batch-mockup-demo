@@ -1,4 +1,4 @@
-import { dependencyIssues, contentImageLabels } from './artwork-reliability';
+import { dependencyIssues, contentImageLabels, scopeArtworkVersionInput, scopedImageVersion } from './artwork-reliability';
 import { resolveFontReferenceText, fontReferenceInput, fontReferenceRequirement, type ArtworkFontReference } from './artwork-font-reference';
 import { compileGenerationPrompt } from '@/lib/artwork-generation-prompt';
 
@@ -155,6 +155,7 @@ export function artworkReferenceEvidence(text: string): ArtworkReferenceEvidence
 }
 
 export function artworkReferenceIssues(input: { generationPrompt?: string; instruction: string; layoutNote: string; primaryImageLabel: string; primaryImageRole?: 'content' | 'reference'; referenceImages: Array<{ label: string }>; sourceRequirementText?: string; printPlacement?: { key: string } | null; sourceScope?: string; fontReference?: import('./artwork-font-reference').FontReferenceInput }) {
+  input = scopeArtworkVersionInput(input);
   if (input.fontReference?.origin === 'manual') input = { ...input, instruction: resolveFontReferenceText(input.instruction, input.fontReference), layoutNote: resolveFontReferenceText(input.layoutNote, input.fontReference), sourceRequirementText: input.sourceRequirementText ? resolveFontReferenceText(input.sourceRequirementText, input.fontReference) : undefined };
   const requiredImages = dependencyIssues(input);
   if (requiredImages.length) return requiredImages;
@@ -165,7 +166,7 @@ export function artworkReferenceIssues(input: { generationPrompt?: string; instr
         ...input.referenceImages.map((image, index) => ({ sourceLabel: image.label, modelInputLabel: `图${index + 2}`, role: 'reference' as const })),
       ]);
       const primaryNumber = artworkImageNumbers(input.primaryImageLabel)[0] ?? 0;
-      const scoped = input.sourceRequirementText ? sourceArtworkReferenceRequirement(input.sourceRequirementText, input.printPlacement?.key ?? null, primaryNumber) : '';
+      const scoped = input.sourceRequirementText ? scopedImageVersion(sourceArtworkReferenceRequirement(input.sourceRequirementText, input.printPlacement?.key ?? null, primaryNumber), input.primaryImageLabel).text : '';
       const bound = new Set(input.referenceImages.map(image => normalizeArtworkImageNumbers(image.label)));
       const issues = artworkReferenceEvidence(scoped).filter(reference => reference.number !== primaryNumber && !bound.has(`图${reference.number}`))
         .map(reference => `原文要求参考图${reference.number}，当前方案未绑定该素材`);
@@ -178,7 +179,7 @@ export function artworkReferenceIssues(input: { generationPrompt?: string; instr
   const bound = new Set(input.referenceImages.map(image => normalizeArtworkImageNumbers(image.label)));
   const issues: string[] = [];
   const primaryNumber = artworkImageNumbers(primary)[0] ?? 0;
-  const scoped = input.sourceRequirementText ? sourceArtworkReferenceRequirement(input.sourceRequirementText, input.printPlacement?.key ?? null, primaryNumber) : '';
+  const scoped = input.sourceRequirementText ? scopedImageVersion(sourceArtworkReferenceRequirement(input.sourceRequirementText, input.printPlacement?.key ?? null, primaryNumber), input.primaryImageLabel).text : '';
   const original = artworkReferenceEvidence(scoped);
   if (input.sourceRequirementText) {
     const allSourceReferences = artworkReferenceEvidence(input.sourceRequirementText);

@@ -1,4 +1,6 @@
 'use client';
+
+import { WpsImagePreviewDialog } from './wps-image-preview-dialog';
 import { WpsFontReference } from './wps-font-reference';
 import { resolveFontReferenceText, fontReferenceInput } from '@/lib/artwork-font-reference';
 import { WpsArtworkChecklist } from './wps-artwork-checklist';
@@ -33,6 +35,7 @@ import '@/components/wps-production-compact.css';
 import { WpsPlacementEditor, type PlacementUpdate } from '@/components/wps-placement-editor';
 import { WpsMockupPreview } from '@/components/wps-mockup-preview';
 import { reuseProductionGeometry } from '@/lib/production-preview';
+import { productionReadinessNotice } from '@/lib/production-readiness-notice';
 import { DEFAULT_WPS_STATUSES, WpsStatusFilter } from '@/components/wps-status-filter';
 import { WPS_COMPOSITOR_VERSION } from '@/lib/confirmation-frame';
 import { productionArtworkRouting, productionRecipe } from '@/lib/production-recipe';
@@ -71,6 +74,7 @@ import { WpsArtworkProgress } from '@/components/wps-artwork-progress';
 import { PLACEMENT_DEFAULTS, PLACEMENT_LABELS } from '@/lib/mockup';
 import type { ProductionUnit, WpsProductionState } from '@/lib/wps-production';
 import { liveWpsProductionState, orderWpsSourceRecords, pendingWpsAnalysisRecords, wpsSourceEvidence } from '@/lib/wps-source';
+import { coordinateProductionSync } from '@/lib/wps-production-sync-coordinator';
 
 type WpsSyncResponse = {
   mode: 'live';
@@ -127,7 +131,7 @@ function WpsArtworkPreparationDetails({ unit, source, preview }: { unit: Product
     <div className="wps-production-inputs">{source.materials.filter(material => material.id === unit.materialId || unit.referenceMaterialIds.includes(material.id)).map(material => {
       const url = material.previewUrl ?? material.url;
       const label = `图${source.materials.indexOf(material) + 1} · ${material.id === unit.materialId ? '内容' : '参考'}`;
-      return <WpsMaterialImage key={material.id} src={url} alt={material.description} label={label} sizes="64px" open={() => url && preview(url, label)} />;
+      return <WpsMaterialImage key={material.id} src={url} alt={material.description} label={label} sizes="64px" open={() => material.url && preview(material.url, label)} />;
     })}</div>
     {routing.report?.facts.sourceAssessment?.recognizedContent && <details open><summary>实际识别内容</summary><p>{routing.report.facts.sourceAssessment.recognizedContent.structure}</p><p>{routing.report.facts.sourceAssessment.recognizedContent.layout}</p><ul>{routing.report.facts.sourceAssessment.recognizedContent.text.map((text, index) => <li key={index}>{text.location}：{text.certain ? text.value : '待人工核查'}</li>)}</ul></details>}
     <WpsArtworkRouting unit={unit} source={source}/>
@@ -219,13 +223,7 @@ export function WpsProductionClient() {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncAuthorizeUrl, setSyncAuthorizeUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [preview, setPreview] = useState<{ url: string; title: string } | null>(null);
-  useEffect(() => {
-    if (!preview) return;
-    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setPreview(null); };
-    window.addEventListener('keydown', close);
-    return () => window.removeEventListener('keydown', close);
-  }, [preview]);
+  const [preview, setPreview] = useState<{ url: string; title: string; kind?: 'artwork' | 'customer' } | null>(null);
   const [artworkErrors, setArtworkErrors] = useState<Record<string, string>>({});
   const [actionFeedback, setActionFeedback] = useState<Record<string, ProductionActionFeedback>>({});
   const actionStateReads = useRef(new Set<string>());
@@ -330,17 +328,21 @@ export function WpsProductionClient() {
     lastSyncStartedAt.current = Date.now();
     setSyncing(true);
     const timeout = window.setTimeout(() => request.abort(new DOMException('同步超时', 'TimeoutError')), 60_000);
+    let receivedSavedSnapshot = false;
     try {
-      const [sync, stateBody] = await Promise.all([
-        fetchApi('/api/wps-tasks', { cache: 'no-store', signal: request.signal }).then(responseJson) as Promise<WpsSyncResponse>,
-        stateReader.current.read(request.signal).then(responseJson).then(body => {
-          // Saved work can render while WPS is still fetching its live records.
-          if (!request.signal.aborted && syncRequest.current === request) acceptProductionState(responseState(body));
-          return body;
-        }),
-      ]);
+      const coordinated = await coordinateProductionSync({
+        signal: request.signal,
+        isCurrent: () => syncRequest.current === request,
+        readState: () => stateReader.current.read(request.signal).then(responseJson).then(responseState),
+        readWps: () => fetchApi('/api/wps-tasks', { cache: 'no-store', signal: request.signal }).then(responseJson) as Promise<WpsSyncResponse>,
+        onState: state => {
+          receivedSavedSnapshot = true;
+          acceptProductionState(state);
+        },
+      });
+      if (request.signal.aborted || syncRequest.current !== request) return;
+      const { wps: sync, state } = coordinated;
       if (sync.mode !== 'live' || !Array.isArray(sync.records)) throw new Error('WPS 未返回真实表格记录');
-      const state = responseState(stateBody);
       // A user action may have cancelled this read while its response was arriving.
       if (request.signal.aborted || syncRequest.current !== request) return;
       const previousIds = new Set(sourceRecords.current.map((record) => record.recordId));
@@ -357,7 +359,7 @@ export function WpsProductionClient() {
     } catch (loadError) {
       if (syncRequest.current !== request || (request.signal.aborted && request.signal.reason?.name !== 'TimeoutError')) return;
       setSyncMode(null);
-      setSyncMessage('本次同步未成功，可重试同步。');
+      setSyncMessage(receivedSavedSnapshot ? '已显示保存快照，本次同步未成功；可重试同步。' : '本次同步未成功，原有保存内容保持不变；可重试同步。');
       setSyncAuthorizeUrl(loadError && typeof loadError === 'object' && 'authorizeUrl' in loadError && typeof loadError.authorizeUrl === 'string' ? loadError.authorizeUrl : null);
       setSyncError(request.signal.reason?.name === 'TimeoutError' ? '同步超过 60 秒，请重试。' : loadError instanceof Error ? loadError.message : String(loadError));
     } finally {
@@ -1251,7 +1253,7 @@ export function WpsProductionClient() {
                     <small className="wps-technical-id">{record.source.recordId} · {record.source.revision}</small><strong>{record.source.customerId}</strong><p>{record.source.requirementText}</p><small>商品款式：{record.source.productStyleText}</small>
                     <div>{record.source.materials.map((material, index) => {
                       const url = material.previewUrl ?? material.url;
-                      return <WpsMaterialImage key={material.id} src={url} alt={material.description} label={`图${index + 1}`} sizes="68px" open={() => url && setPreview({ url, title: `图${index + 1} · ${material.description}` })} />;
+                      return <WpsMaterialImage key={material.id} src={url} alt={material.description} label={`图${index + 1}`} sizes="68px" open={() => material.url && setPreview({ url: material.url, title: `图${index + 1} · ${material.description}` })} />;
                     })}</div>
                     {statusEditor(record.source)}
                   </td>}
@@ -1282,7 +1284,7 @@ export function WpsProductionClient() {
                       feedback={id => actionFeedback[id]} refresh={refreshActionState}
                       error={id => artworkErrors[id] || cloudJobs.find(job => job.unitId === id && !['queued', 'running', 'completed', 'cancelled'].includes(job.status))?.error || ''}
                       progress={id => artworkJobs.find(job => job.id === id)?.progress || ''} />
-                  </td> : <><td className="wps-requirement-cell">{renderUnitContent(unit).requirements}</td><td className="wps-artwork-cell" aria-label={`${positionLabel}图案制作`} aria-busy={producingHere}>{renderUnitContent(unit).artwork}</td></>}
+                  </td> : <><td className="wps-requirement-cell">{renderUnitContent(unit).requirements}</td><td className="wps-artwork-cell" aria-label={`${positionLabel}图案制作`} aria-busy={producingHere}>{productionReadinessNotice(unit, production)}{renderUnitContent(unit).artwork}</td></>}
                   {unitIndex === 0 && <td className="wps-version-cell" rowSpan={group.units.length}>
                     <strong>{version.garmentLabel} · {version.variantLabel}</strong>
                     <WpsMockupPreview version={version} units={group.units} open={setPreview} adjust={() => void openPlacement(unit)} disabled={Boolean(versionBlocked) || inspectingId === unit.id} paused={Boolean(placingUnitId && version.unitIds.includes(placingUnitId))} composing={operations.some(operation => operation.key === `compose:${version.id}`) || version.status === 'composing'} />
@@ -1300,7 +1302,7 @@ export function WpsProductionClient() {
       </main>
       {editingUnit && editingRecord && planForm && <div className="wps-plan-backdrop" onMouseDown={(event) => !unitBusyReason(editingUnit.id) && event.target === event.currentTarget && setEditingUnitId(null)}><div className="wps-plan-dialog" role="dialog" aria-modal="true" aria-labelledby="wps-plan-title">
         <header><div><small>修改制作要求</small><strong id="wps-plan-title">{editingRecord.source.customerId} · {editingUnit.garmentLabel} · {editingUnit.variantLabel}</strong></div><button disabled={Boolean(unitBusyReason(editingUnit.id))} onClick={() => setEditingUnitId(null)} type="button">关闭</button></header>
-        <section className="wps-plan-evidence"><div><b>WPS 原文</b><p>{editingRecord.source.requirementText}</p></div><div><b>附件</b><div>{editingRecord.source.materials.map((material, index) => { const url = material.previewUrl ?? material.url; return <WpsMaterialImage key={material.id} src={url} alt={material.description} label={`图${index + 1}`} sizes="70px" open={() => url && setPreview({ url, title: `图${index + 1} · ${material.description}` })} />; })}</div></div></section>
+        <section className="wps-plan-evidence"><div><b>WPS 原文</b><p>{editingRecord.source.requirementText}</p></div><div><b>附件</b><div>{editingRecord.source.materials.map((material, index) => { const url = material.previewUrl ?? material.url; return <WpsMaterialImage key={material.id} src={url} alt={material.description} label={`图${index + 1}`} sizes="70px" open={() => material.url && setPreview({ url: material.url, title: `图${index + 1} · ${material.description}` })} />; })}</div></div></section>
         <section className="wps-plan-fields">
           <label><span>主要内容素材</span><select disabled={planningPrompt} value={planForm.materialId} onChange={(event) => setPlanForm({ ...planForm, materialId: event.target.value })}><option value="">无内容图片（文字制作）</option>{editingRecord.source.materials.map((material, index) => <option key={material.id} value={material.id}>图{index + 1} · {material.description}</option>)}</select></label>
           <div className="wide"><WpsFontReference source={editingRecord.source} reference={planForm.fontReference} disabled={planningPrompt} change={fontReference => setPlanForm({ ...planForm, fontReference,
@@ -1344,7 +1346,7 @@ export function WpsProductionClient() {
         return <WpsPlacementEditor key={unit.id} unit={unit} requirementText={production!.records.find(record => record.source.recordId === unit.sourceRecordId)?.source.requirementText} versionUnits={production!.units.filter(candidate => version.unitIds.includes(candidate.id))} busy={Boolean(versionBusyReason(version.id))} composing={operations.some(operation => operation.key === `compose:${version.id}`)} error={error} edit={editArtwork} close={() => setPlacingUnitId(null)} save={saveTaskPlacement} />;
       })()}
       {artworkEditor && <TaskReviewArtworkEditor title={`${editorUsesSharedArtwork ? "共用图稿" : artworkEditor.unit.garmentLabel} · 图案调整`} originalRequirement={production?.records.find(record => record.source.recordId === artworkEditor.unit.sourceRecordId)?.source.requirementText ?? ''} initialDraft={artworkEditor.draft} defaultTextColor={() => productionTextColor(artworkEditor.unit)} renderPreview={draft => <WpsArtworkSizePreview unit={artworkEditor.unit} draft={draft}/>} saveLabel={editorUsesSharedArtwork ? "保存共用图稿" : "保存图案"} saveHint={editorUsesSharedArtwork ? "更新关联的未定稿应用，已定稿和未采用共用稿的位置保留原版。" : "保存后返回生产台，保留图层并更新客户效果图。"} saving={Boolean(unitBusyReason(artworkEditor.unit.id))} onCancel={() => setArtworkEditor(null)} onSave={saveArtworkDraft} />}
-      {preview && <div className={`wps-preview-backdrop ${preview.title.includes("图案") || preview.title.startsWith("图") ? 'artwork-preview' : 'customer-preview'}`} onMouseDown={(event) => event.target === event.currentTarget && setPreview(null)}><div role="dialog" aria-modal="true" aria-label={preview.title}><header><strong>{preview.title}</strong><button  onClick={() => setPreview(null)} type="button">关闭</button></header><section><WpsMaterialImage src={preview.url} alt={preview.title} sizes="90vw" large /></section>{previewVersion?.output && <footer>{error && <p className="wps-plan-error" role="alert">{error}</p>}<span>{previewVersion.output.width} × {previewVersion.output.height} px · 用于核对整体位置与比例，小字请查看高清图案。</span><div><button  onClick={() => setPreview(null)} type="button">返回表格调整</button>{previewVersion.status === 'pendingFinalConfirmation' && <button className="primary" disabled={Boolean(versionBusyReason(previewVersion.id))} type="button" onClick={async () => { const state = await runAction(`approve:${previewVersion.id}`, { action: 'approveVersion', versionId: previewVersion.id, actor: '当前操作员' }); if (state) { setPreview(null); setMessage('客户图已确认，可以导出。'); } }}>确认客户成品</button>}</div></footer>}</div></div>}
+      {preview && <WpsImagePreviewDialog url={preview.url} title={preview.title} customer={preview.kind === 'customer' || !!previewVersion} close={() => setPreview(null)} footer={previewVersion?.output && <footer>{error && <p className="wps-plan-error" role="alert">{error}</p>}<span>{previewVersion.output.width} × {previewVersion.output.height} px · 用于核对整体位置与比例，小字请查看高清图案。</span><div><button  onClick={() => setPreview(null)} type="button">返回表格调整</button>{previewVersion.status === 'pendingFinalConfirmation' && <button className="primary" disabled={Boolean(versionBusyReason(previewVersion.id))} type="button" onClick={async () => { const state = await runAction(`approve:${previewVersion.id}`, { action: 'approveVersion', versionId: previewVersion.id, actor: '当前操作员' }); if (state) { setPreview(null); setMessage('客户图已确认，可以导出。'); } }}>确认客户成品</button>}</div></footer>} />}
     </div>
   );
 }

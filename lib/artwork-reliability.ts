@@ -54,8 +54,36 @@ export function normalizeImageLabels(value: string): string {
 export function imageLabels(value: string): string[] {
   return [...new Set([...normalizeImageLabels(value).matchAll(/图([1-9]\d*)/gu)].map(m => `图${Number(m[1])}`))];
 }
-/** Keep exact source clauses for evidence; only matching uses normalized labels. */
+/** Narrow only an explicit per-image alternative list. The bound primary image is
+ * the unit's selected version; no role is inferred from a garment name or a number.
+ * Joint compositions and independent references outside this list remain intact.
+ * sourceText in the contract always retains the complete, original WPS evidence.
+ */
+export function scopedImageVersion(text: string, primary: string): { text: string; ambiguous: boolean } {
+  const image = String.raw`(?:图(?:片)?\s*(?:[1-9]\d*|[１-９][０-９]*|[一二三四五六七八九十]+)|第\s*(?:[1-9]\d*|[一二三四五六七八九十]+)\s*张图(?:片)?)`;
+  const separator = String.raw`(?:[、，,+＋&/]|以及|和|及|与)`;
+  const list = String.raw`(${image}(?:(?:\s*${separator}?\s*${image})|(?:\s*${separator}\s*[1-9]\d?)){1,})`;
+  const pattern = new RegExp(String.raw`${list}\s*(?:各(?:自)?|分别)(?:制作|生成|做|出)\s*(?:一|1)\s*版(?:本)?`, 'gu');
+  let found = false, ambiguous = false;
+  const scoped = text.replace(pattern, (whole, list: string, offset: number) => {
+    // A negated alternative is not permission to discard the other input.
+    if (/(?:不要|不得|不能|并非|不是|无需|不需要|不用)\s*$/u.test(text.slice(Math.max(0, offset - 12), offset))) return whole;
+    const alternatives = imageLabels(list), selected = normalizeImageLabels(primary);
+    if (alternatives.length < 2) return whole;
+    found = true;
+    if (!alternatives.includes(selected)) { ambiguous = true; return whole; }
+    return `${selected}（本版单独制作）`;
+  });
+  return { text: found ? scoped : text, ambiguous };
+}
+
+/** Keep source clauses scoped by placement first, then by an explicit image version. */
 export function scopedSourceRequirement(source: string, placement: string | null | undefined, primary: string): { text: string; ambiguous: boolean } {
+  const scope = placementSourceRequirement(source, placement, primary);
+  if (scope.ambiguous) return scope;
+  return scopedImageVersion(scope.text, primary);
+}
+function placementSourceRequirement(source: string, placement: string | null | undefined, primary: string): { text: string; ambiguous: boolean } {
   const names = [...Object.keys(placementAliases), ...globalFields].join('|');
   const fields = [...source.matchAll(new RegExp(`(${names})\\s*[:：]`, 'gu'))];
   if (!fields.some(field => placementAliases[field[1]])) return scopedByLeadingPlacement(source, placement);
@@ -144,7 +172,7 @@ function roleFor(before: string, after: string): ImageRole {
   const style = /(?:参考|参照|仿照|依照|按|照|仿|学)\s*(?:WPS\s*)?$/iu.test(prior)
     || /(?:字体|字形|笔触|颜色|配色|排版|版式).{0,10}(?:参考|参照|按|照|用|学|仿)?\s*$/u.test(prior)
     || /^\s*(?:的)?(?:字体|字形|笔触|配色|版式|排版|颜色)/u.test(next)
-    || /^\s*(?:仅|只)?(?:用作|作为|作)?(?:字体|字形|颜色|版式|排版)?参考/u.test(next);
+    || /^\s*(?:仅|只)?(?:用作|作为|作)?(?:字体|字形|颜色|版式|排版|风格|样式)?参考/u.test(next);
   // 「整体改为图3所示的深蓝色」「统一改成WPS图2中的…荧光绿色」：a change verb before the
   // image label plus a colour word after it describes the colour source, not content to copy.
   const colourSource = /(?:改|换|变|调)(?:成|为|到)?\s*(?:WPS\s*)?$/u.test(prior)
@@ -188,6 +216,9 @@ function requirementCategories(text: string): RequirementCategory[] {
   return categories;
 }
 export function compileArtworkRequirements(input: RequirementInput): ArtworkRequirementContract {
+  // Legacy authored prompts sometimes repeat the original alternative list. Scope
+  // that exact list too; unrelated missing-image references must still be rejected.
+  input = scopeArtworkVersionInput(input);
   const scope = scopedSourceRequirement(input.sourceRequirementText ?? '', input.printPlacement?.key, input.primaryImageLabel);
   const sourceDependencies = imageDependencies(scope.text || `${input.instruction}\n${input.layoutNote}`);
   // A manual font crop is an explicit override for font evidence only, never for content.
@@ -291,7 +322,13 @@ export function authoredArtworkInstruction(instruction: string): string {
   return instruction.split(SOURCE_MARKER)[0];
 }
 /** Idempotent: the server and preview compiler see precisely the same request. */
+export function scopeArtworkVersionInput<T extends RequirementInput>(input: T): T {
+  const scope = (text: string) => scopedImageVersion(text, input.primaryImageLabel).text;
+  return { ...input, instruction: scope(input.instruction), layoutNote: scope(input.layoutNote),
+    ...(input.generationPrompt ? { generationPrompt: scope(input.generationPrompt) } : {}) };
+}
 export function withSourceRequirements<T extends RequirementInput>(input: T): T {
+  input = scopeArtworkVersionInput(input);
   const baseInstruction = input.instruction.split(SOURCE_MARKER)[0];
   const scope = scopedSourceRequirement(input.sourceRequirementText ?? '', input.printPlacement?.key, input.primaryImageLabel);
   if (!scope.text.trim() || scope.ambiguous) return input;

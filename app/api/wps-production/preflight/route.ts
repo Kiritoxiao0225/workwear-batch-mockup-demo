@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { productionUser } from '@/lib/server/production-storage';
 import { CatalogHttpError } from '@/lib/server/catalog-auth';
 import { readWpsProductionState } from '@/lib/server/wps-production-store';
-import { preflightResolvedArtworkUnit } from '@/lib/server/artwork-preflight';
+import { preflightArtworkOperation } from '@/lib/server/artwork-preflight';
 import { productionArtworkSnapshot, productionSharedSnapshot } from '@/lib/production-artwork-snapshot';
 import { sharedArtworkForUnit, sharedArtworkLeader } from '@/lib/shared-artwork';
 import { canonicalJson, safeErrorText } from '@/lib/artwork-reliability';
@@ -30,16 +30,11 @@ export async function POST(request: Request) {
       const source = state.records.find(record => record.source.recordId === unit.sourceRecordId)?.source;
       if (!source) { results.push({ unitId: unit.id, blockers: ['原始订单已不存在'] }); continue; }
       try {
-        const checked = await preflightResolvedArtworkUnit(unit, source, input.target);
+        const checked = await preflightArtworkOperation(state, unit, source, input.target);
         const blockers = [...checked.blockers];
         if (unit.artwork) blockers.push('图稿已保存；无需批量重做，请核对图稿或只重合成效果图');
         const group = sharedArtworkForUnit(state, unit.id);
-        if (input.target === 'mockup' && group) for (const memberId of group.unitIds) {
-          const member = state.units.find(item => item.id === memberId)!;
-          const memberCheck = await preflightResolvedArtworkUnit(member, source, 'mockup');
-          blockers.push(...memberCheck.blockers.map(message => `${member.garmentLabel}/${member.placement?.key ?? ''}：${message}`));
-        }
-        results.push({ unitId: unit.id, blockers: [...new Set(blockers)], garmentIssue: checked.garmentIssue, inputs: checked.contract.inputs });
+        results.push({ unitId: unit.id, blockers: [...new Set(blockers)], garmentIssue: checked.garmentIssue, inputs: checked.contract.inputs, calibrationUrl: checked.calibrationUrl, temporaryPlacement: checked.temporaryPlacement, garmentChecks: checked.garmentChecks });
         if (!blockers.length) enqueue.push({ unitId: unit.id, snapshot: productionArtworkSnapshot(unit, source), ...(group ? { sharedSnapshot: productionSharedSnapshot(state, unit.id) } : {}) });
       } catch (error) { results.push({ unitId: unit.id, blockers: [safeErrorText(error)] }); }
     }

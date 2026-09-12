@@ -14,7 +14,7 @@ describe('target selection before background removal', () => {
       const expected = await sharp(source).extract(selected.receipt!.bounds).ensureAlpha().raw().toBuffer();
       expect(await sharp(selected.bytes).ensureAlpha().raw().toBuffer()).toEqual(expected);
       const cutout = await removeFlatArtworkBackground(selected.bytes, { r: 255, g: 255, b: 255 });
-      await expect(validateCutoutOutput(cutout, selected.bytes)).resolves.toEqual([]);
+      await expect(validateCutoutOutput(cutout, selected.bytes)).resolves.toMatchObject({ watermarks: [], integrity: { status: 'checked' } });
       const { data } = await sharp(cutout).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
       expect(Array.from(data).filter((value, index) => index % 4 === 3 && value === 255).length).toBeGreaterThan(5000);
       if (bounds.left === 40) {

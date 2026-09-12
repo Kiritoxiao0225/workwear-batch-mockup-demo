@@ -134,3 +134,36 @@ it('previews only the requested face, independent of calibration, and never subs
   garment.views = garment.views.filter(view => view.face === 'front');
   expect(productionGarmentPreviewCrop(garment, { key: 'back' })).toBeNull();
 });
+
+describe('B4 finite garment colour aliases', () => {
+  const catalog = [styleFixture('JSH-JSD33', ['藏青', '深蓝', '宝蓝', '冰蓝', '淡蓝']), styleFixture('B01SD', ['米白', '黑色'], 1)];
+  const choose = (text: string, garmentLabel = 'JSH-JSD33', colorText = '', all = catalog) => matchProductionGarment(
+    { ...taskReviewFixture()[0].source, requirementText: text, productStyleText: '' },
+    { garmentLabel, productCode: null, garmentRequest: { styleCode: '', colorText, sizeText: '' } }, all);
+  it.each(['藏青', '藏青色'])('maps explicit %s and excludes the size token', color => {
+    for (const size of ['L', 'XL', '2XL', 'XXXL']) {
+      expect(choose(`货号:JSH-JSD33-${color}-${size} 左胸：Logo改成白色`)).toMatchObject({ selection: 'exact', item: { colorName: '藏青' } });
+    }
+  });
+  it.each(['深蓝', '宝蓝', '冰蓝', '淡蓝'])('does not collapse %s into navy', color => {
+    expect(choose(`JSH-JSD33-${color}色-XL`)).toMatchObject({ selection: 'exact', item: { colorName: color } });
+    expect(choose(`JSH-JSD33-${color}色-XL`, 'JSH-JSD33', '', [styleFixture('JSH-JSD33', ['藏青'])]).item).toBeNull();
+  });
+  it('prefers a literal specific colour when both spellings exist', () => {
+    const both = [styleFixture('JSH-JSD33', ['藏青', '藏青色'])];
+    expect(choose('JSH-JSD33-藏青色-XL', 'JSH-JSD33', '', both)).toMatchObject({ selection: 'exact', item: { colorName: '藏青色' } });
+    expect(choose('JSH-JSD33-藏青-XL', 'JSH-JSD33', '', both)).toMatchObject({ selection: 'exact', item: { colorName: '藏青' } });
+  });
+  it('scopes multiple styles/colours and does not accept a Logo-only colour', () => {
+    const text = 'JSH-JSD33-藏青色-XL、JSH-JSD33-宝蓝-L、B01SD-米白-L\n左胸：logo用冰蓝色';
+    expect(choose(text, 'JSH-JSD33 藏青', '藏青').item?.colorName).toBe('藏青');
+    expect(choose(text, 'JSH-JSD33 宝蓝').item?.colorName).toBe('宝蓝');
+    expect(choose(text, 'B01SD 米白').item?.colorName).toBe('米白');
+    expect(choose(text).item).toBeNull();
+    expect(choose('JSH-JSD33-XL\n左胸：Logo藏青色', 'JSH-JSD33', '藏青色').item).toBeNull();
+  });
+  it('keeps the existing generic multi-colour provisional rule', () => {
+    expect(choose('JSH-JSD33-蓝色-XL')).toMatchObject({ selection: 'provisional' });
+    expect(choose('JSH-JSD33-红色-XL', 'JSH-JSD33', '', [styleFixture('JSH-JSD33', ['红色', '酒红'])])).toMatchObject({ selection: 'provisional' });
+  });
+});

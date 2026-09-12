@@ -33,3 +33,11 @@ it.each(['输出纯白背景（#FFFFFF）的 PNG', '背景为纯白色 #FFFFFF',
   expect(result).toContain('保留白色文字、橙色笔画'); expect(result).toContain('禁止白字变深色');
   expect(result).not.toContain(ending); expect(artworkSeparationPrompt(result)).toBe(result);
 });
+
+it('whole-image background preservation remains idempotent instead of reintroducing a removable staging canvas', () => {
+  const previous = artworkSeparationPrompt('保留完整素材，纯白背景输出');
+  const resolved = artworkSeparationPrompt(previous, true);
+  expect(resolved).not.toContain('【前景与临时底色】');
+  expect(resolved).toContain('【整图背景保留】');
+  expect(artworkSeparationPrompt(resolved)).toBe(resolved);
+});

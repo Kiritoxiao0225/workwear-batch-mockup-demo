@@ -107,8 +107,9 @@ export function CatalogLibraryClient() {
   }
   useEffect(() => {
     if (!user) return;
-    const variantId = new URLSearchParams(window.location.search).get('variantId');
-    const timer = setTimeout(() => { if (variantId) void openDetail(variantId); }, 0);
+    const params = new URLSearchParams(window.location.search);
+    const variantId = params.get('variantId'), assetVersionId = params.get('assetVersionId') ?? undefined;
+    const timer = setTimeout(() => { if (variantId) void openDetail(variantId, assetVersionId); }, 0);
     return () => clearTimeout(timer);
     // The link opens once after authentication; later modal changes stay local.
     // eslint-disable-next-line react-hooks/exhaustive-deps

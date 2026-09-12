@@ -61,7 +61,7 @@ function renderPixels(version: ProductionMockupVersion, units: ProductionUnit[],
  * The caller must schedule persist in Next after(); delivery still awaits savedProductionRender.
  */
 export async function prepareProductionPreview(version: ProductionMockupVersion, originalUnits: ProductionUnit[]) {
-  const units = await productionPreviewUnits(originalUnits);
+  const units = await productionPreviewUnits(originalUnits, version);
   const hash = await renderFingerprint(version, units);
   const hit = await catalogDatabase().query(`SELECT c.file_id,EXISTS(
     SELECT 1 FROM production_renders r WHERE r.state_key=$2 AND r.version_id=$3 AND r.input_hash=c.input_hash AND r.file_id=c.file_id
@@ -81,7 +81,7 @@ export async function prepareProductionPreview(version: ProductionMockupVersion,
 
 /** Durable input cache plus a short renewable claim; rendering never holds a state/database lock. */
 export async function savedProductionRender(version: ProductionMockupVersion, originalUnits: ProductionUnit[], prepared?: { hash: string; bytes: Buffer }) {
-  const units = await productionPreviewUnits(originalUnits);
+  const units = await productionPreviewUnits(originalUnits, version);
   const hash = await renderFingerprint(version, units);
   const owner = randomUUID();
   const operationKey = `render:${hash}`;

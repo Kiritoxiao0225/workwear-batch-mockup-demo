@@ -1,4 +1,5 @@
 import sharp from 'sharp';
+import type { ArtworkBackgroundContract } from '@/lib/artwork-background-contract';
 
 export type ArtworkBadgeRegion = { x: number; y: number; radius: number };
 
@@ -62,7 +63,9 @@ export async function detectArtworkBadges(bytes: Buffer): Promise<ArtworkBadgeRe
 }
 
 /** Both providers use the original pixels inside a verified badge; never paint invented white. */
-export async function protectArtworkBadges(source: Buffer, result: Buffer) {
+export async function protectArtworkBadges(source: Buffer, result: Buffer, background?: ArtworkBackgroundContract) {
+  // Explicit all-background removal must not be undone by the historical badge heuristic.
+  if (background?.scope === 'all-background' || background?.scope === 'preserve') return { bytes: result, regions: [] as ArtworkBadgeRegion[], restoredPixels: 0 };
   const regions = await detectArtworkBadges(source);
   if (!regions.length) return { bytes: result, regions, restoredPixels: 0 };
   const [original, cutout] = await Promise.all([

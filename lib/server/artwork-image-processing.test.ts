@@ -134,7 +134,9 @@ describe('flat artwork preprocessing', () => {
     };
 
     expect(rgbaAt(0, 0)).toEqual([0, 0, 0, 0]);
-    expect(rgbaAt(0, 7)).toEqual([0, 0, 0, 0]);
+    // An isolated one-pixel mark is not proven noise. Enhancement must retain its alpha.
+    expect(rgbaAt(0, 7)[3]).toBe(255);
+    for (let i = 3; i < data.length; i += 4) expect(data[i]).toBe(maskPixels[i]);
     expect(rgbaAt(3, 3)).toEqual([foreground.r, foreground.g, foreground.b, 255]);
     expect(rgbaAt(2, 3)[3]).toBe(128);
     expect(rgbaAt(2, 3)[0]).toBeCloseTo(foreground.r, -1);
@@ -381,5 +383,44 @@ describe('independent foreground preservation', () => {
     expect(await missingArtworkForegroundRegions(source, belowThreshold, white)).toEqual([
       { left: 1, top: 1, width: 5, height: 2 },
     ]);
+  });
+});
+
+describe('background field regression without damaging original alpha', () => {
+  it('removes the actual grey wordmark board while preserving every bright white glyph core and RGB', async () => {
+    const bytes = await readFile('public/task-review-originals/row2-5.png');
+    const original = await sharp(bytes).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const profile = await inspectArtworkSource(bytes);
+    const output = await sharp(await removeFlatArtworkBackground(bytes, profile.backgroundColor!)).ensureAlpha().raw().toBuffer();
+    let white = 0, kept = 0, background = 0, cleared = 0;
+    for (let y = 0; y < original.info.height; y++) for (let x = 0; x < original.info.width; x++) {
+      const i = (y * original.info.width + x) * 4, edge = (y * original.info.width + 1) * 4;
+      // The actual fixture's far edges contain only its neutral grey ramp.
+      if ([0, 1, 2].every(c => Math.abs(original.data[i + c] - original.data[edge + c]) <= 3)) {
+        background++; if (output[i + 3] <= 8) cleared++;
+      }
+      if ([0, 1, 2].every(c => original.data[i + c] >= 250)) { white++; if (output[i + 3] >= 240) kept++; }
+      for (let c = 0; c < 3; c++) expect(output[i + c]).toBe(original.data[i + c]);
+    }
+    expect(white).toBe(245); expect(kept).toBe(white);
+    expect(background).toBe(7098); expect(cleared / background).toBeGreaterThan(.999);
+    const report = await alphaMaskReport(await sharp(output, { raw: { width: 147, height: 64, channels: 4 } }).png().toBuffer());
+    expect(report.transparentBorderRatio).toBe(1); expect(report.coreOpaqueAmongVisible).toBeGreaterThan(.7);
+  });
+
+  it('keeps the real green canvas cutout pixels identical to the pre-gradient implementation', async () => {
+    const { createHash } = await import('node:crypto');
+    const source = await readFile('public/task-review-originals/row1-1.png');
+    const profile = await inspectArtworkSource(source);
+    const result = await sharp(await removeFlatArtworkBackground(source, profile.backgroundColor!)).ensureAlpha().raw().toBuffer();
+    expect(createHash('sha256').update(result).digest('hex')).toBe('0ed2b3af94d3d02eec50d68e62c7dbcb8215b4cd8f43c110c751153a221f9796');
+  });
+
+  it('preserves negative space, tiny marks and every existing alpha value during mask transfer', async () => {
+    const source = Buffer.alloc(64 * 64 * 4);
+    for (let p = 0; p < 64 * 64; p++) { source[p * 4] = 240; source[p * 4 + 1] = 20; source[p * 4 + 2] = 30; source[p * 4 + 3] = p % 256; }
+    const png = await sharp(source, { raw: { width: 64, height: 64, channels: 4 } }).png().toBuffer();
+    const output = await sharp(await applyArtworkAlphaMask(png, png, undefined, true)).ensureAlpha().raw().toBuffer();
+    for (let i = 3; i < source.length; i += 4) expect(output[i]).toBe(source[i]);
   });
 });

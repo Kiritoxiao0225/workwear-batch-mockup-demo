@@ -5,14 +5,14 @@ import { useEffect, useState } from 'react';
 import type { ProductionMockupVersion, ProductionUnit } from '@/lib/wps-production';
 import { WPS_COMPOSITOR_VERSION } from '@/lib/confirmation-frame';
 import { useProjectSession } from '@/components/project-session';
-import { productionPreviewRevision, productionPreviewCalibrationKey } from '@/lib/production-preview';
+import { productionPreviewRevision, productionPreviewCalibrationKey, productionPreviewProgress, garmentCalibrationUrl } from '@/lib/production-preview';
 import { MISSING_BODY_SCALE_MESSAGE } from '@/lib/production-sizing';
 import { readProductionPreview } from '@/lib/client/production-preview-queue';
 
 export function WpsMockupPreview({ version, units, open, adjust, disabled, paused, composing }: {
   version: ProductionMockupVersion; units: ProductionUnit[];
   revision?: number;
-  open: (preview: { url: string; title: string }) => void;
+  open: (preview: { url: string; title: string; kind: 'customer' }) => void;
   adjust: () => void;
   disabled?: boolean;
   paused?: boolean;
@@ -20,7 +20,7 @@ export function WpsMockupPreview({ version, units, open, adjust, disabled, pause
 }) {
   const session = useProjectSession();
   const [retry, setRetry] = useState(0);
-  const output = version.output?.compositorVersion === WPS_COMPOSITOR_VERSION ? version.output : null;
+  const output = version.output?.compositorVersion === WPS_COMPOSITOR_VERSION && version.output.composeFingerprint === version.composeFingerprint ? version.output : null;
   const previewUrl = `/api/catalog/production-preview?versionId=${encodeURIComponent(version.id)}&revision=${encodeURIComponent(productionPreviewRevision(version, units))}&calibration=${encodeURIComponent(productionPreviewCalibrationKey(units))}&retry=${retry}`;
   const url = `${previewUrl}&size=card`;
   const fullUrl = output?.url ?? previewUrl;
@@ -61,20 +61,19 @@ export function WpsMockupPreview({ version, units, open, adjust, disabled, pause
   const failed = failure?.key === previewKey && !current ? failure : null;
   const notice = paused ? '位置调整完成后更新预览' : failed ? visible ? '预览更新失败 · 当前显示上一版' : '预览读取失败' : !current
     ? visible ? '正在更新 · 当前显示上一版' : '效果图更新中…' : composing ? '预览已更新，高清客户图保存中…' : null;
-  const previewed = units.filter(unit => unit.artwork && unit.placement).length;
   const missingPosition = units.some(unit => unit.artwork && !unit.placement);
   return <div className="wps-framed-preview">
     {!session.initialized ? <div className="wps-image-notice" role="status">正在读取工作台登录状态…</div>
       : !session.user ? <div className="wps-image-notice"><strong>工作台连接暂不可用</strong><p>已保存的制作内容仍保留。</p><button type="button" onClick={() => void session.refresh()}>重新连接</button></div>
       : <>
-        <button className="wps-output-preview" aria-label={`放大查看${title}`} disabled={!current || paused} type="button" onClick={() => open({ url: fullUrl, title })}>
+        <button className="wps-output-preview" aria-label={`放大查看${title}`} disabled={!current || paused} type="button" onClick={() => open({ url: fullUrl, title, kind: 'customer' })}>
           {visible && <Image alt={title} fill sizes="400px" src={visible.objectUrl} unoptimized />}
           {notice && <span className="wps-preview-status" role="status">{notice}</span>}
         </button>
-        {failed && <div role="alert"><p>{failed.message}</p><p>已保存的图案和制作状态仍保留。</p>{failed.message.includes(MISSING_BODY_SCALE_MESSAGE) && <a href="/products">到素材库核对腋点</a>}<button type="button" onClick={() => setRetry(value => value + 1)}>重新读取预览</button></div>}
+        {failed && <div role="alert"><p>{failed.message}</p><p>已保存的图案和制作状态仍保留。</p>{failed.message.includes(MISSING_BODY_SCALE_MESSAGE) && <span>{units.filter((unit, index) => units.findIndex(other => garmentCalibrationUrl(other) === garmentCalibrationUrl(unit)) === index).map(unit => <a key={unit.id} href={garmentCalibrationUrl(unit)}>核对{unit.garment?.colorName ?? unit.garmentLabel}的{unit.placement?.key === 'back' ? '背面' : '正面'}腋点 </a>)}</span>}<button type="button" onClick={() => setRetry(value => value + 1)}>重新读取预览</button></div>}
       </>}
     <small>点击图片放大查看</small>
     <button className="wps-position-adjust" type="button" disabled={disabled} onClick={adjust}>调整位置</button>
-    {!output && <small>{previewed}/{units.length} 个图案已上衣 · 预览，未定稿{missingPosition && <><br/>部分图案尚未选择印花位置</>}</small>}
+    {!output && <small>{productionPreviewProgress(units, current, !!failed)} · 预览，未定稿{missingPosition && <><br/>部分图案尚未选择印花位置</>}</small>}
   </div>;
 }

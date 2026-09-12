@@ -3,6 +3,7 @@ import type { RecoveryAction } from './artwork-reliability';
 export type DiagnosticUnit = {
   id: string; garmentLabel: string; placement: string; state: string; analysisCurrent: boolean;
   artwork: { url: string | null; sha256: string; confirmed: boolean } | null;
+  calibrationUrl?: string; temporaryPlacement?: boolean;
   blockers: string[]; garmentIssue: string | null; inputs: Array<{ sourceLabel: string; roles: string[] }>;
   job: { id: string; status: string; message: string; error: string | null; failedCutoutKey?: string;
     recovery: { action: RecoveryAction; label: string; mayCharge: boolean; reason: string };

@@ -1,4 +1,6 @@
 'use client';
+import { WpsArtworkWarnings } from './wps-artwork-warnings';
+import { productionReadinessNotice } from '@/lib/production-readiness-notice';
 import { WpsFontReference } from './wps-font-reference';
 import { WpsArtworkPreview } from './wps-artwork-preview';
 import { useState, type ReactNode } from 'react';
@@ -54,7 +56,7 @@ export function WpsSharedArtworks({ state, recordId, busy, make, edit, preview, 
       const reason = members.map(unit => busy(unit.id)).find(Boolean);
       const status = sharedArtworkStatus(state, group);
       const operation = members.map(member => feedback(member.id)).find(item => item && item.status !== 'saved') ?? feedback(group.sourceUnitId);
-      const generationError = error(group.sourceUnitId);
+      const generationError = error(group.sourceUnitId) || source.error;
       const working = progress(group.sourceUnitId);
       const names = [...new Set(members.map(unit => unit.garmentLabel))];
       const content = renderUnit(unit, true);
@@ -82,6 +84,12 @@ export function WpsSharedArtworks({ state, recordId, busy, make, edit, preview, 
             <strong>{operation?.status === 'unknown' ? '本次操作结果待核实' : reason || working || (version ? status.complete ? `${shared ? '共用' : ''}图案已确认` : `图稿已保存 · v${version.number}` : `待制作${shared ? '共用' : ''}图案`)}</strong>
             <span>{operation?.status === 'unknown' ? '上次读取：' : ''}{status.summary}</span>
           </div>
+          {unit.artwork && !members.some(member => member.artwork?.validation.sha256 === unit.artwork!.validation.sha256) && <div aria-label="尚未应用的最新源稿核对">
+            <p className="wps-shared-next">最新保存的源稿尚未应用到以下位置；源稿和各位置当前图稿分别核对。</p>
+            <WpsArtworkWarnings unit={unit} preview={preview} />
+          </div>}
+          {members.filter(member => member.artwork).map(member => <WpsArtworkWarnings key={member.id} unit={member} fixed={sharedArtworkFixed(state, member.id)} preview={preview} />)}
+          {members.map(member => productionReadinessNotice(member, state))}
           {operation && <div className={`wps-shared-operation ${operation.status}`} role={operation.status === 'error' || operation.status === 'unknown' ? 'alert' : 'status'}>
             <p>{operation.message}</p>
             {['error', 'unknown'].includes(operation.status) && <button type="button" onClick={() => void refresh(members.find(member => feedback(member.id) === operation)?.id ?? group.sourceUnitId)}>重新检查状态</button>}
@@ -102,9 +110,9 @@ export function WpsSharedArtworks({ state, recordId, busy, make, edit, preview, 
         </div>
       </article>;
     })}
-    {standalone.map(unit => { const content = renderUnit(unit); return <article className="wps-shared-design wps-standalone-design" key={unit.id}>
-      <div className="wps-requirement-cell"><small className="wps-standalone-label">{unit.garmentLabel} · 单独制作</small>{content.requirements}</div>
-      <div className="wps-artwork-cell">{content.artwork}</div>
+    {standalone.map(unit => { const content = renderUnit(unit); const notice = productionReadinessNotice(unit, state); return <article className="wps-shared-design wps-standalone-design" key={unit.id}>
+      <div className="wps-requirement-cell"><small className="wps-standalone-label">{unit.garmentLabel} · 单独制作</small>{content.requirements}{notice}</div>
+      <div className="wps-artwork-cell"><WpsArtworkWarnings unit={unit} fixed={sharedArtworkFixed(state, unit.id)} preview={preview} />{content.artwork}</div>
     </article>; })}
   </section>;
 }

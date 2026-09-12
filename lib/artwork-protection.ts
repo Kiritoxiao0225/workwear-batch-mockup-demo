@@ -1,12 +1,15 @@
+import { artworkBackgroundContract, type ArtworkBackgroundContract, type ArtworkBackgroundInput } from './artwork-background-contract';
+
 /** Explicit foreground preservation, separate from generic background removal. */
 export const ARTWORK_PROTECTION_VERSION = 'explicit-panel-protection-v1';
-export type ArtworkProtectionPolicy = { version: typeof ARTWORK_PROTECTION_VERSION; keepRedPanels: boolean };
+export type ArtworkProtectionPolicy = { version: typeof ARTWORK_PROTECTION_VERSION; keepRedPanels: boolean; background?: ArtworkBackgroundContract };
 export type PixelRegion = { left: number; top: number; width: number; height: number };
-export function artworkProtectionPolicy(instruction: string, layoutNote = ''): ArtworkProtectionPolicy {
+export function artworkProtectionPolicy(instruction: string, layoutNote = '', context: Omit<ArtworkBackgroundInput, 'instruction' | 'layoutNote'> = {}): ArtworkProtectionPolicy {
   const clauses = `${instruction}\n${layoutNote}`.replace(/不要去掉|不得去掉|不去掉/gu, '保留').split(/[，,。；;\n]/u);
   const keepRedPanels = clauses.some(clause => /(?:保留|保持|保护|不要去掉|不去掉|不得去掉).{0,24}(?:红底|红色底|红色.*(?:底形|底块|底板|背景))|(?:红底|红色底|红色.*(?:底形|底块|底板|背景)).{0,24}(?:保留|保持|保护|不去掉)/u.test(clause)
     && !/(?:不保留|不要保留|无需保留|去掉红|删除红)/u.test(clause));
-  return { version: ARTWORK_PROTECTION_VERSION, keepRedPanels };
+  const background = artworkBackgroundContract({ ...context, instruction, layoutNote });
+  return { version: ARTWORK_PROTECTION_VERSION, keepRedPanels, ...(background.scope === 'legacy' ? {} : { background }) };
 }
 /** Detect only large, closed, axis-aligned red panels. Never guess arbitrary semantic regions. */
 export function redPanelRegions(rgba: Uint8Array, width: number, height: number): PixelRegion[] {

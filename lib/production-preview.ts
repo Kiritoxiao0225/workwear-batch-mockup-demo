@@ -1,6 +1,6 @@
 import type { ArtworkValidation, ProductionMockupVersion, ProductionPlacement, ProductionUnit, WpsProductionState } from '@/lib/wps-production';
 import { MOCKUP_SIZE_POLICY, MOCKUP_BODY_WIDTH_CM, printSizeCm, GarmentBodyScaleError } from './production-sizing';
-import { catalogPositionKey, productionPlacementGeometry, type GarmentBinding } from '@/lib/production-garment';
+import { catalogPositionKey, garmentPlacementIssue, productionPlacementGeometry, type GarmentBinding } from '@/lib/production-garment';
 import { artworkBlockingAmbiguities, artworkProcessingRoute } from '@/lib/task-review-analysis';
 import { WPS_COMPOSITOR_VERSION } from './confirmation-frame';
 
@@ -78,6 +78,45 @@ export function taskPlacementAnchor(unit: ProductionUnit) {
   };
   const [centerX, centerY] = placement.key === 'back' && placement.catalogPosition === 'upperBack' ? [0.5, 0.22] : centers[placement.key];
   return { centerX, centerY };
+}
+/** A saved/confirmed version is not a licence to re-position its members. */
+export function productionPreviewFixed(unit: ProductionUnit, versions: ProductionMockupVersion[] = []) {
+  return !!unit.gateA || versions.some(version => version.unitIds.includes(unit.id) && !!(version.finalConfirmation || version.output));
+}
+
+export function garmentCalibrationUrl(unit: Pick<ProductionUnit, 'garment' | 'placement'>) {
+  if (!unit.garment) return '/products';
+  const params = new URLSearchParams({ variantId: unit.garment.variantId, assetVersionId: unit.garment.assetVersionId,
+    face: unit.placement?.key === 'back' ? 'back' : 'front' });
+  return `/products?${params}`;
+}
+
+/** Shared by diagnostics, preflight and the renderer. No state, bytes or approvals
+ * are written here. Before artwork exists, only garment prerequisites can be
+ * checked; printable bounds must wait for its real alpha content dimensions.
+ */
+export function productionPreviewReadiness(unit: ProductionUnit, options: { fixed?: boolean; dimensions?: ArtworkDimensions } = {}) {
+  const dimensions = options.dimensions ?? unit.artwork?.validation;
+  const temporaryPlacement = !!(unit.garment && unit.placement && !unit.placement.manual && !unit.gateA && !options.fixed);
+  let placement = temporaryPlacement ? { ...unit.placement!, sizePolicy: MOCKUP_SIZE_POLICY } : unit.placement;
+  let garmentIssue = garmentPlacementIssue(unit.garment, placement, { temporaryPosition: temporaryPlacement });
+  if (!garmentIssue && dimensions && placement && unit.garment) {
+    try {
+      if (temporaryPlacement) placement = initialTaskPlacement(unit, dimensions);
+      productionPlacementGeometry(unit.garment, placement, artworkAspectRatio(dimensions));
+    } catch (error) { garmentIssue = error instanceof Error ? error.message : '无法计算当前图稿的上衣位置，请人工核对'; }
+  }
+  const artworkIssue = !unit.artwork ? '尚无已保存图稿；可先独立制作图案' : !unit.artwork.validation.valid
+    ? '当前图稿文件未通过有效性检查，请核对或重新保存图稿' : null;
+  return { garmentIssue, artworkIssue, garmentReady: !garmentIssue, previewReady: !garmentIssue && !artworkIssue,
+    // A missing artwork never receives fabricated dimensions or a candidate width.
+    placement, temporaryPlacement, calibrationUrl: garmentCalibrationUrl(unit) };
+}
+
+/** A file attached to a position is not proof of a successfully rendered preview. */
+export function productionPreviewProgress(units: ProductionUnit[], current: boolean, failed: boolean) {
+  const applied = units.filter(unit => unit.artwork && unit.placement).length;
+  return `${applied}/${units.length} 个图案已应用 · ${failed ? '预览失败' : current ? '预览已成功' : '预览尚未成功'}`;
 }
 export function placementPreview(garment: GarmentBinding, placement: ProductionPlacement, validation: ArtworkDimensions) {
   return productionPlacementGeometry(garment, placement, artworkAspectRatio(validation));

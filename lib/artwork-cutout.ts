@@ -7,9 +7,18 @@ export type ArtworkCutoutDecision = {
   estimatedCredits: number | null;
   version: 'artwork-cutout-v1' | 'artwork-cutout-v2' | 'artwork-cutout-v3' | typeof ARTWORK_CUTOUT_VERSION;
 };
+export type ArtworkCutoutIntegrity = { version: string; status: 'checked' | 'uncertain' | 'mask-only'; basis: string; warning?: string };
 export type ArtworkCutoutReceipt = ArtworkCutoutDecision & {
   protection?: import('./artwork-protection').ArtworkProtectionPolicy;
   reusedFrom?: string;
+  /** Local validation version is deliberately separate from the paid submission key. */
+  localValidationVersion?: string;
+  integrityCheck?: ArtworkCutoutIntegrity;
+  localValidationOnly?: boolean;
+  providerOutputUrl?: string;
+  diagnostics?: { stage: 'provider-mask' | 'protection' | 'final-mask' | 'completeness' | 'completed';
+    rawMaskError?: string; rawMask?: import('./server/artwork-image-processing').ArtworkAlphaMaskReport;
+    acceptance?: 'standard' | 'explicit-full-bleed-panel' };
   jobKey: string;
   mode: ArtworkCutoutMode;
   sourceSha256: string;
@@ -28,7 +37,7 @@ export type ArtworkCutoutResult = {
   receipt: ArtworkCutoutReceipt;
   url?: string;
   error?: string;
-  /** Rejected provider output is view-only; only completed url may become artwork. */
+  /** Failed or uncertain-integrity output remains available as a candidate. A completed URL is not content approval. */
   candidate?: { url: string; width: number; height: number; missingRegions: ArtworkCutoutRegion[] };
 };
 export const CUTOUT_ROUTE_LABELS = { reuse: '透明图复用', standard: '标准抠图 · 本地', volcano: '标准抠图 · 火山', meitu: '美图精细' };

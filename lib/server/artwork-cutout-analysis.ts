@@ -1,21 +1,24 @@
 import sharp from 'sharp';
+import { ARTWORK_INTEGRITY_VERSION, inspectArtworkCompleteness } from './artwork-foreground-integrity';
+import { assertArtworkMask, panelIntegritySource } from './artwork-panel-mask';
+import type { ArtworkProtectionPolicy } from '@/lib/artwork-protection';
 import type { ArtworkCutoutDecision, ArtworkCutoutMode } from '@/lib/artwork-cutout';
 import { ARTWORK_CUTOUT_VERSION } from '@/lib/artwork-cutout';
-import { inspectArtworkSource, alphaMaskReport, assertUsableArtworkMask, missingArtworkForegroundRegions } from './artwork-image-processing';
+import { inspectArtworkSource } from './artwork-image-processing';
 import { detectArtworkBadges } from './artwork-badge-protection';
-import type { ArtworkCutoutRegion } from '@/lib/artwork-cutout';
+import type { ArtworkCutoutRegion, ArtworkCutoutIntegrity } from '@/lib/artwork-cutout';
 import type { ArtworkWatermarkEvidence } from './artwork-content-inspection';
 
 /** Simple holes need segmentation; fine foreground details need the precision route.
  * Explicit standard mode keeps Volcano available even for detailed artwork. */
-export async function analyzeArtworkCutout(bytes: Buffer, mode: ArtworkCutoutMode = 'auto'): Promise<ArtworkCutoutDecision> {
+export async function analyzeArtworkCutout(bytes: Buffer, mode: ArtworkCutoutMode = 'auto', protection?: ArtworkProtectionPolicy): Promise<ArtworkCutoutDecision> {
   const profile = await inspectArtworkSource(bytes);
   const decision = (route: ArtworkCutoutDecision['route'], reasons: string[]): ArtworkCutoutDecision => ({ route, reasons, estimatedCredits: route === 'volcano' ? null : route === 'meitu' ? 1 : 0, version: ARTWORK_CUTOUT_VERSION });
   if (profile.kind === 'transparent') {
-    assertUsableArtworkMask(await alphaMaskReport(bytes));
+    await assertArtworkMask(bytes, protection);
     return decision('reuse', ['已有可用透明背景，保留原图']);
   }
-  const badgeReasons = (await detectArtworkBadges(bytes)).length ? ['检测到完整圆形徽章：保护圆内原图底色与图形'] : [];
+  const badgeReasons = protection?.background?.scope !== 'all-background' && (await detectArtworkBadges(bytes)).length ? ['检测到完整圆形徽章：保护圆内原图底色与图形'] : [];
   if (mode === 'meitu') return decision('meitu', ['手动选择美图精细', ...badgeReasons]);
   const risks: string[] = [];
   const fineDetails: string[] = [];
@@ -61,28 +64,35 @@ export class ArtworkCutoutContentError extends Error {
   constructor(public missingRegions: ArtworkCutoutRegion[]) { super('抠图结果疑似丢失文字或独立图形，请对照标记区域核对'); }
 }
 
+export class ArtworkCutoutGeometryError extends Error {
+  constructor(public changedRegions: ArtworkCutoutRegion[]) { super('抠图结果新增了原透明区的可见像素，可能填充负形或增加轮廓；候选已保留，请核对'); }
+}
+
 export async function validateCutoutOutput(bytes: Buffer, source?: Buffer, options: {
   inspectWatermarks?: (source: Buffer, missing: ArtworkCutoutRegion[]) => Promise<ArtworkWatermarkEvidence[]>;
-} = {}) {
+  protection?: ArtworkProtectionPolicy;
+} = {}): Promise<{ watermarks: ArtworkWatermarkEvidence[]; integrity: ArtworkCutoutIntegrity }> {
   const meta = await sharp(bytes).metadata();
   if (meta.format !== 'png' || !meta.hasAlpha) throw new Error('结果必须为带透明通道的 PNG');
-  assertUsableArtworkMask(await alphaMaskReport(bytes));
+  await assertArtworkMask(bytes, options.protection);
   if (source) {
-    const profile = await inspectArtworkSource(source);
-    if (meta.width !== profile.width || meta.height !== profile.height) throw new Error('抠图前后画布尺寸不一致，请核对完整图案与排版');
-    if (profile.backgroundColor && profile.dominantBorderRatio >= .95 && profile.borderEdgeDensity <= .02) {
-      const missing = await missingArtworkForegroundRegions(source, bytes, profile.backgroundColor, { minimumAlpha: 64 });
-      if (missing.length) {
-        // No inference failure may turn missing customer content into an accepted result.
-        const watermarks = await options.inspectWatermarks?.(source, missing).catch(() => []) ?? [];
-        const unexplained = missing.filter(region => !watermarks.some(({ bounds }) => bounds.width * bounds.height <= profile.width * profile.height * .08
-          && bounds.left >= 0 && bounds.top >= 0 && bounds.width > 0 && bounds.height > 0
-          && bounds.left <= region.left && bounds.top <= region.top
-          && bounds.left + bounds.width >= region.left + region.width && bounds.top + bounds.height >= region.top + region.height));
-        if (unexplained.length) throw new ArtworkCutoutContentError(unexplained);
-        return watermarks;
-      }
+    const completeness = await inspectArtworkCompleteness(await panelIntegritySource(source, options.protection), bytes);
+    if (completeness.status === 'uncertain') return { watermarks: [], integrity: { version: ARTWORK_INTEGRITY_VERSION,
+      status: 'uncertain', basis: completeness.basis, warning: '当前背景无法可靠建立前景完整性证据；未认证内容完整，请对照原图与供应商候选人工核对，不自动重绘。' } };
+    if (completeness.addedRegions.length) throw new ArtworkCutoutGeometryError(completeness.addedRegions);
+    const missing = completeness.missingRegions;
+    if (missing.length) {
+      // A missing customer component is never excused by a failed/uncertain model call.
+      const watermarks = await options.inspectWatermarks?.(source, missing).catch(() => []) ?? [];
+      const unexplained = missing.filter(region => !watermarks.some(({ bounds }) => bounds.width * bounds.height <= meta.width! * meta.height! * .08
+        && bounds.left >= 0 && bounds.top >= 0 && bounds.width > 0 && bounds.height > 0
+        && bounds.left + bounds.width <= meta.width! && bounds.top + bounds.height <= meta.height!
+        && bounds.left <= region.left && bounds.top <= region.top
+        && bounds.left + bounds.width >= region.left + region.width && bounds.top + bounds.height >= region.top + region.height));
+      if (unexplained.length) throw new ArtworkCutoutContentError(unexplained);
+      return { watermarks, integrity: { version: ARTWORK_INTEGRITY_VERSION, status: 'checked', basis: completeness.basis } };
     }
+    return { watermarks: [], integrity: { version: ARTWORK_INTEGRITY_VERSION, status: 'checked', basis: completeness.basis } };
   }
-  return [];
+  return { watermarks: [], integrity: { version: ARTWORK_INTEGRITY_VERSION, status: 'mask-only', basis: 'no-source' } };
 }

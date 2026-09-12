@@ -1566,3 +1566,13 @@ button.catalog-card-image { width: 100%; padding: 0; border: 0; cursor: zoom-in;
   font-weight: 400 800;
   font-display: block;
 }
+
+/* Read-only full-image viewing controls; the original image stays unoptimized. */
+.wps-material-viewer { position: absolute; inset: 0; }
+.wps-material-viewer-controls { position: absolute; z-index: 2; top: 8px; right: 8px; padding: 6px 10px; border: 1px solid #cbd4ce; border-radius: 6px; background: rgb(255 255 255 / 95%); color: #24372b; }
+.wps-material-viewer-controls small { display: block; font-size: 11px; }
+.wps-current-artwork-warnings { margin: 10px 0; padding: 10px 12px; border: 1px solid #bdc9c0; border-radius: 6px; background: #fafbf9; font-size: 13px; overflow-wrap: anywhere; }
+.wps-current-artwork-warnings p { margin: 7px 0; }
+.wps-current-artwork-warnings [data-review-kind="difference"] { color: #a82f26; }
+.wps-current-artwork-warnings [data-review-kind="uncertain"], .wps-current-artwork-warnings [data-review-kind="unavailable"] { color: #82500b; }
+.wps-current-artwork-warnings small { display: block; margin-top: 8px; }

@@ -9,8 +9,8 @@ import sharp, { type OverlayOptions } from 'sharp';
 import { productionPlacementGeometry } from '@/lib/production-garment';
 import { verifyGarmentBinding } from '@/lib/server/wps-production-garments';
 import { readCatalogFile } from '@/lib/server/catalog-files';
-import { initialTaskPlacement } from '@/lib/production-preview';
-import { withGarmentBodyScale } from '@/lib/server/wps-garment-sizing';
+import { productionPreviewFixed } from '@/lib/production-preview';
+import { prepareProductionPreviewUnit } from './production-preview-readiness';
 import { renderConfirmationFrame } from '@/lib/server/confirmation-frame';
 import { CONFIRMATION_FRAME, CONFIRMATION_OUTPUT } from '@/lib/confirmation-frame';
 import type {
@@ -92,18 +92,13 @@ export async function validateProductionArtwork(url: string, now = new Date()): 
 
 // Preview and delivery use the same pixels. Only final delivery checks both confirmations.
 // Draft rendering uses the same initial position as the editor and never saves or confirms it.
-export async function productionPreviewUnits(units: ProductionUnit[]) {
-  const candidates = await Promise.all(units.filter(unit => unit.artwork && unit.placement).map(async unit => {
-    if (unit.gateA) return unit;
-    if (!unit.garment) throw new Error(`定制单元 ${unit.id} 尚未选择衣服`);
-    const garment = await withGarmentBodyScale(unit.garment);
-    return { ...unit, garment, placement: initialTaskPlacement({ ...unit, garment }, unit.artwork!.validation) };
-  }));
-  return candidates;
+export async function productionPreviewUnits(units: ProductionUnit[], version?: ProductionMockupVersion) {
+  return Promise.all(units.filter(unit => unit.artwork && unit.placement).map(unit =>
+    prepareProductionPreviewUnit(unit, { fixed: productionPreviewFixed(unit, version ? [version] : []) })));
 }
 export async function renderProductionPreview(version: ProductionMockupVersion, units: ProductionUnit[]) {
   if (usesProductionCloud()) return (await savedProductionRender(version, units)).bytes;
-  return renderProductionMockup(version, await productionPreviewUnits(units));
+  return renderProductionMockup(version, await productionPreviewUnits(units, version));
 }
 
 export async function renderProductionMockup(

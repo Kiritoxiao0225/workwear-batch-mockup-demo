@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import sharp from 'sharp';
 import { describe, expect, it, vi } from 'vitest';
 import { createLegacyArtworkDraft } from '@/lib/artwork-editor';
@@ -21,6 +22,9 @@ async function setup(scores: number[] = [90, 90]) {
   const generate = vi.fn<StandardArtworkServices['generate']>(async () => ({ bytes: source, model: 'test-seedream' }));
   const inspect = vi.fn(async (): Promise<RedrawInspection> => ({ type: 'flat-logo', textReadable: true, graphicReadable: true, hasWhiteForeground: false, recognizedText: '', reasons: ['测试图为平面纯色'] }));
   const services: StandardArtworkServices = { measure, fidelity, generate, inspect,
+    locateEdit: vi.fn(async (_bytes, instruction) => ({ status: 'located' as const,
+      regions: /眼睛|嘴巴/u.test(instruction) ? [{ left: 590, top: 170, width: 320, height: 160 }]
+        : [{ left: 90, top: 490, width: 920, height: 270 }], evidence: '测试显式像素选区' })),
     inspectSource: vi.fn<StandardArtworkServices['inspectSource']>(async () => ({ version: 'artwork-source-v1', kind: 'flat-artwork', targetDescription: '独立平面 Logo', needsReconstruction: false, recognizedContent: { text: [], layout: '原排版', colors: ['红色'], structure: '平面图形' }, selection: { scope: 'full-image' }, evidence: ['图案已独立，无实物载体'], uncertainDetails: [] })), cutout: vi.fn(async () => prepared), saveReport: vi.fn(), saveImage: vi.fn(), saveGeneration: vi.fn(), resolveReferenceColor: vi.fn(async () => { throw new Error('Unexpected reference color inspection'); }), verifyEdits: vi.fn(async () => { throw new Error('Unexpected edit verification'); }),
     verifyText: vi.fn<StandardArtworkServices['verifyText']>(async (bytes, targetText) => ({ version: 'artwork-text-component-v1', outputSha256: artworkSha256(bytes), targetText,
       recognizedText: targetText, model: 'test-inspector', status: 'passed', evidence: '只有目标文字' })) };
@@ -85,11 +89,14 @@ describe('executed artwork standard', () => {
     const result = await prepareStandardArtwork({ ...t.request, instruction: '去掉牙齿内部的眼睛和嘴巴，上方添加圆弧文字“小景是牙医”',
       layoutNote: '文字排成圆弧形，置于牙齿图形上方', exactText: '小景是牙医' }, t.services);
     expect(t.generate).toHaveBeenCalledOnce();
-    expect(result.draft.graphic.sourceUrl).toBe(url(cleared));
+    const pixels = await sharp(Buffer.from(result.draft.graphic.sourceUrl.split(',')[1], 'base64')).ensureAlpha().raw().toBuffer();
+    const before = await sharp(await sample(true)).ensureAlpha().raw().toBuffer();
+    expect([...pixels.subarray((210 * 1200 + 700) * 4, (210 * 1200 + 700) * 4 + 4)]).toEqual([180, 18, 48, 255]);
+    expect(pixels.subarray(480 * 1200 * 4).equals(before.subarray(480 * 1200 * 4))).toBe(true);
     expect(result.draft.text).toMatchObject({ value: '小景是牙医', arc: { mode: 'up' } });
     expect(result.draft.extraGraphics ?? []).toHaveLength(0);
     expect(result.draft.preprocessing.routingReport).toMatchObject({ executedMethod: 'compose',
-      textComposition: { graphicRemoval: { outputSha256: artworkSha256(cleared) } } });
+      textComposition: { graphicRemoval: { outputSha256: artworkSha256(Buffer.from(result.draft.graphic.sourceUrl.split(',')[1], 'base64')) } } });
     expect(result.draft.preprocessing.routingReport?.prompt).toContain('局部删除步骤');
     expect(t.services.verifyText).not.toHaveBeenCalled();
   });
@@ -111,7 +118,7 @@ describe('executed artwork standard', () => {
       expect(t.services.verifyText).toHaveBeenCalledOnce();
       expect(t.services.saveReport).toHaveBeenCalledOnce();
     });
-  it('uses the final edited graphic for pixel warnings, not an undersized intermediate enhancement', async () => {
+  it('retains source canvas resolution for a local edit and does not claim whole-logo resolution from a larger model output', async () => {
     const t = await setup();
     const finalGraphic = await sharp(await sample(true)).resize({ width: 2400 }).png().toBuffer();
     t.generate.mockResolvedValue({ bytes: finalGraphic, model: 'test-editor' });
@@ -124,8 +131,9 @@ describe('executed artwork standard', () => {
       instruction: '删除牙齿内部眼睛和嘴巴，上方加文字“小景是牙医”', exactText: '小景是牙医' }, t.services);
     const report = result.draft.preprocessing.routingReport!;
     expect(report.repair!.requiredScale).toBeGreaterThan(1);
-    expect(report.graphic.requiredScale).toBeLessThan(1);
-    expect(report.contentReview?.warnings ?? []).toEqual([]);
+    expect(report.graphic.requiredScale).toBeGreaterThan(1);
+    expect((await sharp(Buffer.from(result.draft.graphic.sourceUrl.split(',')[1], 'base64')).metadata()).width).toBe(1200);
+    expect(report.contentReview?.warnings.some(warning => warning.includes('像素仍低于'))).toBe(true);
     expect(t.fidelity).toHaveBeenCalledOnce();
   });
   it('clears the old lettering before adding replacement text, keeping one graphic layer', async () => {
@@ -137,13 +145,15 @@ describe('executed artwork standard', () => {
       sourceSha256: artworkSha256(source), outputSha256: artworkSha256(output), model: 'test-inspector',
       checks: requirements.map(requirement => ({ requirement, status: 'passed', evidence: '指定旧字消失，其余内容保留' })) }));
     const result = await prepareStandardArtwork({ ...t.request, instruction: '将Logo下方原文字替换为“康悦”，其余图形保留', exactText: '康悦' }, t.services);
-    expect(t.generate).toHaveBeenCalledOnce();
-    expect(t.generate.mock.calls[0][0]).toContain('不制作新文字');
-    expect(result.draft.graphic.sourceUrl).toBe(url(cleared));
+    expect(t.generate).not.toHaveBeenCalled();
+    const pixels = await sharp(Buffer.from(result.draft.graphic.sourceUrl.split(',')[1], 'base64')).ensureAlpha().raw().toBuffer();
+    const before = await sharp(await sample(true)).ensureAlpha().raw().toBuffer();
+    expect(pixels.subarray(0, 480 * 1200 * 4).equals(before.subarray(0, 480 * 1200 * 4))).toBe(true);
+    expect(pixels[(600 * 1200 + 500) * 4 + 3]).toBe(0);
     expect(result.draft.text?.value).toBe('康悦');
     expect(result.draft.extraGraphics ?? []).toHaveLength(0);
     expect(result.preprocessing.modelLayoutPreserved).toBe(false);
-    expect(result.draft.preprocessing.routingReport?.textComposition).toMatchObject({ operation: 'replace', removal: { outputSha256: artworkSha256(cleared) } });
+    expect(result.draft.preprocessing.routingReport?.textComposition).toMatchObject({ operation: 'replace', removal: { outputSha256: artworkSha256(Buffer.from(result.draft.graphic.sourceUrl.split(',')[1], 'base64')) } });
     expect(t.services.verifyText).not.toHaveBeenCalled();
   });
 
@@ -157,7 +167,7 @@ describe('executed artwork standard', () => {
     const result = await prepareStandardArtwork({ ...t.request, instruction: '将原文字替换为“康悦”，使用书法字体', exactText: '康悦' }, t.services);
     expect(result.status).toBe('prepared');
     expect(result.draft.preprocessing.routingReport?.contentReview?.warnings.length).toBeGreaterThan(0);
-    expect(t.generate).toHaveBeenCalledTimes(2);
+    expect(t.generate).toHaveBeenCalledTimes(1);
     expect(t.services.verifyText).toHaveBeenCalledOnce();
     expect(t.services.saveReport).toHaveBeenCalledOnce();
   });
@@ -669,4 +679,52 @@ describe('reconstruction of artwork photographed on objects', () => {
     expect(t.services.inspectSource).not.toHaveBeenCalled(); expect(t.generate).not.toHaveBeenCalled();
     expect(result.draft.preprocessing.routingReport?.executedMethod).toBe('preserve');
   });
+});
+
+
+describe('Task A pipeline regressions', () => {
+  it('TH already-cropped source never enters removal generation and Chinese remains an independent accurate layer', async () => {
+    const t = await setup();
+    const original = await readFile('lib/server/artwork-task-a-fixtures/N-before-generation.png');
+    t.fidelity.mockImplementation(async () => ({ status: 'prepared', draft: createLegacyArtworkDraft(url(original)),
+      preprocessing: { enhancement: 'none', backgroundRemoval: 'none' } } as ArtworkPreparationResponse));
+    t.services.locateEdit = vi.fn<NonNullable<StandardArtworkServices['locateEdit']>>(async () => ({ status: 'absent', regions: [], evidence: '当前实际输入只含保留的主图形，没有下方英文' }));
+    const result = await prepareStandardArtwork({ ...t.request, image: { ...t.request.image, dataUrl: url(original) },
+      instruction: '仅将下方英文替换为通华驾校，保留TH的红色、青蓝、深蓝和白色轮廓', exactText: '通华驾校' }, t.services);
+    expect(t.generate).not.toHaveBeenCalled();
+    expect(t.services.locateEdit).toHaveBeenCalledWith(original, expect.any(String));
+    expect(result.draft.text?.value).toBe('通华驾校');
+    const resultPixels = await sharp(Buffer.from(result.draft.graphic.sourceUrl.split(',')[1], 'base64')).ensureAlpha().raw().toBuffer();
+    expect(resultPixels.equals(await sharp(original).ensureAlpha().raw().toBuffer())).toBe(true);
+    expect(result.draft.graphic.recolor.mode).toBe('original');
+  });
+  it('proven pure recolour calls neither fidelity, cutout nor generation even for a low-resolution source', async () => {
+    const t = await setup();
+    const original = await sharp(Buffer.from('<svg width="400" height="300"><path fill="#663399" fill-rule="evenodd" d="M30 30h300v200H30z M80 70h30v80H80z"/></svg>')).png().toBuffer();
+    const result = await prepareStandardArtwork({ ...t.request, image: { ...t.request.image, dataUrl: url(original) },
+      instruction: '紫色前景改为白色，保持原几何和负形' }, t.services);
+    expect(t.generate).not.toHaveBeenCalled(); expect(t.fidelity).not.toHaveBeenCalled(); expect(t.services.cutout).not.toHaveBeenCalled();
+    const a = await sharp(original).ensureAlpha().raw().toBuffer(), b = await sharp(Buffer.from(result.draft.graphic.sourceUrl.split(',')[1], 'base64')).ensureAlpha().raw().toBuffer();
+    expect(a.length).toBe(b.length);
+    for (let i = 0; i < a.length; i += 4) { expect(b[i + 3]).toBe(a[i + 3]); if (a[i + 3]) expect([...b.subarray(i, i + 3)]).toEqual([255, 255, 255]); }
+  });
+  it('uncertain edit location preserves the current candidate and never calls image generation', async () => {
+    const t = await setup(); t.services.locateEdit = vi.fn<NonNullable<StandardArtworkServices['locateEdit']>>(async () => ({ status: 'uncertain', regions: [], evidence: '无法安全隔离' }));
+    const error = await prepareStandardArtwork({ ...t.request, instruction: '将下方旧字替换为通华驾校', exactText: '通华驾校' }, t.services).catch(error => error);
+    expect(error).toBeInstanceOf(NativeArtworkCandidateError); expect(error.candidate.url).toBe(url(await sample(true)));
+    expect(t.generate).not.toHaveBeenCalled(); expect(t.services.saveReport).not.toHaveBeenCalled();
+  });
+  it('wholeImage generation retains actual opaque background without calling cutout or falsely claiming alpha acceptance', async () => {
+    const t = await setup();
+    const result = await prepareStandardArtwork({ ...t.request, sourceScope: 'wholeImage', artworkMethod: 'generate',
+      instruction: '重新设计完整图片，保留整张画布', generationPrompt: '重新设计完整图案，保留完整背景' }, t.services);
+    expect(t.generate).toHaveBeenCalledOnce(); expect(t.services.cutout).not.toHaveBeenCalled();
+    expect(result.preprocessing.backgroundRemoval).toBe('none');
+    const bytes = Buffer.from(result.draft.graphic.sourceUrl.split(',')[1], 'base64');
+    const actualPixels = await sharp(bytes).ensureAlpha().raw().toBuffer();
+    const sourcePixels = await sharp(t.source).ensureAlpha().raw().toBuffer();
+    expect(actualPixels.length).toBe(sourcePixels.length);
+    expect(actualPixels.equals(sourcePixels)).toBe(true);
+  });
+
 });

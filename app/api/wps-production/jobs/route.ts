@@ -1,5 +1,5 @@
 import { assertActiveSourceStatus } from '@/lib/artwork-reliability';
-import { preflightResolvedArtworkUnit, verifyArtworkInputFiles, verifyLiveArtworkSource } from '@/lib/server/artwork-preflight';
+import { preflightArtworkOperation, verifyArtworkInputFiles, verifyLiveArtworkSource } from '@/lib/server/artwork-preflight';
 import { currentArtworkReview } from '@/lib/artwork-review-ledger';
 import { artworkCorrectionIssues } from '@/lib/artwork-correction';
 import { readArtworkRoutingReport } from '@/lib/server/artwork-routing-records';
@@ -71,7 +71,7 @@ export async function POST(request: Request) {
         const source = state.records.find(record => record.source.recordId === unit.sourceRecordId)!.source;
         if (source.wpsSource) assertActiveSourceStatus(source.wpsSource.status);
         await verifyLiveArtworkSource(source, verifiedSources);
-        const preflight = await preflightResolvedArtworkUnit(unit, source, body.target ?? 'artwork');
+        const preflight = await preflightArtworkOperation(state, unit, source, body.target ?? 'artwork');
         if (preflight.blockers.length) throw new Error(preflight.blockers.join('；'));
         await verifyArtworkInputFiles(source, unit, verifiedInputs);
         const issues = artworkPlanIssues(source, unit);

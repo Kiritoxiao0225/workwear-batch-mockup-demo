@@ -64,3 +64,25 @@ describe('reference identity and routing evidence', () => {
     expect(artworkReferenceIssues({ ...clarified, instruction: '使用图1完整图案，排版参考图2' }).join('；')).toContain('未完整保留该范围');
   });
 });
+
+describe('B3 per-image version plan validation', () => {
+  const requirementText = '货号:JSH-JSD33-淡蓝-L 左胸：图一图二各做一版 只要logo，下面的字都改成康悦';
+  const source = { requirementText, materials: [{ id: 'm1' }, { id: 'm2' }] };
+  it.each([1, 2])('enables the actual plan validator for 图%d版, including a historical prompt', async number => {
+    const { artworkPlanIssues } = await import('./artwork-reference');
+    const plan = { materialId: `m${number}`, referenceMaterialIds: [], instruction: `图${number}版，只要logo，下面的字改成康悦`,
+      layoutNote: '', generationPrompt: requirementText, sourceScope: 'subject', placement: { key: 'leftChest' }, textMode: 'replace', exactText: '康悦' };
+    const before = structuredClone(plan);
+    expect(artworkPlanIssues(source, plan)).toEqual([]);
+    expect(plan).toEqual(before);
+    expect(artworkPlanIssues({ ...source, materials: [] }, plan).join('；')).toContain('不存在');
+    expect(artworkPlanIssues(source, { ...plan, generationPrompt: `图${number}版，再添加图3` }).join('；')).toContain('图3');
+  });
+  it('retains joint content and requires the separately named style reference', async () => {
+    const { artworkPlanIssues } = await import('./artwork-reference');
+    const plan = { materialId: 'm1', referenceMaterialIds: [] as string[], instruction: '图一图二合在一起', layoutNote: '', sourceScope: 'subject', placement: { key: 'leftChest' } };
+    expect(artworkPlanIssues({ ...source, requirementText: '左胸：图一图二合在一起' }, plan).join('；')).toContain('图2');
+    expect(artworkPlanIssues({ ...source, requirementText: '左胸：图一图二合在一起' }, { ...plan, referenceMaterialIds: ['m2'] })).toEqual([]);
+    expect(artworkPlanIssues({ ...source, requirementText: '左胸：图1内容，图2仅风格参考' }, { ...plan, instruction: '图1内容，图2仅风格参考' }).join('；')).toContain('图2');
+  });
+});

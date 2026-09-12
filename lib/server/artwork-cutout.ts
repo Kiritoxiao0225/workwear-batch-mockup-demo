@@ -1,3 +1,6 @@
+import { ARTWORK_INTEGRITY_VERSION } from './artwork-foreground-integrity';
+import { alphaMaskReport, assertUsableArtworkMask } from './artwork-image-processing';
+import { assertArtworkMask } from './artwork-panel-mask';
 import { protectExplicitArtwork } from './artwork-explicit-protection';
 import type { ArtworkProtectionPolicy } from '@/lib/artwork-protection';
 import type { ArtworkCutoutReceipt } from '@/lib/artwork-cutout';
@@ -26,16 +29,32 @@ function errorText(error: unknown) { return error instanceof Error ? error.messa
 async function checkedProviderOutput(bytes: Buffer, job: StoredCutout, services: CutoutServices) {
   const metadata = await sharp(bytes).metadata();
   if (metadata.width && metadata.height) job.candidate = { url: inline(bytes), width: metadata.width, height: metadata.height, missingRegions: [] };
-  const source = Buffer.from(job.receipt.sourceUrl.split(',')[1], 'base64');
-  const explicit = await protectExplicitArtwork(source, bytes, job.receipt.protection);
-  const protectedResult = await protectArtworkBadges(source, explicit.bytes);
-  await validateCutoutOutput(protectedResult.bytes);
-  if (explicit.protectedPanels) job.receipt.reasons.push(`按明确要求保留 ${explicit.protectedPanels} 个完整红色矩形底形及其原字`);
-  if (job.candidate) job.candidate.url = inline(protectedResult.bytes);
-  // Retain the paid provider output before a potentially slow visual inspection.
+  // Save the raw supplier result BEFORE restoration or validation. Its identity
+  // survives even if the protected candidate fails. Existing pack() retains URLs.
+  job.receipt.providerOutputUrl = inline(bytes);
+  job.receipt.localValidationVersion = ARTWORK_INTEGRITY_VERSION;
+  job.receipt.diagnostics = { stage: 'provider-mask' };
   await saveCutoutJob(job);
+  const rawMask = await alphaMaskReport(bytes);
+  job.receipt.diagnostics.rawMask = rawMask;
+  try { assertUsableArtworkMask(rawMask); }
+  catch (error) { job.receipt.diagnostics.rawMaskError = errorText(error); }
+  const source = Buffer.from(job.receipt.sourceUrl.split(',')[1], 'base64');
+  job.receipt.diagnostics.stage = 'protection';
+  const explicit = await protectExplicitArtwork(source, bytes, job.receipt.protection);
+  const protectedResult = await protectArtworkBadges(source, explicit.bytes, job.receipt.protection?.background);
+  if (job.candidate) job.candidate.url = inline(protectedResult.bytes);
+  await saveCutoutJob(job);
+  job.receipt.diagnostics.stage = 'final-mask';
+  const mask = await assertArtworkMask(protectedResult.bytes, job.receipt.protection);
+  job.receipt.diagnostics.acceptance = mask.acceptance;
+  if (explicit.protectedPanels) job.receipt.reasons.push(`按明确要求保留 ${explicit.protectedPanels} 个红色底形及其原字，圆角外部不恢复`);
+  job.receipt.diagnostics.stage = 'completeness';
   try {
-    const watermarks = await validateCutoutOutput(protectedResult.bytes, source, { inspectWatermarks: services.inspectWatermarks });
+    const checked = await validateCutoutOutput(protectedResult.bytes, source, { inspectWatermarks: services.inspectWatermarks, protection: job.receipt.protection });
+    const { watermarks, integrity } = checked;
+    job.receipt.integrityCheck = integrity;
+    if (integrity.warning) job.receipt.reasons.push(integrity.warning);
     if (watermarks.length) {
       job.receipt.excludedWatermarks = watermarks;
       job.receipt.reasons.push(`完整性检查已排除确认的生成平台水印：${[...new Set(watermarks.map(mark => mark.text))].join('、')}`);
@@ -49,8 +68,57 @@ async function checkedProviderOutput(bytes: Buffer, job: StoredCutout, services:
     const reason = `已保护 ${protectedResult.regions.length} 个圆形徽章，圆内使用原图像素，保留底色与白色图形`;
     if (!job.receipt.reasons.includes(reason)) job.receipt.reasons.push(reason);
   }
-  job.candidate = undefined;
+  job.receipt.diagnostics.stage = 'completed';
+  if (job.receipt.integrityCheck?.status !== 'uncertain') job.candidate = undefined;
   return protectedResult.bytes;
+}
+
+function samePolicy(a?: ArtworkProtectionPolicy, b?: ArtworkProtectionPolicy) {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+
+/** Policy/integrity changes create local derivatives, not new paid submissions.
+ * Old jobs and finalized artwork remain untouched, and pending parents are queried. */
+async function localValidationResult(parent: StoredCutout, protection: ArtworkProtectionPolicy | undefined, services: CutoutServices) {
+  const key = sha(JSON.stringify([parent.receipt.jobKey, ARTWORK_INTEGRITY_VERSION, protection ?? null]));
+  const existing = await readCutoutJob(key);
+  if (existing) return queryArtworkCutout(key, services);
+  const job: StoredCutout = { status: 'pending', phase: 'ready', requestId: randomUUID(), updatedAt: new Date().toISOString(),
+    receipt: { ...parent.receipt, jobKey: key, protection, reusedFrom: parent.receipt.jobKey, localValidationOnly: true,
+      localValidationVersion: ARTWORK_INTEGRITY_VERSION, route: 'reuse', actualCredits: 0, estimatedCredits: 0,
+      cacheHit: true, outputSha256: undefined, completedAt: undefined, badgeProtection: undefined,
+      excludedWatermarks: undefined, diagnostics: undefined, integrityCheck: undefined,
+      reasons: [...parent.receipt.reasons.map(reason => `[原任务] ${reason}`), '复用同一供应商任务，仅本地按当前背景范围与完整性合同核查；不重新付费'] } };
+  await claimCutoutJob(job);
+  return queryArtworkCutout(key, services);
+}
+
+async function finishLocalValidation(job: StoredCutout, services: CutoutServices): Promise<ArtworkCutoutResult> {
+  let parent = await readCutoutJob(job.receipt.reusedFrom!);
+  if (!parent) return { ...publicResult(job), status: 'unknown', error: '原供应商任务记录缺失；不重新提交，请核对原始候选' };
+  if (!['completed', 'failed'].includes(parent.status)) {
+    const result = await queryArtworkCutout(parent.receipt.jobKey, services);
+    if (!['completed', 'failed'].includes(result.status)) return { ...publicResult(job), status: result.status, error: result.error };
+    parent = (await readCutoutJob(parent.receipt.jobKey))!;
+  }
+  const rawUrl = parent.receipt.providerOutputUrl;
+  const url = rawUrl ?? parent.candidate?.url ?? parent.url;
+  if (!url) {
+    job.status = 'failed'; job.phase = 'finished'; job.error = parent.error || '原任务没有可复核的图片；不重新提交';
+    await saveCutoutJob(job); return publicResult(job);
+  }
+  const bytes = Buffer.from(url.split(',')[1], 'base64');
+  const meta = await sharp(bytes).metadata();
+  job.candidate = { url, width: meta.width!, height: meta.height!, missingRegions: [] };
+  try {
+    // Legacy badge-restored outputs cannot prove which internal whites the raw
+    // supplier removed. Keep both source/candidate; do not guess or repurchase.
+    if (!rawUrl && parent.receipt.badgeProtection && job.receipt.protection?.background?.scope === 'all-background') throw new Error('旧结果已恢复徽章内部，缺少供应商原始遮罩；无法证明全去底范围，候选保留待核对');
+    const checked = await checkedProviderOutput(bytes, job, { ...services, inspectWatermarks: async () => parent!.receipt.excludedWatermarks ?? [] });
+    job.url = inline(checked); job.status = 'completed'; job.error = undefined;
+    job.receipt.outputSha256 = sha(checked); job.receipt.completedAt = new Date().toISOString();
+  } catch (error) { job.status = 'failed'; job.error = errorText(error); }
+  job.phase = 'finished'; await saveCutoutJob(job); return publicResult(job, true);
 }
 
 async function finishVolcanoCutout(job: StoredCutout, services: CutoutServices): Promise<ArtworkCutoutResult> {
@@ -81,6 +149,7 @@ export async function queryArtworkCutout(key: string, services: CutoutServices =
     }
     return publicResult(job);
   }
+  if (job.receipt.localValidationOnly) return finishLocalValidation(job, services);
   if (job.receipt.route === 'volcano' && job.providerResultUrl) return finishVolcanoCutout(job, services);
   if (!job.receipt.taskId) {
     if (Date.now() - Date.parse(job.updatedAt) > 180000) return { ...publicResult(job), status: 'unknown', error: '提交结果待核实，请保留任务编号联系支持；不会自动重新提交。' };
@@ -117,47 +186,39 @@ export async function startArtworkCutout(source: Buffer, mode: ArtworkCutoutMode
   const previous = options.retryOf ? await readCutoutJob(options.retryOf) : null;
   if (options.retryOf && (!previous || previous.status !== 'failed' || previous.receipt.sourceSha256 !== sourceSha256)) throw new Error('只有已明确失败的同图任务可以重试；处理中的任务请继续查询');
   const baseKey = sha(JSON.stringify([productionStateKey(), sha(process.env.MEITU_OPENAPI_ACCESS_KEY || 'unconfigured'), sha(process.env.MEDIAKIT_API_KEY || 'unconfigured'), MEITU_CUTOUT_VERSION, ARTWORK_CUTOUT_VERSION, mode, sourceSha256, previous?.requestId ?? '']));
-  const protection = options.protection?.keepRedPanels ? options.protection : undefined;
-  const key = protection ? sha(JSON.stringify([baseKey, protection])) : baseKey;
-  const found = await readCutoutJob(key);
-  if (!found && protection) {
-    const reusable = await readCutoutJob(baseKey);
-    if (reusable) {
-      // Changing a local preservation rule must not repurchase a provider result.
-      const reusableUrl = reusable.url ?? reusable.candidate?.url;
-      if (!reusableUrl || !['completed', 'failed'].includes(reusable.status)) return publicResult(reusable);
-      const repaired: StoredCutout = { ...reusable, status: 'pending', phase: 'ready', requestId: randomUUID(),
-        url: undefined, error: undefined, updatedAt: new Date().toISOString(),
-        receipt: { ...reusable.receipt, jobKey: key, protection, reusedFrom: baseKey, route: 'reuse',
-          actualCredits: 0, estimatedCredits: 0, cacheHit: false, reasons: [...reusable.receipt.reasons, '复用已保存供应商结果，仅本地恢复明确保留的底形，本次不重新付费'] } };
-      if (!await claimCutoutJob(repaired)) return queryArtworkCutout(key, services);
-      try {
-        const checked = await checkedProviderOutput(Buffer.from(reusableUrl.split(',')[1], 'base64'), repaired, services);
-        repaired.url = inline(checked); repaired.status = 'completed'; repaired.phase = 'finished';
-        repaired.receipt.outputSha256 = sha(checked); repaired.receipt.completedAt = new Date().toISOString();
-      } catch (error) { repaired.status = 'failed'; repaired.phase = 'finished'; repaired.error = errorText(error); }
-      await saveCutoutJob(repaired); return publicResult(repaired);
-    }
-  }
+  const protection = options.protection?.keepRedPanels || options.protection?.background ? options.protection : undefined;
+  // New submissions share the original base key even when local policy differs.
+  // Also read the historical explicit-red key so upgrading cannot repurchase it.
+  const legacyRedKey = sha(JSON.stringify([baseKey, { version: 'explicit-panel-protection-v1', keepRedPanels: true }]));
+  const key = baseKey;
+  const found = await readCutoutJob(key) ?? await readCutoutJob(legacyRedKey);
   // A new user-requested processing run may retry a proven local failure. Keep
   // the old job for audit and use the existing retry key to deduplicate clicks.
   // Queries and uncertain/paid failures never enter this branch.
   if (found?.status === 'failed' && found.submissionNotStarted && !options.retryOf) {
-    return startArtworkCutout(source, mode, { ...options, retryOf: key });
+    return startArtworkCutout(source, mode, { ...options, retryOf: found.receipt.jobKey });
   }
-  if (found) return found.status === 'completed' ? publicResult(found, true) : queryArtworkCutout(key, services);
-  const decision = await analyzeArtworkCutout(bytes, mode);
+  if (found) {
+    if (!samePolicy(found.receipt.protection, protection) || found.receipt.localValidationVersion !== ARTWORK_INTEGRITY_VERSION) return localValidationResult(found, protection, services);
+    return found.status === 'completed' ? publicResult(found, true) : queryArtworkCutout(found.receipt.jobKey, services);
+  }
+  const decision = await analyzeArtworkCutout(bytes, mode, protection);
   const job: StoredCutout = { status: 'pending', phase: 'ready', requestId: randomUUID(), updatedAt: new Date().toISOString(), receipt: {
-    ...decision, jobKey: key, mode, sourceSha256, sourceUrl: inline(bytes), ...(protection ? { protection } : {}), actualCredits: decision.route === 'meitu' || decision.route === 'volcano' ? null : 0, cacheHit: false,
+    ...decision, localValidationVersion: ARTWORK_INTEGRITY_VERSION, jobKey: key, mode, sourceSha256, sourceUrl: inline(bytes), ...(protection ? { protection } : {}), actualCredits: decision.route === 'meitu' || decision.route === 'volcano' ? null : 0, cacheHit: false,
   } };
-  if (!await claimCutoutJob(job)) return queryArtworkCutout(key, services);
+  if (!await claimCutoutJob(job)) {
+    const claimed = await readCutoutJob(key);
+    if (claimed && (!samePolicy(claimed.receipt.protection, protection) || claimed.receipt.localValidationVersion !== ARTWORK_INTEGRITY_VERSION)) {
+      return localValidationResult(claimed, protection, services);
+    }
+    return queryArtworkCutout(key, services);
+  }
   if (decision.route === 'reuse' || decision.route === 'standard') {
     try {
       const profile = await inspectArtworkSource(bytes);
       const initial = decision.route === 'reuse' ? bytes : profile.backgroundColor ? await removeFlatArtworkBackground(bytes, profile.backgroundColor) : null;
       if (!initial) throw new Error('标准抠图无法确定背景颜色');
-      const result = (await protectExplicitArtwork(bytes, initial, protection)).bytes;
-      await validateCutoutOutput(result);
+      const result = await checkedProviderOutput(initial, job, services);
       job.url = inline(result); job.status = 'completed'; job.phase = 'finished';
       job.receipt.completedAt = new Date().toISOString(); job.receipt.outputSha256 = sha(result);
       await saveCutoutJob(job); return publicResult(job);
@@ -203,13 +264,31 @@ export class ArtworkCutoutPendingError extends Error {
   constructor(public result: ArtworkCutoutResult) { super(result.error || '抠图仍在处理中，可继续查询本次任务'); }
 }
 export async function cutoutArtworkForPipeline(bytes: Buffer, mode: ArtworkCutoutMode = 'auto', protection?: ArtworkProtectionPolicy): Promise<{ bytes: Buffer; receipt: ArtworkCutoutReceipt }> {
-  const applied = protection?.keepRedPanels ? protection : undefined;
+  const applied = protection?.keepRedPanels || protection?.background ? protection : undefined;
   const requested = currentCutoutRecovery();
   const sourceHash = requested ? sha(await sharp(bytes, { limitInputPixels: 25_000_000 }).rotate().png().toBuffer()) : null;
   const recovery = requested?.sourceSha256 === sourceHash ? requested : undefined;
   const actualMode = recovery?.mode ?? mode;
-  return artworkJobStep('cutout', 'cutout', { bytes, mode: actualMode, ...(applied ? { protection: applied } : {}),
+  const replay = await artworkJobStep('cutout', 'cutout', { bytes, mode: actualMode, ...(applied ? { protection: applied } : {}),
     ...(recovery ? { retryOf: recovery.failedKey } : {}) }, () => pipelineCutout(bytes, actualMode, applied, recovery?.failedKey));
+  // This is outside the durable checkpoint: old cached 'passed' results must
+  // not bypass new local integrity checks. No new provider call occurs here.
+  try {
+    const checked = await validateCutoutOutput(replay.bytes, await sharp(bytes).rotate().png().toBuffer(), { protection: applied,
+      inspectWatermarks: async () => replay.receipt.excludedWatermarks ?? [] });
+    replay.receipt = { ...replay.receipt, integrityCheck: checked.integrity };
+  } catch (error) {
+    const stored = await readCutoutJob(replay.receipt.jobKey);
+    if (stored && !stored.receipt.localValidationOnly) {
+      const checked = await localValidationResult(stored, applied, cutoutServices);
+      if (checked.status === 'completed' && checked.url) return { bytes: Buffer.from(checked.url.split(',')[1], 'base64'), receipt: checked.receipt };
+      throw new ArtworkCutoutPendingError(checked);
+    }
+    const meta = await sharp(replay.bytes).metadata();
+    throw new ArtworkCutoutPendingError({ status: 'failed', receipt: replay.receipt, error: errorText(error), candidate: {
+      url: inline(replay.bytes), width: meta.width!, height: meta.height!, missingRegions: error instanceof ArtworkCutoutContentError ? error.missingRegions : [] } });
+  }
+  return replay;
 }
 async function pipelineCutout(bytes: Buffer, mode: ArtworkCutoutMode, protection?: ArtworkProtectionPolicy, retryOf?: string) {
   let result = await startArtworkCutout(bytes, mode, { protection, retryOf });

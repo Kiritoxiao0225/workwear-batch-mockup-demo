@@ -1,3 +1,4 @@
+import { productionPreviewFixed } from '@/lib/production-preview';
 import { publicAnalysisProposal } from '@/lib/artwork-analysis-proposal';
 import { NextResponse } from 'next/server';
 import { productionUser, usesProductionCloud, productionStateKey } from '@/lib/server/production-storage';
@@ -5,7 +6,7 @@ import { CatalogHttpError } from '@/lib/server/catalog-auth';
 import { readWpsProductionState } from '@/lib/server/wps-production-store';
 import { readArtworkJobs } from '@/lib/server/artwork-job-store';
 import { catalogDatabase } from '@/lib/server/catalog-database';
-import { preflightArtworkUnit } from '@/lib/server/artwork-preflight';
+import { preflightResolvedArtworkUnit } from '@/lib/server/artwork-preflight';
 import { WORKWEAR_LOGIC_VERSION, safeErrorText, isActiveSourceStatus, recoveryForJob, artworkBusinessStep } from '@/lib/artwork-reliability';
 import { WPS_COMPOSITOR_VERSION } from '@/lib/wps-production';
 import { productionRenderInputKey } from '@/lib/production-render-outcome';
@@ -14,7 +15,7 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 const localUrl = (url?: string | null) => typeof url === 'string' && /^\/api\/(?:production-files|catalog\/files)\/[\da-f-]+(?:\?|$)/u.test(url) ? url : null;
-/** Intentionally bypasses old GET's after-response rendering/cleanup; this route only reads. */
+/** No job/render/task writes. Trusted geometry resolution may reuse the existing derived catalog cache, never a manual standard. */
 export async function GET(request: Request) {
   try {
     await productionUser(request);
@@ -30,21 +31,21 @@ export async function GET(request: Request) {
     const active = state.records.filter(record => isActiveSourceStatus(record.source.wpsSource?.status));
     const query = new URL(request.url).searchParams;
     const selected = query.get('recordId') ? active.filter(record => record.source.recordId === query.get('recordId')) : active;
-    const orders: DiagnosticOrder[] = selected.map(record => {
+    const orders: DiagnosticOrder[] = await Promise.all(selected.map(async record => {
       const units = state.units.filter(unit => unit.sourceRecordId === record.source.recordId);
       return { id: record.source.recordId, customer: record.source.customerId, status: record.source.wpsSource?.status ?? '未知', requirement: record.source.requirementText,
-        needsAnalysis: !units.length, units: units.map(unit => {
-          let preflight: ReturnType<typeof preflightArtworkUnit> | null = null, error: string | null = null;
-          try { preflight = preflightArtworkUnit(unit, record.source, 'artwork'); } catch (caught) { error = safeErrorText(caught); }
+        needsAnalysis: !units.length, units: await Promise.all(units.map(async unit => {
+          let preflight: Awaited<ReturnType<typeof preflightResolvedArtworkUnit>> | null = null, error: string | null = null;
+          try { preflight = await preflightResolvedArtworkUnit(unit, record.source, 'artwork', { fixed: productionPreviewFixed(unit, state.mockupVersions) }); } catch (caught) { error = safeErrorText(caught); }
           const job = jobs.jobs.find(item => item.unitId === unit.id);
           return { id: unit.id, garmentLabel: unit.garmentLabel, placement: unit.placement?.key ?? '未确定位置', state: unit.status,
             analysisCurrent: unit.analysisLogicVersion === WORKWEAR_LOGIC_VERSION,
             artwork: unit.artwork ? { url: localUrl(unit.artwork.url), sha256: unit.artwork.validation.sha256, confirmed: !!unit.gateB } : null,
-            blockers: error ? [error] : preflight?.blockers ?? [], garmentIssue: preflight?.garmentIssue ?? null, inputs: preflight?.contract.inputs ?? [],
+            blockers: error ? [error] : preflight?.blockers ?? [], garmentIssue: preflight?.garmentIssue ?? null, inputs: preflight?.contract.inputs ?? [], calibrationUrl: preflight?.calibrationUrl, temporaryPlacement: preflight?.temporaryPlacement,
             job: job ? { id: job.id, status: job.status, message: safeErrorText(job.message), error: job.error ? safeErrorText(job.error) : null,
               ...(job.candidate?.cutout?.status === 'failed' ? { failedCutoutKey: job.candidate.cutout.receipt.jobKey } : {}),
               recovery: job.recovery ?? recoveryForJob(job), steps: job.steps.map(step => ({ label: step.label ?? artworkBusinessStep(step.stepKey ?? '', step.stage), status: step.status, error: step.error ? safeErrorText(step.error) : null })) } : null };
-        }), versions: state.mockupVersions.filter(version => version.sourceRecordId === record.source.recordId).map(version => {
+        })), versions: state.mockupVersions.filter(version => version.sourceRecordId === record.source.recordId).map(version => {
           const members = units.filter(unit => version.unitIds.includes(unit.id));
           const tracked = state.renderOutcomes?.[version.id];
           const currentTracked = tracked?.inputKey === productionRenderInputKey(version, members, WPS_COMPOSITOR_VERSION);
@@ -55,7 +56,7 @@ export async function GET(request: Request) {
             error: currentTracked && tracked?.error ? tracked.error : version.compositionError,
             readyPositions: members.filter(unit => !!unit.artwork).length, totalPositions: version.unitIds.length };
         }), pendingProposal: (() => { const proposal = [...(state.analysisProposals ?? [])].reverse().find(item => item.recordId === record.source.recordId && item.status === 'pending'); return proposal ? publicAnalysisProposal(proposal) : null; })() };
-    });
+    }));
     const payload: WorkwearDiagnostics = { generatedAt: new Date().toISOString(), sourceFreshness: 'stored-snapshot', stateUpdatedAt: state.updatedAt,
       web: { logicVersion: WORKWEAR_LOGIC_VERSION, commit: process.env.WORKWEAR_BUILD_COMMIT ?? process.env.VERCEL_GIT_COMMIT_SHA ?? null },
       worker: { online: jobs.workerOnline, lastObservedExecutionBuild: observed },

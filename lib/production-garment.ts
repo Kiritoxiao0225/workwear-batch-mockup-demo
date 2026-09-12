@@ -23,6 +23,14 @@ export type GarmentMatch = { item: CatalogStyle['colors'][number] | null; select
 
 const genericFamilies: Record<string, string> = { 黑: '黑', 黑色: '黑', 白: '白', 白色: '白', 红: '红', 红色: '红', 蓝: '蓝', 蓝色: '蓝', 兰色: '蓝', 绿: '绿', 绿色: '绿', 黄: '黄', 黄色: '黄', 灰: '灰', 灰色: '灰', 紫: '紫', 紫色: '紫', 粉: '粉', 粉色: '粉', 橙: '橙', 橙色: '橙', 橘色: '橙', 桔色: '橙', 棕色: '棕' };
 function compact(value: string) { return value.normalize('NFKC').trim().toUpperCase(); }
+// Only spelling variants of a named colour, not a perceptual similarity classifier.
+// In particular navy, royal blue, dark blue and ice blue remain different colours.
+const namedColorBases = new Set(['藏青', '藏蓝', '深蓝', '宝蓝', '冰蓝', '淡蓝', '浅蓝', '米白', '乳白', '象牙白', '酒红', '卡其']);
+export function normalizeProductionColor(value: string) {
+  const name = compact(value).replace(/\s+/gu, '');
+  const base = name.endsWith('色') ? name.slice(0, -1) : name;
+  return namedColorBases.has(base) ? base : name;
+}
 function containsCode(text: string, code: string) {
   const escaped = compact(code).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`(?<![A-Z0-9])${escaped}(?![A-Z0-9])`, 'u').test(compact(text));
@@ -50,21 +58,29 @@ export function matchProductionGarment(source: SourceTaskRecord, unit: Pick<Gene
     segments.push(tail.split(/\n|[、，,；;]|(?:左胸|右胸|后背|正面|后脖|左袖|右袖|字体|工艺|尺寸)\s*[:：]?/u)[0].split(/\s+/u)[0]);
   }
   const requested = unit.garmentRequest?.colorText?.trim() ?? '';
-  const explicitColors = [...new Set(segments.flatMap(segment => segment.split(/[-—/]/u).filter(token => token && !/^(?:[XSML]+|\d+XL|\d+)$/iu.test(token))))];
-  const labelColors = explicitColors.filter(color => compact(unit.garmentLabel).includes(color));
-  const colorText = requested && explicitColors.includes(compact(requested)) ? requested
+  const rawColors = segments.flatMap(segment => segment.split(/[-—/]/u).filter(token => token && !/^(?:[XSML]+|\d+XL|\d+)$/iu.test(token)));
+  const explicitColors = rawColors.filter((color, index) => rawColors.findIndex(other => normalizeProductionColor(other) === normalizeProductionColor(color)) === index);
+  const labelColors = explicitColors.filter(color => compact(unit.garmentLabel).includes(color)
+    || compact(unit.garmentLabel).includes(normalizeProductionColor(color)));
+  // A parsed colour is only accepted when the source's garment segment supports it.
+  // A Logo colour elsewhere in the brief must never select a garment.
+  const colorText = requested && explicitColors.some(color => normalizeProductionColor(color) === normalizeProductionColor(requested)) ? requested
     : labelColors.length === 1 ? labelColors[0] : explicitColors.length === 1 ? explicitColors[0] : '';
   if (explicitColors.length > 1 && !colorText) return unresolved('同款出现多个颜色，请选择该制作单元对应的颜色');
   if (!colorText || /^(?:[XSML]+|\d+XL|\d+)$/iu.test(colorText)) return unresolved('原文未明确衣服颜色，请选择颜色');
-  const family = genericFamilies[colorText];
-  const exact = style.colors.filter(color => compact(color.colorName) === compact(colorText));
+  const family = genericFamilies[compact(colorText)];
+  const literal = style.colors.filter(color => compact(color.colorName) === compact(colorText));
+  const equivalent = style.colors.filter(color => normalizeProductionColor(color.colorName) === normalizeProductionColor(colorText));
+  // A literal named colour wins over its aliases. Generic '红色' still means the
+  // existing family rule, so several reds remain a visible provisional selection.
+  const exact = literal.length ? literal : equivalent;
   const familyColors = family ? style.colors.filter(color => colorFamily(color.colorName).length === 1 && colorFamily(color.colorName)[0] === family) : [];
   // Generic colors must consider all colors in the family, even if one is literally called “红色”.
   const colors = family ? familyColors : exact;
   if (!colors.length) return unresolved(`${style.styleCode} 没有匹配“${colorText}”的颜色，请选择`, colorText);
   const selection = colors.length > 1 ? 'provisional' : exact.length ? 'exact' : 'family';
   const item = [...colors].sort((a, b) => a.id.localeCompare(b.id))[0];
-  return { item, selection, colorText, evidence: `${style.styleCode} · 原文颜色“${colorText}”${selection === 'provisional' ? `，同色系 ${colors.length} 色，暂选 ${item.colorName}，可修改` : ` → ${item.colorName}`}` };
+  return { item, selection, colorText, evidence: `${style.styleCode} · 原文颜色“${colorText}”${selection === 'provisional' ? `，同色系 ${colors.length} 色，暂选 ${item.colorName}，可修改` : ` → ${item.colorName}${!family && !literal.length ? '（颜色名规范化）' : ''}`}` };
 }
 
 export function bindingFromCatalog(detail: CatalogDetail, match: Pick<GarmentMatch, 'selection' | 'colorText' | 'evidence'>): GarmentBinding {
@@ -89,7 +105,7 @@ export function productionPositionLabel(placement: ProductionPlacement) {
 }
 export const taskPlacementSchema = z.object({ centerX: z.number().min(0).max(1), centerY: z.number().min(0).max(1), width: z.number().positive().max(1) }).strict();
 
-export function garmentPlacementIssue(garment: GarmentBinding | null | undefined, placement: ProductionPlacement | null) {
+export function garmentPlacementIssue(garment: GarmentBinding | null | undefined, placement: ProductionPlacement | null, options: { temporaryPosition?: boolean } = {}) {
   if (!garment) return '请选择素材库中的款式和颜色';
   if (!placement) return '请选择制作位置';
   if (placement.requestedSizeIssue && !placement.sizeOverride) return placement.requestedSizeIssue;
@@ -104,6 +120,9 @@ export function garmentPlacementIssue(garment: GarmentBinding | null | undefined
     if (placement.sizePolicy !== MOCKUP_SIZE_POLICY && placement.sizeMode !== 'standard' && !view.standard?.specification.measuredWidthCm) return '客户指定了厘米尺寸，需要填写实测衣宽后才能确认；不能用视觉比例代替厘米';
     return null;
   }
+  // Only the read-only preview resolver opts in. Save/confirmation callers still
+  // require a manual placement or an actual confirmed position standard.
+  if (options.temporaryPosition && view.bodyScale) return null;
   if (!view.standard) return `该颜色${face === 'front' ? '正面' : '背面'}位置尚未校准，请到商品素材库确认后更新位置标准`;
   if (!view.standard.specification.positions.some(position => position.key === catalogPositionKey(placement))) return '该位置没有已确认标准，请调整位置或在商品素材库校准';
   if (placement.sizePolicy !== MOCKUP_SIZE_POLICY && placement.sizeMode !== 'standard' && !view.standard.specification.measuredWidthCm) return '此衣服尚未填写实测衣宽，不能把厘米尺寸换算为底图位置';
