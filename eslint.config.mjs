@@ -16,5 +16,5 @@ export default defineConfig([
       ],
     },
   },
-  globalIgnores(['.next*/**', 'data/**', 'output/**', '.workbuddy/**', 'coverage/**', 'public/uploads/**']),
+  globalIgnores(['.next*/**', '.tmp/**', 'data/**', 'output/**', '.workbuddy/**', 'coverage/**', 'public/uploads/**']),
 ]);
