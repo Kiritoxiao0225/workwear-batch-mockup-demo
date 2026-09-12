@@ -10,6 +10,8 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
+    // Native canvas/Sharp suites compete for CPU; bound workers instead of relaxing assertions/timeouts.
+    maxWorkers: 2,
     include: ['app/**/*.test.ts', 'components/**/*.test.ts', 'hooks/**/*.test.ts', 'lib/**/*.test.ts'],
   },
 });

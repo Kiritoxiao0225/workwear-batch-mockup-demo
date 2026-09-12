@@ -4,7 +4,7 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import sharp from 'sharp';
 import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './catalog-database';
-import { catalogOssBrowserSigner, catalogOssObjects } from './catalog-oss';
+import { assertCatalogObjectStoreConfig, catalogOssBrowserSigner, catalogOssObjects } from './catalog-oss';
 import { imageStoreConfig, imageStoreRequest, signedImageStoreFile } from './catalog-image-store';
 
 export function fileSha256(bytes: Buffer | string) { return createHash('sha256').update(bytes).digest('hex'); }
@@ -28,7 +28,8 @@ export function catalogStorageConfig() {
     return { backend: 'zeabur' as const, bucket: imageStoreConfig().bucket };
   }
   const bucket = process.env.CATALOG_OSS_BUCKET;
-  if (!bucket || !process.env.CATALOG_OSS_REGION || !process.env.CATALOG_OSS_ACCESS_KEY_ID || !process.env.CATALOG_OSS_ACCESS_KEY_SECRET) throw new Error('尚未配置 CATALOG_OSS_BUCKET / REGION / ACCESS_KEY_ID / ACCESS_KEY_SECRET');
+  if (!bucket) throw new Error('尚未配置文件逻辑桶 CATALOG_OSS_BUCKET');
+  assertCatalogObjectStoreConfig(bucket);
   catalogObjectPrefix();
   return { backend: 'oss' as const, bucket };
 }

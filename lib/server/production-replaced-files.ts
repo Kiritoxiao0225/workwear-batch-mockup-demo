@@ -33,7 +33,7 @@ export async function cleanupReplacedFiles(limit = 20, budgetMs = 60_000) {
     WHERE operation_key LIKE 'delete:%' AND lease_until<=now() ORDER BY updated_at LIMIT $1`, [limit])).rows;
   const deleted: string[] = [], failures: { id: string; error: string }[] = [];
   if (!candidates.length) return { deleted, failures };
-  if (storage.backend === 'oss' && (!process.env.PRODUCTION_DELETE_ACCESS_KEY_ID || !process.env.PRODUCTION_DELETE_ACCESS_KEY_SECRET)) throw new Error('替换后的旧图删除尚未配置 PRODUCTION_DELETE_ACCESS_KEY_ID / SECRET');
+  // The adapter validates the selected provider's cleanup credentials before any claim/write.
   const client = storage.backend === 'oss' ? catalogOssObjects(storage.bucket, 'cleanup') : null;
   const versioning = client ? await catalogOssBucketControl(storage.bucket).getBucketVersioning(storage.bucket) : null;
   for (const candidate of candidates) {

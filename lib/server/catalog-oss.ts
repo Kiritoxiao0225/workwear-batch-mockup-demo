@@ -14,7 +14,8 @@ const R2_REGION = 'auto';
  *
  * 关键约定：数据库 files.bucket 存的是**逻辑桶名**（CATALOG_OSS_BUCKET）。
  * 切换提供方时逻辑桶名不变，只有适配器内部把它映射到 R2 的物理桶
- * （CATALOG_R2_BUCKET）。所以切换与回滚都只改环境变量，数据库不动。
+ * （CATALOG_R2_BUCKET）。切换前须补齐目标端对象，并同步 Web/worker 配置；
+ * 回滚也须先补齐切换后新增的文件，数据库中的文件身份不变。
  */
 export function catalogObjectStore(): 'oss' | 'r2' {
   const value = process.env.CATALOG_OBJECT_STORE?.trim() || 'oss';
@@ -28,13 +29,16 @@ export function catalogObjectStore(): 'oss' | 'r2' {
 
 // Keep endpoint selection here. Retention prefixes and caller names do not
 // determine transport; every server-side image operation uses acceleration.
-function ossClient(bucket: string, credentials: Credentials, accelerated: boolean) {
+function ossCredentials(bucket: string, credentials: Credentials) {
   const prefix = credentials === 'cleanup' ? 'PRODUCTION_DELETE' : 'CATALOG_OSS';
   const accessKeyId = process.env[`${prefix}_ACCESS_KEY_ID`];
   const accessKeySecret = process.env[`${prefix}_ACCESS_KEY_SECRET`];
   const region = process.env.CATALOG_OSS_REGION;
   if (!bucket || !region || !accessKeyId || !accessKeySecret) throw new Error(`OSS 尚未配置 Bucket / REGION / ${prefix}_ACCESS_KEY_ID / SECRET`);
-  return new OSS({ bucket, region, accessKeyId, accessKeySecret, secure: true, authorizationV4: true,
+  return { bucket, region, accessKeyId, accessKeySecret };
+}
+function ossClient(bucket: string, credentials: Credentials, accelerated: boolean) {
+  return new OSS({ ...ossCredentials(bucket, credentials), secure: true, authorizationV4: true,
     timeout: credentials === 'cleanup' ? 5000 : 120000,
     ...(accelerated ? { endpoint: 'https://oss-accelerate.aliyuncs.com' } : {}),
   });
@@ -63,6 +67,16 @@ function r2Credentials(credentials: Credentials) {
   const endpoint = process.env.CATALOG_R2_ENDPOINT;
   if (!accessKeyId || !accessKeySecret || !endpoint) throw new Error(`R2 尚未配置 CATALOG_R2_ENDPOINT / ${prefix}_ACCESS_KEY_ID / SECRET`);
   return { endpoint, accessKeyId, accessKeySecret };
+}
+
+/** Validate the selected provider before registering files or claiming work. No network I/O. */
+export function assertCatalogObjectStoreConfig(bucket: string, credentials: Credentials = 'catalog') {
+  if (catalogObjectStore() === 'r2') {
+    r2Bucket(bucket);
+    r2Credentials(credentials);
+  } else {
+    ossCredentials(bucket, credentials);
+  }
 }
 
 function r2Client(credentials: Credentials) {
