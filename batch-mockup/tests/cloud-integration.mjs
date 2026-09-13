@@ -7,6 +7,7 @@ import {createServer} from 'node:net';
 import EmbeddedPostgres from 'embedded-postgres';
 import sharp from 'sharp';
 import {migrateCatalog,catalogDatabase,closeCatalogDatabase} from '../../lib/server/catalog-database.ts';
+import {backupCatalog,restoreCatalog} from '../../lib/server/catalog-backup.ts';
 import {cloudStorage,CLOUD_ROOT} from '../adapters/cloud-files.mjs';
 import {atomicFile,jsonFile,saveJSON,readBytes,assetPath} from '../adapters/a-files.mjs';
 const root=await mkdtemp(join(tmpdir(),'batch-cloud-test-')),probe=createServer();await new Promise(ok=>probe.listen(0,'127.0.0.1',ok));const port=probe.address().port;await new Promise(ok=>probe.close(ok));
@@ -26,5 +27,6 @@ try{
  await assert.rejects(()=>cloudStorage(()=>readBytes('/etc/passwd')),/越界/);
  await assert.rejects(()=>cloudStorage(()=>jsonFile(file),{workspace:'other'}),/尚未找到/);
  await cloudStorage(async()=>{await saveJSON(join(CLOUD_ROOT,'requirements-state/A.json'),{revision:7,text:'持久正文'});await saveJSON(join(CLOUD_ROOT,'production-jobs/J/state.json'),{status:'returned'});});await cloudStorage(async adapter=>{await adapter.preload();assert.equal((await jsonFile(join(CLOUD_ROOT,'requirements-state/A.json'))).revision,7);assert.equal((await jsonFile(join(CLOUD_ROOT,'production-jobs/J/state.json'))).status,'returned');assert.equal(await jsonFile(join(CLOUD_ROOT,'mockups/absent.json'),null),null);});assert.equal((await catalogDatabase().query('SELECT count(*)::int n FROM batch_assets b WHERE NOT EXISTS(SELECT 1 FROM production_file_refs r WHERE r.file_id=b.file_id)')).rows[0].n,0);
- console.log('PASS cloud reconnect, immutable images, competing saves, queue persistence, compressed evidence, workspace isolation');
+ const backup=await backupCatalog();await catalogDatabase().query('CREATE DATABASE batch_restore');await closeCatalogDatabase();const restoreURL=new URL(process.env.CATALOG_DATABASE_URL);restoreURL.pathname='/batch_restore';process.env.CATALOG_DATABASE_URL=restoreURL.toString();await migrateCatalog();await restoreCatalog(backup);assert.equal((await cloudStorage(()=>jsonFile(file))).text,'新页面');assert.equal((await cloudStorage(()=>readBytes(join(CLOUD_ROOT,'evidence.txt')))).toString(),big);assert.deepEqual(await cloudStorage(()=>readBytes(assetPath(CLOUD_ROOT,'assets/test.png'))),png);assert.equal((await catalogDatabase().query('SELECT count(*)::int n FROM batch_queue')).rows[0].n,1);
+ console.log('PASS cloud reconnect, immutable images, competing saves, queue persistence, compressed evidence, workspace isolation, full fresh-database restore');
 }finally{await closeCatalogDatabase();await postgres.stop();await rm(root,{recursive:true,force:true});}

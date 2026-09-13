@@ -21,7 +21,7 @@ export function createMockupEditor({api,assetURL=x=>'/'+x,onSaved,toast}){
    el.querySelector('[data-style-search]').oninput=e=>{if(styles)applyOptions(styles,e.target.value);};
    styleSelect.onchange=()=>{colors(styles||[]);if(!colorSelect.value){setStatus('请选择该款颜色；当前图片仍是原来的款色');el.querySelector('[data-mockup-action=copy]').disabled=true;el.querySelector('a[download]')?.removeAttribute('href');}if(colorSelect.value&&card.render&&['ready','preview'].includes(card.status)){el.querySelector('[data-mockup-action=copy]').disabled=false;el.querySelector('a[download]').href=assetURL(card.render.asset);}colorSelect.focus();};
    let failedPatch=null;
-   async function save(patch){if(busy.has(card.id))return;busy.add(card.id);active=card.id;setStatus('正在保存并更新整张图片…');el.dataset.saving='true';
+   async function save(patch){if(busy.has(card.id))return;busy.add(card.id);active=card.id;setStatus('正在保存并更新整张图片…');el.dataset.saving='true';el.querySelector('[data-mockup-action=copy]').disabled=true;el.querySelector('a[download]')?.removeAttribute('href');
     try{failedPatch=null;el.querySelector('.mockup-retry')?.remove();const saved=await api('/api/mockups',{caseId:c.caseId,cardId:card.id,revision:state.revision,...patch});state.revision=saved.revision;await onSaved();}
     catch(e){failedPatch=patch;setStatus('保存失败，当前调整仍保留：'+e.message);toast(e.message);const controls=document.createElement('div');controls.className='mockup-retry';controls.innerHTML='<button type="button">重试保存</button> <button type="button">取消本次调整</button>';controls.children[0].onclick=async()=>{try{const latest=(await api('/api/requirements')).cases.find(x=>x.caseId===c.caseId)?.mockups;if(latest?.revision!==state.revision){setStatus('版本已变化，请取消本次调整并读取最新结果后再调整');return;}void save(patch);}catch(err){setStatus(err.message);}};controls.children[1].onclick=async()=>{failedPatch=null;active=null;await onSaved();};status.after(controls);}
     finally{busy.delete(card.id);if(!failedPatch)active=null;delete el.dataset.saving;if(!failedPatch)await onSaved();}
@@ -46,7 +46,7 @@ export function createMockupEditor({api,assetURL=x=>'/'+x,onSaved,toast}){
     stage.oncontextmenu=e=>{if(busy.has(card.id)||!['ready','preview'].includes(card.status)||dirty||failedPatch||!colorSelect.value){e.preventDefault();toast('正在更新图片，完成后再复制');}else canvas.hidden=true;};
     canvas.style.pointerEvents='none';if(final)final.oncontextmenu=stage.oncontextmenu;
    }
-   el.onclick=async e=>{const b=e.target.closest('[data-mockup-action]');if(!b)return;
+   el.onclick=async e=>{if(e.target.closest('a[download]')&&(busy.has(card.id)||failedPatch||!['ready','preview'].includes(card.status))){e.preventDefault();return;}const b=e.target.closest('[data-mockup-action]');if(!b)return;
     const action=b.dataset.mockupAction;
     if(action==='expand'){expanded=card.id;el.classList.add('garment-expanded');el.querySelector('[data-mockup-action="close"]').hidden=false;return;}
     if(action==='close'){expanded=null;el.classList.remove('garment-expanded');b.hidden=true;return;}
