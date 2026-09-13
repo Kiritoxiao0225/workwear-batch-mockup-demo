@@ -683,7 +683,9 @@ describe('reconstruction of artwork photographed on objects', () => {
 
 
 describe('Task A pipeline regressions', () => {
-  it('TH already-cropped source never enters removal generation and Chinese remains an independent accurate layer', async () => {
+  // Full-resolution PNG decoding and pixel comparison can exceed Vitest's 5s
+  // default on the shared CI runner; this is a fidelity check, not a latency SLA.
+  it('TH already-cropped source never enters removal generation and Chinese remains an independent accurate layer', { timeout: 30_000 }, async () => {
     const t = await setup();
     const original = await readFile('lib/server/artwork-task-a-fixtures/N-before-generation.png');
     t.fidelity.mockImplementation(async () => ({ status: 'prepared', draft: createLegacyArtworkDraft(url(original)),
