@@ -1,5 +1,38 @@
 # 工作服批量效果图 Demo Logic Map
 
+## 2026-09-14 三阶段需求理解（当前重建方案）
+
+- 当前产品改为需求理解 → 生图 → 风险评估。A/B合为一次真实理解与选路；旧B规划器、供应商选择和生成后返回B不进入本页执行路径。
+- `CAP-REQ-V2` → `PAGE-REQ-V2`（三阶段工作台）→ `API-REQ-V2`（`/api/requirements/*`）→ `STORE-REQ-V2`（逐条状态与原始回执）；`RULE-REQ-V2` 保留逐字正文、图片身份与版本历史，`TEST-REQ-V2` 对应 `batch-mockup/tests/requirements.test.mjs` 与本轮浏览器证据。
+- 新源码 `batch-mockup/application/requirements.mjs`、`requirements-prompt.txt` 与 `experiments/workbench/requirements-server.mjs`、`requirements.html`。旧业务规则不导入。
+- 用户确认固定七项：主体、文字、字体、颜色、排版、尺寸、输出；简单图同样完整。编辑器只替换对应项的原文片段，其他字句、空格和换行保持。
+- `PAGE-REQ-V2` 支持七项原位编辑，`requirements-editor.mjs` 每条串行自动保存，停止输入700毫秒或失焦触发。模型原稿作为人工改动比对依据；新增／替换红色加粗，删减提示不写入prompt。保存响应丢失先回读，冲突保留本页输入；已去掉独立确认按钮、待核对／已确认筛选、计数和核对人输入，仅展示实际保存状态。测试见`requirements-editor.test.mjs`与`output/requirements-v3-30-20260914/autosave-evidence/`。
+- 模型直接返回逐图稿唯一prompt；UI只排版，编辑保存不调用模型，第二阶段须在点击生成时完成保存、固定本次正文与图片再逐字交接；生成期间的修改用于下一次，不影响在途任务。现有`artwork-input-v2`仍是历史确认包的兼容读取接口，本地生成入口现通过`POST /api/production`接通，历史兼容接口保持独立。应用、制作方式与图片身份独立保留，不再摘要或暗中拼接正文。
+- 新版三阶段表格使用30条旧WPS快照与37张原图重新识别，证据在`output/requirements-v3-30-20260914/`；不是本轮重新全量读取WPS。旧批次保留。
+- 补图后重识别返回候选；保存保留revision与素材版本，原图身份保留SHA，历史确认记录不删除。未知请求不自动重发。新版真实制作通过`application/production.mjs`与`adapters/production-images.mjs`执行，不导入旧业务分流；本机3并发。`production-jobs`保存逐字输入、原图SHA和真实回执，public下保存候选。评分未接通；历史兼容接口仍`executionEnabled=false`。
+- `CAP-MANUAL-REPAIR`：制作图片旁“局部修补” → `repair-editor.mjs`画笔／缩放／撤销 → GET/POST `/api/production/repair` → `application/production-repair.mjs` → 每任务独立`repair-state.json`与不可覆盖PNG。共享`repair-pixels.mjs`按源像素坐标执行，保留复制原图RGBA、去除只改Alpha；区域外保持原始结果。原制作job、原图及历次修补保留。保存串行、版本CAS与请求幂等；背景和原图辅助层不入成品；不调用供应商。`production-repair.test.mjs`覆盖像素、冲突、幂等、边界与HTTP，浏览器证据在本轮`meitu-research/repair-evidence/`。
+- `CAP-MANUAL-REPAIR`增加`fill`操作：默认圈内补空白，或点选连通单块；仅恢复原图可恢复的Alpha区域，已有不透明像素不改变，圈内模式严格不改圈外。八连通检测排除外部背景，失败点击不生成笔画／保存版本；共享算法同时驱动浏览器预览与服务端PNG。真实D12一次补回17,541像素，HTTP下载逐像素／SHA验收，N02细缝连通案例拒绝填补，详见`meitu-research/repair-fill-report.md`。
+- 当前验收规则以`batch-mockup/PRD.md` v2.6为准。下方旧ABCDE及生产旧模块章节属于历史或不同执行入口，不覆盖本节。
+
+
+## 2026-09-14 新版ABCDE表格与B两阶段决策
+
+- `PAGE-ABCDE-WORKBENCH` / `UI-ABCDE-REVIEW`：`batch-mockup/experiments/workbench/table.html`显示WPS原文、A、B、C、D、E相邻列，搜索、原图放大、补图、A编辑/确认沿用新A合同；C/D/E占位不可执行。
+- `API-ABCDE-DATA`：GET `/api/workbench`读取本批原始A、人工草稿/确认及B候选；POST `/api/b-plan`以正文SHA和修订做版本检查。来源/Host限本机，修改不回写WPS。入口`experiments/workbench/serve.mjs`。
+- `CAP-B-PLAN` / `FLOW-B-PLAN` v2：`application/b-v2.mjs`准备原图及可选目标 → `domain/b-plan-v2.mjs`三类路线 → 真实规划 → `b-validation-v2.mjs`校验 → `STORE-B-PLAN`独立不可覆盖目录与b-to-c-v2。模型返回不能改写A，说明文字不成为隐藏prompt。
+- `FLOW-B-BACKGROUND`：生成路线初次不指定抠图模型；未来C返回具体候选，B绑定parentRunId/artworkId/sourceStepId/A正文SHA/图片SHA，仅选择背景处理；C实际适配仍未启动。Alpha只是事实，非语义合格证明。
+- `RULE-ABCDE-SCOPE`：本轮只运行A和B候选，不伪造人工确认；草稿权限draft_planning_only、canExecute=false。先重新生图不先高清/抠图，无统一白底/2048，模型边界提示不变成固定阈值分流。旧生产逻辑保持独立。
+- `TEST-B-V2` / `TEST-ABCDE-HTTP`：`tests/b-v2.test.mjs`及`tests/workbench.test.mjs`覆盖原文图像完整交接、无效/重复请求、阶段约束、跨图稿/版本、修改过期、背景选择合同、本机接口。真实素材调用和浏览器证据见唯一进度表。
+
+## 2026-09-13 批量效果图独立重写：ABCDE 固定入口
+
+- `CAP-B-PLAN` / `FLOW-B-PLAN`：A确认回执 → `application/b-input.mjs`实际像素和能力输入 → `b-planning.mjs`单次CLIProxy规划 → `b-validation.mjs`客观校验 → 固定`b-to-c-v1`接收包。对应`STORE-B-PLAN`为独立运行目录的请求、原始响应、计划和交接包；`TEST-B-PLAN`为`tests/b-planning.test.mjs`及真实规划实验。B不重写A正文，不导入旧业务执行器；旧能力只作调研线索，全部新C能力未准入。接口返回/JSON合法/交接完整不等于实际图片正确。2026-09-13背景修订：能力目录v2提供按需compose，默认透明画布；允许reuse/增强/生成/抠图/排字直接输出，白底须明确授权。原生尺寸模式不强制放大，预览底色不修改文件；新版20例证据见进度表。
+
+- `CAP-009` / `FLOW-009`：在独立 `batch-mockup/` 目录从零重写业务核心，职责与验收以 [PRD](../batch-mockup/PRD.md) 为准，当前状态仅查 [唯一进度表](../batch-mockup/PLAN.md)。固定 A 需求理解 → B 制作规划 → C 图稿制作 → D 核对与交付 → E 工作台与任务管理，前一模块验收通过后再推进下一模块。
+- `PAGE-007` / `API-005` / `API-006` / `API-007`：本节是新模块的目标关系，原有编号在后文仍描述旧生产能力。新本地 `/batch-mockup` 的人工输入演示和部分代码存在，但不能冒充 A 的真实看图理解或 C 的真实生图/美图抠图。具体已实现入口与缺项见进度表的源码证据。
+- `STORE-005` / `RULE-ARTWORK-REVIEW-VERSION` / `TEST-008`：A 输出统一版本及素材用途，B/C/D 消费同一要求，E 保存和展示结果；按模块验证交接与真实结果，保留旧数据/版本/回执和新旧回归边界。新代码不导入旧业务协调器。
+- 旧重建计划、架构和协作文档已删除；原始案例和用户修订保留为事实材料。用户审表后进入 A 方案讨论，已形成 [独立讨论结果](../output/a-module-discussion-20260913/A模块方案讨论结果.md)：轻提示词、正常一次理解、素材/交接校验及分阶段 API 实验建议。A已进入独立真实识图实验，当前只取WPS待领取／未领取且不按修改次数筛选；A独立本地审阅入口已支持补图再次真实识别、人工确认历史及B原样接收；`application/a-review.mjs`协调固定输入，`application/b-intake.mjs`只接收正文与图片，不提前规划或制图。真实客户语义仍待逐条核对，实际数量和差异只查唯一进度表。不修改旧生产入口或数据；Pro草案与接口返回不能代替真实验收。
+
 ## 2026-09-12 R2 配置与 Web/worker 同步
 
 - `STORE-008` / `STORE-005`：`catalog-oss.ts` 统一校验实际提供方的读写/清理配置；R2 保留数据库逻辑桶与文件 ID，但不要求 OSS 区域和密钥。OSS 清理仍必须使用独立删除凭据；文件归属、哈希、防覆盖、引用与删除回读不变。
@@ -1143,3 +1176,13 @@
 - 迁移：`scripts/migrate-image-storage.ts copy` 从数据库登记的 active/ready OSS 文件复制，逐一读回主副本与独立副本核对 SHA，并记录原定位。所有 Web/worker 支持双读后执行 activate，在行锁下复核身份与状态再切换同一 file ID；copy 可根据 manifest 续传，失败不迁移对应引用；最后再次补齐新增文件。不会删除 OSS 原图或改写客户状态。
 - 回退：运行版本必须继续支持 zeabur 已有引用；将新写入设回 oss 不会自动搬回旧图。迁移前 OSS 定位保存在 manifest，回迁前需逐个验证 OSS 原对象，新增 Zeabur 文件需先复制回 OSS；不能直接部署不认识 zeabur backend 的旧版本。
 - 验证：`services/image-store/server.test.mjs` 覆盖匿名拒绝、篡改/过期签名、不可覆盖、备份失败、删除隔离与备份保留；`catalog-image-store.test.ts` 和 `catalog-files-acceleration.test.ts` 覆盖存储归属、HTTPS、混合读/签名和内容损坏拒绝。正式服务重启持久性、全量图片迁移、正式 Web 与 worker 验收以本轮发布回执为准。
+
+## 2026-09-14 新版批量效果图工作台
+
+- `CAP-BATCH-WORKBENCH` / `PAGE-WPS-PRODUCTION`：/wps-production为新三阶段表格，旧编辑台保留在/wps-production/legacy。七项正文逐字传给模型，人工红字只显示。
+- `API-BATCH`：/api/batch/[...path]继承catalogUser及同源写保护；独立需求保存/识别、制作、修补、上衣排版和WPS读取。静态模块与图片白名单，不提供任意URL代理。
+- `STORE-BATCH`：014建batch_documents、batch_assets、batch_queue、batch_workers。小文档JSONB，大回执按单文档gzip保存，revision CAS；R2图片经SHA校验后登记不可变引用。015将新图片额外固定在旧清理器识别的production_file_refs，保护滚动部署；内部batch-assets-*引用容器不是客户订单。备份恢复含新表，旧main状态不覆盖。
+- `FLOW-BATCH-JOBS`：常驻worker以BATCH_WORKBENCH_ENABLED开启新队列，SKIP LOCKED领取、心跳、租约fencing。关闭页面不停止；费用请求中断标unknown，不自动重发。
+- `FLOW-BATCH-MOCKUPS`：按款色/方案组织正背位置，多款共享图稿；多位置候选配对不明时不猜。目录实际裁切、Alpha边界、同一比例入框；Sharp产3252×2301 PNG，Canvas按相同坐标预览。拖动CAS保存，原生img和ClipboardItem复制同一整图。
+- `RULE-BATCH-WPS`：只读待领取/未领取；变化原稿存pendingSource，显式采用后重新识别，人工稿与旧源保留历史。复制PNG不代表WPS完成。
+- `TEST-BATCH`：requirements/production/repair 30项；mockups.test.mjs覆盖共享、同框、候选、Alpha和位置隔离；cloud-integration.mjs在隔离PostgreSQL验证重连、CAS、不可变图、队列、压缩证据与工作区隔离。真实目录、浏览器粘贴和部署回读证据见发布回执，模拟供应商不冒充生产验证。

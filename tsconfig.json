@@ -50,6 +50,7 @@
   "exclude": [
     "node_modules",
     ".tmp",
-    "output"
+    "output",
+    "batch-mockup/.next"
   ]
 }

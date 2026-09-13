@@ -1,5 +1,7 @@
 # 工作服批量效果图 Demo
 
+2026-09-14 新版入口 `/wps-production`：需求理解 → 图稿制作/修补 → 上衣效果图。正式状态由 PostgreSQL 与 R2 保存，WPS 读取待领取/未领取，长任务在 Zeabur worker 执行。旧工作台及历史保留在 `/wps-production/legacy`。当前规则以 [新版 PRD](batch-mockup/PRD.md) 与 [进度表](batch-mockup/PLAN.md) 为准；下文旧生产台说明仅适用于 legacy。
+
 基于 Next.js 的批量效果图项目。商品素材库使用 PostgreSQL 保存款式、颜色、底图版本和位置标准，使用 OSS 保存文件；本地验收可显式使用独立 PostgreSQL 与本地对象目录。WPS 的同步、AI 理解、素材处理、方案确认、效果图制作和导出集中在一张生产表中，云模式将任务状态保存到 PostgreSQL、图片保存到私有 OSS。工作台界面固定浅色，避免系统暗夜模式影响文字和预览可读性。
 
 ## 商品素材库与位置标准

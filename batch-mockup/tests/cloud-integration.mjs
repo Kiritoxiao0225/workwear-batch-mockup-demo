@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import {randomBytes} from 'node:crypto';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createServer} from 'node:net';
+import EmbeddedPostgres from 'embedded-postgres';
+import sharp from 'sharp';
+import {migrateCatalog,catalogDatabase,closeCatalogDatabase} from '../../lib/server/catalog-database.ts';
+import {cloudStorage,CLOUD_ROOT} from '../adapters/cloud-files.mjs';
+import {atomicFile,jsonFile,saveJSON,readBytes,assetPath} from '../adapters/a-files.mjs';
+const root=await mkdtemp(join(tmpdir(),'batch-cloud-test-')),probe=createServer();await new Promise(ok=>probe.listen(0,'127.0.0.1',ok));const port=probe.address().port;await new Promise(ok=>probe.close(ok));
+const password=randomBytes(24).toString('hex');process.env.CATALOG_DATABASE_URL=`postgresql://batch_test:${password}@127.0.0.1:${port}/postgres`;process.env.CATALOG_LOCAL_OBJECT_ROOT=join(root,'objects');
+const postgres=new EmbeddedPostgres({databaseDir:join(root,'pg'),user:'batch_test',password,port,persistent:true,authMethod:'scram-sha-256',postgresFlags:['-h','127.0.0.1'],onLog:()=>{},onError:console.error});
+try{
+ await postgres.initialise();await postgres.start();await migrateCatalog();const file=join(CLOUD_ROOT,'case.json');
+ await cloudStorage(()=>saveJSON(file,{revision:1,text:'第一版'}));await closeCatalogDatabase();assert.deepEqual(await cloudStorage(()=>jsonFile(file)),{revision:1,text:'第一版'});
+ const png=await sharp({create:{width:20,height:20,channels:4,background:'red'}}).png().toBuffer();await cloudStorage(()=>atomicFile(assetPath(CLOUD_ROOT,'assets/test.png'),png));assert.deepEqual(await cloudStorage(()=>readBytes(assetPath(CLOUD_ROOT,'assets/test.png'))),png);
+ await assert.rejects(()=>cloudStorage(()=>atomicFile(assetPath(CLOUD_ROOT,'assets/test.png'),Buffer.from('wrong'))));
+ let continueFirst,readFirst;const firstRead=new Promise(ok=>readFirst=ok),resume=new Promise(ok=>continueFirst=ok);
+ const first=cloudStorage(async()=>{await jsonFile(file);readFirst();await resume;await saveJSON(file,{revision:2,text:'旧页面'});});await firstRead;
+ await cloudStorage(async()=>{await jsonFile(file);await saveJSON(file,{revision:2,text:'新页面'});});continueFirst();await assert.rejects(first,/其他页面/);
+ assert.equal((await cloudStorage(()=>jsonFile(file))).text,'新页面');
+ await cloudStorage(async adapter=>{await saveJSON(join(CLOUD_ROOT,'queue-test.json'),{ready:true});adapter.enqueue({id:'test-job',kind:'mockup',payload:{caseId:'A'}});});assert.equal((await catalogDatabase().query('SELECT count(*)::int n FROM batch_queue')).rows[0].n,1);
+ const big='图片请求'.repeat(100000);await cloudStorage(()=>atomicFile(join(CLOUD_ROOT,'evidence.txt'),big));assert.equal((await cloudStorage(()=>readBytes(join(CLOUD_ROOT,'evidence.txt')))).toString(),big);
+ await assert.rejects(()=>cloudStorage(()=>readBytes('/etc/passwd')),/越界/);
+ await assert.rejects(()=>cloudStorage(()=>jsonFile(file),{workspace:'other'}),/尚未找到/);
+ await cloudStorage(async()=>{await saveJSON(join(CLOUD_ROOT,'requirements-state/A.json'),{revision:7,text:'持久正文'});await saveJSON(join(CLOUD_ROOT,'production-jobs/J/state.json'),{status:'returned'});});await cloudStorage(async adapter=>{await adapter.preload();assert.equal((await jsonFile(join(CLOUD_ROOT,'requirements-state/A.json'))).revision,7);assert.equal((await jsonFile(join(CLOUD_ROOT,'production-jobs/J/state.json'))).status,'returned');assert.equal(await jsonFile(join(CLOUD_ROOT,'mockups/absent.json'),null),null);});assert.equal((await catalogDatabase().query('SELECT count(*)::int n FROM batch_assets b WHERE NOT EXISTS(SELECT 1 FROM production_file_refs r WHERE r.file_id=b.file_id)')).rows[0].n,0);
+ console.log('PASS cloud reconnect, immutable images, competing saves, queue persistence, compressed evidence, workspace isolation');
+}finally{await closeCatalogDatabase();await postgres.stop();await rm(root,{recursive:true,force:true});}

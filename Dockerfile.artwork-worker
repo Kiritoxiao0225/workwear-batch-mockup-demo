@@ -4,6 +4,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --include=dev && npm cache clean --force
 COPY tsconfig.json ./
 COPY lib ./lib
+COPY batch-mockup ./batch-mockup
 COPY scripts/artwork-worker.ts ./scripts/artwork-worker.ts
 COPY public/fonts ./public/fonts
 COPY public/brand ./public/brand

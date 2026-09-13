@@ -12,6 +12,6 @@ export default defineConfig({
     environment: 'node',
     // Bound concurrent native canvas/Sharp work to avoid CPU oversubscription.
     maxWorkers: 2,
-    include: ['app/**/*.test.ts', 'components/**/*.test.ts', 'hooks/**/*.test.ts', 'lib/**/*.test.ts'],
+    include: ['app/**/*.test.ts', 'components/**/*.test.ts', 'hooks/**/*.test.ts', 'lib/**/*.test.ts', 'batch-mockup/**/*.test.ts'],
   },
 });

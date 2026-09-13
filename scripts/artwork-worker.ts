@@ -9,6 +9,7 @@ const { recoverProductionRenders } = await import('../lib/server/production-rend
 const { WORKWEAR_LOGIC_VERSION } = await import('../lib/artwork-reliability');
 const { catalogStorageConfig } = await import('../lib/server/catalog-files');
 const { catalogObjectStore } = await import('../lib/server/catalog-oss');
+const batchWorker = process.env.BATCH_WORKBENCH_ENABLED === '1' ? await (await import('../batch-mockup/runtime/worker.mjs')).startBatchWorker() : null;
 let renderRecovery: Promise<void> | null = null, nextRenderRecovery = 0;
 const { wpsAnalysisJobsEnabled, claimWpsAnalysis, heartbeatWpsAnalysis } = await import('../lib/server/wps-analysis-jobs');
 const { processWpsAnalysis, discoverWpsAnalysis } = await import('../lib/server/wps-analysis-worker');
@@ -60,4 +61,4 @@ try {
     running.add(work);
   }
   await Promise.allSettled([...running, ...analysisRunning, ...(discovery ? [discovery] : []), ...(renderRecovery ? [renderRecovery] : [])]);
-} finally { health?.close(); clearInterval(heartbeat); await closeCatalogDatabase(); }
+} finally { await batchWorker?.close(); health?.close(); clearInterval(heartbeat); await closeCatalogDatabase(); }
