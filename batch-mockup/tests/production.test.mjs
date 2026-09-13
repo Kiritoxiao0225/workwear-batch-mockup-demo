@@ -56,3 +56,12 @@ test('缺客户Logo不凭空生成；纯文字无图可以生成',async t=>{
  f.state.draft.readingIssues=[];f.state.revision++;await saveJSON(resolve(f.root,'requirements-state/T.json'),f.state);
  const [ok]=await reserveProduction(f.root,f.manifest,[{...f.requests[0],revision:2}]);assert.equal(ok.status,'queued');
 });
+test('确认失败后仅续跑抠图，未知抠图不重复付费',async t=>{
+ const f=await fixture(t),[j]=await reserveProduction(f.root,f.manifest,f.requests);let generated=0,cuts=0;
+ const providers={generate:async()=>{generated++;return f.opaque;},cutout:async()=>{cuts++;throw Object.assign(Error('before submit'),{definiteFailure:true});}};
+ const partial=await executeProduction(f.root,j.id,providers);assert.equal(partial.steps.at(-1).status,'failed');
+ partial.status='queued';partial.resumeCutout=true;await saveJSON(resolve(f.root,'production-jobs',j.id,'state.json'),partial);
+ const final=await executeProduction(f.root,j.id,{...providers,cutout:async()=>{cuts++;return f.transparent;}});assert.equal(final.status,'returned');assert.equal(generated,1);assert.equal(cuts,2);assert.equal(final.raw.sha256,hash(f.opaque));
+ final.status='queued';final.steps.at(-1).status='unknown';await saveJSON(resolve(f.root,'production-jobs',j.id,'state.json'),final);
+ const stopped=await executeProduction(f.root,j.id,providers);assert.equal(stopped.status,'partial');assert.equal(cuts,2);assert.equal(generated,1);
+});

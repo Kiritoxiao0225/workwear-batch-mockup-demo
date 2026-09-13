@@ -70,7 +70,8 @@ export async function executeProduction(root,id,providers,onProgress=()=>{}) {
     const images=[];for(const img of input.images){const path=assetPath(root,img.asset),bytes=await readBytes(path);if(hash(bytes)!==img.sha256)throw new Error('固定原图校验失败');images.push({...img,path:await materialize(path)});}
     if(hash(input.prompt)!==input.promptSHA256)throw new Error('固定正文校验失败');
     let raw;
-    if(input.route==='generate')raw=await step('generate',dir=>providers.generate({...input,images},dir));
+    if(job.resumeCutout){if(!job.raw||job.steps.filter(s=>s.name==='cutout').at(-1)?.status!=='failed')throw new Error('未确认抠图失败，不能重试未知请求');raw=await readBytes(assetPath(root,job.raw.asset));if(hash(raw)!==job.raw.sha256)throw new Error('已生成原图校验失败');}
+    else if(input.route==='generate')raw=await step('generate',dir=>providers.generate({...input,images},dir));
     else {const image=images.find(i=>i.id===sourceFor(input).id);raw=input.route==='enhance'?await step('enhance',dir=>providers.enhance(image,dir)):await import('node:fs/promises').then(fs=>fs.readFile(image.path));}
     job.raw=await publish(raw,'raw');await save();
     if(job.raw.transparentExterior){job.final=job.raw;job.backgroundDecision='实际像素已有透明外围，跳过抠图';}
@@ -79,7 +80,7 @@ export async function executeProduction(root,id,providers,onProgress=()=>{}) {
       const bytes=await step('cutout',dir=>materialize(assetPath(root,job.raw.asset)).then(path=>providers.cutout(path,dir)));job.final=await publish(bytes,'cutout');
       if(!job.final.transparentExterior)job.warning='抠图结果的外围透明检查未通过，请放大核对；未自动重跑';
     }
-    job.status='returned';job.phase='done';
+    job.status='returned';job.phase='done';job.error=null;
   }catch(e){job.status=job.raw?'partial':e.definiteFailure?'failed':'unknown';job.error=String(e.message);}
   job.finishedAt=stamp();job.elapsedMs=Date.parse(job.finishedAt)-Date.parse(job.startedAt);await save();return job;
 }

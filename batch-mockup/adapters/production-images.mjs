@@ -2,7 +2,6 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { parseEnv } from 'node:util';
 import { spawn } from 'node:child_process';
-import { createRequire } from 'node:module';
 import sharp from 'sharp';
 import { saveJSON, atomicFile, checkpoint } from './a-files.mjs';
 
@@ -70,8 +69,7 @@ export async function configuredProduction() {
   }
   async function cutout(path,dir) {
     if(!e.MEITU_OPENAPI_ACCESS_KEY||!e.MEITU_OPENAPI_SECRET_KEY)throw new Error('美图凭据未配置');
-    const require=createRequire(resolve(repo,'package.json')),partition=require('meitu-cli/dist/partition.js');
-    const env={...process.env,MEITU_OPENAPI_ACCESS_KEY:e.MEITU_OPENAPI_ACCESS_KEY,MEITU_OPENAPI_SECRET_KEY:e.MEITU_OPENAPI_SECRET_KEY,MEITU_OPENAPI_TOOL_TASK_MODE:'command',MEITU_OPENAPI_TASK_TIMEOUT_MS:'900000',[partition.PARTITION_ENV]:'intl'};
+    const env={...process.env,MEITU_OPENAPI_ACCESS_KEY:e.MEITU_OPENAPI_ACCESS_KEY,MEITU_OPENAPI_SECRET_KEY:e.MEITU_OPENAPI_SECRET_KEY,MEITU_OPENAPI_TOOL_TASK_MODE:'command',MEITU_OPENAPI_TASK_TIMEOUT_MS:'900000',MEITU_CLI_PARTITION:'intl'};
     const args=['node_modules/meitu-cli/bin/meitu.js','image-cutout','--image_url',path,'--model_type','2','--json'];
     await saveJSON(resolve(dir,'request.json'),{command:'meitu image-cutout',image:path,model_type:2,partition:'intl'});
     async function cli(args,label) {
