@@ -1,0 +1,68 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {resolve} from 'node:path';
+import sharp from 'sharp';
+import {saveJSON,atomicFile,hash,jsonFile} from '../adapters/a-files.mjs';
+import {executeTask,queueNewRequirements,continueAfterAnalysis} from '../runtime/service.mjs';
+import {readRequirementState} from '../application/requirements.mjs';
+import {readProductionJobs} from '../application/production.mjs';
+import {FRAME,readMockupState} from '../application/mockups.mjs';
+const prompt='【左胸图稿】\n主体：制作文字。\n文字：测试。\n字体：黑体。\n颜色：红色。\n排版：横排。\n尺寸：未指定。\n输出：独立透明图稿。';
+async function fixture(t){
+ const root=await mkdtemp(resolve(tmpdir(),'automatic-flow-'));t.after(()=>rm(root,{recursive:true,force:true}));
+ const manifest={run:{promptSHA256:hash('prompt')},cases:['A','B'].map(caseId=>({caseId,sourceText:'制作测试文字',images:[],active:true}))};
+ await saveJSON(resolve(root,'manifest.json'),manifest);await atomicFile(resolve(root,'prompt.txt'),'prompt');
+ const draft={artworks:[{id:'logo',name:'左胸',route:'generate',applications:[{style:'S',color:'黑',position:'左胸'}],imageIds:[],prompt}],readingIssues:[]};
+ let calls=0;const analyzerFactory=async()=>async()=>{calls++;return {rawContent:JSON.stringify(draft)};};
+ const queue=new Map(),enqueue=t=>queue.set(t.id,t);
+ return {root,manifest,draft,analyzerFactory,queue,enqueue,calls:()=>calls};
+}
+test('同步后逐条识别、自动制作和实际PNG上衣；重复同步和重复回调不重复付费',async t=>{
+ const f=await fixture(t),syncWps=async()=>({newCases:['A','B']});
+ await executeTask(f.root,{kind:'sync'},f.enqueue,{syncWps,analyzerFactory:f.analyzerFactory});
+ assert.equal(f.queue.size,2);await queueNewRequirements(f.root,f.manifest,f.enqueue,f.analyzerFactory);assert.equal(f.queue.size,2);
+ for(const task of [...f.queue.values()])await executeTask(f.root,task,f.enqueue,{analyzerFactory:f.analyzerFactory});
+ assert.equal(f.calls(),2);assert.equal((await readProductionJobs(f.root)).length,2);
+ const png=(w,h,c)=>sharp({create:{width:w,height:h,channels:4,background:c}}).png().toBuffer();
+ const logo=await sharp(await png(40,40,'#0000')).composite([{input:await png(20,10,'red'),left:10,top:15}]).png().toBuffer();
+ const garment=await sharp(Buffer.from('<svg width="200" height="200"><path fill="#ccc" d="M30 15H70L95 60L80 75L72 60V190H28V60L20 75L5 60ZM130 15H170L195 60L180 75L172 60V190H128V60L120 75L105 60Z"/></svg>')).png().toBuffer();
+ const detail={id:'11111111-1111-4111-8111-111111111111',assetVersionId:'v1',styleCode:'S',colorName:'黑',sha256:hash(garment),width:200,height:200,views:[{face:'front',crop:{x:0,y:0,width:.5,height:1},history:[]},{face:'back',crop:{x:.5,y:0,width:.5,height:1},history:[]}]};
+ const catalog={styles:async()=>[{styleCode:'S',colors:[{id:detail.id,colorName:'黑'}]}],detail:async()=>detail,bytes:async()=>garment,frame:()=>png(FRAME.width,FRAME.height,'white')};
+ let generated=0;const deps={productionFactory:async()=>({generate:async input=>{assert.equal(input.prompt,prompt);generated++;return logo;},cutout:()=>assert.fail('透明图无需抠图')}),catalog};
+ for(const task of [...f.queue.values()].filter(t=>t.kind==='production')){await executeTask(f.root,task,f.enqueue,deps);await executeTask(f.root,task,f.enqueue,deps);}
+ for(const task of [...f.queue.values()].filter(t=>t.kind==='mockup'))await executeTask(f.root,task,f.enqueue,deps);
+ assert.equal(generated,2);for(const id of ['A','B']){const state=await readMockupState(f.root,id);assert.equal(state.cards[0].status,'ready');assert.equal(state.cards[0].layers.length,1);assert.equal(state.cards[0].render.width,FRAME.width);}
+ await queueNewRequirements(f.root,f.manifest,f.enqueue,f.analyzerFactory);assert.equal(f.calls(),2);
+});
+test('错误输出停止本条不阻塞其他条；同步不自动重试失败或未知识别',async t=>{
+ const f=await fixture(t);await queueNewRequirements(f.root,f.manifest,f.enqueue,f.analyzerFactory);
+ const tasks=[...f.queue.values()];await executeTask(f.root,tasks[0],f.enqueue,{analyzerFactory:async()=>async()=>({rawContent:'bad json'})});
+ await executeTask(f.root,tasks[1],f.enqueue,{analyzerFactory:f.analyzerFactory});assert.equal((await readProductionJobs(f.root)).length,1);
+ const before=f.queue.size;await queueNewRequirements(f.root,f.manifest,f.enqueue,f.analyzerFactory);assert.equal(f.queue.size,before);assert.equal((await readRequirementState(f.root,'A')).analyses.length,1);
+});
+test('人工修改、补图变更、原稿变更和状态移出均不自动生成',async t=>{
+ for(const mutation of ['designer','supplement','source','inactive']){
+ const f=await fixture(t);f.manifest.cases=f.manifest.cases.slice(0,1);await saveJSON(resolve(f.root,'manifest.json'),f.manifest);await queueNewRequirements(f.root,f.manifest,f.enqueue,f.analyzerFactory);
+ const task=[...f.queue.values()][0];await executeTask(f.root,{...task,payload:{...task.payload,autoProduce:false}},f.enqueue,{analyzerFactory:f.analyzerFactory});
+ if(mutation==='designer'){const s=await readRequirementState(f.root,'A');s.revision++;s.draftOrigin='designer';await saveJSON(resolve(f.root,'requirements-state/A.json'),s);}
+ if(mutation==='supplement')await saveJSON(resolve(f.root,'supplements.json'),{A:{revision:1,items:[]}});
+ if(mutation==='source')f.manifest.cases[0].sourceChanged=true;
+ if(mutation==='inactive')f.manifest.cases[0].active=false;
+ await saveJSON(resolve(f.root,'manifest.json'),f.manifest);await continueAfterAnalysis(f.root,'A',task.payload.analysisId,f.enqueue);assert.equal((await readProductionJobs(f.root)).length,0,mutation);
+ }
+});
+test('缺Logo保留阻塞记录；单条预约失败不阻塞其他需求',async t=>{
+ const f=await fixture(t);f.draft.readingIssues=[{scope:'左胸',issue:'未提供Logo素材'}];let n=0;
+ const result=await queueNewRequirements(f.root,f.manifest,f.enqueue,async()=>{if(++n===1)throw Error('配置失败');return f.analyzerFactory();});assert.equal(result.errors.length,1);assert.equal(result.queued.length,1);
+ await executeTask(f.root,[...f.queue.values()][0],f.enqueue,{analyzerFactory:f.analyzerFactory});assert.equal((await readProductionJobs(f.root))[0].status,'blocked');assert.equal([...f.queue.values()].filter(t=>t.kind==='production').length,0);
+ assert.equal((await jsonFile(resolve(f.root,'auto-flow.json'))).errors[0].caseId,'A');
+});
+test('排队期间人工修改后自动任务停止，未调用付费制作',async t=>{
+ const f=await fixture(t);await queueNewRequirements(f.root,f.manifest,f.enqueue,f.analyzerFactory);
+ await executeTask(f.root,[...f.queue.values()][0],f.enqueue,{analyzerFactory:f.analyzerFactory});
+ const state=await readRequirementState(f.root,'A');state.revision++;state.draftOrigin='designer';await saveJSON(resolve(f.root,'requirements-state/A.json'),state);
+ const task=[...f.queue.values()].find(t=>t.kind==='production');await executeTask(f.root,task,f.enqueue,{productionFactory:()=>assert.fail('不应调用制作供应商')});
+ assert.equal((await readProductionJobs(f.root))[0].status,'blocked');
+});
