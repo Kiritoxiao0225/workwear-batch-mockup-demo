@@ -16,7 +16,14 @@ async function handle(request,context){
   const write=request.method!=='GET';await catalogUser(request,write);
   const params=await context.params,path=params.path.join('/'),url=new URL(request.url);
   if(!write&&staticFiles[path]){
-   const raw=await readFile(resolve(process.cwd(),'batch-mockup',staticFiles[path]),'utf8');
+   let raw=await readFile(resolve(process.cwd(),'batch-mockup',staticFiles[path]),'utf8');
+   if(path==='ui'){
+    // Deliver editor styles with the page so a delayed stylesheet request cannot expose full-size assets.
+    for(const name of ['repair-editor.css','mockup-editor.css']){
+     const css=await readFile(resolve(process.cwd(),'batch-mockup',staticFiles[name]),'utf8');
+     raw=raw.replace(`<link rel="stylesheet" href="/${name}">`,`<style data-editor-style="${name}">${css}</style>`);
+    }
+   }
    return new Response(scopeURLs(raw),{headers:{'Content-Type':path==='ui'?'text/html; charset=utf-8':path.endsWith('.css')?'text/css; charset=utf-8':'text/javascript; charset=utf-8','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"frame-ancestors 'self'"}});
   }
   if(!write&&!path.startsWith('api/')&&!path.endsWith('.json')){
