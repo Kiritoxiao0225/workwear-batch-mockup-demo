@@ -11,10 +11,12 @@ import { configuredProduction } from '../adapters/production-images.mjs';
 
 // Only untouched inputs enter automatically. Re-sync must not restart failed calls or designer edits.
 export async function queueNewRequirements(root,manifest,enqueue,factory=configuredAnalyzer){
- const queued=[],errors=[];
+ const queued=[],errors=[],existingJobs=await readProductionJobs(root);
  for(const c of (await requirementWorkbench(root,manifest)).cases){
-  if(c.active===false||c.sourceChanged||c.sourceReadError||c.draft||c.analysis)continue;
+  if(c.active===false||c.sourceChanged||c.sourceReadError)continue;
   try{
+   if(c.draft){if(!existingJobs.some(j=>j.caseId===c.caseId))await continueAfterAnalysis(root,c.caseId,c.draftAnalysisId,enqueue);continue;}
+   if(c.analysis)continue;
    const reserved=await reserveRequirementAnalysis(root,manifest,{caseId:c.caseId,revision:c.revision,supplementRevision:c.supplement.revision,requestId:randomUUID()},factory);
    if(reserved.execute){await enqueue({id:reserved.analysis.id,kind:'analysis',payload:{caseId:c.caseId,analysisId:reserved.analysis.id,autoProduce:true}});queued.push(c.caseId);}
   }catch(e){errors.push({caseId:c.caseId,error:e.message});}

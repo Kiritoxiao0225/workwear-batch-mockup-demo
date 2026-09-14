@@ -66,3 +66,9 @@ test('排队期间人工修改后自动任务停止，未调用付费制作',asy
  const task=[...f.queue.values()].find(t=>t.kind==='production');await executeTask(f.root,task,f.enqueue,{productionFactory:()=>assert.fail('不应调用制作供应商')});
  assert.equal((await readProductionJobs(f.root))[0].status,'blocked');
 });
+test('旧页面已首次识别但未制作的条目可接续；已有制作结果不因同步再预约',async t=>{
+ const f=await fixture(t);await queueNewRequirements(f.root,f.manifest,f.enqueue,f.analyzerFactory);
+ for(const task of [...f.queue.values()])await executeTask(f.root,{...task,payload:{...task.payload,autoProduce:false}},f.enqueue,{analyzerFactory:f.analyzerFactory});
+ assert.equal((await readProductionJobs(f.root)).length,0);await queueNewRequirements(f.root,f.manifest,f.enqueue,f.analyzerFactory);assert.equal((await readProductionJobs(f.root)).length,2);
+ const ids=[...f.queue.keys()];await queueNewRequirements(f.root,f.manifest,f.enqueue,f.analyzerFactory);assert.deepEqual([...f.queue.keys()],ids);assert.equal(f.calls(),2);
+});
