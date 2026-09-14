@@ -6,7 +6,7 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {mockupGroups,exactGarment,garmentCanvas,renderMockups,saveMockupSelection,readMockupState,initialPlacement,hasManualSize,FRAME} from '../application/mockups.mjs';
-import {atomicFile,assetPath,hash} from '../adapters/a-files.mjs';
+import {atomicFile,assetPath,hash,saveJSON} from '../adapters/a-files.mjs';
 const artwork=(id,apps)=>({id,name:id,applications:apps});
 test('共享图稿只建立多个服装应用；同款色前后同框，候选版本不叠加',()=>{
  const c={caseId:'A',draft:{artworks:[artwork('logo',[{style:'S',color:'黑',position:'左胸'},{style:'S',color:'白',position:'左胸'}]),artwork('back',[{style:'S',color:'黑',position:'后背'},{style:'S',color:'白',position:'后背'}])]}};
@@ -64,4 +64,15 @@ test('旧版拖动误标manual不锁死默认大尺寸；真实人工缩放保�
  assert.equal(hasManualSize({manual:true,width},face,info),false);
  assert.equal(hasManualSize({manual:true,width:width+.01},face,info),true);
  assert.equal(hasManualSize({manual:true,sizeManual:true,width},face,info),true);
+});
+
+test('保存旧版仅移动图层不把历史manual升级成手动缩放',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'legacy-drag-'));
+ try{const c={caseId:'A',draft:{artworks:[artwork('logo',[{style:'S',color:'黑',position:'左胸'}])]}};
+ const g=mockupGroups(c)[0],layer={id:'L',x:.3,y:.4,width:.07,manual:true};
+ await saveJSON(join(root,'mockups/A.json'),{revision:1,cards:[{...g,layers:[layer]}]});
+ let s=await saveMockupSelection(root,c,{revision:1,cardId:g.id,layers:[{...layer,x:.35}]});
+ assert.equal(s.cards[0].layers[0].sizeManual,undefined);assert.equal(s.cards[0].layers[0].positionManual,true);
+ s=await saveMockupSelection(root,c,{revision:s.revision,cardId:g.id,layers:[{...layer,x:.35,width:.06}]});assert.equal(s.cards[0].layers[0].sizeManual,true);
+ }finally{await rm(root,{recursive:true,force:true});}
 });

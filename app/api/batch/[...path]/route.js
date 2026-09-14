@@ -9,7 +9,7 @@ import { readBytes,assetPath } from '@/batch-mockup/adapters/a-files.mjs';
 export const dynamic='force-dynamic';
 export const runtime='nodejs';
 export const maxDuration=300;
-const staticFiles={ui:'experiments/workbench/requirements.html','requirements-editor.mjs':'experiments/workbench/requirements-editor.mjs','repair-editor.mjs':'experiments/workbench/repair-editor.mjs','repair-editor.css':'experiments/workbench/repair-editor.css','repair-pixels.mjs':'application/repair-pixels.mjs','mockup-editor.mjs':'experiments/workbench/mockup-editor.mjs','mockup-editor.css':'experiments/workbench/mockup-editor.css'};
+const staticFiles={'mockup-save.mjs':'experiments/workbench/mockup-save.mjs',ui:'experiments/workbench/requirements.html','requirements-editor.mjs':'experiments/workbench/requirements-editor.mjs','repair-editor.mjs':'experiments/workbench/repair-editor.mjs','repair-editor.css':'experiments/workbench/repair-editor.css','repair-pixels.mjs':'application/repair-pixels.mjs','mockup-editor.mjs':'experiments/workbench/mockup-editor.mjs','mockup-editor.css':'experiments/workbench/mockup-editor.css'};
 function scopeURLs(text){return text.replace(/(["'`])\/(?!\/)/g,'$1/api/batch/');}
 async function handle(request,context){
  try{
@@ -31,7 +31,7 @@ async function handle(request,context){
    const bytes=await cloudStorage(()=>readBytes(assetPath(CLOUD_ROOT,path)));const ext=extname(path);let offset=0;const stream=new ReadableStream({pull(controller){if(offset>=bytes.length){controller.close();return;}const end=Math.min(offset+65536,bytes.length);controller.enqueue(new Uint8Array(bytes.subarray(offset,end)));offset=end;}});return new Response(stream,{headers:{'Content-Type':ext==='.png'?'image/png':ext==='.webp'?'image/webp':'image/jpeg','Cache-Control':'private, max-age=86400, immutable','X-Content-Type-Options':'nosniff'}});
   }
   const body=write?JSON.parse((await catalogBody(request,4*1024*1024)).toString('utf8')):Object.fromEntries(url.searchParams);
-  const result=await cloudStorage(async adapter=>{await adapter.preload();return service(CLOUD_ROOT,'/'+path,request.method,body,{enqueue:task=>adapter.enqueue(task)});});
+  const result=await cloudStorage(async adapter=>{if(!['api/mockups','api/mockups/prepare','api/garments'].includes(path))await adapter.preload();return service(CLOUD_ROOT,'/'+path,request.method,body,{enqueue:task=>adapter.enqueue(task)});});
   if(path==='api/requirements'){result.storage='cloud';result.workerOnline=await queueHealth();result.activity=await queueActivity();}
   return NextResponse.json(result,{headers:{'Cache-Control':'private, no-store'}});
  }catch(e){const status=Number(e.status)||500;console.error('[batch-api]',e.name);return NextResponse.json({error:status===500?'保存或读取暂时失败，请稍后重试；已保存内容保留':e.message},{status,headers:{'Cache-Control':'no-store'}});}

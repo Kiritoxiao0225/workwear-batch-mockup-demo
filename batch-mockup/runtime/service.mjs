@@ -18,6 +18,7 @@ export async function workbenchData(root){
 export async function service(root,path,method,body={},options={}){
  const queue=options.enqueue||(()=>{throw fail('后台任务未连接',503);});
  if(method==='GET'){
+  if(path==='/api/mockups')return readMockupState(root,body.caseId);
   if(path==='/api/requirements')return workbenchData(root);
   if(path==='/api/garments')return {styles:await (await import('../adapters/garments.mjs')).garmentCatalog.styles()};
   if(path==='/api/production/repair')return readRepairInput(root,body.jobId);
@@ -43,7 +44,7 @@ export async function service(root,path,method,body={},options={}){
    await queue({id:randomUUID(),kind:'mockup',payload:{caseId:job.caseId}});return saved;
   }
   if(['/api/mockups','/api/mockups/prepare'].includes(path)){
-   const c=(await requirementWorkbench(root,manifest)).cases.find(c=>c.caseId===body.caseId);if(!c)throw fail('未找到需求',404);
+   const source=manifest.cases.find(c=>c.caseId===body.caseId);if(!source)throw fail('未找到需求',404);const c={...source,...await readRequirementState(root,body.caseId),caseId:body.caseId};
    const saved=path==='/api/mockups'?await saveMockupSelection(root,c,body):await readMockupState(root,c.caseId);
    await queue({id:randomUUID(),kind:'mockup',payload:{caseId:c.caseId}});return saved;
   }

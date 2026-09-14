@@ -1,3 +1,4 @@
+import {createPlacementWriter} from '/mockup-save.mjs';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const W=3252,H=2301;
 export function createMockupEditor({api,assetURL=x=>'/'+x,onSaved,toast}){
@@ -33,11 +34,17 @@ export function createMockupEditor({api,assetURL=x=>'/'+x,onSaved,toast}){
    styleSelect.onkeydown=e=>{const choices=[...options.querySelectorAll('[data-style-id]')];if(e.key==='Escape'&&!options.hidden){e.preventDefault();e.stopPropagation();closeOptions();styleSelect.value=styles?.find(s=>s.id===styleId)?.styleCode||'';if(colorSelect.value&&!busy.has(card.id))active=null;return;}if(['ArrowDown','ArrowUp'].includes(e.key)){e.preventDefault();if(options.hidden){showOptions();return;}optionIndex=Math.max(0,Math.min(choices.length-1,optionIndex+(e.key==='ArrowDown'?1:-1)));choices.forEach((b,i)=>b.setAttribute('aria-selected',String(i===optionIndex)));if(choices[optionIndex]){styleSelect.setAttribute('aria-activedescendant',choices[optionIndex].id);choices[optionIndex].scrollIntoView({block:'nearest'});}}if(e.key==='Enter'&&!options.hidden&&choices[optionIndex]){e.preventDefault();choose(choices[optionIndex]);}};
    picker.onfocusout=e=>{if(!picker.contains(e.relatedTarget)){closeOptions();styleSelect.value=styles?.find(s=>s.id===styleId)?.styleCode||'';if(colorSelect.value&&!busy.has(card.id))active=null;}};
    let failedPatch=null;
-   async function save(patch){if(busy.has(card.id))return;busy.add(card.id);active=card.id;setStatus('正在保存并更新整张图片…');el.dataset.saving='true';el.querySelector('[data-mockup-action=copy]').disabled=true;el.querySelector('a[download]')?.removeAttribute('href');
-    try{failedPatch=null;el.querySelector('.mockup-retry')?.remove();const saved=await api('/api/mockups',{caseId:c.caseId,cardId:card.id,revision:state.revision,...patch});state.revision=saved.revision;await onSaved();}
-    catch(e){failedPatch=patch;setStatus('保存失败，当前调整仍保留：'+e.message);toast(e.message);const controls=document.createElement('div');controls.className='mockup-retry';controls.innerHTML='<button type="button">重试保存</button> <button type="button">取消本次调整</button>';controls.children[0].onclick=async()=>{try{const latest=(await api('/api/requirements')).cases.find(x=>x.caseId===c.caseId)?.mockups;if(latest?.revision!==state.revision){setStatus('版本已变化，请取消本次调整并读取最新结果后再调整');return;}void save(patch);}catch(err){setStatus(err.message);}};controls.children[1].onclick=async()=>{failedPatch=null;active=null;await onSaved();};status.after(controls);}
-    finally{busy.delete(card.id);if(!failedPatch)active=null;delete el.dataset.saving;if(!failedPatch)await onSaved();}
-   }
+   const writer=createPlacementWriter({initial:state,cardId:card.id,
+    write:patch=>api('/api/mockups',{caseId:c.caseId,cardId:card.id,...patch}),
+    read:()=>api('/api/mockups?caseId='+encodeURIComponent(c.caseId)),
+    onChange:s=>{
+     state.revision=s.revision;
+     if(s.pending){busy.add(card.id);el.dataset.saving='true';setStatus(s.error?'保存失败，调整仍保留：'+s.error:'正在保存位置，可继续拖动…');el.querySelector('[data-mockup-action=copy]').disabled=true;el.querySelector('a[download]')?.removeAttribute('href');}
+     else{busy.delete(card.id);delete el.dataset.saving;setStatus('位置已保存，正在更新整张图片…');if(!drag&&active===card.id)active=null;void onSaved();}
+     failedPatch=s.error;
+     if(s.error&&!el.querySelector('.mockup-retry')){const controls=document.createElement('div');controls.className='mockup-retry';controls.innerHTML='<button type="button">重试保存</button>';controls.firstChild.onclick=()=>{controls.remove();void writer.retry();};status.after(controls);toast(s.error);}
+    }});
+   function save(patch){return writer.submit(patch);}
    colorSelect.onchange=()=>{if(colorSelect.value)void save({variantId:colorSelect.value});};
    const canvas=el.querySelector('canvas'),stage=el.querySelector('.garment-stage'),final=el.querySelector('.garment-final');
    let selected=null,drag=null,baseImage=null,logos=null,ready=null,layers=structuredClone(card.layers),dirty=false;
@@ -45,10 +52,10 @@ export function createMockupEditor({api,assetURL=x=>'/'+x,onSaved,toast}){
    const box=l=>({x:l.x*W-l.width*W/2,y:l.y*H-l.width*W*l.ratio/2,w:l.width*W,h:l.width*W*l.ratio});
    const point=e=>{const r=stage.getBoundingClientRect();return{x:(e.clientX-r.left)/r.width*W,y:(e.clientY-r.top)/r.height*H};};
    function draw(){const g=canvas.getContext('2d');g.clearRect(0,0,W,H);g.drawImage(baseImage,0,0,W,H);layers.forEach((l,n)=>{const b=box(l);g.drawImage(logos[n],b.x,b.y,b.w,b.h);if(l.id===selected){g.strokeStyle='#16825b';g.lineWidth=8;g.strokeRect(b.x,b.y,b.w,b.h);g.fillStyle='#16825b';g.fillRect(b.x+b.w-20,b.y+b.h-20,40,40);}});canvas.hidden=false;}
-   if(canvas&&card.base){void load().catch(()=>{});
-    stage.onpointerdown=async e=>{if(expanded!==card.id)return;if(e.button!==0||busy.has(card.id)||failedPatch||!['ready','preview'].includes(card.status))return;const p=point(e),size=45;let hit=null,resize=false;
+   if(canvas&&card.base){void load().then(()=>{if(card.status==='pending')draw();}).catch(()=>{});
+    stage.onpointerdown=async e=>{if(expanded!==card.id)return;if(e.button!==0||!['ready','preview','pending'].includes(card.status))return;const p=point(e),size=45;let hit=null,resize=false;
      for(const l of [...layers].reverse()){const b=box(l);if(l.id===selected&&Math.abs(p.x-b.x-b.w)<size&&Math.abs(p.y-b.y-b.h)<size){hit=l;resize=true;break;}if(p.x>=b.x&&p.x<=b.x+b.w&&p.y>=b.y&&p.y<=b.y+b.h){hit=l;break;}}
-     if(!hit){selected=null;canvas.hidden=true;return;}e.preventDefault();try{await load();}catch(err){toast(err.message);return;}
+     if(!hit){selected=null;if(busy.has(card.id)||card.status==='pending')draw();else canvas.hidden=true;return;}e.preventDefault();try{await load();}catch(err){toast(err.message);return;}
      if(!(e.buttons&1))return;active=card.id;selected=hit.id;drag={id:hit.id,p,initial:structuredClone(hit),resize,before:structuredClone(layers),pointer:e.pointerId};stage.setPointerCapture(e.pointerId);draw();
     };
     stage.onpointermove=e=>{if(!drag)return;const p=point(e),l=layers.find(l=>l.id===drag.id);if(drag.resize){const b=box(drag.initial),w=Math.max(.005,Math.min(.8,(p.x-b.x)/W));l.width=w;l.x=(b.x+w*W/2)/W;l.y=(b.y+w*W*l.ratio/2)/H;}else{l.x=Math.max(0,Math.min(1,drag.initial.x+(p.x-drag.p.x)/W));l.y=Math.max(0,Math.min(1,drag.initial.y+(p.y-drag.p.y)/H));}dirty=true;draw();};
@@ -58,7 +65,7 @@ export function createMockupEditor({api,assetURL=x=>'/'+x,onSaved,toast}){
     canvas.style.pointerEvents='none';if(final)final.oncontextmenu=stage.oncontextmenu;
    }
    function open(){expanded=card.id;el.classList.add('garment-expanded');el.querySelector('.garment-close').hidden=false;el.querySelector('.garment-close').focus();}
-   function close(){if(drag){layers=drag.before;drag=null;dirty=false;}expanded=null;el.classList.remove('garment-expanded');el.querySelector('.garment-close').hidden=true;closeOptions();if(!busy.has(card.id)&&!failedPatch){active=null;applyOptions();}if(canvas)canvas.hidden=true;stage.focus();}
+   function close(){if(drag){layers=drag.before;drag=null;dirty=false;}expanded=null;el.classList.remove('garment-expanded');el.querySelector('.garment-close').hidden=true;closeOptions();if(!busy.has(card.id)&&!failedPatch){active=null;applyOptions();}if(canvas)canvas.hidden=!(busy.has(card.id)||card.status==='pending');stage.focus();}
    stage.onclick=e=>{if(e.button===0&&expanded!==card.id){e.preventDefault();open();}};
    stage.onkeydown=e=>{if((e.key==='Enter'||e.key===' ')&&expanded!==card.id){e.preventDefault();open();}};
    el.onclick=async e=>{if(e.target.closest('a[download]')&&(busy.has(card.id)||failedPatch||!['ready','preview'].includes(card.status))){e.preventDefault();return;}const b=e.target.closest('[data-mockup-action]');if(!b)return;
@@ -71,5 +78,5 @@ export function createMockupEditor({api,assetURL=x=>'/'+x,onSaved,toast}){
   }
  }}
  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&expanded&&!document.querySelector('dialog[open]')){e.preventDefault();document.querySelector('.garment-expanded .garment-close')?.click();}});
- return {html,hydrate,isEditing:()=>!!active};
+ return {html,hydrate,isEditing:()=>!!active||busy.size>0};
 }
