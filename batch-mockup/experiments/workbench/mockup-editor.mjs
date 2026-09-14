@@ -2,7 +2,7 @@ import {createPlacementWriter} from '/mockup-save.mjs';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const W=3252,H=2301;
 export function createMockupEditor({api,assetURL=x=>'/'+x,onSaved,toast}){
- let styles=null,catalogPending=null,styleError='',active=null,expanded=null;const busy=new Set(),prepared=new Set(),undo=new Map();
+ let styles=null,catalogPending=null,styleError='',active=null,expanded=null,editEpoch=0;const busy=new Set(),prepared=new Set(),undo=new Map();
  const imageCache=new Map();
  const img=src=>{if(!imageCache.has(src))imageCache.set(src,new Promise((ok,no)=>{const i=new Image();i.onload=()=>ok(i);i.onerror=()=>{imageCache.delete(src);no(Error('图片读取失败'));};i.src=assetURL(src);}));return imageCache.get(src);};
  async function catalog(){if(styles)return styles;if(catalogPending)return catalogPending;catalogPending=api('/api/garments').then(x=>{styles=x.styles;styleError='';return styles;}).catch(e=>{styleError=e.message;throw e;}).finally(()=>{catalogPending=null;});return catalogPending;}
@@ -44,7 +44,7 @@ export function createMockupEditor({api,assetURL=x=>'/'+x,onSaved,toast}){
      failedPatch=s.error;
      if(s.error&&!el.querySelector('.mockup-retry')){const controls=document.createElement('div');controls.className='mockup-retry';controls.innerHTML='<button type="button">重试保存</button>';controls.firstChild.onclick=()=>{controls.remove();void writer.retry();};status.after(controls);toast(s.error);}
     }});
-   function save(patch){return writer.submit(patch);}
+   function save(patch){editEpoch++;return writer.submit(patch);}
    colorSelect.onchange=()=>{if(colorSelect.value)void save({variantId:colorSelect.value});};
    const canvas=el.querySelector('canvas'),stage=el.querySelector('.garment-stage'),final=el.querySelector('.garment-final');
    let selected=null,drag=null,baseImage=null,logos=null,ready=null,layers=structuredClone(card.layers),dirty=false;
@@ -56,7 +56,7 @@ export function createMockupEditor({api,assetURL=x=>'/'+x,onSaved,toast}){
     stage.onpointerdown=async e=>{if(expanded!==card.id)return;if(e.button!==0||!['ready','preview','pending'].includes(card.status))return;const p=point(e),size=45;let hit=null,resize=false;
      for(const l of [...layers].reverse()){const b=box(l);if(l.id===selected&&Math.abs(p.x-b.x-b.w)<size&&Math.abs(p.y-b.y-b.h)<size){hit=l;resize=true;break;}if(p.x>=b.x&&p.x<=b.x+b.w&&p.y>=b.y&&p.y<=b.y+b.h){hit=l;break;}}
      if(!hit){selected=null;if(busy.has(card.id)||card.status==='pending')draw();else canvas.hidden=true;return;}e.preventDefault();try{await load();}catch(err){toast(err.message);return;}
-     if(!(e.buttons&1))return;active=card.id;selected=hit.id;drag={id:hit.id,p,initial:structuredClone(hit),resize,before:structuredClone(layers),pointer:e.pointerId};stage.setPointerCapture(e.pointerId);draw();
+     if(!(e.buttons&1))return;editEpoch++;active=card.id;selected=hit.id;drag={id:hit.id,p,initial:structuredClone(hit),resize,before:structuredClone(layers),pointer:e.pointerId};stage.setPointerCapture(e.pointerId);draw();
     };
     stage.onpointermove=e=>{if(!drag)return;const p=point(e),l=layers.find(l=>l.id===drag.id);if(drag.resize){const b=box(drag.initial),w=Math.max(.005,Math.min(.8,(p.x-b.x)/W));l.width=w;l.x=(b.x+w*W/2)/W;l.y=(b.y+w*W*l.ratio/2)/H;}else{l.x=Math.max(0,Math.min(1,drag.initial.x+(p.x-drag.p.x)/W));l.y=Math.max(0,Math.min(1,drag.initial.y+(p.y-drag.p.y)/H));}dirty=true;draw();};
     const end=()=>{if(!drag)return;const before=drag.before;drag=null;active=null;if(dirty){dirty=false;undo.set(card.id,before);void save({layers:layers.map(({id,x,y,width})=>({id,x,y,width}))});}else{setTimeout(()=>{if(!drag&&!busy.has(card.id))canvas.hidden=true;},2000);}};
@@ -78,5 +78,5 @@ export function createMockupEditor({api,assetURL=x=>'/'+x,onSaved,toast}){
   }
  }}
  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&expanded&&!document.querySelector('dialog[open]')){e.preventDefault();document.querySelector('.garment-expanded .garment-close')?.click();}});
- return {html,hydrate,isEditing:()=>!!active||busy.size>0};
+ return {html,hydrate,epoch:()=>editEpoch,isEditing:()=>!!active||busy.size>0};
 }
