@@ -1,3 +1,4 @@
+import {readProductionEdit,saveProductionEdit,saveEditChunk} from '../application/production-edit.mjs';
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { jsonFile,readBytes,saveJSON,fail,checkpoint } from '../adapters/a-files.mjs';
@@ -45,6 +46,7 @@ export async function service(root,path,method,body={},options={}){
   if(path==='/api/mockups')return readMockupState(root,body.caseId);
   if(path==='/api/requirements')return workbenchData(root);
   if(path==='/api/garments')return {styles:await (await import('../adapters/garments.mjs')).garmentCatalog.styles()};
+  if(path==='/api/production/edit')return readProductionEdit(root,body.jobId);
   if(path==='/api/production/repair')return readRepairInput(root,body.jobId);
   if(path==='/production-review.json')return jsonFile(resolve(root,'production-review.json'),{});
   if(path==='/api/prompt'){const manifest=await jsonFile(resolve(root,'manifest.json'));return {text:(await readBytes(resolve(root,'prompt.txt'))).toString('utf8'),sha256:manifest.run.promptSHA256};}
@@ -63,6 +65,8 @@ export async function service(root,path,method,body={},options={}){
   if(path==='/api/production'){
    const jobs=await reserveProduction(root,manifest,body.requests);for(const job of jobs)if(job.status==='queued')await queue({id:job.id,kind:'production',payload:{jobId:job.id,caseId:job.caseId}});return {jobs};
   }
+  if(path==='/api/production/edit/chunk')return saveEditChunk(root,body);
+  if(path==='/api/production/edit'){const saved=await saveProductionEdit(root,body),input=await readProductionEdit(root,body.jobId);await queue({id:randomUUID(),kind:'mockup',payload:{caseId:input.caseId}});return saved;}
   if(path==='/api/production/repair'){
    const saved=await saveProductionRepair(root,body),jobs=await readProductionJobs(root),job=jobs.find(j=>j.id===body.jobId);
    await queue({id:randomUUID(),kind:'mockup',payload:{caseId:job.caseId}});return saved;
