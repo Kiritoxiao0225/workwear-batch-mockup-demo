@@ -9,7 +9,7 @@ import { readBytes,assetPath } from '@/batch-mockup/adapters/a-files.mjs';
 export const dynamic='force-dynamic';
 export const runtime='nodejs';
 export const maxDuration=300;
-const staticFiles={'mockup-save.mjs':'experiments/workbench/mockup-save.mjs',ui:'experiments/workbench/requirements.html','requirements-editor.mjs':'experiments/workbench/requirements-editor.mjs','repair-editor.mjs':'experiments/workbench/repair-editor.mjs','repair-editor.css':'experiments/workbench/repair-editor.css','repair-pixels.mjs':'application/repair-pixels.mjs','mockup-editor.mjs':'experiments/workbench/mockup-editor.mjs','mockup-editor.css':'experiments/workbench/mockup-editor.css'};
+const staticFiles={'compact-layout.css':'experiments/workbench/compact-layout.css','mockup-save.mjs':'experiments/workbench/mockup-save.mjs',ui:'experiments/workbench/requirements.html','requirements-editor.mjs':'experiments/workbench/requirements-editor.mjs','repair-editor.mjs':'experiments/workbench/repair-editor.mjs','repair-editor.css':'experiments/workbench/repair-editor.css','repair-pixels.mjs':'application/repair-pixels.mjs','mockup-editor.mjs':'experiments/workbench/mockup-editor.mjs','mockup-editor.css':'experiments/workbench/mockup-editor.css'};
 function scopeURLs(text){return text.replace(/(["'`])\/(?!\/)/g,'$1/api/batch/');}
 async function handle(request,context){
  try{
@@ -19,7 +19,7 @@ async function handle(request,context){
    let raw=await readFile(resolve(process.cwd(),'batch-mockup',staticFiles[path]),'utf8');
    if(path==='ui'){
     // Deliver editor styles with the page so a delayed stylesheet request cannot expose full-size assets.
-    for(const name of ['repair-editor.css','mockup-editor.css']){
+    for(const name of ['repair-editor.css','mockup-editor.css','compact-layout.css']){
      const css=await readFile(resolve(process.cwd(),'batch-mockup',staticFiles[name]),'utf8');
      raw=raw.replace(`<link rel="stylesheet" href="/${name}">`,`<style data-editor-style="${name}">${css}</style>`);
     }

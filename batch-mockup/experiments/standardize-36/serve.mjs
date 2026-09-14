@@ -141,6 +141,7 @@ export async function startServer(root = outputRoot, port = 3197, options = {}) 
   });
   server.on('close', () => { unlinkSync(lockPath); });
   try { await new Promise((done, fail) => { server.once('error', fail); server.listen(port, '127.0.0.1', done); }); } catch (e) { unlinkSync(lockPath); throw e; }
+  server.enqueue = enqueue; // Background jobs share the same file-write queue as HTTP edits.
   server.waitForAnalyses = () => Promise.allSettled([...running]);
   return server;
 }
