@@ -5,7 +5,7 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ['ali-oss', 'meitu-cli', '@napi-rs/canvas'],
   // The Meitu CLI loads obfuscated runtime dependencies through computed require paths.
   outputFileTracingIncludes: {
-    '/api/batch/*': ['./batch-mockup/experiments/workbench/**', './batch-mockup/application/repair-pixels.mjs', './public/brand/ant-shirt/**'],
+    '/api/batch/*': ['./lib/artwork-preview-tone.mjs', './batch-mockup/experiments/workbench/**', './batch-mockup/application/repair-pixels.mjs', './public/brand/ant-shirt/**'],
     '/api/wps-production/*': [
       './node_modules/meitu-cli/**', './node_modules/@aws-sdk/**', './node_modules/@smithy/**',
       './node_modules/@aws/lambda-invoke-store/**', './node_modules/bowser/**', './node_modules/commander/**',

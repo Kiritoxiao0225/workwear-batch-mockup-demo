@@ -183,3 +183,8 @@ footer{padding:0 16px 5px!important;font-size:9px;line-height:15px}
 .comfortable .cell-body{padding:16px 14px}.comfortable .compact-prompt{gap:7px}.comfortable .compact-field{font-size:12px;line-height:22px}
 .comfortable .original{line-height:21px}.comfortable .production-image{width:min(100%,144px);height:auto}
 .comfortable .garment-card:not(.garment-expanded) .garment-stage{width:100%;max-width:280px}
+
+/* A display backdrop for transparent ink, never part of the downloadable PNG. */
+.production-image[data-preview-tone="light"]{background:#f5f5f5}
+.production-image[data-preview-tone="dark"]{background:#333}
+.production-image[data-preview-tone="gray"]{background:#808080}

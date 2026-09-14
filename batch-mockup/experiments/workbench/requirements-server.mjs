@@ -20,7 +20,7 @@ export async function startRequirements(root, port = 3214, options = {}) {
   let productionWorker;
   const server = await startServer(root, port, { indexFile: fileURLToPath(new URL('./requirements.html', import.meta.url)),
     extraRoutes: async ({ req, res, url, enqueue, json, readBody }) => {
-      const editorFiles = { '/compact-layout.css': './compact-layout.css', '/mockup-save.mjs': './mockup-save.mjs', '/requirements-editor.mjs': './requirements-editor.mjs', '/repair-editor.mjs': './repair-editor.mjs', '/repair-editor.css': './repair-editor.css', '/repair-pixels.mjs': '../../application/repair-pixels.mjs', '/mockup-editor.mjs': './mockup-editor.mjs', '/mockup-editor.css': './mockup-editor.css' };
+      const editorFiles = { '/preview-tone.mjs': '../../../lib/artwork-preview-tone.mjs', '/compact-layout.css': './compact-layout.css', '/mockup-save.mjs': './mockup-save.mjs', '/requirements-editor.mjs': './requirements-editor.mjs', '/repair-editor.mjs': './repair-editor.mjs', '/repair-editor.css': './repair-editor.css', '/repair-pixels.mjs': '../../application/repair-pixels.mjs', '/mockup-editor.mjs': './mockup-editor.mjs', '/mockup-editor.css': './mockup-editor.css' };
       if (editorFiles[url.pathname] && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': url.pathname.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
         res.end(await readFile(fileURLToPath(new URL(editorFiles[url.pathname], import.meta.url)))); return true;
