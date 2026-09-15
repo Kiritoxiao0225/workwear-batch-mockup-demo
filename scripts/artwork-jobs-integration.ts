@@ -299,25 +299,33 @@ try {
   pass('Actual jobs API enforces origin, 100-item bound and per-item failure isolation');
 
   // Start the actual standalone executable against this isolated database.
-  // No browser request drives the worker, and there are no paid-image jobs in its queue.
+  // It must now process only the new queue and autonomously attempt WPS sync.
+  // WPS/network is denied in this isolated test; legacy jobs must stay untouched.
+  const batchWorkspace = 'standalone-test';
+  await catalogDatabase().query('INSERT INTO batch_documents(workspace,path,content_json) VALUES($1,$2,$3)', [batchWorkspace, 'manifest.json', { run: {}, cases: [] }]);
+  const batchJob = randomUUID();
+  await catalogDatabase().query("INSERT INTO batch_queue(id,workspace,kind,payload) VALUES($1,$2,'mockup',$3)", [batchJob, batchWorkspace, { caseId: 'no-active-case' }]);
   const denyNetwork = path.join(root, 'deny-network.mjs');
   await writeFile(denyNetwork, 'globalThis.fetch = async () => { throw new Error("Worker integration forbids network requests"); };');
-  const child = spawn(process.execPath, ['--import', denyNetwork, '--import', 'tsx', 'scripts/artwork-worker.ts'], { env: { ...process.env, VERCEL: '', CATALOG_DATABASE_CA_CERT: '' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['--import', denyNetwork, '--import', 'tsx', 'scripts/artwork-worker.ts'], { env: { ...process.env, BATCH_WORKBENCH_ENABLED: '1', BATCH_WORKSPACE: batchWorkspace, VERCEL: '', CATALOG_DATABASE_CA_CERT: '', PORT: '' }, stdio: ['ignore', 'pipe', 'pipe'] });
   let logs = ''; child.stdout.on('data', bytes => { logs += bytes; }); child.stderr.on('data', bytes => { logs += bytes; });
   const childExit = new Promise<number | null>(resolve => child.once('exit', resolve));
   try {
     const deadline = Date.now() + 30_000;
     let status: string | undefined;
     while (Date.now() < deadline) {
-      status = (await readArtworkJobs()).jobs.find(job => job.id === batch.results[1].id)?.status;
-      if (status === 'completed' || status === 'failed' || child.exitCode !== null) break;
+      status = (await catalogDatabase().query('SELECT status FROM batch_queue WHERE id=$1', [batchJob])).rows[0]?.status;
+      const sync = await catalogDatabase().query("SELECT 1 FROM batch_queue WHERE workspace=$1 AND kind='sync' AND payload->>'automatic'='true' AND status='failed'", [batchWorkspace]);
+      if ((status === 'finished' && sync.rowCount) || child.exitCode !== null) break;
       await delay(200);
     }
-    assert.equal(status, 'completed', logs);
-    assert.ok(logs.includes('[artwork-worker] ready'));
+    assert.equal(status, 'finished', logs);
+    assert.ok(logs.includes('[batch-worker] ready'));
+    assert.equal((await readArtworkJobs()).jobs.find(job => job.id === batch.results[1].id)?.status, 'queued');
+    assert.equal((await catalogDatabase().query("SELECT count(*)::int n FROM batch_queue WHERE workspace=$1 AND kind='sync' AND payload->>'automatic'='true' AND status='failed'", [batchWorkspace])).rows[0].n, 1);
   } finally { child.kill('SIGTERM'); }
   assert.equal(await childExit, 0, logs);
-  pass('Standalone worker command loads, processes a queued job without a browser and drains cleanly on SIGTERM');
+  pass('Standalone new worker processes its queue and schedules WPS without a browser, leaves legacy jobs untouched and drains on SIGTERM');
   console.log(JSON.stringify({ checks, generatedCalls: generated, scoringCalls: scored, peak, paidCalls: 0 }, null, 2));
 } finally {
   globalThis.fetch = savedFetch; await closeCatalogDatabase(); await db.stop(); await rm(root, { recursive: true, force: true });
