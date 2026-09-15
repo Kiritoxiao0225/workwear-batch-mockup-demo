@@ -1190,7 +1190,7 @@
 
 ## 2026-09-14 新版批量效果图工作台
 
-- `CAP-BATCH-WORKBENCH` / `PAGE-WPS-PRODUCTION`：/wps-production为新三阶段表格，旧编辑台保留在/wps-production/legacy。七项正文逐字传给模型，人工红字只显示。
+- `CAP-BATCH-WORKBENCH` / `PAGE-WPS-PRODUCTION`：/wps-production为新三阶段表格，旧编辑台入口已停用（见FLOW-BATCH-WPS-AUTO-SYNC）。七项正文逐字传给模型，人工红字只显示。
 - `API-BATCH`：/api/batch/[...path]继承catalogUser及同源写保护；独立需求保存/识别、制作、修补、上衣排版和WPS读取。静态模块与图片白名单，不提供任意URL代理。
 - `STORE-BATCH`：014建batch_documents、batch_assets、batch_queue、batch_workers。小文档JSONB，大回执按单文档gzip保存，revision CAS；R2图片经SHA校验后登记不可变引用。015将新图片额外固定在旧清理器识别的production_file_refs，保护滚动部署；内部batch-assets-*引用容器不是客户订单。备份恢复含新表，旧main状态不覆盖。
 - `FLOW-BATCH-JOBS`：常驻worker以BATCH_WORKBENCH_ENABLED开启新队列，SKIP LOCKED领取、心跳、租约fencing。关闭页面不停止；费用请求中断标unknown，不自动重发。
