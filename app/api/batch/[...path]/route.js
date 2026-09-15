@@ -5,6 +5,7 @@ import { catalogUser } from '@/lib/server/catalog-auth';
 import { catalogBody } from '@/lib/server/catalog-http';
 import { cloudStorage,CLOUD_ROOT,queueHealth,queueActivity } from '@/batch-mockup/adapters/cloud-files.mjs';
 import { service } from '@/batch-mockup/runtime/service.mjs';
+import { enqueueWpsSync,readWpsSyncStatus } from '@/batch-mockup/runtime/sync-scheduler.mjs';
 import { readBytes,assetPath } from '@/batch-mockup/adapters/a-files.mjs';
 export const dynamic='force-dynamic';
 export const runtime='nodejs';
@@ -31,8 +32,8 @@ async function handle(request,context){
    const bytes=await cloudStorage(()=>readBytes(assetPath(CLOUD_ROOT,path)));const ext=extname(path);let offset=0;const stream=new ReadableStream({pull(controller){if(offset>=bytes.length){controller.close();return;}const end=Math.min(offset+65536,bytes.length);controller.enqueue(new Uint8Array(bytes.subarray(offset,end)));offset=end;}});return new Response(stream,{headers:{'Content-Type':ext==='.png'?'image/png':ext==='.webp'?'image/webp':'image/jpeg','Cache-Control':'private, max-age=86400, immutable','X-Content-Type-Options':'nosniff'}});
   }
   const body=write?JSON.parse((await catalogBody(request,4*1024*1024)).toString('utf8')):Object.fromEntries(url.searchParams);
-  const result=await cloudStorage(async adapter=>{if(!['api/mockups','api/mockups/prepare','api/garments'].includes(path))await adapter.preload();return service(CLOUD_ROOT,'/'+path,request.method,body,{enqueue:task=>adapter.enqueue(task)});});
-  if(path==='api/requirements'){result.storage='cloud';result.workerOnline=await queueHealth();result.activity=await queueActivity();}
+  const result=await cloudStorage(async adapter=>{if(!['api/mockups','api/mockups/prepare','api/garments','api/wps/sync'].includes(path))await adapter.preload();return service(CLOUD_ROOT,'/'+path,request.method,body,{enqueue:task=>adapter.enqueue(task),scheduleSync:()=>enqueueWpsSync()});});
+  if(path==='api/requirements'){result.storage='cloud';[result.workerOnline,result.activity,result.wpsSync]=await Promise.all([queueHealth(),queueActivity(),readWpsSyncStatus()]);}
   return NextResponse.json(result,{headers:{'Cache-Control':'private, no-store'}});
  }catch(e){const status=Number(e.status)||500;console.error('[batch-api]',e.name);return NextResponse.json({error:status===500?'保存或读取暂时失败，请稍后重试；已保存内容保留':e.message},{status,headers:{'Cache-Control':'no-store'}});}
 }

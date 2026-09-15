@@ -51,7 +51,7 @@ export async function service(root,path,method,body={},options={}){
   if(path==='/production-review.json')return jsonFile(resolve(root,'production-review.json'),{});
   if(path==='/api/prompt'){const manifest=await jsonFile(resolve(root,'manifest.json'));return {text:(await readBytes(resolve(root,'prompt.txt'))).toString('utf8'),sha256:manifest.run.promptSHA256};}
  }else if(method==='POST'){
-  if(path==='/api/wps/sync'){const id=randomUUID();await queue({id,kind:'sync',payload:{}});return {id,status:'queued'};}
+  if(path==='/api/wps/sync'){if(options.scheduleSync)return options.scheduleSync();const id=randomUUID();await queue({id,kind:'sync',payload:{}});return {id,status:'queued'};}
   const manifest=await jsonFile(resolve(root,'manifest.json'));
   if(path==='/api/wps/adopt'){const c=manifest.cases.find(c=>c.caseId===body.caseId);if(!c?.pendingSource)throw fail('没有待载入的原稿',409);const state=await readRequirementState(root,c.caseId);if(state.revision!==body.revision)throw fail('要求已更新，请刷新后再操作',409);await saveJSON(resolve(root,'requirements-history',c.caseId,`before-wps-${state.revision}.json`),{source:c,state});Object.assign(c,c.pendingSource);delete c.pendingSource;delete c.sourceChanged;state.draft=null;state.revision++;delete state.draftAnalysisId;state.draftOrigin=null;await saveJSON(resolve(root,'requirements-state',c.caseId+'.json'),state);await saveJSON(resolve(root,'manifest.json'),manifest);return {revision:state.revision};}
   if(path==='/api/requirements/save'){const state=await saveRequirementDraft(root,manifest,body);return {revision:state.revision};}

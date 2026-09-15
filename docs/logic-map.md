@@ -1197,3 +1197,11 @@
 - `FLOW-BATCH-MOCKUPS`：按款色/方案组织正背位置，多款共享图稿；多位置候选配对不明时不猜。目录实际裁切、Alpha边界、同一比例入框；Sharp产3252×2301 PNG，Canvas按相同坐标预览。拖动CAS保存，原生img和ClipboardItem复制同一整图。
 - `RULE-BATCH-WPS`：只读待领取/未领取；变化原稿存pendingSource，显式采用后重新识别，人工稿与旧源保留历史。复制PNG不代表WPS完成。
 - `TEST-BATCH`：requirements/production/repair 30项；mockups.test.mjs覆盖共享、同框、候选、Alpha和位置隔离；cloud-integration.mjs在隔离PostgreSQL验证重连、CAS、不可变图、队列、压缩证据与工作区隔离。真实目录、浏览器粘贴和部署回读证据见发布回执，模拟供应商不冒充生产验证。
+
+### `FLOW-BATCH-WPS-AUTO-SYNC` 后台自动接单（2026-09-15）
+
+- `scripts/artwork-worker.ts` → `batch-mockup/runtime/worker.mjs` → `sync-scheduler.mjs` → `batch_queue(sync)` → `syncWps` → `queueNewRequirements` → 识别、制作、上衣。仅检查已初始化的 BATCH_WORKSPACE（默认 main），网页关闭仍运行；成功完成后至少间隔30秒，失败后至少60秒。
+- 手动同步与所有worker实例共用事务级锁，已有 queued/running 同步时复用任务；不堆积同步。队列历史索引为迁移016。页面读取 wpsSync、workerOnline、最近WPS读取和按项错误；页面GET不发起同步或模型调用。
+- 原表指纹持久化在manifest；只读取新增/变化记录，附件按稳定上传ID复用，变更附件才下载。同步仍只取待领取/未领取；设计中不进入新版。变更原稿留pendingSource，原始图、人工稿、已有制作和失败/未知付费任务保持；原稿恢复原值时解除过期变更提示。WPS读取失败保留前次内容。
+- 按用户最新要求关闭旧入口：proxy.ts将旧生产台/总览/task-review跳转到新版，旧/api/wps-production及/api/wps-tasks全路径返回410。新版编辑与生图只使用/api/batch及共用素材/Logo能力。scripts/artwork-worker.ts只启动新版后台（需要BATCH_WORKBENCH_ENABLED=1），不再启动旧发现、解析、制作、预览恢复或旧心跳；已有历史数据与旧排队记录保留，不再自动处理。
+- 验证：`wps-sync.test.mjs`覆盖增量读取、同名同像素新附件ID、变更/还原、人工稿保留、状态切换和源读取失败；`cloud-integration.mjs`用真实隔离PostgreSQL验证多实例/手动去重、慢同步不重入、间隔、失败退避和工作区隔离；原automatic-flow测试验证到PNG合成及不重复付费。

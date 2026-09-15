@@ -10,6 +10,7 @@ import {migrateCatalog,catalogDatabase,closeCatalogDatabase} from '../../lib/ser
 import {backupCatalog,restoreCatalog} from '../../lib/server/catalog-backup.ts';
 import {cloudStorage,CLOUD_ROOT} from '../adapters/cloud-files.mjs';
 import {atomicFile,jsonFile,saveJSON,readBytes,assetPath} from '../adapters/a-files.mjs';
+import {enqueueWpsSync,readWpsSyncStatus} from '../runtime/sync-scheduler.mjs';
 const root=await mkdtemp(join(tmpdir(),'batch-cloud-test-')),probe=createServer();await new Promise(ok=>probe.listen(0,'127.0.0.1',ok));const port=probe.address().port;await new Promise(ok=>probe.close(ok));
 const password=randomBytes(24).toString('hex');process.env.CATALOG_DATABASE_URL=`postgresql://batch_test:${password}@127.0.0.1:${port}/postgres`;process.env.CATALOG_LOCAL_OBJECT_ROOT=join(root,'objects');
 const postgres=new EmbeddedPostgres({databaseDir:join(root,'pg'),user:'batch_test',password,port,persistent:true,authMethod:'scram-sha-256',postgresFlags:['-h','127.0.0.1'],onLog:()=>{},onError:console.error});
@@ -28,5 +29,24 @@ try{
  await assert.rejects(()=>cloudStorage(()=>jsonFile(file),{workspace:'other'}),/尚未找到/);
  await cloudStorage(async()=>{await saveJSON(join(CLOUD_ROOT,'requirements-state/A.json'),{revision:7,text:'持久正文'});await saveJSON(join(CLOUD_ROOT,'production-jobs/J/state.json'),{status:'returned'});});await cloudStorage(async adapter=>{await adapter.preload();assert.equal((await jsonFile(join(CLOUD_ROOT,'requirements-state/A.json'))).revision,7);assert.equal((await jsonFile(join(CLOUD_ROOT,'production-jobs/J/state.json'))).status,'returned');assert.equal(await jsonFile(join(CLOUD_ROOT,'mockups/absent.json'),null),null);});assert.equal((await catalogDatabase().query('SELECT count(*)::int n FROM batch_assets b WHERE NOT EXISTS(SELECT 1 FROM production_file_refs r WHERE r.file_id=b.file_id)')).rows[0].n,0);
  const backup=await backupCatalog();await catalogDatabase().query('CREATE DATABASE batch_restore');await closeCatalogDatabase();const restoreURL=new URL(process.env.CATALOG_DATABASE_URL);restoreURL.pathname='/batch_restore';process.env.CATALOG_DATABASE_URL=restoreURL.toString();await migrateCatalog();await restoreCatalog(backup);assert.equal((await cloudStorage(()=>jsonFile(file))).text,'新页面');assert.equal((await cloudStorage(()=>readBytes(join(CLOUD_ROOT,'evidence.txt')))).toString(),big);assert.deepEqual(await cloudStorage(()=>readBytes(assetPath(CLOUD_ROOT,'assets/test.png'))),png);assert.equal((await catalogDatabase().query('SELECT count(*)::int n FROM batch_queue')).rows[0].n,1);
- console.log('PASS cloud reconnect, immutable images, competing saves, queue persistence, compressed evidence, workspace isolation, full fresh-database restore');
+ const workspace='sync-test';
+ assert.equal(await enqueueWpsSync({automatic:true,workspace}),null);
+ await cloudStorage(()=>saveJSON(join(CLOUD_ROOT,'manifest.json'),{cases:[],run:{}}),{workspace});
+ const simultaneous=await Promise.all(Array.from({length:8},(_,n)=>enqueueWpsSync({automatic:n%2===0,workspace})));
+ assert.equal(new Set(simultaneous.map(s=>s.id)).size,1);const syncId=simultaneous[0].id;
+ assert.equal((await catalogDatabase().query("SELECT count(*)::int n FROM batch_queue WHERE workspace=$1",[workspace])).rows[0].n,1);
+ await catalogDatabase().query("UPDATE batch_queue SET status='running',updated_at=now()-interval '10 minutes' WHERE id=$1",[syncId]);
+ assert.equal((await enqueueWpsSync({automatic:true,workspace})).id,syncId);
+ await catalogDatabase().query("UPDATE batch_queue SET status='finished',updated_at=now() WHERE id=$1",[syncId]);
+ assert.equal(await enqueueWpsSync({automatic:true,workspace}),null);
+ await catalogDatabase().query("UPDATE batch_queue SET updated_at=now()-interval '31 seconds' WHERE id=$1",[syncId]);
+ const next=await enqueueWpsSync({automatic:true,workspace});assert.notEqual(next.id,syncId);
+ assert.equal((await readWpsSyncStatus(workspace)).automatic,true);
+ await catalogDatabase().query("UPDATE batch_queue SET status='failed',error='WPS unavailable',updated_at=now()-interval '31 seconds' WHERE id=$1",[next.id]);
+ assert.equal(await enqueueWpsSync({automatic:true,workspace}),null);assert.equal((await readWpsSyncStatus(workspace)).error,'WPS unavailable');
+ const manual=await enqueueWpsSync({workspace});assert.notEqual(manual.id,next.id);
+ await catalogDatabase().query("UPDATE batch_queue SET status='failed',updated_at=now()-interval '61 seconds' WHERE id=$1",[manual.id]);
+ assert((await enqueueWpsSync({automatic:true,workspace})).id);
+ assert.equal((await catalogDatabase().query("SELECT count(*)::int n FROM batch_queue WHERE workspace='main' AND kind='sync'")).rows[0].n,0);
+ console.log('PASS cloud storage, restore, WPS multi-worker/manual deduplication, interval, failure backoff, workspace isolation');
 }finally{await closeCatalogDatabase();await postgres.stop();await rm(root,{recursive:true,force:true});}

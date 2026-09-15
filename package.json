@@ -34,7 +34,7 @@
     "test:a": "node --test batch-mockup/experiments/standardize-36/*.test.mjs",
     "test:b": "tsx --test batch-mockup/tests/b-*.test.mjs",
     "test:workbench": "tsx --test batch-mockup/tests/workbench.test.mjs",
-    "test:requirements": "tsx --test batch-mockup/tests/requirements.test.mjs batch-mockup/tests/requirements-editor.test.mjs batch-mockup/tests/production.test.mjs batch-mockup/tests/production-repair.test.mjs batch-mockup/tests/production-edit.test.mjs batch-mockup/tests/automatic-flow.test.mjs",
+    "test:requirements": "tsx --test batch-mockup/tests/requirements.test.mjs batch-mockup/tests/requirements-editor.test.mjs batch-mockup/tests/production.test.mjs batch-mockup/tests/production-repair.test.mjs batch-mockup/tests/production-edit.test.mjs batch-mockup/tests/automatic-flow.test.mjs batch-mockup/tests/wps-sync.test.mjs",
     "requirements:dev": "tsx batch-mockup/experiments/workbench/requirements-server.mjs",
     "test:mockups": "tsx --test batch-mockup/tests/mockups.test.mjs batch-mockup/tests/mockup-save.test.mjs",
     "test:batch-cloud": "tsx batch-mockup/tests/cloud-integration.mjs"
