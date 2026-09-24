@@ -1,0 +1,113 @@
+{
+  "source": "CatalogHub local working tree",
+  "files": {
+    "components/mockup/ColorPicker.tsx": {
+      "destination": "components/garment-editor/ColorPicker.tsx",
+      "sourceSha256": "b1b230c942a24d99d75784849d490699bb926c01126fadbb1666a5309d9edd03"
+    },
+    "components/mockup/Editor.tsx": {
+      "destination": "components/garment-editor/Editor.tsx",
+      "sourceSha256": "a0d71fdbd068778a7235b3045c82992da1eb0347051d4b742c3f592890d4e196"
+    },
+    "components/mockup/LogoRedrawFlow.tsx": {
+      "destination": "components/garment-editor/LogoRedrawFlow.tsx",
+      "sourceSha256": "ebb60f261e5fe4cb606776c3d5710c557292098388a3dbb6ae3739446a2027cc"
+    },
+    "components/mockup/MeasurementPanel.tsx": {
+      "destination": "components/garment-editor/MeasurementPanel.tsx",
+      "sourceSha256": "77fda5c4ea4f207fad3bde0cb80547cc6d8de6aa18d9b49c9d781b258fcf3cb8"
+    },
+    "components/mockup/Sidebar.tsx": {
+      "destination": "components/garment-editor/Sidebar.tsx",
+      "sourceSha256": "99d7b29c77209a6e6c145c649735218181be46f3a6f89cdd8f764e8269619041"
+    },
+    "components/mockup/TextInspector.tsx": {
+      "destination": "components/garment-editor/TextInspector.tsx",
+      "sourceSha256": "961a41cab10ab809f4c5e4f58e3540c0e61e3c74ab4e2c8c5ef45ad699e1f7d5"
+    },
+    "components/mockup/detect-product-garment-geometry.ts": {
+      "destination": "components/garment-editor/detect-product-garment-geometry.ts",
+      "sourceSha256": "7213984e733e0723ad3790c264efa24a947e2477a53258332fa6fad169936cf9"
+    },
+    "components/mockup/editor-canvas-utils.ts": {
+      "destination": "components/garment-editor/editor-canvas-utils.ts",
+      "sourceSha256": "42e9f04c989f4d6603564edc8d7275af96fca0bb4f0dc789d84295f8abb3447d"
+    },
+    "components/mockup/image-editing.ts": {
+      "destination": "components/garment-editor/image-editing.ts",
+      "sourceSha256": "6ee9f9e372a755b06953e155ad392bf87c90348d144d1cf2dcadc1bbc82af815"
+    },
+    "components/mockup/measurement-overlay.ts": {
+      "destination": "components/garment-editor/measurement-overlay.ts",
+      "sourceSha256": "38ce63b73dceb6db116c46fc5291f58c1164b316031d1d5287f7a5b949cdeeda"
+    },
+    "components/ui/button.tsx": {
+      "destination": "components/garment-editor/ui/button.tsx",
+      "sourceSha256": "d2993b4ab10803cbad03e7c86753e92b67a57e66e21e8c354a154a0bd32dde8d"
+    },
+    "components/ui/confirm-dialog.tsx": {
+      "destination": "components/garment-editor/ui/confirm-dialog.tsx",
+      "sourceSha256": "5f6c55a6c7fcae87fa292e8adf6b77e83025add3dfd0949cc2cc446eef471635"
+    },
+    "components/ui/modal.tsx": {
+      "destination": "components/garment-editor/ui/modal.tsx",
+      "sourceSha256": "2d7266d64de4ce8d0b0cf235fa52c2568f8c7c3736b50d65498e6cd42f3c7a85"
+    },
+    "components/ui/spinner.tsx": {
+      "destination": "components/garment-editor/ui/spinner.tsx",
+      "sourceSha256": "5628d1e3825d2a5f2a466cad178e0a86ccd0d940bcc0ae8adbda6c6ca50e3020"
+    },
+    "components/ui/toast.tsx": {
+      "destination": "components/garment-editor/ui/toast.tsx",
+      "sourceSha256": "1444cd362f70a0611730f642bdcb5fee8355ae023bc2e170448e1f998b2b8918"
+    },
+    "hooks/useMockupUndoHistory.ts": {
+      "destination": "components/garment-editor/useMockupUndoHistory.ts",
+      "sourceSha256": "9cde97d159f17be2308b9b48543986f0e519def516f45ef36fdf68d7195f4a59"
+    },
+    "lib/mockup-async-state.ts": {
+      "destination": "lib/garment-editor/mockup-async-state.ts",
+      "sourceSha256": "eff640f81c79a856236de9837101e460e30025a44caffdbc61af37880ea01c99"
+    },
+    "lib/mockup-element-relations.ts": {
+      "destination": "lib/garment-editor/mockup-element-relations.ts",
+      "sourceSha256": "7b45e81b3279be658460b4bac614c149c2683a3c95713870b9e7c769ba571211"
+    },
+    "lib/mockup-garment-geometry.ts": {
+      "destination": "lib/garment-editor/mockup-garment-geometry.ts",
+      "sourceSha256": "a84e1c3c9fd82d72cebceeb932c461f23c39ed3607fed259d9b7f929b3ef1ad7"
+    },
+    "lib/mockup-logo-redraw.ts": {
+      "destination": "lib/garment-editor/mockup-logo-redraw.ts",
+      "sourceSha256": "f76c09a911c7eadd5a7e682988f08244291039e2541c6118f206f5a43c434c3b"
+    },
+    "lib/mockup-measurements.ts": {
+      "destination": "lib/garment-editor/mockup-measurements.ts",
+      "sourceSha256": "3cec982551be697d4231e18963e7ebdca82526d5f97a1bad581f420991dc9aef"
+    },
+    "lib/mockup-types.ts": {
+      "destination": "lib/garment-editor/mockup-types.ts",
+      "sourceSha256": "afc0a3b963bc01418737c49d4eaca6d57f8291edf10e84acb459c5d63208068d"
+    },
+    "lib/ark-runtime.ts": {
+      "destination": "lib/garment-editor/ark-runtime.ts",
+      "sourceSha256": "502257a4aeb8b789c7113e9e0df9798c03685d3b15030f6cde8236cf19a6f1fb"
+    },
+    "lib/mockup-image-limits.ts": {
+      "destination": "lib/garment-editor/mockup-image-limits.ts",
+      "sourceSha256": "84f67ab25efc9ad97bca7a280354072294c989518fbc5ae6ecd8d684b60cc4bb"
+    },
+    "lib/mockup-volcengine-sign.ts": {
+      "destination": "lib/garment-editor/mockup-volcengine-sign.ts",
+      "sourceSha256": "4254b88ea8bc07e09ec1e971afca2e3fa1ff4ea993f8707f534791e13a47cae2"
+    },
+    "lib/server/ark-mockup-logo-redraw.ts": {
+      "destination": "lib/server/ark-garment-logo-redraw.ts",
+      "sourceSha256": "8100eef62e6103b439c6b339de5677d99287fcf8e0c0b0fecbd08a7ad45a35a3"
+    },
+    "lib/server/ark-mockup-logo-redraw.test.ts": {
+      "destination": "lib/server/ark-garment-logo-redraw.test.ts",
+      "sourceSha256": "3bfc02ba7e361c6d5570ee8a62e43a5f7dc6aa9fc3a0f4a6271dabc7692b3562"
+    }
+  }
+}

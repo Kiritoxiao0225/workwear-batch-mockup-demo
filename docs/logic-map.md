@@ -1205,3 +1205,49 @@
 - 原表指纹持久化在manifest；只读取新增/变化记录，附件按稳定上传ID复用，变更附件才下载。同步仍只取待领取/未领取；设计中不进入新版。变更原稿留pendingSource，原始图、人工稿、已有制作和失败/未知付费任务保持；原稿恢复原值时解除过期变更提示。WPS读取失败保留前次内容。
 - 按用户最新要求关闭旧入口：proxy.ts将旧生产台/总览/task-review跳转到新版，旧/api/wps-production及/api/wps-tasks全路径返回410。新版编辑与生图只使用/api/batch及共用素材/Logo能力。scripts/artwork-worker.ts只启动新版后台（需要BATCH_WORKBENCH_ENABLED=1），不再启动旧发现、解析、制作、预览恢复或旧心跳；已有历史数据与旧排队记录保留，不再自动处理。
 - 验证：`wps-sync.test.mjs`覆盖增量读取、同名同像素新附件ID、变更/还原、人工稿保留、状态切换和源读取失败；`cloud-integration.mjs`用真实隔离PostgreSQL验证多实例/手动去重、慢同步不重入、间隔、失败退避和工作区隔离；原automatic-flow测试验证到PNG合成及不重复付费。
+
+## 2026-09-21 多租户页面接线与隔离（本地验证，未发布）
+
+- `PAGE-SAAS-BATCH` → `components/batch-client.tsx`：对齐 `public/saas-prototype/batch.html` 的四列表格，手动录入与七项正文自动保存、图稿和上衣结果。`PAGE-SAAS-STUDIO` → `components/artwork-studio-client.tsx`：对齐三栏原型，手工七项直接预约制作；历史、修补、再加工、转入批量需求。`UI-SAAS-EDITORS` 通过同源 iframe 桥接原有图层/修补/位置编辑器，不重写编辑算法。
+- `FLOW-SAAS-INTAKE`：分片上传 → `intake.mjs` 完整解码并冻结图号 → `batch_documents` 保存源与 revision → 识别或 studio 手工 draft → 既有生产队列。改原文使旧稿过期；CAS 冲突保留当前输入；未保存完成不能开始制作。删除只移出当前列表并保留历史。
+- `RULE-SAAS-TENANT`：`API-BATCH` 从已登录租户取得 workspace，解析失败拒绝；素材引用、字节额度、`garmentCatalogForWorkspace` 查询和缓存均按租户隔离。batch 图片响应 no-store，production-files 每次重验证授权后才允许 304，避免浏览器换账号复用受保护响应。
+- `FLOW-SAAS-BILLING`：cloudStorage flush 将文档、队列、hold 放同一事务；余额不足整体回滚。外部付费调用前检查 held；分析与生产 step 调用前写 attemptId 并 checkpoint；结果按实际 step 结算，未知进入待裁定。main 完全免计费，不受零余额影响。完整供应商回执查询、周期对账尚未闭合。
+- `FLOW-BATCH-JOBS` 更新：`BATCH_WORKER_SCOPE=main|external` 同时隔离 claim 与 expire；仅 main 自动 WPS 同步。external 排除同步及停用租户，每租户最多两个运行任务；两类 worker 心跳分开供页面判断。
+- `TEST-SAAS-RUNTIME`：`npm run test:saas` 在真实临时 PostgreSQL 通过实际 API 验证空工作区、CAS、4MB 以上图片分片、文件归属与配额、跨租户目录/缓存、直接图稿制作、冻结幂等、无 hold 拒绝调用与实际动作结算。供应商替身返回确定 PNG，不是生产模型验收。
+- `TEST-SAAS-MIGRATION`：`scripts/saas-migration-rehearsal.mjs <016备份> <报告>` 离线校验备份 SHA，非空副本迁移 017–020，比对 15 项计数和四项指纹；另建 016 恢复库回读一致。恢复仅验证数据库与文件元数据，云对象仍需正式发布窗口核验。
+- 发布边界：2026-09-21 15:43 CST 只读生产仍是 016。019 改唯一约束，必须与对应 Web/worker 同批切换，不能仅回退代码。运行中的文档和队列会变，切换需停写并重新备份；本轮没有迁移、部署、改 WPS 原表或调用真实收费模型。邮箱登录另一个 session 负责。
+
+### WPS 保持线上原状：2026-09-21 用户澄清
+
+- WPS 是当前产品的一个页面，保留统一导航中的“WPS 批量生成”。入口 `/wps-production` 留在当前项目，不跳转至独立旧站；表格、需求/图稿/上衣编辑器沿用原实现。
+- 数据入口为 `/api/wps-workbench/*`，所有请求先验证内部账号，写入保留同源与角色校验；三个编辑器及图片 URL 均使用该入口。外部租户不得访问内部 WPS 数据。新版批量与图稿页继续使用原来的租户 API。
+- 本地 3001 使用多租户测试库，而正式库仍是 016。开发配置 `WPS_LOCAL_COMPAT_ORIGIN` 将专用 API 转发到本机 3002 的原版本服务，复用生产库、原 WPS 与线上 worker；HTML/样式/编辑器静态资源由当前项目提供，只转发正式数据 API，不跳转页面、不复制生产记录至测试库、不另启动消费队列。并发列表读取只共享进行中的请求，完成后不缓存，写入不合并。这个配置仅在 development 接受 loopback origin，生产环境拒绝。
+- 正式库完成配套迁移后不设置兼容配置，专用入口直接调用当前项目的内部工作区实现。新旧版本与迁移必须一起切换。
+- 图稿保存前将页面专用图片 URL 还原为原存储路径，分块提交也保持同样的存储格式；原图稿内容与版本检查保持不变。
+- 之前把三个验收样例混入本地 main、换回旧导航并交付独立旧站均不符合用户要求。样例已归档移出，当前导航已恢复。详情见 `output/wps-preserve-20260921/status.md`。
+
+## 2026-09-21 WPS 列表读取性能修复
+
+- `/api/wps-workbench/*`：内部鉴权后，不可变 batch 图片保持 private immutable 缓存；任务状态、错误及其他文件入口继续 no-store。
+- 原表格只在没有未结束刷新时轮询；屏幕外上衣成品延迟加载，编辑底图/图层打开编辑器时再加载，pending 合成预览保留。
+- `workbench-snapshot.mjs` 每次从数据库核对 workspace、revision、完整精度 updated_at，未变化只复用正文；删除/恢复/失败不沿用旧结果。云适配器预取 auto-flow、并行读取去重目录，checkpoint 后仍包含新目录。
+- 验证：真实 PostgreSQL 增量读取及云存储集成、WPS 42 项回归、代理 16 项、上衣 12 项、工作台 3 项；当前 45 条与历史 47 条切换、原上衣编辑器开关，证据 `output/wps-preserve-20260921/latency-fix-receipt.json`。
+
+## 2026-09-22 成衣效果图独立副本
+
+- `CAP-GARMENT-EDITOR` / `PAGE-GARMENT-MOCKUP`：导航新增“成衣效果图”，入口 `/garment-mockup`。从 CatalogHub 复制 Fabric 编辑器、文字/渐变/弧形字、定位、标尺、撤销和图稿制作交互至 `components/garment-editor` / `lib/garment-editor`；复制来源清单见 `docs/garment-editor-copy-source.json`。源项目文件、数据库、历史作品均不改动、不接入。
+- `FLOW-GARMENT-EDIT`：当前租户商品素材库选择指定资产版本/正背面 → 在本项目存储登记成衣素材 → 画布编辑 → 自动保存工程。图稿生成结果可通过“用于成衣效果图”导入。浏览器 IndexedDB 按当前用户分草稿，工程保存使用幂等请求编号与 revision CAS；冲突保留输入并可另存副本。历史恢复产生新版本，软删除不清掉历史文件。导出支持单件与整画布 JPEG。
+- `API-GARMENT-MOCKUP`：`/api/garment-mockup/[...path]` 统一登录租户、同源写入、角色校验；工程与文件每次按 tenant_id 检查，响应 no-store。保存状态只接受本模块资产 URL，拒绝源项目 URL 和未登记图片；素材导入固定被选中的 assetVersionId。
+- `STORE-GARMENT-MOCKUP`：迁移 `023_garment_mockup.sql` 在当前项目数据库 `garment_catalog` schema 新增 projects / assets / revisions / ai_jobs / ai_attempts / workers 六张 `garment_mockup_*` 表。前五张为独立业务数据并纳入备份；workers 仅运行心跳。复用本项目 files、对象存储、租户与积分，不写旧 batch_documents/batch_queue 的业务内容。相同文件可在本项目内按 SHA 复用物理字节，工程/资产/归属独立；数据库 GC 保护与清理器排除条件防止误删新模块引用。
+- `FLOW-GARMENT-AI`：复制源 UI 的“理解 → 人工确认 → 生成原图 → 按需抠图”流程；按用户要求与 CatalogHub 原页面一致：理解 `doubao-seed-2-0-lite-260215`（temperature 0.1 / max_tokens 2000）；Logo 重绘 `doubao-seedream-4-0-250828`（1K、附目标文字骨架图）；背面 `doubao-seedream-5-0-260128`（1920×1920）；抠图为火山 CVProcess `saliency_seg`（only_mask=1 / refine_mask=1）。该模块模型配置独立于批量/图稿全局默认值，缺少配置直接失败，不切换 CLIProxy 或美图。抠图使用原尺寸原图与蒙版合成，保留原始 RGB 和 Alpha。生成原图与透明结果独立保留。纯排版/文字/导出不调用模型；AI 背面明确为参考。
+- `RULE-GARMENT-JOBS`：独立持久队列/回执，后台在线才允许新建冻结与任务；同 ID 重发只读原结果。付费调用前登记 attempt，未知结果保留争议冻结且不自动重新提交。租约失效任务进入 unknown。`scripts/garment-worker.ts` 可单独运行；当前 `scripts/artwork-worker.ts` 同时启动该独立消费者，发布前必须先应用 023。
+- `TEST-GARMENT`：`npm run test:garment` 使用临时真实 PostgreSQL 验证租户隔离、资产去重/额度、GC 保护、幂等保存、CAS/历史、非法源引用拒绝、后台离线不冻结、AI 回执与未知结果处理，以及旧队列/目录不被写入。供应商使用替身；不代表真实付费模型效果验收。浏览器已验证合成样例的编辑、定位、改色、恢复及导出按钮；不把示意底图称为真实商品验收。
+
+- `TEST-GARMENT-ORIGINAL-PROVIDERS`：`ark-garment-logo-redraw.test.ts` 与 `garment-mockup-provider.test.ts` 共 10 项，验证原模型、参数、文字骨架、只提交一次、原尺寸蒙版合成、配置缺失不换供应商。2026-09-22 四项真实接口验证通过，回执 `output/garment-model-original-20260922/verification.json`。新增 `garment:worker:local` 明确绑定本地试用 DB/对象存储；2026-09-22 已发布到北京 Web 与两个 worker，版本及凭据一致，正式抠图队列真实链路通过；回执见 `output/garment-release-20260922/verification.json`。
+- `FLOW-GARMENT-SAVE-LOGOUT`：2026-09-22 Web 补丁为手动保存增加明确反馈，并等待自动保存后保存最新改动；首次显式保存也持久化空白工程。工具栏增加逐项说明，区分“保存作品”与下载单件/整张图片。公共导航提供退出登录，成衣页先完成保存，失败则阻止退出，成功后撤销会话并导航至登录页。线上隔离账号与数据库回读通过，Web 指纹 `d6472ef3994d652da83966105ed3b6d71d81127413e1c11a45fb378c3ef6116c`，worker 仍沿用上一版；回执 `output/garment-ux-20260922/verification.json`。
+
+## 2026-09-22 邮箱注册与找回密码衔接
+
+- `FLOW-EMAIL-RECOVERY`：注册验证码验证成功后，若邮箱已属于现有账号，按当前密码状态签发 `setup` 或 `reset` 的短期单次凭据，前端直接进入对应密码步骤并说明保留原资料。验证本身不改密码、不建立会话；用户明确提交密码后仍核对账号、用途、密码版本并撤销旧会话。注册码不能直接提交给重置验证接口，也不能重复消费。
+- `RULE-EMAIL-SEND-LIMIT`：同邮箱跨注册/找回/设密的 60 秒间隔与小时/日/IP/全局限额保留；429 响应携带 `retryAfterSeconds` 和 `Retry-After`，页面恢复真实等待倒计时，避免只有“发送过于频繁”且仍可连续点击。
+- 验证：180 项真实 PostgreSQL 账号集成测试、类型检查、定向 lint、生产构建通过；线上隔离无密码账号使用合成验证码实测注册转设密、重发倒计时、新密码登录、原账号/工作区不变及退出清除会话。本次页面验收未发送真实邮件。Web 部署 `6ab240fec71834649e112a92`，指纹 `28de211499f2e33730149c02d949dfa9c579c54bf2dc6f8a125a68504a1cf2a9`，未修改 worker；回执 `output/email-recovery-20260922/verification.json`。
