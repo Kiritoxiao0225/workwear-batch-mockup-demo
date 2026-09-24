@@ -720,6 +720,21 @@
     width: 100%;
     min-height: 168px;
   }
+  .studio-output-settings {
+    padding: 13px 14px;
+  }
+  .studio-output-settings h4 {
+    margin-bottom: 8px;
+    font-size: 12px;
+  }
+  .studio-output-settings label {
+    gap: 8px;
+    cursor: pointer;
+  }
+  .studio-output-settings input {
+    margin: 0;
+    accent-color: var(--brand);
+  }
 
   /* 中列：图片撑满 */
   .preview {

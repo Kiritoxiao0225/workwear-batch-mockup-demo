@@ -375,6 +375,28 @@ export function ArtworkStudioClient() {
                 七项细化保留原文供你核对，不额外调用识图模型。
               </p>
             </div>
+            <div
+              className="col-foot studio-output-settings"
+              role="group"
+              aria-labelledby="studio-output-heading"
+            >
+              <h4 id="studio-output-heading">输出设置</h4>
+              <label className="row">
+                <input
+                  type="checkbox"
+                  checked={transparentBackground}
+                  disabled={busy}
+                  aria-describedby="studio-output-hint"
+                  onChange={(e) => setTransparentBackground(e.target.checked)}
+                />
+                <b>透明背景 PNG</b>
+              </label>
+              <p className="sub" id="studio-output-hint">
+                {transparentBackground
+                  ? "去除背景，仅保留主体，输出透明 PNG。"
+                  : "保留背景或使用场景，不自动抠图。"}
+              </p>
+            </div>
           </section>
           <section className="col col-mid">
             <div className="col-head">
@@ -516,20 +538,6 @@ export function ArtworkStudioClient() {
                   </button>
                 ))}
               </div>
-              <label className="row" style={{ marginTop: 16 }}>
-                <input
-                  type="checkbox"
-                  checked={transparentBackground}
-                  disabled={busy}
-                  onChange={(e) => setTransparentBackground(e.target.checked)}
-                />
-                <b>透明背景 PNG</b>
-              </label>
-              <p className="sub">
-                {transparentBackground
-                  ? "只保留主体。结果若仍带背景，会自动抠图。"
-                  : "保留需求中的背景或使用场景，不自动抠图。"}
-              </p>
             </div>
             <div className="col-foot">
               <div className="cost-row">
