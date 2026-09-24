@@ -62,6 +62,9 @@
 .cal-position-list button { padding: 10px; text-align: left; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); cursor: pointer; font-size: 12px; }
 .cal-position-list small { display: block; margin-top: 4px; font-size: 10px; color: var(--muted); }
 .cal-position-list button[aria-pressed=true] { border-color: var(--brand); background: #e6f2eb; color: var(--brand); }
+.cal-offset { padding: 12px; margin: 0 0 14px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); font-size: 12px; }
+.cal-offset .cal-hint { margin: 4px 0 8px; }
+.cal-offset .button { margin-top: 8px; }
 .cal-canvas .cal-position-label { fill: #176b46; font-weight: 650; font-size: 25px; stroke-width: 5; }
 .cal-canvas .cal-exclusion-label { fill: #963d34; font-size: 20px; stroke-width: 4; }
 .cal-canvas .cal-exclusion { fill: var(--cal-danger-fill, #ce483733); }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assertConfirmedStandard, emptyStandard, type PlacementStandard } from './catalog';
+import { assertConfirmedStandard, emptyStandard, standardSchema, type PlacementStandard } from './catalog';
 import { estimatedLandmarks, sopEstimatedExclusions, sopPlacement, sopPrintSize, sopStandardPositions, sopStructureFromStandard, type SopStructure } from './sop-placement';
 
 const px = 10; // 400 px projected torso = 40 cm
@@ -61,6 +61,28 @@ describe('catalog standards derived from structure points', () => {
     const chest = spec.positions.find(p => p.key === 'leftChest')!;
     expect(chest.anchor.y * 1400).toBeCloseTo(sopPlacement(s, 'leftChest', sopPrintSize('leftChest', .32), px).y);
     expect(chest.anchor.x).toBeGreaterThan(.5);
+  });
+  it('keeps a catalog fine-tuning offset in cm, for the catalog box and the composite alike', () => {
+    const base = sopStandardPositions(spec, 'front', pixel, 400, ['leftChest', 'frontCenter'])!;
+    const tuned = standardSchema.parse({ ...spec, positions: base.map(p => p.key === 'frontCenter' ? { ...p, offsetCm: { x: -1, y: 2.5 } } : p) });
+    const again = sopStandardPositions(tuned, 'front', pixel, 400, ['leftChest', 'frontCenter'])!;
+    const before = base.find(p => p.key === 'frontCenter')!, after = again.find(p => p.key === 'frontCenter')!;
+    expect(after.offsetCm).toEqual({ x: -1, y: 2.5 });
+    expect((after.anchor.x - before.anchor.x) * 1000).toBeCloseTo(-10);
+    expect((after.anchor.y - before.anchor.y) * 1400).toBeCloseTo(25);
+    expect(again.find(p => p.key === 'leftChest')).toEqual(base.find(p => p.key === 'leftChest'));
+    // The composite reads the same offset; a bigger customer logo keeps the SOP top-edge rule shifted by it.
+    const s = sopStructureFromStandard(tuned, pixel, 400)!, plain = sopStructureFromStandard(spec, pixel, 400)!;
+    const placed = sopPlacement(s, 'frontCenter', { width: 30, height: 20 }, px), sop = sopPlacement(plain, 'frontCenter', { width: 30, height: 20 }, px);
+    expect([placed.x - sop.x, placed.y - sop.y]).toEqual([-10, 25]);
+    expect(placed.rule).toMatch(/按素材库微调（画面左移1厘米、下移2.5厘米）/);
+  });
+  it('never pushes a fine-tuned center out of an avoidance zone, and reports the overlap', () => {
+    const jacket = { ...polo, structureType: 'jacket' as const, offsets: { leftChest: { x: -10, y: 0 } } };
+    jacket.exclusions = sopEstimatedExclusions('jacket', 'front', jacket, px).map(e => e.box);
+    const p = sopPlacement(jacket, 'leftChest', { width: 8, height: 2 }, px);
+    expect(p.x).toBeCloseTo(500 + .27 * 400 - 100);
+    expect(p.conflict).toMatch(/避让区域/);
   });
   it('needs the structure points before it can derive a position', () => {
     expect(sopStandardPositions({ ...emptyStandard(), structureType: 'polo' }, 'front', pixel, 400, ['leftChest'])).toBeNull();

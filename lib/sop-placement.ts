@@ -33,6 +33,8 @@ export type SopStructure = {
   structureType: StructureType;
   neck: Point; leftShoulder: Point; rightShoulder: Point; leftArmpit: Point; rightArmpit: Point;
   button2?: Point; button3?: Point;
+  /** Catalog fine-tuning of a print center, in cm from where the SOP rule puts it (+x image right, +y down). */
+  offsets?: Partial<Record<SopKey, Point>>;
   bodyWidth: number; center: number; bounds: Box; exclusions: Box[];
 };
 
@@ -73,7 +75,12 @@ export function sopPlacement(s: SopStructure, key: SopKey, sizeCm: { width: numb
   const box = (cx: number, cy: number): Box => ({ x: cx - w / 2, y: cy - h / 2, width: w, height: h });
   const clear = (cx: number, cy: number) => !s.exclusions.some(e => intersects(box(cx, cy), e));
   let conflict: string | null = null;
-  if (!clear(x, y)) {
+  const offset = s.offsets?.[key];
+  if (offset) {
+    // A person placed this center on purpose: never nudge it away, only report an overlap.
+    x += offset.x * pxPerCm; y += offset.y * pxPerCm; rule += `，按素材库微调（${describeSopOffset(offset)}）`;
+    if (!clear(x, y)) conflict = '素材库微调后的位置与避让区域重叠，请在素材库核对';
+  } else if (!clear(x, y)) {
     // A front print may need to clear a whole polo placket; other logos only nudge.
     const step = .25 * pxPerCm, limit = (key === 'frontCenter' ? 12 : 6) * pxPerCm;
     let moved: [number, number] | null = null;
@@ -98,8 +105,15 @@ export function sopStandardPositions(spec: PlacementStandard, face: 'front' | 'b
     const anchor = { x: clamp(p.x / pixel.width), y: clamp(p.y / pixel.height) };
     const x = clamp(anchor.x - w / 2), y = clamp(anchor.y - h / 2);
     const box = { x, y, width: Math.min(w, 1 - x), height: Math.min(h, 1 - y) };
-    return { key, anchor, printableArea: box, defaultSize: { width: box.width, height: box.height } };
+    const offsetCm = s.offsets?.[key];
+    return { key, anchor, printableArea: box, defaultSize: { width: box.width, height: box.height }, ...(offsetCm ? { offsetCm } : {}) };
   });
+}
+
+/** Plain words for a fine-tuning offset, sides as seen in the image. */
+export function describeSopOffset(offset: Point) {
+  const part = (v: number, plus: string, minus: string) => Math.abs(v) >= .05 ? `${v > 0 ? plus : minus}${+Math.abs(v).toFixed(1)}厘米` : '';
+  return [part(offset.x, '画面右移', '画面左移'), part(offset.y, '下移', '上移')].filter(Boolean).join('、') || '未偏移';
 }
 
 /** Converts garment-frame landmarks into pixels; missing required points mean no SOP structure. */
@@ -109,7 +123,8 @@ export function sopStructureFromStandard(spec: PlacementStandard, pixel: { width
   if (!neck || !leftShoulder || !rightShoulder || !leftArmpit || !rightArmpit) return null;
   const bodyWidth = bodyWidthPx ?? Math.abs(rightArmpit.x - leftArmpit.x);
   if (!(bodyWidth > 0)) return null;
-  return { structureType: spec.structureType, neck, leftShoulder, rightShoulder, leftArmpit, rightArmpit, button2: at('button2'), button3: at('button3'),
+  const offsets = Object.fromEntries(spec.positions.flatMap(p => p.offsetCm ? [[p.key, p.offsetCm]] : []));
+  return { structureType: spec.structureType, neck, leftShoulder, rightShoulder, leftArmpit, rightArmpit, button2: at('button2'), button3: at('button3'), offsets,
     bodyWidth, center: (leftArmpit.x + rightArmpit.x) / 2, bounds: { x: 0, y: 0, width: pixel.width, height: pixel.height },
     exclusions: spec.exclusions.map(e => ({ x: e.area.x * pixel.width, y: e.area.y * pixel.height, width: e.area.width * pixel.width, height: e.area.height * pixel.height })) };
 }
