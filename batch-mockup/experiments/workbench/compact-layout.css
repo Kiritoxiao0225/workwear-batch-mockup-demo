@@ -184,7 +184,8 @@ footer{padding:0 16px 5px!important;font-size:9px;line-height:15px}
 .comfortable .original{line-height:21px}.comfortable .production-image{width:min(100%,144px);height:auto}
 .comfortable .garment-card:not(.garment-expanded) .garment-stage{width:100%;max-width:280px}
 
-/* A display backdrop for transparent ink, never part of the downloadable PNG. */
-.production-image[data-preview-tone="light"]{background:#f5f5f5}
-.production-image[data-preview-tone="dark"]{background:#333}
-.production-image[data-preview-tone="gray"]{background:#808080}
+/* A display backdrop for transparent ink, never part of the downloadable PNG. A faint checker in
+   the chosen tone still reads as transparency; a flat gray square looked like an uncut background. */
+.production-image[data-preview-tone="light"]{background:repeating-conic-gradient(#f5f5f5 0 25%,#e7e7e7 0 50%) 0/12px 12px}
+.production-image[data-preview-tone="dark"]{background:repeating-conic-gradient(#333 0 25%,#262626 0 50%) 0/12px 12px}
+.production-image[data-preview-tone="gray"]{background:repeating-conic-gradient(#858585 0 25%,#737373 0 50%) 0/12px 12px}
