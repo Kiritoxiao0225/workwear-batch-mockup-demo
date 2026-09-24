@@ -56,6 +56,11 @@ describe('SOP 5 logo colors', () => {
   it('lets the garment decide only when the 颜色 item keeps the original colors or leaves them open', () => {
     const prompt = (color: string) => `【后背图稿】\n\n主体：使用图2完整Logo。\n\n文字：沿用图2已有文字，不改写。\n\n字体：沿用图2。\n\n颜色：${color}\n\n排版：保持图2原有构图。\n\n尺寸：原需求未指定图稿尺寸。\n\n输出：一张独立平面图稿。`;
     expect(promptFixesLogoColor(prompt('沿用图2原有配色。'))).toBe(false);
+    // W70bcd6a10902: the requirement model spelled out the original colors; nothing here is the customer's.
+    expect(promptFixesLogoColor(prompt('人物侧脸及头发使用图2的深蓝黑色，头饰保留酒红色、绿色、棕色及白色分隔区域，沿用图2原有配色。'))).toBe(false);
+    expect(promptFixesLogoColor(prompt('沿用图2原有配色，包括酒红色、绿色、棕色、深蓝黑色及白色分隔区域；文字沿用深蓝黑色效果。'))).toBe(false);
+    expect(promptFixesLogoColor(prompt('文字使用图3中的红色。'))).toBe(true);
+    expect(promptFixesLogoColor(prompt('文字颜色参考图2。'))).toBe(true);
     expect(promptFixesLogoColor(prompt('原需求未指定颜色。'))).toBe(false);
     expect(promptFixesLogoColor(prompt('Logo改为白色。'))).toBe(true);
     expect(promptFixesLogoColor(prompt('沿用图2原有配色，新增文字为黑色。'))).toBe(true);
