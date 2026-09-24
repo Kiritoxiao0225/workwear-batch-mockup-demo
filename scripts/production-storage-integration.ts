@@ -70,12 +70,12 @@ try {
     headers: { 'Content-Type': 'application/json', Origin: 'http://localhost', ...(cookie ? { Cookie: `catalog_session=${token}` } : {}) }, body: JSON.stringify(body) }));
   const pixels = await sharp({ create: { width: 200, height: 200, channels: 4, background: '#234b70' } }).extend({ top: 30, bottom: 30, left: 30, right: 30, background: '#00000000' }).png().toBuffer();
   const hash = fileSha256(pixels);
-  const claims = await Promise.all([claimProductionUpload(hash, randomUUID()), claimProductionUpload(hash, randomUUID())]);
+  const claims = await Promise.all([claimProductionUpload(hash, randomUUID(), '00000000-0000-0000-0000-000000000001'), claimProductionUpload(hash, randomUUID(), '00000000-0000-0000-0000-000000000001')]);
   assert.deepEqual(claims.map(claim => claim.status).sort(), ['pending','upload']);
   const parallel = await Promise.all(Array.from({ length: 5 }, () => saveProductionFile(pixels, 'same.png')));
   assert.equal(new Set(parallel.map(file => file.id)).size, 1);
   const image = parallel[0];
-  for (let i = 0; i < 20; i++) assert.equal((await claimProductionUpload(hash, randomUUID())).status, 'ready');
+  for (let i = 0; i < 20; i++) assert.equal((await claimProductionUpload(hash, randomUUID(), '00000000-0000-0000-0000-000000000001')).status, 'ready');
   assert.equal((await catalogDatabase().query('SELECT count(*)::int AS n FROM files WHERE sha256=$1', [hash])).rows[0].n, 1);
   pass('并发单上传资格、同哈希单文件、20 次复用及响应丢失后查询恢复');
   const hidden = await saveProductionFile(await sharp(pixels).negate().png().toBuffer(), 'hidden.png');

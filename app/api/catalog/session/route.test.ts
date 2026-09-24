@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
+import { limitPasswordLogin } from '@/lib/server/password-login-limit';
+vi.mock('@/lib/server/password-login-limit', () => ({ limitPasswordLogin: vi.fn() }));
 import { DELETE, GET, PATCH, POST } from './route';
 import { CatalogHttpError, catalogUser, loginWorkspace, logoutCatalog, renewCatalogSession, SESSION_SECONDS } from '@/lib/server/catalog-auth';
 
@@ -15,14 +17,22 @@ function request(method: string, body?: unknown) {
 beforeEach(() => {
   vi.stubEnv('CATALOG_AUTH_MODE', 'password');
   vi.clearAllMocks(); vi.stubEnv('NODE_ENV', 'production'); vi.stubEnv('CATALOG_APP_ORIGIN', 'https://mockup.example');
+  vi.mocked(limitPasswordLogin).mockResolvedValue(undefined);
   vi.mocked(loginWorkspace).mockResolvedValue({ user, token });
   vi.mocked(renewCatalogSession).mockResolvedValue({ user, token });
   vi.mocked(catalogUser).mockResolvedValue(user);
 });
 afterEach(() => vi.unstubAllEnvs());
 describe('persistent project sessions', () => {
+  it('rejects the shared workspace mode in production, where it would bypass every tenant check', async () => {
+    vi.stubEnv('CATALOG_AUTH_MODE', 'open');
+    vi.stubEnv('NODE_ENV', 'production');
+    expect((await GET(request('GET'))).status).toBe(500);
+  });
   it('opens a shared workspace without credentials or session cookies, including old clients using PATCH', async () => {
     vi.stubEnv('CATALOG_AUTH_MODE', 'open');
+    // Shared access is a local-development convenience; production refuses it outright.
+    vi.stubEnv('NODE_ENV', 'development');
     for (const [method, handler] of [['GET', GET], ['PATCH', PATCH], ['POST', POST]] as const) {
       const response = await handler(new NextRequest('https://mockup.example/api/catalog/session', { method, headers: { origin: 'https://mockup.example' } }));
       expect(response.status).toBe(200);
@@ -49,6 +59,11 @@ describe('persistent project sessions', () => {
     const response = await POST(request('POST', body));
     expect(response.status).toBe(400);
     expect(response.headers.has('set-cookie')).toBe(false);
+    expect(loginWorkspace).not.toHaveBeenCalled();
+  });
+  it('rate limits legacy password entry before checking credentials', async () => {
+    vi.mocked(limitPasswordLogin).mockRejectedValueOnce(new CatalogHttpError(429, '登录尝试过于频繁'));
+    expect((await POST(request('POST', { password: 'example-password' }))).status).toBe(429);
     expect(loginWorkspace).not.toHaveBeenCalled();
   });
   it('rejects cross-origin login before password validation', async () => {

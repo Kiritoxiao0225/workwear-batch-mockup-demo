@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <link rel="stylesheet" href="/mockup-editor.css" />
+    <link rel="stylesheet" href="/repair-editor.css" />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 20px;
+        background: #f3f6f4;
+        color: #17211c;
+        font: 14px/1.6 system-ui;
+      }
+      button,
+      a,
+      select,
+      input {
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+      }
+      #notice {
+        color: #9b5b08;
+      }
+      #content {
+        max-width: 1300px;
+        margin: auto;
+      }
+      .garment-gallery {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 12px;
+      }
+      .garment-card {
+        background: white;
+        padding: 15px;
+        border: 1px solid #d9e2dc;
+        border-radius: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <p id="notice" role="status"></p>
+    <div id="content"></div>
+    <script type="module">
+      import { createMockupEditor } from "/mockup-editor.mjs";
+      let caseId = null;
+      const send = (type) => parent.postMessage({ type }, location.origin);
+      const api = async (path, body) => {
+        const r = await fetch(
+          path.startsWith("/api/batch/") ? path : "/api/batch" + path,
+          body === undefined
+            ? { cache: "no-store" }
+            : {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+              },
+        );
+        const d = await r.json();
+        if (!r.ok) throw Error(d.error || "操作失败");
+        return d;
+      };
+      const toast = (text) =>
+        (document.querySelector("#notice").textContent = text);
+      const editor = createMockupEditor({
+        api,
+        assetURL: (x) => "/api/batch/" + x,
+        onSaved: async () => {
+          send("saas-editor-saved");
+          await refresh();
+        },
+        toast,
+      });
+      async function refresh() {
+        if (!caseId || editor.isEditing()) return;
+        try {
+          const data = await api("/api/requirements"),
+            c = data.cases.find((c) => c.caseId === caseId);
+          if (!c) throw Error("需求不存在");
+          if (editor.isEditing()) return;
+          document.querySelector("#content").innerHTML = editor.html(c);
+          editor.hydrate([c]);
+        } catch (e) {
+          toast(e.message);
+        }
+      }
+      window.addEventListener("message", (e) => {
+        if (e.origin !== location.origin || e.source !== parent) return;
+        const d = e.data;
+        if (d?.type === "saas-open-artwork")
+          parent.postMessage(
+            { type: "batch-open-artwork", jobId: d.jobId },
+            location.origin,
+          );
+        if (d?.type === "saas-open-mockup") {
+          caseId = d.caseId;
+          void refresh();
+        }
+        if (d?.type === "saas-close") {
+          if (editor.isEditing()) toast("位置正在编辑或保存，请完成后再关闭");
+          else send("saas-editor-close");
+        }
+        if (d?.type === "batch-artwork-saved") send("saas-editor-saved");
+      });
+      setInterval(() => {
+        if (!document.hidden) void refresh();
+      }, 3000);
+      send("saas-editor-ready");
+    </script>
+  </body>
+</html>

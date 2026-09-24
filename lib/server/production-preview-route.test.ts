@@ -18,6 +18,11 @@ vi.mock('./production-cloud-state', () => ({ readCloudProductionPreviewState: vi
 vi.mock('./wps-production-assets', () => ({ renderProductionPreview: vi.fn() }));
 vi.mock('./production-post-save', () => ({ finishProductionSave: vi.fn() }));
 vi.mock('./catalog-auth', async original => ({ ...await original<typeof import('./catalog-auth')>(), catalogUser: vi.fn() }));
+// The route now proves the caller belongs to the internal tenant before touching shared state.
+vi.mock('./tenant-scope', () => ({ internalScope: vi.fn(async () => ({
+  user: { id: 'operator', email: 'operator@example.test', displayName: '操作员', role: 'editor' as const },
+  tenant: { id: '00000000-0000-0000-0000-000000000001', name: '内部', plan: 'internal', billingMode: 'exempt', styleQuota: 1, storageQuotaBytes: 1, workspace: 'main' } as const,
+})) }));
 beforeEach(() => vi.resetAllMocks());
 async function setup() {
   const reviews = taskReviewFixture();

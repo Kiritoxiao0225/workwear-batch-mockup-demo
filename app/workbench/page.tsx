@@ -1,10 +1,6 @@
-import { WorkbenchClient } from '@/components/workbench-client';
+import { redirect } from 'next/navigation';
 
-type WorkbenchPageProps = {
-  searchParams: Promise<{ taskId?: string }>;
-};
-
-export default async function WorkbenchPage({ searchParams }: WorkbenchPageProps) {
-  const params = await searchParams;
-  return <WorkbenchClient requestedTaskId={params.taskId ?? null} />;
+// Replaced by the batch workspace; the old local demo state is retired.
+export default function WorkbenchPage() {
+  redirect('/batch');
 }

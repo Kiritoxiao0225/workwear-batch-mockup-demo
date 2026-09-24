@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>商品素材库 · 工作服效果图</title>
+<link rel="stylesheet" href="app.css">
+<style>
+  .toolbar { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; padding: 14px; margin-bottom: 18px; }
+  .toolbar > input { flex: 1; min-width: 220px; }
+  .quota-strip { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 24px; padding: 16px 20px; margin-bottom: 18px; }
+  .grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 18px; }
+  .card { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); overflow: hidden; }
+  .card .thumb { aspect-ratio: 1.25; }
+  .card-body { display: flex; flex-direction: column; gap: 11px; padding: 14px; flex: 1; }
+  .card-body h2 { font-size: 15px; }
+  .colors { display: flex; flex-wrap: wrap; gap: 5px; }
+  .colors button { padding: 4px 8px; font-size: 11px; border: 1px solid transparent; border-radius: 5px; background: var(--panel-soft); color: var(--muted); cursor: pointer; }
+  .colors button[aria-pressed=true] { color: var(--brand); background: var(--brand-soft); border-color: var(--brand); }
+  .card-foot { margin-top: auto; display: flex; gap: 8px; }
+  .card-foot .button { flex: 1; }
+  .badge-pos { position: absolute; top: 10px; left: 10px; }
+  .card .thumb { position: relative; }
+  @media (max-width:1240px){ .grid{grid-template-columns:repeat(3,minmax(0,1fr));} }
+  @media (max-width:900px){ .grid{grid-template-columns:repeat(2,minmax(0,1fr));} .quota-strip{grid-template-columns:1fr;} }
+</style>
+</head>
+<body>
+
+<header class="app-header">
+  <a class="brand" href="index.html"><span class="brand-mark">衣</span><span><strong>工作服效果图</strong><small>批量制作台</small></span></a>
+  <div class="app-header-controls">
+    <nav class="main-nav">
+      <a class="active" href="products.html">商品素材库</a>
+      <a href="artwork-studio.html">图稿生成</a>
+      <a href="batch.html">批量生成</a>
+      <a class="wps" href="/wps-production">WPS 批量生成</a>
+      <a href="account.html">我的账户</a>
+    </nav>
+    <div class="credit-pill"><span class="muted">积分</span><b class="num">1,240</b><span class="held tiny">冻结 60</span></div>
+    <div class="account-chip"><span class="avatar">138</span><span>138****8000</span></div>
+  </div>
+</header>
+
+<main class="page">
+  <div class="page-head">
+    <div>
+      <h1>商品素材库</h1>
+      <p>上传你自己的衣服底图，标一次印花位置，后面所有效果图都复用它。一款一张卡片，卡内切换颜色。</p>
+    </div>
+    <div class="row">
+      <button class="button">批量导入</button>
+      <button class="button primary">＋ 上传新款</button>
+    </div>
+  </div>
+
+  <section class="panel quota-strip">
+    <div class="quota">
+      <div class="spread"><span class="small"><b>款式</b> <span class="muted">免费版上限 5 款</span></span><span class="small num">3 / 5</span></div>
+      <div class="quota-bar"><i style="width:60%"></i></div>
+    </div>
+    <div class="quota">
+      <div class="spread"><span class="small"><b>存储</b> <span class="muted">免费版上限 0.5 GiB</span></span><span class="small num">0.41 / 0.5 GiB</span></div>
+      <div class="quota-bar near"><i style="width:82%"></i></div>
+    </div>
+  </section>
+
+  <div class="notice warn" style="margin-bottom:18px">
+    <div><b>存储即将用尽</b>剩余 0.09 GiB。一款带正反面底图的衣服平均约 150 MiB，继续上传可能失败。升级到付费版可获得 500 款 / 5 GiB。<a href="account.html">查看套餐</a></div>
+  </div>
+
+  <section class="panel toolbar">
+    <input placeholder="搜索款号、款名或颜色">
+    <select><option>全部状态</option><option>已确认位置</option><option>仅草稿</option><option>未标定</option></select>
+    <select><option>按最近更新</option><option>按款号</option><option>按颜色数</option></select>
+    <span class="grow"></span>
+    <span class="small muted num">3 款 · 27 个颜色</span>
+  </section>
+
+  <section class="grid">
+
+    <article class="card">
+      <div class="thumb"><span class="tag ok badge-pos">位置已确认</span>正面 / 背面底图</div>
+      <div class="card-body">
+        <div class="spread"><h2>春秋长袖工装</h2><span class="small muted">GD-2201</span></div>
+        <div class="colors">
+          <button aria-pressed="true">藏青</button><button>黑</button><button>浅灰</button>
+          <button>酒红</button><button>卡其</button><button>+7</button>
+        </div>
+        <small class="tiny muted">12 个颜色 · 底图 v2 · 2 天前更新</small>
+        <div class="card-foot">
+          <button class="button sm">查看印花位置</button>
+          <button class="button sm">换版</button>
+        </div>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="thumb"><span class="tag warn badge-pos">仅草稿</span>正面 / 背面底图</div>
+      <div class="card-body">
+        <div class="spread"><h2>纯棉圆领 T 恤</h2><span class="small muted">TS-1180</span></div>
+        <div class="colors">
+          <button aria-pressed="true">白</button><button>黑</button><button>藏青</button><button>+5</button>
+        </div>
+        <small class="tiny muted">8 个颜色 · 底图 v1 · 5 天前更新</small>
+        <div class="card-foot">
+          <button class="button sm primary">去确认位置</button>
+          <button class="button sm">换版</button>
+        </div>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="thumb"><span class="tag bad badge-pos">未标定</span>仅正面底图</div>
+      <div class="card-body">
+        <div class="spread"><h2>防静电大褂</h2><span class="small muted">FJ-3050</span></div>
+        <div class="colors"><button aria-pressed="true">白</button><button>浅蓝</button></div>
+        <small class="tiny muted">7 个颜色 · 底图 v1 · 今天上传</small>
+        <div class="card-foot">
+          <button class="button sm primary">标印花位置</button>
+          <button class="button sm">换版</button>
+        </div>
+      </div>
+    </article>
+
+    <article class="card" style="border-style:dashed;align-items:center;justify-content:center;min-height:300px">
+      <div class="empty" style="padding:30px">
+        <span class="mark">＋</span>
+        <h3 style="font-size:14px">上传新款</h3>
+        <p class="tiny">支持 PNG / JPG / WebP。一张图含正反面或只有正面都可以，上传后可标印花位置。</p>
+        <button class="button sm">选择文件</button>
+      </div>
+    </article>
+
+  </section>
+
+  <div class="spec" style="margin-top:24px">
+    <b>后端契约要点：</b>
+    列表查询必须 <code>JOIN garment_styles</code> 并按 <code>tenant_id</code> 过滤；
+    缩略图 URL 由列表直接签发，<b>签发前也要校验 <code>tenant_file_refs</code></b>（这条不经过 <code>/api/catalog/files/[id]</code>，是容易漏的旁路）。<br>
+    上传走「原子配额预约 → 写对象 → 确认」三步，预约记录在 <code>quota_reservations</code>，带过期回收；
+    款数与字节两个维度都要原子预约，否则并发建款能越过上限。
+  </div>
+
+  <div class="spec">
+    <b>印花位置标定：</b>点「查看印花位置 / 标印花位置」打开正反面同屏标定弹窗（交互沿用现有
+    <a href="/product-library-placement-standard-prototype.html">位置标准原型</a>，本轮不重做）。
+    该页的 AI 建议锚点会调用视觉模型，<b>属付费动作</b>，按 <code>recognize</code> 单价计费、最多两次调用。
+  </div>
+
+</main>
+</body>
+</html>

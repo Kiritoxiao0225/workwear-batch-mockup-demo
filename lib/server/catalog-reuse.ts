@@ -14,13 +14,15 @@ async function assetBytes(assetVersionId: string) {
   if (!result.rowCount) throw new CatalogHttpError(404, `底图版本不存在：${assetVersionId}`);
   return (await readCatalogFile(z.uuid().parse(result.rows[0].file_id))).bytes;
 }
-export async function previewStandardReuse(raw: unknown, actor: CatalogUser): Promise<ReusePreview> {
+export async function previewStandardReuse(raw: unknown, actor: CatalogUser, tenantId: string): Promise<ReusePreview> {
   assertEditor(actor);
   const input = z.object({ variantId: z.uuid() }).strict().parse(raw);
-  const source = await catalogDetail(input.variantId);
+  // Source, style and every target are resolved inside the tenant, so a foreign variant id
+  // simply does not exist rather than leaking a standard across accounts.
+  const source = await catalogDetail(input.variantId, undefined, tenantId);
   const sourceViews = source.views.filter(v => v.latest?.status === 'confirmed' && v.latest.origin === 'manual' && v.latest.id === v.confirmedId);
   if (!sourceViews.length) throw new CatalogHttpError(422, '请先在代表颜色上保存至少一面的人工确认标准；草稿或继承标准不能作为来源');
-  const style = await catalogStyle(source.styleId);
+  const style = await catalogStyle(source.styleId, tenantId);
   if (style.colors.length > 100) throw new CatalogHttpError(422, `款式包含 ${style.colors.length} 个颜色，超过单次检查上限 100`);
   const bytes = await assetBytes(source.assetVersionId);
   const sourceMasks = new Map<string, Awaited<ReturnType<typeof garmentSilhouette>>>();
@@ -29,7 +31,7 @@ export async function previewStandardReuse(raw: unknown, actor: CatalogUser): Pr
   for (const item of style.colors.filter(c => c.id !== source.id)) {
     const faces: ReuseFace[] = [];
     try {
-      const target = await catalogDetail(item.id);
+      const target = await catalogDetail(item.id, undefined, tenantId);
       const targetBytes = await assetBytes(target.assetVersionId);
       for (const view of target.views) {
         const sourceView = sourceViews.find(v => v.face === view.face);
@@ -55,12 +57,13 @@ export async function previewStandardReuse(raw: unknown, actor: CatalogUser): Pr
   return { source, colors };
 }
 
-export async function applyStandardReuse(raw: unknown, actor: CatalogUser) {
+export async function applyStandardReuse(raw: unknown, actor: CatalogUser, tenantId: string) {
   assertEditor(actor);
   const input = z.object({ sourceVariantId: z.uuid(), checkIds: z.array(z.uuid()).min(1).max(200), reviewed: z.literal(true) }).strict().parse(raw);
   if (new Set(input.checkIds).size !== input.checkIds.length) throw new CatalogHttpError(400, '重复的复用检查 ID');
   return catalogTransaction(async client => {
-    const source = await client.query('SELECT style_id FROM garment_variants WHERE id=$1', [input.sourceVariantId]);
+    // The style is resolved through the tenant, so a foreign source variant is simply absent.
+    const source = await client.query('SELECT v.style_id FROM garment_variants v JOIN garment_styles s ON s.id=v.style_id WHERE v.id=$1 AND s.tenant_id=$2', [input.sourceVariantId, tenantId]);
     if (!source.rowCount) throw new CatalogHttpError(404, '代表颜色不存在');
     const styleId = z.uuid().parse(source.rows[0].style_id);
     await client.query('SELECT id FROM garment_styles WHERE id=$1 FOR UPDATE', [styleId]);

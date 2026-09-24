@@ -3,6 +3,8 @@ import { readdir, readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
 import { z } from 'zod';
+import { INTERNAL_TENANT_ID } from './catalog-auth';
+import { releaseQuota, reserveQuota, settleQuota } from './quota';
 import { catalogDatabase, catalogTransaction } from './catalog-database';
 import { fileSha256, inspectCatalogImage, readCatalogFile, saveCatalogFile } from './catalog-files';
 import { CatalogHttpError } from './catalog-auth';
@@ -63,18 +65,53 @@ type AssetInput = {
   bytes: Buffer; filename: string; provenance: Record<string, unknown>;
   sources: { fileId: string; sourcePath: string }[];
   expectedAssetVersionId?: string; actorId?: string;
+  /** Owner of the resulting style and files. Existing callers are all internal-facing. */
+  tenantId?: string;
 };
 export async function importCatalogAsset(input: AssetInput) {
   if (!input.styleCode.trim() || !input.colorName.trim() || input.styleCode.length > 200 || input.colorName.length > 100) throw new Error('款号和颜色必填，款号最多 200 字、颜色最多 100 字');
-  const file = await saveCatalogFile(input.bytes, input.filename);
+  const tenantId = input.tenantId ?? INTERNAL_TENANT_ID;
   const thumbBytes = await sharp(input.bytes).resize({ width: 640, height: 640, fit: 'inside', withoutEnlargement: true }).webp({ quality: 82 }).toBuffer();
+  const reservationId = randomUUID();
+  // Capacity is held before any object is written, because the object store commits on its
+  // own and would otherwise leave bytes behind that nobody accounted for.
+  const known = await catalogDatabase().query(
+    'SELECT 1 FROM garment_styles WHERE tenant_id=$1 AND source_namespace=$2 AND style_code=$3',
+    [tenantId, input.namespace, input.styleCode]);
+  await catalogTransaction(client => reserveQuota(client, {
+    id: reservationId, tenantId,
+    bytes: input.bytes.length + thumbBytes.length,
+    styles: known.rowCount ? 0 : 1,
+  }));
+  try {
+    return await importReservedAsset(input, tenantId, reservationId, thumbBytes);
+  } catch (error) {
+    await releaseQuota(reservationId, tenantId).catch(() => {});
+    throw error;
+  }
+}
+async function importReservedAsset(input: AssetInput, tenantId: string, reservationId: string, thumbBytes: Buffer) {
+  const file = await saveCatalogFile(input.bytes, input.filename);
   const thumbnail = await saveCatalogFile(thumbBytes, `${input.filename}.thumb.webp`);
   const faces = input.layout === 'front_back' ? ['front', 'back'] : ['front'];
   const crops = faces.map(face => ({ x: face === 'back' ? 0.5 : 0, y: 0, width: input.layout === 'front_back' ? 0.5 : 1, height: 1 }));
   // Prepare geometry before publishing the new asset as the current version.
   await loadBodyGeometry({ fileId: file.id, sha256: file.sha256, width: file.width, height: file.height, crops }, input.bytes);
-  return catalogTransaction(async client => {
-    const style = await client.query('INSERT INTO garment_styles(id,source_namespace,style_code,name) VALUES($1,$2,$3,$3) ON CONFLICT(source_namespace,style_code) DO UPDATE SET style_code=EXCLUDED.style_code RETURNING id', [randomUUID(), input.namespace, input.styleCode]);
+  let addedBytes = 0; let addedStyles = 0;
+  const result = await catalogTransaction(async client => {
+    // `xmax = 0` distinguishes a real insert from the conflict branch, so quota counts the
+    // style only when one was actually created.
+    const style = await client.query('INSERT INTO garment_styles(id,tenant_id,source_namespace,style_code,name) VALUES($1,$2,$3,$4,$4) ON CONFLICT(tenant_id,source_namespace,style_code) DO UPDATE SET style_code=EXCLUDED.style_code RETURNING id,(xmax = 0) AS inserted', [randomUUID(), tenantId, input.namespace, input.styleCode]);
+    addedStyles = style.rows[0].inserted ? 1 : 0;
+    // Access is granted by a tenant-owned reference, not by knowing the id or the content hash.
+    for (const [id, purpose, size] of [[file.id, 'garment', input.bytes.length], [thumbnail.id, 'garment-thumb', thumbBytes.length]] as const) {
+      const added = await client.query('INSERT INTO tenant_file_refs(tenant_id,file_id,purpose,display_name) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING file_id', [tenantId, id, purpose, input.filename]);
+      // A file this tenant already references costs no additional capacity.
+      if (added.rowCount) addedBytes += size;
+    }
+    for (const source of input.sources) {
+      await client.query('INSERT INTO tenant_file_refs(tenant_id,file_id,purpose,display_name) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING', [tenantId, source.fileId, 'asset-source', source.sourcePath]);
+    }
     const variants = await client.query('INSERT INTO garment_variants(id,style_id,color_name) VALUES($1,$2,$3) ON CONFLICT(style_id,color_name) DO UPDATE SET color_name=EXCLUDED.color_name RETURNING id,current_asset_version_id', [randomUUID(), style.rows[0].id, input.colorName]);
     const variant = variants.rows[0];
     const existing = await client.query('SELECT id,layout FROM garment_asset_versions WHERE variant_id=$1 AND file_id=$2', [variant.id, file.id]);
@@ -101,6 +138,10 @@ export async function importCatalogAsset(input: AssetInput) {
     await client.query('INSERT INTO audit_events(id,actor_id,action,entity_id,details) VALUES($1,$2,$3,$4,$5)', [randomUUID(), input.actorId ?? null, 'asset.import', id, { filename: input.filename, sha256: file.sha256, previousAssetVersionId: variant.current_asset_version_id }]);
     return { variantId: variant.id as string, assetVersionId: id, fileId: file.id, reused: false };
   });
+  // Settle with what was actually added: a de-duplicated file or an existing style costs
+  // nothing, and the unused part of the reservation goes back.
+  await settleQuota(reservationId, tenantId, { bytes: addedBytes, styles: addedStyles });
+  return result;
 }
 async function verifiedSourcePath(root: string, relative: string) {
   const canonicalRoot = await realpath(root);
@@ -108,10 +149,10 @@ async function verifiedSourcePath(root: string, relative: string) {
   if (!resolved.startsWith(`${canonicalRoot}${path.sep}`)) throw new Error(`来源路径越界：${relative}`);
   return resolved;
 }
-export async function importCatalogManifest(raw: unknown, progress: (message: string) => void = () => {}) {
+export async function importCatalogManifest(raw: unknown, progress: (message: string) => void = () => {}, tenantId = INTERNAL_TENANT_ID) {
   const manifest = manifestSchema.parse(raw);
   const hash = fileSha256(JSON.stringify(manifest));
-  const batch = await catalogDatabase().query('INSERT INTO import_batches(id,manifest_hash,source_namespace,manifest) VALUES($1,$2,$3,$4) ON CONFLICT(manifest_hash) DO UPDATE SET manifest_hash=EXCLUDED.manifest_hash RETURNING id', [randomUUID(), hash, manifest.sourceNamespace, manifest]);
+  const batch = await catalogDatabase().query('INSERT INTO import_batches(id,tenant_id,manifest_hash,source_namespace,manifest) VALUES($1,$2,$3,$4,$5) ON CONFLICT(tenant_id,manifest_hash) DO UPDATE SET manifest_hash=EXCLUDED.manifest_hash RETURNING id', [randomUUID(), tenantId, hash, manifest.sourceNamespace, manifest]);
   const batchId = batch.rows[0].id as string;
   for (const entry of manifest.entries) {
     await catalogDatabase().query("INSERT INTO import_items(batch_id,filename,status) VALUES($1,$2,'pending') ON CONFLICT DO NOTHING", [batchId, entry.filename]);
@@ -131,7 +172,7 @@ export async function importCatalogManifest(raw: unknown, progress: (message: st
         const saved = await saveCatalogFile(original, path.basename(source.path));
         sources.push({ fileId: saved.id, sourcePath: source.path });
       }
-      const imported = await importCatalogAsset({ namespace: manifest.sourceNamespace, styleCode: entry.styleCode, colorName: entry.colorName, bytes, filename: entry.filename, layout: entry.layout, sources,
+      const imported = await importCatalogAsset({ tenantId, namespace: manifest.sourceNamespace, styleCode: entry.styleCode, colorName: entry.colorName, bytes, filename: entry.filename, layout: entry.layout, sources,
         provenance: { manifestHash: hash, originalFilename: entry.filename, processing: '已有规范成品；本次不重绘', sourceMappingStatus: 'filename_candidates_not_reviewed', sourceCandidateCount: sources.length, layoutBasis: '已确认的规范成品：双面左正右反；单面保留场景' } });
       await catalogDatabase().query("UPDATE import_items SET status='imported',file_id=$3,asset_version_id=$4,error=NULL,updated_at=now() WHERE batch_id=$1 AND filename=$2", [batchId, entry.filename, imported.fileId, imported.assetVersionId]);
     } catch (error) {

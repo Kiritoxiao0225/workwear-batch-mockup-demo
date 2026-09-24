@@ -1,0 +1,221 @@
+"use client";
+import { useCallback, useEffect, useState } from "react";
+export type Artwork = {
+  id: string;
+  name: string;
+  route: "generate" | "enhance" | "reuse";
+  transparentBackground?: boolean;
+  prompt: string;
+  imageIds: string[];
+  applications: { style: string; color: string; position: string }[];
+};
+export type Draft = {
+  artworks: Artwork[];
+  readingIssues: { scope: string; issue: string }[];
+};
+export type ResultFile = {
+  asset: string;
+  sha256: string;
+  bytes?: number;
+  width?: number;
+  height?: number;
+};
+export type Job = {
+  id: string;
+  revision: number;
+  artworkId: string;
+  name: string;
+  route: Artwork["route"];
+  transparentBackground?: boolean;
+  status: string;
+  error?: string;
+  createdAt: string;
+  final?: ResultFile;
+  raw?: ResultFile;
+  repair?: { file: ResultFile };
+};
+export type Case = {
+  caseId: string;
+  sourceRecordId?: string;
+  entry?: string;
+  sourceText: string;
+  sourceRevision?: number;
+  active: boolean;
+  needsReanalysis: boolean;
+  revision: number;
+  images: {
+    id: string;
+    index: number;
+    label: string;
+    asset: string;
+    source: string;
+  }[];
+  supplement: { revision: number };
+  draft: Draft | null;
+  modelDraft: Draft | null;
+  analysis: {
+    id: string;
+    status: string;
+    error?: string;
+    proposedDraft?: Draft;
+  } | null;
+  productions: Job[];
+  mockups: {
+    revision: number;
+    cards: {
+      id: string;
+      status: string;
+      style: string;
+      color: string;
+      render?: ResultFile;
+      warnings?: string[];
+      garment?: { style: string; color: string };
+    }[];
+  };
+};
+export type Workbench = { cases: Case[]; workerOnline: boolean };
+export type Prices = {
+  analyze: number;
+  generate: number;
+  enhance: number;
+  reuse: number;
+  exempt: boolean;
+};
+export const labels = [
+  "主体",
+  "文字",
+  "字体",
+  "颜色",
+  "排版",
+  "尺寸",
+  "输出",
+] as const;
+export const assetURL = (asset: string) => "/api/batch/" + asset;
+export async function batchAPI<T = Record<string, unknown>>(
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  const response = await fetch(
+    "/api/batch" + path,
+    body === undefined
+      ? { cache: "no-store" }
+      : {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+  );
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "操作失败，请重试");
+  return data;
+}
+export function useWorkbench() {
+  const [data, setData] = useState<Workbench | null>(null),
+    [error, setError] = useState("");
+  const reload = useCallback(async () => {
+    try {
+      const next = await batchAPI<Workbench>("/api/requirements");
+      setData(next);
+      setError("");
+      return next;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      return null;
+    }
+  }, []);
+  useEffect(() => {
+    let alive = true;
+    const read = async () => {
+      try {
+        const next = await batchAPI<Workbench>("/api/requirements");
+        if (alive) {
+          setData(next);
+          setError("");
+        }
+      } catch (e) {
+        if (alive) setError(e instanceof Error ? e.message : String(e));
+      }
+    };
+    void read();
+    const timer = setInterval(() => {
+      if (!document.hidden) void read();
+    }, 5000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, []);
+  return { data, error, reload };
+}
+export function usePrices() {
+  const [prices, setPrices] = useState<Prices | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void batchAPI<Prices>("/api/prices")
+      .then((p) => {
+        if (alive) setPrices(p);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return prices;
+}
+export const chargeLabel = (
+  prices: Prices | null,
+  kind: keyof Omit<Prices, "exempt">,
+) =>
+  prices
+    ? prices.exempt
+      ? "内部免计费"
+      : `最多冻结 ${prices[kind]} 分`
+    : "读取计价中";
+export async function uploadImages(files: File[]) {
+  if (files.length > 10) throw new Error("最多 10 张素材图");
+  const results: { uploadId: string; chunkCount: number; name: string }[] = [];
+  for (const file of files) {
+    if (file.size === 0 || file.size > 15 * 1024 * 1024)
+      throw new Error(`${file.name} 必须在 1B–15MB 之间`);
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type))
+      throw new Error("请使用 PNG、JPG 或 WebP 图片");
+    const base64 = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(",")[1]);
+      reader.onerror = () => reject(new Error("图片读取失败"));
+      reader.readAsDataURL(file);
+    });
+    const uploadId = crypto.randomUUID(),
+      size = 1400000,
+      chunkCount = Math.ceil(base64.length / size);
+    for (let index = 0; index < chunkCount; index++)
+      await batchAPI("/api/cases/image", {
+        id: uploadId,
+        index,
+        count: chunkCount,
+        base64: base64.slice(index * size, (index + 1) * size),
+      });
+    results.push({ uploadId, chunkCount, name: file.name });
+  }
+  return results;
+}
+export const resultFile = (job?: Job) =>
+  job?.repair?.file || job?.final || job?.raw;
+export const statusText = (status?: string) =>
+  ({
+    returned: "已完成",
+    queued: "排队中",
+    running: "制作中",
+    blocked: "已阻塞",
+    failed: "失败",
+    partial: "部分完成",
+    unknown: "结果未知",
+    invalid_output: "识别结果待核对",
+  })[status || ""] || "草稿";
+export async function copyImage(asset: string) {
+  const r = await fetch(assetURL(asset));
+  if (!r.ok) throw new Error("图片读取失败");
+  await navigator.clipboard.write([
+    new ClipboardItem({ "image/png": await r.blob() }),
+  ]);
+}

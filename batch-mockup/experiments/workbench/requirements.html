@@ -110,8 +110,9 @@ for(const image of document.querySelectorAll('.production-image img'))paintPrevi
 mockupEditor.hydrate(list);
 for(const el of document.querySelectorAll('details'))if(opened.has(el.dataset.detail))el.open=true;for(const [id,w] of autosaves)saveUI(id,w.snapshot());
 }
-let productionReview={},reviewRequested=false;
-async function refresh(){if(inlineActive()||unsaved()||mockupEditor.isEditing()||$('#requirement-drawer').open)return;const mockupEpoch=mockupEditor.epoch();const next=await api('/api/requirements');next.productionReview=productionReview;if(inlineActive()||unsaved()||mockupEditor.isEditing()||$('#requirement-drawer').open||mockupEpoch!==mockupEditor.epoch())return;const sig=JSON.stringify(next);data=next;autosaves.clear();if(sig!==last){last=sig;render()}
+let productionReview={},reviewRequested=false,refreshesInFlight=0;
+async function refresh(){refreshesInFlight++;try{await readWorkbench();}finally{refreshesInFlight--;}}
+async function readWorkbench(){if(inlineActive()||unsaved()||mockupEditor.isEditing()||$('#requirement-drawer').open)return;const mockupEpoch=mockupEditor.epoch();const next=await api('/api/requirements');next.productionReview=productionReview;if(inlineActive()||unsaved()||mockupEditor.isEditing()||$('#requirement-drawer').open||mockupEpoch!==mockupEditor.epoch())return;const sig=JSON.stringify(next);data=next;autosaves.clear();if(sig!==last){last=sig;render()}
 // Optional historical notes must never delay the actual workbench or its saving feedback.
 if(!reviewRequested){reviewRequested=true;void api('/production-review.json').then(notes=>{productionReview=notes;if(data){data.productionReview=notes;last='';render()}}).catch(()=>{reviewRequested=false;});}}
 
@@ -143,6 +144,6 @@ for(const b of document.querySelectorAll('[data-density]'))b.onclick=()=>{if(moc
 await refresh().catch(e=>{$('#rows').innerHTML='<tr><td colspan="4" class="empty">读取失败，请点击刷新。</td></tr>';toast(e.message)});
 if(location.hash){document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView({block:'start'})}
 window.addEventListener('message',e=>{if(e.origin===location.origin&&e.source===window.parent&&e.data?.type==='batch-artwork-saved'){void refresh();toast('图稿已保存，正在更新关联效果图')}});
-setInterval(()=>{if(document.hidden||document.querySelector('dialog[open]')||inlineActive()||unsaved())return;refresh().catch(()=>{})},5000);
+setInterval(()=>{if(refreshesInFlight||document.hidden||document.querySelector('dialog[open]')||inlineActive()||unsaved())return;refresh().catch(()=>{})},5000);
 </script>
 </html>

@@ -1,7 +1,9 @@
+import { readWorkbenchSnapshot } from './workbench-snapshot.mjs';
 import { resolve, relative, sep } from 'node:path';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { catalogDatabase, catalogTransaction } from '../../lib/server/catalog-database.ts';
 import { saveCatalogFile, readCatalogFile } from '../../lib/server/catalog-files.ts';
+import { currentPrices, ceilingMicroCents, microToCents, holdCredits } from '../../lib/server/credits.ts';
 import { emptyWpsProductionState } from '../../lib/wps-production.ts';
 import { withFileStorage, hash, fail } from './a-files.mjs';
 export const CLOUD_ROOT = '/tmp/workwear-batch-runtime';
@@ -10,8 +12,8 @@ const decode = row => row.content_json ?? JSON.parse(gunzipSync(row.content_gzip
 export async function cloudStorage(action, { workspace = workspaceId(), lease } = {}) {
   if (!/^[a-zA-Z0-9_-]{1,80}$/.test(workspace)) throw fail('工作区无效');
   const db = catalogDatabase(), reads = new Map(), pending = new Map(), queue = [], cache = new Map();
-  let preloaded=false;
-  const workbenchKey=key=>['manifest.json','supplements.json','qa-notes-v2.json','production-review.json'].includes(key)||key.startsWith('requirements-state/')||key.startsWith('mockups/')||/^production-jobs\/[^/]+\/(?:state|repair-state)\.json$/.test(key);
+  let preloaded=false,productionDirectories=null;
+  const workbenchKey=key=>['manifest.json','supplements.json','qa-notes-v2.json','production-review.json','auto-flow.json'].includes(key)||key.startsWith('requirements-state/')||key.startsWith('mockups/')||/^production-jobs\/[^/]+\/(?:state|repair-state)\.json$/.test(key);
   const keyFor = path => {
     const key = relative(CLOUD_ROOT, resolve(path));
     if (!key || key.startsWith('..') || key.startsWith(sep)) throw fail('存储路径越界');
@@ -26,7 +28,11 @@ export async function cloudStorage(action, { workspace = workspaceId(), lease } 
     return structuredClone(decode(row));
   }
   const adapter = {
-    preload:async()=>{const result=await db.query("SELECT path,revision,content_json,content_gzip FROM batch_documents WHERE workspace=$1 AND (path=ANY($2::text[]) OR starts_with(path,'requirements-state/') OR starts_with(path,'mockups/') OR path~'^production-jobs/[^/]+/(state|repair-state)\\.json$')",[workspace,['manifest.json','supplements.json','qa-notes-v2.json','production-review.json']]);for(const row of result.rows)cache.set(row.path,row);preloaded=true;},
+    preload:async()=>{
+      const [rows,dirs]=await Promise.all([readWorkbenchSnapshot(db,workspace),db.query("SELECT DISTINCT split_part(path,'/',2) AS directory FROM batch_documents WHERE workspace=$1 AND starts_with(path,'production-jobs/')",[workspace])]);
+      for(const row of rows)cache.set(row.path,row);
+      productionDirectories=dirs.rows.map(row=>row.directory);preloaded=true;
+    },
     readJSON: (path,fallback) => load(keyFor(path),fallback),
     writeJSON: async (path,value) => { const key=keyFor(path);if(!reads.has(key))await load(key,null);pending.set(key,structuredClone(value)); },
     readBytes: async path => {
@@ -49,11 +55,23 @@ export async function cloudStorage(action, { workspace = workspaceId(), lease } 
           const pin='batch-assets-'+workspace;await client.query('INSERT INTO production_states(state_key,revision,state_jsonb) VALUES($1,0,$2) ON CONFLICT DO NOTHING',[pin,emptyWpsProductionState()]);
           await client.query('INSERT INTO production_file_refs(state_key,ref_key,file_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',[pin,hash(key),id]);
           await client.query('INSERT INTO batch_assets(workspace,path,file_id,sha256) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING',[workspace,key,id,sha]);
+          const tenant=(await client.query('SELECT id,storage_quota_bytes FROM tenants WHERE workspace=$1 AND NOT disabled',[workspace])).rows[0];
+          if(!tenant)throw fail('工作区不存在或已停用',403);
+          // Lock the usage row before checking an existing ref: concurrent same-file uploads
+          // count bytes once, while a different tenant must still acquire its own reference.
+          await client.query('SELECT tenant_id FROM tenant_usage WHERE tenant_id=$1 FOR UPDATE',[tenant.id]);
+          const owned=await client.query('SELECT 1 FROM tenant_file_refs WHERE tenant_id=$1 AND file_id=$2 LIMIT 1',[tenant.id,id]);
+          if(!owned.rowCount){
+            const counted=await client.query('UPDATE tenant_usage SET bytes_used=bytes_used+$2 WHERE tenant_id=$1 AND bytes_used+bytes_reserved+$2<=$3 RETURNING tenant_id',[tenant.id,bytes.length,tenant.storage_quota_bytes]);
+            if(!counted.rowCount)throw fail('存储额度不足，请联系管理员调整额度',413);
+          }
+          await client.query("INSERT INTO tenant_file_refs(tenant_id,file_id,purpose,display_name) VALUES($1,$2,'batch',$3) ON CONFLICT DO NOTHING",[tenant.id,id,key.split('/').at(-1)]);
         });
       } else await adapter.writeJSON(path,{encoding:'base64',value:bytes.toString('base64')});
     },
     listDirectories: async path => {
       const key=keyFor(path)+'/';
+      if(key==='production-jobs/'&&productionDirectories)return [...new Set([...productionDirectories,...[...pending.keys()].filter(p=>p.startsWith(key)).map(p=>p.slice(key.length).split('/')[0])])];
       const rows=await db.query('SELECT path FROM batch_documents WHERE workspace=$1 AND starts_with(path,$2)',[workspace,key]);
       return [...new Set([...rows.rows.map(r=>r.path),...pending.keys()].filter(p=>p.startsWith(key)).map(p=>p.slice(key.length).split('/')[0]))];
     },
@@ -73,14 +91,32 @@ export async function cloudStorage(action, { workspace = workspaceId(), lease } 
             if(!updated.rowCount)throw fail('内容已在其他页面更新，请刷新后重试；未覆盖已有修改',409);
           }else if(!found.rowCount)throw fail('内容已在其他页面创建，请刷新后重试',409);
         }
-        for(const task of queue)await client.query('INSERT INTO batch_queue(id,workspace,kind,payload) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING',[task.id,workspace,task.kind,task.payload]);
+        for(const task of queue){
+          // The hold and queue commit with the documents, including automatic follow-on jobs.
+          // main stays entirely outside billing, preserving the customer's delivery path.
+          if(workspace!=='main'&&['analysis','production'].includes(task.kind)){
+            const tenant=(await client.query('SELECT id,billing_mode FROM tenants WHERE workspace=$1 AND NOT disabled FOR SHARE',[workspace])).rows[0];
+            if(!tenant)throw fail('工作区不存在或已停用',403);
+            if(tenant.billing_mode!=='exempt'){
+              const key='production-jobs/'+task.payload.jobId+'/state.json';
+              const job=task.kind==='production'?(pending.get(key)??await load(key)):null;
+              const snapshot=await currentPrices();
+              const amountCents=microToCents(ceilingMicroCents(snapshot,task.kind==='analysis'?{analyze:true}:{route:job.route}));
+              await holdCredits(client,{id:workspace+':'+task.id,tenantId:tenant.id,kind:task.kind,
+                jobRef:task.kind==='analysis'?task.payload.caseId:job.caseId+'/'+(job.artworkId||job.id),
+                billingMode:tenant.billing_mode,amountCents,snapshot});
+            }
+          }
+          await client.query('INSERT INTO batch_queue(id,workspace,kind,payload) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING',[task.id,workspace,task.kind,task.payload]);
+        }
       });
+      if(productionDirectories)productionDirectories=[...new Set([...productionDirectories,...[...pending.keys()].filter(p=>p.startsWith('production-jobs/')).map(p=>p.split('/')[1])])];
       for(const [key,value] of pending){reads.set(key,(reads.get(key)||0)+1);cache.set(key,{revision:reads.get(key),content_json:structuredClone(value)});}
       pending.clear();queue.length=0;
     },
   };
   return withFileStorage(adapter,async()=>{const result=await action(adapter);await adapter.flush();return result;});
 }
-export async function queueHealth(){const r=await catalogDatabase().query("SELECT max(heartbeat_at) AS last FROM batch_workers WHERE heartbeat_at>now()-interval '45 seconds'");return !!r.rows[0]?.last;}
+export async function queueHealth(workspace='main'){const r=await catalogDatabase().query("SELECT max(heartbeat_at) AS last FROM batch_workers WHERE heartbeat_at>now()-interval '45 seconds' AND (($1='main' AND id NOT LIKE 'external:%') OR ($1<>'main' AND id LIKE 'external:%'))",[workspace]);return !!r.rows[0]?.last;}
 
-export async function queueActivity(){const rows=await catalogDatabase().query("SELECT id,kind,payload->>'caseId' AS case_id,status,updated_at FROM batch_queue WHERE workspace=$1 AND (status IN ('queued','running') OR updated_at>now()-interval '1 day') ORDER BY updated_at DESC LIMIT 100",[workspaceId()]);return rows.rows.map(r=>({id:r.id,kind:r.kind,caseId:r.case_id,status:r.status,updatedAt:r.updated_at}));}
+export async function queueActivity(workspace=workspaceId()){const rows=await catalogDatabase().query("SELECT id,kind,payload->>'caseId' AS case_id,status,updated_at FROM batch_queue WHERE workspace=$1 AND (status IN ('queued','running') OR updated_at>now()-interval '1 day') ORDER BY updated_at DESC LIMIT 100",[workspace]);return rows.rows.map(r=>({id:r.id,kind:r.kind,caseId:r.case_id,status:r.status,updatedAt:r.updated_at}));}

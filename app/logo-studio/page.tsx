@@ -1,5 +1,6 @@
-import { LogoStudioClient } from '@/components/logo-studio-client';
+import { redirect } from 'next/navigation';
 
+// Replaced by the artwork studio, which runs through the shared production queue.
 export default function LogoStudioPage() {
-  return <LogoStudioClient />;
+  redirect('/artwork-studio');
 }

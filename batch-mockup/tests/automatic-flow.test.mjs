@@ -72,3 +72,19 @@ test('旧页面已首次识别但未制作的条目可接续；已有制作结�
  assert.equal((await readProductionJobs(f.root)).length,0);await queueNewRequirements(f.root,f.manifest,f.enqueue,f.analyzerFactory);assert.equal((await readProductionJobs(f.root)).length,2);
  const ids=[...f.queue.keys()];await queueNewRequirements(f.root,f.manifest,f.enqueue,f.analyzerFactory);assert.deepEqual([...f.queue.keys()],ids);assert.equal(f.calls(),2);
 });
+
+test('WPS 自动队列不识别或制作手动录入的需求，独立图稿不自动合成衣服',async t=>{
+ const f=await fixture(t);
+ for(const [i,c] of f.manifest.cases.entries()){c.sourceRecordId='upload:'+c.caseId;c.entry=i?'batch':'studio';}
+ await saveJSON(resolve(f.root,'manifest.json'),f.manifest);
+ await queueNewRequirements(f.root,f.manifest,f.enqueue,()=>assert.fail('不应自动调用识图'));
+ assert.equal(f.queue.size,0);
+ const {reserveProduction}=await import('../application/production.mjs');
+ await saveJSON(resolve(f.root,'requirements-state/A.json'),{revision:1,draft:{...f.draft,artworks:[{...f.draft.artworks[0],applications:[],transparentBackground:false}]},draftSupplementRevision:0,analyses:[],confirmations:[]});
+ await queueNewRequirements(f.root,f.manifest,f.enqueue,()=>assert.fail('不应自动调用识图'));
+ assert.equal((await readProductionJobs(f.root)).length,0);
+ const [j]=await reserveProduction(f.root,f.manifest,[{caseId:'A',revision:1,supplementRevision:0}]);
+ const png=await sharp({create:{width:16,height:16,channels:3,background:'red'}}).png().toBuffer();
+ await executeTask(f.root,{kind:'production',payload:{caseId:'A',jobId:j.id}},f.enqueue,{productionFactory:async()=>({generate:async()=>png,cutout:()=>assert.fail('未勾选不抠图')})});
+ assert.equal((await readProductionJobs(f.root))[0].status,'returned');assert.equal(f.queue.size,0);
+});

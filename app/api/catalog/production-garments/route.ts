@@ -8,7 +8,7 @@ import { mutateWpsProductionState, ProductionRevisionConflictError } from '@/lib
 import { after, NextRequest, NextResponse } from 'next/server';
 import { usesProductionCloud } from '@/lib/server/production-storage';
 import { finishProductionSave } from '@/lib/server/production-post-save';
-import { catalogUser } from '@/lib/server/catalog-auth';
+import { internalScope } from '@/lib/server/tenant-scope';
 import { catalogError, catalogJson } from '@/lib/server/catalog-http';
 import { productionCatalogStyles } from '@/lib/server/wps-production-garments';
 export const dynamic = 'force-dynamic';
@@ -16,16 +16,19 @@ export const maxDuration = 300;
 const selectionSchema = z.object({ action: z.literal('selectGarment'), expectedVersionSnapshot: z.string().min(1).max(3_000_000).optional(), expectedRevision: z.number().int().nonnegative(), unitId: z.string().min(1).max(300), variantId: z.uuid(), assetVersionId: z.uuid().optional() }).strict();
 export async function GET(request: NextRequest) {
   try {
-    await catalogUser(request);
+    // Serves the shared WPS workspace, not the caller's own catalog.
+    await internalScope(request);
     return NextResponse.json({ styles: await productionCatalogStyles() }, { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (error) { return catalogError(error); }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    await catalogUser(request, true);
+    // This writes shared WPS production state; tenant-filtering the catalog query alone
+    // would not protect it.
+    const { tenant } = await internalScope(request, true);
     const input = selectionSchema.parse(await catalogJson(request));
-    const detail = await catalogDetail(input.variantId, input.assetVersionId);
+    const detail = await catalogDetail(input.variantId, input.assetVersionId, tenant.id);
     const garment = await withGarmentBodyScale(bindingFromCatalog(detail, { selection: 'manual', colorText: '', evidence: `人工选择 ${detail.styleCode} · ${detail.colorName}` }));
     const saved = await mutateWpsProductionState(input.expectedRevision, state => selectProductionGarment(state, input.unitId, garment), productionActionAssertion(input));
     if (usesProductionCloud()) after(() => finishProductionSave(input));

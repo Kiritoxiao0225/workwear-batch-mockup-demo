@@ -2,8 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { productionUser, usesProductionCloud, saveProductionFile } from '@/lib/server/production-storage';
+import { tenantScope } from '@/lib/server/tenant-scope';
 import { claimProductionUpload } from '@/lib/server/production-upload';
 import { fileSha256 } from '@/lib/server/catalog-files';
 import { catalogError } from '@/lib/server/catalog-http';
@@ -18,6 +19,9 @@ const EXTENSION_BY_TYPE: Record<string, string> = {
 export async function POST(request: Request) {
   try {
     await productionUser(request, true);
+    const scope = usesProductionCloud()
+      ? await tenantScope(new NextRequest(request.url, { method: request.method, headers: request.headers }), true)
+      : null;
     const formData = await request.formData();
     const file = formData.get('file');
     if (!(file instanceof File)) {
@@ -35,10 +39,10 @@ export async function POST(request: Request) {
       const sha256 = fileSha256(bytes);
       const claimedHash = formData.get('sha256');
       if (claimedHash && claimedHash !== sha256) throw new Error('上传内容与文件指纹不一致');
-      const claim = await claimProductionUpload(sha256, String(formData.get('operationId') || randomUUID()));
+      const claim = await claimProductionUpload(sha256, String(formData.get('operationId') || randomUUID()), scope!.tenant.id);
       if (claim.status === 'ready') return NextResponse.json({ url: claim.url, originalName: file.name });
       if (claim.status === 'pending') return NextResponse.json({ error: '同一图片正在上传，请查询上传状态后重试' }, { status: 409 });
-      return NextResponse.json(await saveProductionFile(bytes, file.name));
+      return NextResponse.json(await saveProductionFile(bytes, file.name, undefined, scope!.tenant.id));
     }
     const fileName = `${Date.now()}-${randomUUID()}.${extension}`;
     const uploadDirectory = path.join(process.cwd(), 'public', 'uploads', 'logos');

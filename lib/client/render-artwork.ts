@@ -31,7 +31,7 @@ export function artworkDraftCanvasBounds(draft: ArtworkDraft) {
     layer.kind === 'text' ? artworkTextLayout(layer.value).bounds : artworkGraphicBounds(layer.value)));
 }
 
-export function loadArtworkImage(sourceUrl: string) {
+export function loadArtworkImage(sourceUrl: string, priority: 'auto' | 'high' | 'low' = 'auto') {
   // Only persisted, immutable file IDs can outlive a single load. Other URLs
   // may be mutable or revoked and keep the existing browser loading behavior.
   const reusable = /^\/api\/production-files\/[a-f0-9-]{36}$/u.test(sourceUrl);
@@ -44,6 +44,7 @@ export function loadArtworkImage(sourceUrl: string) {
   const entry: ArtworkImageEntry = { promise: undefined!, pixels: 0, expires: Date.now() + 5 * 60_000 };
   entry.promise = new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image();
+    image.fetchPriority = priority;
     if (/^https?:\/\//iu.test(sourceUrl)) image.crossOrigin = 'anonymous';
     image.onload = () => {
       entry.pixels = image.naturalWidth * image.naturalHeight;

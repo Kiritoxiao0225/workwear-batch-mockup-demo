@@ -1,26 +1,13 @@
 import { NextResponse } from 'next/server';
 
-import { readDemoState, writeDemoState } from '@/lib/server/demo-state-store';
-
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
-  try {
-    return NextResponse.json(await readDemoState(), {
-      headers: { 'Cache-Control': 'no-store' },
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: `读取 Demo 状态失败：${message}` }, { status: 500 });
-  }
-}
+// The old shared demo state was readable and writable without any account. It is replaced by
+// per-tenant workspaces; the stored JSON is left on disk untouched for reference.
+const retired = () => NextResponse.json(
+  { error: '旧版演示状态已停用，请使用新版批量生成', code: 'LEGACY_STATE_RETIRED' },
+  { status: 410, headers: { 'Cache-Control': 'no-store' } });
 
-export async function PUT(request: Request) {
-  try {
-    const body: unknown = await request.json();
-    return NextResponse.json(await writeDemoState(body));
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: `保存 Demo 状态失败：${message}` }, { status: 400 });
-  }
-}
+export const GET = retired;
+export const PUT = retired;
+export const POST = retired;

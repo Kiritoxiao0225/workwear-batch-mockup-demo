@@ -1,3 +1,4 @@
+import { internalScope } from '@/lib/server/tenant-scope';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { completeWpsUserAuthorization, wpsOAuthRedirectUri } from '@/lib/server/wps-user-oauth';
@@ -5,6 +6,8 @@ import { completeWpsUserAuthorization, wpsOAuthRedirectUri } from '@/lib/server/
 export const runtime = 'nodejs';
 
 export async function GET(request: NextRequest) {
+  // The provider redirects the same browser back, so the session cookie is present here.
+  try { await internalScope(request); } catch { return NextResponse.json({ error: '该功能仅限内部账号' }, { status: 403 }); }
   const oauthError = request.nextUrl.searchParams.get('error');
   if (oauthError) return NextResponse.json({ error: `WPS 用户拒绝或未完成授权：${oauthError}` }, { status: 400 });
 

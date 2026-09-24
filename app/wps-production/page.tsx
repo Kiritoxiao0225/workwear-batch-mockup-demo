@@ -8,7 +8,7 @@ export default function WpsProductionPage() {
   const { user, initialized, error, busy, refresh } = useProjectSession();
   return <main style={{height:'100dvh',display:'flex',flexDirection:'column',overflow:'hidden'}}>
     <AppHeader />
-    {user ? <iframe ref={frame} src="/api/batch/ui" title="批量效果图工作台" style={{width:'100%',flex:1,border:0,minHeight:0}} allow="clipboard-write" /> : <div style={{padding:32}} role="status">{initialized ? error || '工作台暂时无法读取' : '正在连接工作台…'}{initialized && <button disabled={busy} onClick={() => void refresh()}>重试连接</button>}</div>}
-    {user && <BatchArtworkEditorHost frame={frame} />}
+    {user ? <iframe ref={frame} src="/api/wps-workbench/ui" title="批量效果图工作台" style={{width:'100%',flex:1,border:0,minHeight:0}} allow="clipboard-write" /> : <div style={{padding:32}} role="status">{initialized ? error || '工作台暂时无法读取' : '正在连接工作台…'}{initialized && <button disabled={busy} onClick={() => void refresh()}>重试连接</button>}</div>}
+    {user && <BatchArtworkEditorHost frame={frame} apiBase="/api/wps-workbench" />}
   </main>;
 }

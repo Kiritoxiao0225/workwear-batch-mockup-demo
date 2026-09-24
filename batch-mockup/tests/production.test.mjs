@@ -65,3 +65,41 @@ test('确认失败后仅续跑抠图，未知抠图不重复付费',async t=>{
  final.status='queued';final.steps.at(-1).status='unknown';await saveJSON(resolve(f.root,'production-jobs',j.id,'state.json'),final);
  const stopped=await executeProduction(f.root,j.id,providers);assert.equal(stopped.status,'partial');assert.equal(cuts,2);assert.equal(generated,1);
 });
+
+test('未勾选透明背景时保留场景像素，三个路线都不抠图，结果始终为 PNG',async t=>{
+ for(const route of ['generate','enhance','reuse']){
+  const f=await fixture(t,route);f.state.draft.artworks[0].transparentBackground=false;
+  await saveJSON(resolve(f.root,'requirements-state/T.json'),f.state);
+  const [j]=await reserveProduction(f.root,f.manifest,f.requests);
+  const result=await executeProduction(f.root,j.id,{
+   generate:async input=>{assert.equal(input.transparentBackground,false);return sharp(f.opaque).jpeg().toBuffer();},
+   enhance:async()=>sharp(f.opaque).jpeg().toBuffer(),cutout:()=>assert.fail('未勾选不应调用抠图'),
+  });
+  assert.equal(result.status,'returned');assert.equal(result.transparentBackground,false);
+  assert.equal(result.final.transparentPixels,0);assert.match(result.final.asset,/\.png$/);
+  const raw=await sharp(await readFile(resolve(f.root,'public',result.raw.asset))).raw().toBuffer();
+  const final=await sharp(await readFile(resolve(f.root,'public',result.final.asset))).raw().toBuffer();
+  assert.deepEqual(final,raw,'转换 PNG 不改变返回图片的场景像素');
+ }
+});
+
+test('勾选透明背景会按需抠图；选项固定在任务里并参与幂等身份',async t=>{
+ const f=await fixture(t);f.state.draft.artworks[0].transparentBackground=true;
+ await saveJSON(resolve(f.root,'requirements-state/T.json'),f.state);
+ const [j]=await reserveProduction(f.root,f.manifest,f.requests);
+ f.state.draft.artworks[0].transparentBackground=false;await saveJSON(resolve(f.root,'requirements-state/T.json'),f.state);
+ const [other]=await reserveProduction(f.root,f.manifest,f.requests);assert.notEqual(j.id,other.id);
+ let cuts=0;const result=await executeProduction(f.root,j.id,{
+  generate:async input=>{assert.equal(input.transparentBackground,true);return f.opaque;},
+  cutout:async()=>{cuts++;return f.transparent;},
+ });
+ assert.equal(cuts,1);assert.equal(result.status,'returned');assert.equal(result.final.transparentExterior,true);
+});
+
+test('明确要求透明背景但供应商返回不透明图片时，不能标记制作成功',async t=>{
+ const f=await fixture(t);f.state.draft.artworks[0].transparentBackground=true;
+ await saveJSON(resolve(f.root,'requirements-state/T.json'),f.state);
+ const [j]=await reserveProduction(f.root,f.manifest,f.requests);let cuts=0;
+ const result=await executeProduction(f.root,j.id,{generate:async()=>f.opaque,cutout:async()=>{cuts++;return f.opaque;}});
+ assert.equal(result.status,'partial');assert.match(result.error,/透明背景检查未通过/);assert.equal(cuts,1);
+});

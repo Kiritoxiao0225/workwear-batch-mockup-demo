@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>我的账户 · 工作服效果图</title>
+<link rel="stylesheet" href="app.css">
+<style>
+  .cols { display: grid; grid-template-columns: minmax(0,1fr) 340px; gap: 18px; align-items: start; }
+  .balance { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 0; }
+  .balance > div { padding: 22px; border-right: 1px solid var(--line); }
+  .balance > div:last-child { border-right: 0; }
+  .balance .n { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .balance .n.held { color: var(--warning); }
+  .balance .n.brand { color: var(--brand); }
+  .plan { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .plan-card { padding: 16px; border: 1px solid var(--line); border-radius: 11px; }
+  .plan-card.now { border-color: var(--brand); background: var(--brand-soft); }
+  .plan-card h4 { font-size: 15px; margin-bottom: 4px; }
+  .plan-card ul { margin: 10px 0 0; padding-left: 17px; font-size: 12px; line-height: 2; color: var(--muted); }
+  @media (max-width:1050px){ .cols{grid-template-columns:1fr;} .balance{grid-template-columns:1fr;} .balance>div{border-right:0;border-bottom:1px solid var(--line);} }
+</style>
+</head>
+<body>
+
+<header class="app-header">
+  <a class="brand" href="index.html"><span class="brand-mark">衣</span><span><strong>工作服效果图</strong><small>批量制作台</small></span></a>
+  <div class="app-header-controls">
+    <nav class="main-nav">
+      <a href="products.html">商品素材库</a>
+      <a href="artwork-studio.html">图稿生成</a>
+      <a href="batch.html">批量生成</a>
+      <a class="wps" href="/wps-production">WPS 批量生成</a>
+      <a class="active" href="account.html">我的账户</a>
+    </nav>
+    <div class="credit-pill"><span class="muted">积分</span><b class="num">1,240</b><span class="held tiny">冻结 60</span></div>
+    <div class="account-chip"><span class="avatar">138</span><span>138****8000</span></div>
+  </div>
+</header>
+
+<main class="page">
+  <div class="page-head">
+    <div><h1>我的账户</h1><p>积分余额、消耗明细与配额用量。内测期间由管理员发放积分。</p></div>
+    <button class="button">申请增加额度</button>
+  </div>
+
+  <div class="cols">
+    <section class="stack">
+
+      <div class="panel balance">
+        <div><div class="small muted">可用积分</div><div class="n brand">1,240</div><div class="tiny muted">≈ ¥12.40</div></div>
+        <div><div class="small muted">冻结中</div><div class="n held">60</div><div class="tiny muted">2 个任务进行中</div></div>
+        <div><div class="small muted">本月已消耗</div><div class="n">860</div><div class="tiny muted">18 次制作</div></div>
+      </div>
+
+      <div class="panel">
+        <div class="spread" style="padding:16px 20px;border-bottom:1px solid var(--line)">
+          <h3 style="font-size:15px">消耗明细</h3>
+          <div class="row"><select class="small"><option>全部类型</option><option>发放</option><option>冻结</option><option>结算</option><option>退回</option></select></div>
+        </div>
+        <table>
+          <thead><tr><th>时间</th><th>说明</th><th>类型</th><th style="text-align:right">积分</th><th style="text-align:right">余额</th></tr></thead>
+          <tbody>
+            <tr><td class="tiny">09-20 18:12</td><td>图稿制作 · 华信建设 圆形徽标<br><span class="tiny muted">生图 ×1 + 抠图 ×1</span></td><td><span class="tag">结算</span></td><td class="num" style="text-align:right;color:var(--danger)">-50</td><td class="num" style="text-align:right">1,240</td></tr>
+            <tr><td class="tiny">09-20 18:11</td><td>冻结 · 华信建设 圆形徽标<br><span class="tiny muted">按上限冻结，跑完多退</span></td><td><span class="tag warn">冻结</span></td><td class="num" style="text-align:right">-50</td><td class="num" style="text-align:right">1,290</td></tr>
+            <tr><td class="tiny">09-20 16:40</td><td>退回 · 蓝色齿轮 Logo<br><span class="tiny muted">供应商 4xx，确定未产生费用</span></td><td><span class="tag ok">退回</span></td><td class="num" style="text-align:right;color:var(--brand)">+40</td><td class="num" style="text-align:right">1,340</td></tr>
+            <tr><td class="tiny">09-20 15:02</td><td>需求识别 · U-0032</td><td><span class="tag">结算</span></td><td class="num" style="text-align:right;color:var(--danger)">-15</td><td class="num" style="text-align:right">1,300</td></tr>
+            <tr><td class="tiny">09-19 10:00</td><td>管理员发放 · 内测额度</td><td><span class="tag info">发放</span></td><td class="num" style="text-align:right;color:var(--brand)">+2,000</td><td class="num" style="text-align:right">2,000</td></tr>
+          </tbody>
+        </table>
+        <div class="spec" style="margin:14px">
+          明细只显示积分，<b>不显示供应商成本</b>。「冻结」与「结算」成对出现：冻结按最坏情况的上限，结算按实际发生的动作，差额自动退回。
+        </div>
+      </div>
+
+      <div class="panel panel-pad stack">
+        <h3 style="font-size:15px">待裁定（1）</h3>
+        <div class="notice warn">
+          <div>
+            <b>圆形英文标 · 40 分仍冻结</b>
+            请求已发出但没收到确定回执，系统<b>不自动退也不自动扣</b>，避免重复付费。管理员核对供应商侧后会给出结论。
+            <div class="tiny muted" style="margin-top:6px">发生于 09-20 14:22 · 已提交核对</div>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <aside class="stack">
+      <div class="panel panel-pad stack">
+        <h3 style="font-size:15px">配额用量</h3>
+        <div class="quota">
+          <div class="spread"><span class="small">款式</span><span class="small num">3 / 5</span></div>
+          <div class="quota-bar"><i style="width:60%"></i></div>
+        </div>
+        <div class="quota">
+          <div class="spread"><span class="small">存储</span><span class="small num">0.41 / 0.5 GiB</span></div>
+          <div class="quota-bar near"><i style="width:82%"></i></div>
+        </div>
+        <p class="tiny muted">存储按你账号引用的文件计算。不同账号上传同一张图，各算各的。</p>
+      </div>
+
+      <div class="panel panel-pad stack">
+        <h3 style="font-size:15px">套餐</h3>
+        <div class="plan">
+          <div class="plan-card now">
+            <div class="spread"><h4>免费版</h4><span class="tag ok">当前</span></div>
+            <ul><li>5 款商品</li><li>0.5 GiB 存储</li><li>积分由管理员发放</li></ul>
+          </div>
+          <div class="plan-card">
+            <h4>付费版</h4>
+            <ul><li>500 款商品</li><li>5 GiB 存储</li><li>同上计费单价</li></ul>
+            <button class="button sm full" style="margin-top:12px">联系开通</button>
+          </div>
+        </div>
+        <div class="notice warn tiny" style="padding:10px 12px">
+          <div><b>提示</b>按现有素材实测约 150 MiB / 款，5 GiB 大约只装得下 34 款。若你要按「500 款」宣传，存储额度需要同步上调。</div>
+        </div>
+      </div>
+
+      <div class="panel panel-pad stack">
+        <h3 style="font-size:15px">计费单价</h3>
+        <table>
+          <tbody>
+            <tr><td>需求识图</td><td class="num" style="text-align:right">15 分</td></tr>
+            <tr><td>生图</td><td class="num" style="text-align:right">40 分</td></tr>
+            <tr><td>无损放大</td><td class="num" style="text-align:right">20 分</td></tr>
+            <tr><td>抠图</td><td class="num" style="text-align:right">10 分</td></tr>
+            <tr><td>位置识别</td><td class="num" style="text-align:right">8 分</td></tr>
+            <tr><td>效果图合成</td><td class="num" style="text-align:right;color:var(--brand)">免费</td></tr>
+          </tbody>
+        </table>
+        <p class="tiny muted">1 积分 = ¥0.01。单价随供应商调整，改价不影响已冻结的任务（结算读下单时的价格快照）。</p>
+      </div>
+
+      <div class="panel panel-pad stack">
+        <h3 style="font-size:15px">账号</h3>
+        <div class="small">手机号 <b>138****8000</b> <span class="tag ok">已验证</span></div>
+        <div class="small">邮箱 <span class="muted">未绑定</span></div>
+        <button class="button sm">绑定邮箱</button>
+        <button class="button sm danger">退出登录</button>
+      </div>
+    </aside>
+  </div>
+</main>
+</body>
+</html>

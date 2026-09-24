@@ -2,7 +2,7 @@ import { CONFIRMATION_FRAME } from '@/lib/confirmation-frame';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { NextRequest, NextResponse } from 'next/server';
-import { catalogUser } from '@/lib/server/catalog-auth';
+import { tenantScope } from '@/lib/server/tenant-scope';
 import { catalogDetail } from '@/lib/server/catalog-repository';
 import { readCatalogFile } from '@/lib/server/catalog-files';
 import { catalogError } from '@/lib/server/catalog-http';
@@ -12,8 +12,8 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
-    await catalogUser(request);
-    const detail = await catalogDetail((await context.params).id, request.nextUrl.searchParams.get('assetVersionId') ?? undefined);
+    const { tenant } = await tenantScope(request);
+    const detail = await catalogDetail((await context.params).id, request.nextUrl.searchParams.get('assetVersionId') ?? undefined, tenant.id);
     const [{ bytes }, frame] = await Promise.all([
       readCatalogFile(detail.imageUrl.split('/').at(-1)!),
       readFile(path.join(process.cwd(), 'public', CONFIRMATION_FRAME.assetPath)),

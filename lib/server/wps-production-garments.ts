@@ -2,11 +2,13 @@ import { isDeepStrictEqual } from 'node:util';
 import { withGarmentBodyScale } from './wps-garment-sizing';
 import type { TaskReview } from '@/lib/batch-task-review';
 import { bindingFromCatalog, matchProductionGarment, type GarmentBinding } from '@/lib/production-garment';
+import { INTERNAL_TENANT_ID } from '@/lib/server/catalog-auth';
 import { allCatalogStyles, catalogDetail } from '@/lib/server/catalog-repository';
 import type { CatalogStyle } from '@/lib/catalog';
 
+// The WPS workflow serves the internal tenant, which owns the existing catalog.
 export async function productionCatalogStyles(): Promise<CatalogStyle[]> {
-  return allCatalogStyles();
+  return allCatalogStyles(INTERNAL_TENANT_ID);
 }
 export async function prepareCatalogReviews(reviews: TaskReview[]) {
   const styles = await productionCatalogStyles();
@@ -16,7 +18,7 @@ export async function prepareCatalogReviews(reviews: TaskReview[]) {
     let garment: GarmentBinding | null = null;
     if (match.item) {
       const key = match.item.id;
-      if (!bindings.has(key)) bindings.set(key, catalogDetail(key, match.item.assetVersionId));
+      if (!bindings.has(key)) bindings.set(key, catalogDetail(key, match.item.assetVersionId, INTERNAL_TENANT_ID));
       garment = await withGarmentBodyScale(bindingFromCatalog(await bindings.get(key)!, match));
     }
     // Never accept a browser-supplied asset/standard snapshot as catalog truth.
@@ -24,7 +26,7 @@ export async function prepareCatalogReviews(reviews: TaskReview[]) {
   })) })));
 }
 export async function verifyGarmentBinding(binding: GarmentBinding) {
-  const detail = await catalogDetail(binding.variantId, binding.assetVersionId);
+  const detail = await catalogDetail(binding.variantId, binding.assetVersionId, INTERNAL_TENANT_ID);
   if (detail.styleId !== binding.styleId || detail.sha256 !== binding.sha256 || detail.imageUrl !== binding.imageUrl || detail.width !== binding.width || detail.height !== binding.height) throw new Error(`衣服底图身份或内容已变化：${binding.styleCode} ${binding.colorName}`);
   for (const pinned of binding.views) {
     const view = detail.views.find(view => view.id === pinned.id && view.face === pinned.face);

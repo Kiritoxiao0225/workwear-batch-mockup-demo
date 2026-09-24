@@ -19,7 +19,10 @@ afterEach(() => vi.unstubAllEnvs());
 describe('shared workspace access', () => {
   it.each(['', 'catalog_session=expired'])('uses the configured real account without a valid cookie: %s', async cookie => {
     expect(await catalogUser(request(undefined, cookie), true)).toEqual({ id: row.id, email: row.email, displayName: row.display_name, role: row.role });
-    expect(query).toHaveBeenCalledWith(expect.stringContaining('AND NOT disabled'), ['shared@example.test']);
+    const [sql, values] = query.mock.calls[0] as [string, string[]];
+    expect(values).toEqual(['shared@example.test']);
+    expect(sql).toContain('NOT u.disabled');
+    expect(sql).toContain('COALESCE(t.disabled,false)=false');
   });
   it('rejects cross-origin writes before accessing the database', async () => {
     await expect(catalogUser(request('https://foreign.example'), true)).rejects.toMatchObject({ status: 403 });

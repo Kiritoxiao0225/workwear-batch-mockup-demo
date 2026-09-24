@@ -55,14 +55,14 @@ try {
   for (let index = 0; index < 9; index++) {
     const bytes = await sharp({ create: { width: 1000, height: 500, channels: 4, background: index % 2 ? '#f9f9f9' : '#111111' } }).png().toBuffer();
     const asset = await importCatalogAsset({ namespace: 'shared-test', styleCode: 'B01SD', colorName: `颜色${index + 1}`, layout: 'front_back', bytes, filename: `garment-${index}.png`, provenance: {}, sources: [] });
-    const detail = await catalogDetail(asset.variantId);
+    const detail = await catalogDetail(asset.variantId, undefined, '00000000-0000-0000-0000-000000000001');
     for (const view of detail.views) {
       const specification = emptyStandard(); specification.structureType = 'polo';
       specification.landmarks = requiredLandmarks('polo').map((point, i) => ({ ...point, point: { x: point.key === 'leftArmpit' ? .225 : point.key === 'rightArmpit' ? .775 : .5, y: .1 + i * .1 } }));
       specification.positions = [{ key: view.face === 'back' ? 'backCenter' : 'leftChest', anchor: { x: .5, y: .5 }, printableArea: { x: .1, y: .1, width: .8, height: .8 }, defaultSize: { width: .2, height: .2 } }];
-      await savePlacementStandard({ viewId: view.id, assetVersionId: detail.assetVersionId, expectedRevision: view.revision, confirm: true, specification }, actor);
+      await savePlacementStandard({ viewId: view.id, assetVersionId: detail.assetVersionId, expectedRevision: view.revision, confirm: true, specification }, actor, '00000000-0000-0000-0000-000000000001');
     }
-    garments.push(await withGarmentBodyScale(bindingFromCatalog(await catalogDetail(asset.variantId), { selection: 'exact', colorText: `颜色${index + 1}`, evidence: 'isolated integration' })));
+    garments.push(await withGarmentBodyScale(bindingFromCatalog(await catalogDetail(asset.variantId, undefined, '00000000-0000-0000-0000-000000000001'), { selection: 'exact', colorText: `颜色${index + 1}`, evidence: 'isolated integration' })));
   }
   const review = taskReviewFixture()[0];
   review.source.requirementText = '九色同版，后背排字：Sales ELT\nLearn.Lead.Grow';

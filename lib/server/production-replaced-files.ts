@@ -11,6 +11,7 @@ const unreferenced = `f.status='ready' AND NOT EXISTS(SELECT 1 FROM production_f
   AND NOT EXISTS(SELECT 1 FROM artwork_cutout_files c WHERE c.file_id=f.id)
   AND NOT EXISTS(SELECT 1 FROM wps_analysis_files a WHERE a.file_id=f.id)
   AND NOT EXISTS(SELECT 1 FROM batch_assets a WHERE a.file_id=f.id)
+  AND NOT EXISTS(SELECT 1 FROM garment_mockup_assets a WHERE a.file_id=f.id)
   AND NOT EXISTS(SELECT 1 FROM production_renders r WHERE r.file_id=f.id)
   AND NOT EXISTS(SELECT 1 FROM garment_asset_versions v WHERE v.file_id=f.id OR v.thumbnail_file_id=f.id)
   AND NOT EXISTS(SELECT 1 FROM asset_sources s WHERE s.file_id=f.id)

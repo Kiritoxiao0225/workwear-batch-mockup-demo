@@ -7,6 +7,7 @@ const line = z.string().max(500);
 const artworkSchema = z.object({
   id: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/), name: z.string().min(1).max(200),
   route: z.enum(['generate', 'enhance', 'reuse']),
+  transparentBackground: z.boolean().optional(),
   applications: z.array(z.object({ style: line, color: line, position: line }).strict()).max(100),
   imageIds: z.array(z.string().min(1).max(100)).max(30), prompt: z.string().min(1).max(20000),
 }).strict();
@@ -20,13 +21,21 @@ export const readRequirementState = (root, id) => jsonFile(pathFor(root, id), {
   revision: 0, draft: null, draftSupplementRevision: 0, analyses: [], confirmations: [],
 });
 const requestId = id => { if (!z.string().uuid().safeParse(id).success) throw fail('操作标识无效'); };
-const findCase = (manifest, id) => { const c = manifest.cases.find(c => c.caseId === id); if (!c) throw fail('未找到需求', 404); return c; };
+// Single entry point for every manual action, so a withdrawn requirement is refused for
+// analysis and production alike rather than only in the automatic flow.
+const findCase = (manifest, id) => {
+  const c = manifest.cases.find(c => c.caseId === id);
+  if (!c) throw fail('未找到需求', 404);
+  if (c.active === false) throw fail('该需求已删除或已移出本轮，无法继续操作', 409);
+  return c;
+};
 
 export async function requirementImages(root, c, supplement) {
   const images = c.images.map(i => ({ id: i.imageId, label: `图${i.index}`, index: i.index, asset: i.asset,
     sha256: i.originalSHA256, bytes: i.originalBytes, width: i.width, height: i.height, target: '', source: 'original' }));
+  const originalMax=Math.max(0,...c.images.map(i=>i.index));
   for (const [i, x] of supplement.items.entries()) if (!x.removedAt) images.push({ id: x.id,
-    label: `图${c.images.length + i + 1}`, index: c.images.length + i + 1, asset: x.asset, sha256: x.sha256,
+    label: `图${originalMax + i + 1}`, index: originalMax + i + 1, asset: x.asset, sha256: x.sha256,
     bytes: x.bytes, width: x.width, height: x.height, target: x.target, source: 'designer_upload' });
   return images;
 }
@@ -111,6 +120,8 @@ export async function finishRequirementAnalysis(root, manifest, caseId, id, resu
     if (a.status === 'returned' && !state.draft && state.revision === a.revision && sup === a.supplementRevision) {
       state.draft = a.parsed; state.draftOrigin = 'model'; state.draftAnalysisId = id;
       state.draftSupplementRevision = sup; state.revision += 1;
+      const source=manifest.cases.find(c=>c.caseId===caseId);
+      if(source.needsReanalysis){source.needsReanalysis=false;await saveJSON(resolve(root,'manifest.json'),manifest);}
     }
   }
   await writeState(root, caseId, state);
@@ -122,8 +133,9 @@ export async function saveRequirementDraft(root, manifest, body) {
     if (a?.status !== 'returned' || a.revision !== state.revision || a.supplementRevision !== supplement.revision) throw fail('新识别结果已过期，请保留修改并重新识别', 409);
     state.draftAnalysisId = a.id; state.draftSupplementRevision = supplement.revision;
   }
-  if (!state.draftAnalysisId) throw fail('请先取得模型结果', 409);
+  if (!state.draftAnalysisId && c.entry!=='studio') throw fail('请先取得模型结果', 409);
   state.draft = validateRequirementDraft(body.draft, images);
+  if(body.analysisId&&c.needsReanalysis){c.needsReanalysis=false;await saveJSON(resolve(root,'manifest.json'),manifest);}
   state.draftOrigin = 'designer'; state.updatedAt = stamp(); state.revision += 1;
   await writeState(root, c.caseId, state); return state;
 }
@@ -169,7 +181,7 @@ export async function requirementWorkbench(root, manifest) {
     cases.push({ ...c, images: await requirementImages(root, c, supplement), supplement, revision: state.revision,
       draft: state.draft, draftAnalysisId: state.draftAnalysisId || null,
       modelDraft: state.analyses.find(x => x.id === state.draftAnalysisId)?.parsed || null,
-      needsReanalysis: !!state.draft && state.draftSupplementRevision !== supplement.revision,
+      needsReanalysis: !!c.needsReanalysis || (!!state.draft && state.draftSupplementRevision !== supplement.revision),
       analysis: last ? { id: last.id, status: last.status, error: last.error, elapsedMs: last.elapsedMs,
         proposedDraft: last.status === 'returned' && last.id !== state.draftAnalysisId && last.revision === state.revision && last.supplementRevision === supplement.revision ? last.parsed : null } : null,
       confirmation: confirmed ? { id: confirmed.id, by: confirmed.confirmedBy, at: confirmed.confirmedAt } : null,

@@ -1,17 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
+import { internalScope } from '@/lib/server/tenant-scope';
 import sharp from 'sharp';
 import { taskBFixture } from '@/lib/testing/task-b-fixture';
 import { productionUser, usesProductionCloud } from '@/lib/server/production-storage';
 import { readWpsProductionState } from '@/lib/server/wps-production-store';
 import { withGarmentBodyScale } from '@/lib/server/wps-garment-sizing';
-import { catalogUser, CatalogHttpError } from '@/lib/server/catalog-auth';
+import { CatalogHttpError } from '@/lib/server/catalog-auth';
 import { prepareProductionPreviewUnit } from '@/lib/server/production-preview-readiness';
 import { POST } from './route';
 import { POST as submitJobs } from '../jobs/route';
 import { GET as diagnostics } from '../diagnostics/route';
 import { GET as preview } from '../../catalog/production-preview/route';
 
+vi.mock('@/lib/server/file-authorization', () => ({ registerFileRef: vi.fn(), assertFileAccess: vi.fn() }));
+vi.mock('@/lib/server/tenant-scope', () => ({ tenantScope: vi.fn(async () => ({ user: { id: 'operator', email: 'operator@example.test', displayName: '操作员', role: 'editor' as const }, tenant: { id: '00000000-0000-0000-0000-000000000001', name: '内部', plan: 'internal' as const, billingMode: 'exempt' as const, styleQuota: 1, storageQuotaBytes: 1, workspace: 'main' } })), internalScope: vi.fn(async () => ({ user: { id: 'operator', email: 'operator@example.test', displayName: '操作员', role: 'editor' as const }, tenant: { id: '00000000-0000-0000-0000-000000000001', name: '内部', plan: 'internal' as const, billingMode: 'exempt' as const, styleQuota: 1, storageQuotaBytes: 1, workspace: 'main' } })) }));
 vi.mock('../jobs/route', () => ({ POST: vi.fn(async () => Response.json({ accepted: true })) }));
 vi.mock('@/lib/server/wps-production-store', () => ({ readWpsProductionState: vi.fn() }));
 vi.mock('@/lib/server/production-storage', async original => ({ ...await original<typeof import('@/lib/server/production-storage')>(), productionUser: vi.fn(), usesProductionCloud: vi.fn() }));
@@ -92,7 +95,8 @@ describe('B1/B2 compact diagnostics, batch check and real preview HTTP boundary'
     expect(unit.artwork).toEqual(before.units[0].artwork);
     const report = await (await diagnostics(new Request('http://localhost/api/wps-production/diagnostics'))).json();
     expect(report.orders[0].versions[0]).toMatchObject({ current: false, readyPositions: 1 });
-    expect(catalogUser).toHaveBeenCalled();
+    // The preview route now proves internal-tenant membership instead of merely being signed in.
+    expect(internalScope).toHaveBeenCalled();
   });
   it('never bulk-regenerates an existing saved draft and authenticates before any state read', async () => {
     const { unit } = stored(true);

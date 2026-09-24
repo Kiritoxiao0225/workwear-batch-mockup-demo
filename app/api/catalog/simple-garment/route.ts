@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { catalogUser } from '@/lib/server/catalog-auth';
+import { tenantScope } from '@/lib/server/tenant-scope';
 import { catalogError } from '@/lib/server/catalog-http';
 import { catalogDetail } from '@/lib/server/catalog-repository';
 import { bindingFromCatalog } from '@/lib/production-garment';
@@ -13,9 +13,9 @@ const querySchema = z.object({ variantId: z.uuid(), assetVersionId: z.uuid() }).
 // Read a pinned catalog snapshot without creating or modifying a WPS order.
 export async function GET(request: NextRequest) {
   try {
-    await catalogUser(request);
+    const { tenant } = await tenantScope(request);
     const query = querySchema.parse(Object.fromEntries(request.nextUrl.searchParams));
-    const detail = await catalogDetail(query.variantId, query.assetVersionId);
+    const detail = await catalogDetail(query.variantId, query.assetVersionId, tenant.id);
     const [garment, placementDefaults] = await Promise.all([withGarmentBodyScale(bindingFromCatalog(detail, {
       selection: 'manual', colorText: detail.colorName, evidence: `简单批量生图选款 ${detail.styleCode} · ${detail.colorName}`,
     })), catalogPlacementPreview(detail)]);

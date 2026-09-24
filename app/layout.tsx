@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { ProjectSessionProvider } from '@/components/project-session';
 
 import '@/app/globals.css';
+import '@/components/app-header.css';
 
 export const metadata: Metadata = {
   title: '工作服批量效果图 Demo',

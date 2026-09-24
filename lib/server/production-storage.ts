@@ -1,3 +1,5 @@
+import { INTERNAL_TENANT_ID } from './catalog-auth';
+import { registerFileRef } from './file-authorization';
 import type { CatalogQueryClient } from './catalog-database';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -21,8 +23,11 @@ export async function readProductionFile(url: string) {
   if (usesProductionCloud()) throw new Error(`云端状态仍引用本地文件，请完成迁移：${url}`);
   return readFile(path.join(process.cwd(), 'public', 'uploads', match[1], match[2]));
 }
-export async function saveProductionFile(bytes: Buffer, name: string, retain?: (client: CatalogQueryClient, id: string) => Promise<void>) {
+export async function saveProductionFile(bytes: Buffer, name: string, retain?: (client: CatalogQueryClient, id: string) => Promise<void>, tenantId = INTERNAL_TENANT_ID) {
   const file = await saveCatalogFile(bytes, name, 'production', retain);
+  // Registered here rather than at each call site: a production file nobody references
+  // cannot be read back, and the WPS workflow writes these from a dozen places.
+  await registerFileRef(file.id, tenantId, 'production', name);
   return { ...file, url: productionFileUrl(file.id), originalName: name };
 }
 /** Used at import/cutover and for server-generated data URLs; existing cloud IDs are untouched. */

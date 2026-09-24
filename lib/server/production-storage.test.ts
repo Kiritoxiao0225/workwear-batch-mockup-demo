@@ -2,6 +2,8 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { saveCatalogFile } from './catalog-files';
 import { persistProductionReferences } from './production-storage';
 vi.mock('./catalog-files', () => ({ saveCatalogFile: vi.fn(), readCatalogFile: vi.fn() }));
+// saveProductionFile now records a tenant reference; this unit test has no database.
+vi.mock('./file-authorization', () => ({ registerFileRef: vi.fn() }));
 beforeEach(() => vi.resetAllMocks());
 const inline = (value: string) => `data:image/png;base64,${Buffer.from(value).toString('base64')}`;
 

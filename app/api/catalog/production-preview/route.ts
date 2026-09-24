@@ -1,7 +1,8 @@
+import { internalScope } from '@/lib/server/tenant-scope';
 import { after, NextRequest, NextResponse } from 'next/server';
 import { usesProductionCloud } from '@/lib/server/production-storage';
 import { finishProductionSave } from '@/lib/server/production-post-save';
-import { catalogUser, CatalogHttpError } from '@/lib/server/catalog-auth';
+import { CatalogHttpError } from '@/lib/server/catalog-auth';
 import { catalogError } from '@/lib/server/catalog-http';
 import { readWpsProductionState } from '@/lib/server/wps-production-store';
 import { readCloudProductionPreviewState } from '@/lib/server/production-cloud-state';
@@ -18,7 +19,8 @@ export const maxDuration = 300;
 export async function GET(request: NextRequest) {
   const started = performance.now();
   try {
-    await catalogUser(request);
+    // Reads the shared WPS production state, which tenant-filtering the catalog cannot protect.
+    await internalScope(request);
     const versionId = request.nextUrl.searchParams.get('versionId');
     if (!versionId) throw new CatalogHttpError(400, `versionId 不能为空，实际值：${versionId}`);
     const state = usesProductionCloud() ? await readCloudProductionPreviewState(versionId) : recoverProductionPrintSizes(await readWpsProductionState());

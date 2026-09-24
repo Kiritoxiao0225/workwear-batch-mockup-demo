@@ -15,7 +15,7 @@ import { verifyGarmentBinding } from '../server/wps-production-garments';
 export async function verifyBodyCalibrationIntegration(actor: CatalogUser, spec: PlacementStandard, bytes: Buffer) {
   const source = { namespace: 'calibration-integration', styleCode: 'CALIBRATION-ONLY', colorName: 'navy', layout: 'front_back' as const,
     bytes, filename: 'calibration.png', sources: [], provenance: {} };
-  const imported = await importCatalogAsset(source), detail = await catalogDetail(imported.variantId);
+  const imported = await importCatalogAsset(source), detail = await catalogDetail(imported.variantId, undefined, '00000000-0000-0000-0000-000000000001');
   const binding = bindingFromCatalog(detail, { selection: 'exact', colorText: detail.colorName, evidence: 'isolated fixture' });
   const missing = await withGarmentBodyScale(binding);
   assert(missing.views.every(view => !view.bodyScale));
@@ -27,9 +27,9 @@ export async function verifyBodyCalibrationIntegration(actor: CatalogUser, spec:
   assert.throws(() => initialTaskPlacement(unit, { width: 1, height: 1 }), /衣身宽度/);
   const front = detail.views.find(view => view.face === 'front')!;
   const draft = { viewId: front.id, assetVersionId: detail.assetVersionId, expectedRevision: 0, confirm: false, specification: spec };
-  await savePlacementStandard(draft, actor);
+  await savePlacementStandard(draft, actor, '00000000-0000-0000-0000-000000000001');
   assert.equal((await readConfirmedBodyScales(binding, binding.views)).size, 0);
-  const confirmed = await savePlacementStandard({ ...draft, expectedRevision: 1, confirm: true }, actor);
+  const confirmed = await savePlacementStandard({ ...draft, expectedRevision: 1, confirm: true }, actor, '00000000-0000-0000-0000-000000000001');
   const hydrated = await withProductionPreviewGeometry(state);
   const adopted = hydrated.units[0].garment!;
   assert.equal(adopted.views[0].bodyScale?.standardId, confirmed.standardId);
@@ -43,9 +43,9 @@ export async function verifyBodyCalibrationIntegration(actor: CatalogUser, spec:
   await verifyGarmentBinding(adopted);
   const altered = structuredClone(spec);
   altered.landmarks.find(point => point.key === 'rightArmpit')!.point.x -= .1;
-  await savePlacementStandard({ ...draft, expectedRevision: 2, specification: altered }, actor);
+  await savePlacementStandard({ ...draft, expectedRevision: 2, specification: altered }, actor, '00000000-0000-0000-0000-000000000001');
   assert.equal((await readConfirmedBodyScales(binding, binding.views)).get(front.id)!.standardId, confirmed.standardId);
-  const newer = await savePlacementStandard({ ...draft, expectedRevision: 3, specification: altered, confirm: true }, actor);
+  const newer = await savePlacementStandard({ ...draft, expectedRevision: 3, specification: altered, confirm: true }, actor, '00000000-0000-0000-0000-000000000001');
   assert.equal((await withGarmentBodyScale(binding)).views[0].bodyScale!.standardId, newer.standardId);
   assert.deepEqual((await withGarmentBodyScale(adopted)).views[0].bodyScale, adopted.views[0].bodyScale);
   await verifyGarmentBinding(adopted);
@@ -57,7 +57,7 @@ export async function verifyBodyCalibrationIntegration(actor: CatalogUser, spec:
   const recropped = structuredClone(binding); recropped.views[0].crop.width -= .01;
   assert.equal((await readConfirmedBodyScales(recropped, recropped.views)).size, 0);
   const other = await importCatalogAsset({ ...source, colorName: 'other color' });
-  const otherBinding = bindingFromCatalog(await catalogDetail(other.variantId), { selection: 'exact', colorText: 'other color', evidence: 'isolated' });
+  const otherBinding = bindingFromCatalog(await catalogDetail(other.variantId, undefined, '00000000-0000-0000-0000-000000000001'), { selection: 'exact', colorText: 'other color', evidence: 'isolated' });
   assert.equal((await readConfirmedBodyScales(otherBinding, otherBinding.views)).size, 0);
   const wrongFace = structuredClone(binding);
   wrongFace.views[1].bodyScale = adopted.views[0].bodyScale;

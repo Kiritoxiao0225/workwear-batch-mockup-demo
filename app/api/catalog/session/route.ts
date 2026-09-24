@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { assertSameOrigin, catalogUser, CATALOG_COOKIE, loginWorkspace, logoutCatalog, renewCatalogSession, SESSION_SECONDS, workspaceOpenAccess } from '@/lib/server/catalog-auth';
 import type { CatalogUser } from '@/lib/catalog';
 import { catalogError, catalogJson } from '@/lib/server/catalog-http';
+import { limitPasswordLogin } from '@/lib/server/password-login-limit';
+import { requestIp } from '@/lib/server/auth-session';
 export const dynamic = 'force-dynamic';
 function sessionResponse(result: { user: CatalogUser; token?: string }) {
   const response = NextResponse.json({ user: result.user, localStorage: Boolean(process.env.CATALOG_LOCAL_OBJECT_ROOT) }, { headers: { 'Cache-Control': 'no-store' } });
@@ -17,6 +19,7 @@ export async function POST(request: NextRequest) {
     assertSameOrigin(request);
     if (workspaceOpenAccess()) return GET(request);
     const input = z.object({ password: z.string().min(1).max(256) }).strict().parse(await catalogJson(request));
+    await limitPasswordLogin(requestIp(request));
     return sessionResponse(await loginWorkspace(input.password));
   } catch (error) { return catalogError(error); }
 }

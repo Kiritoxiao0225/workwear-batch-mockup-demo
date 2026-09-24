@@ -10,9 +10,11 @@ async function download(url){
 }
 export async function syncWps(root,dependencies={}){
  const source=await (dependencies.source||airscriptSource)(),snapshot=source.scriptSnapshot;
- const eligible=snapshot.recordIds.filter(id=>classifyWpsScope({status:snapshot.manifestFields[id]['任务状态']}).stage==='first_generation');
- const manifest=await jsonFile(resolve(root,'manifest.json')),prior=new Map(manifest.cases.map(c=>[c.sourceRecordId,c]));
  const identityFor=id=>`${source.fileId}:${source.sheetId}:${id}`;
+ const deleted=await jsonFile(resolve(root,'deleted-wps-records.json'),{sourceRecordIds:[]});
+ const deletedIds=new Set(deleted.sourceRecordIds);
+ const eligible=snapshot.recordIds.filter(id=>!deletedIds.has(identityFor(id))&&classifyWpsScope({status:snapshot.manifestFields[id]['任务状态']}).stage==='first_generation');
+ const manifest=await jsonFile(resolve(root,'manifest.json')),prior=new Map(manifest.cases.map(c=>[c.sourceRecordId,c]));
  const changed=eligible.filter(id=>{const old=prior.get(identityFor(id));return !old||old.sourceReadError||!snapshot.fingerprints?.[id]||old.sourceFingerprint!==snapshot.fingerprints[id];});
  const raw=changed.length?await (dependencies.records||airscriptRecords)({...source,scriptSnapshot:{...snapshot,recordIds:changed}},true):[];
  const errors=[],seen=new Set(eligible.map(identityFor)),newCases=[];
@@ -45,8 +47,11 @@ export async function syncWps(root,dependencies={}){
    }
   }catch(e){errors.push({sourceRecordId:identity,error:e.message});const old=prior.get(identity);if(old)old.sourceReadError=e.message;}
  }
- for(const c of manifest.cases)if(!seen.has(c.sourceRecordId))c.active=false;
+ // This snapshot owns only records from this WPS sheet. Manual studio/batch
+ // requests share storage, but their lifecycle never belongs to WPS sync.
+ for(const c of manifest.cases)if(c.sourceRecordId?.startsWith(`${source.fileId}:${source.sheetId}:`)&&!seen.has(c.sourceRecordId))c.active=false;
  manifest.run={...manifest.run,sourceReadAt:new Date().toISOString(),totalSourceRecords:snapshot.recordIds.length,eligibleCount:eligible.length,caseCount:manifest.cases.length,imageCount:manifest.cases.reduce((n,c)=>n+c.images.length,0),source:'WPS正式原表实时同步',syncErrors:errors,syncStats:{readRecords:changed.length,unchangedRecords:eligible.length-changed.length,downloadedImages,reusedImages}};
+ await saveJSON(resolve(root,'wps-case-index.json'),{source:`${source.fileId}:${source.sheetId}`,caseIds:manifest.cases.filter(c=>c.sourceRecordId?.startsWith(`${source.fileId}:${source.sheetId}:`)).map(c=>c.caseId)});
  await saveJSON(resolve(root,'scope.json'),{cases:Object.fromEntries(manifest.cases.map(c=>[c.caseId,{stage:c.active===false?'status_excluded':'first_generation'}]))});await saveJSON(resolve(root,'manifest.json'),manifest);await saveJSON(resolve(root,'source-receipt.json'),{readAt:manifest.run.sourceReadAt,total:snapshot.recordIds.length,eligible:eligible.length,newCases,errors,readOnly:true});await checkpoint();
  return {total:snapshot.recordIds.length,eligible:eligible.length,newCases,errors};
 }

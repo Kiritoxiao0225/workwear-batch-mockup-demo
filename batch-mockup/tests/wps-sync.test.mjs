@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import sharp from 'sharp';
 import { syncWps } from '../runtime/wps.mjs';
+import { requirementWorkbench } from '../application/requirements.mjs';
+import { workbenchData } from '../runtime/service.mjs';
 import { jsonFile, saveJSON } from '../adapters/a-files.mjs';
 
 async function fixture(t) {
@@ -46,4 +48,51 @@ test('新单独立拉入，状态移出及重新进入不重下图片，读取�
   f.rows.B.error=true;await syncWps(f.root,f.deps);let b=(await f.read()).cases.find(c=>c.sourceRecordId.endsWith(':B'));assert(b.sourceReadError);assert.equal(b.active,true);assert.equal(b.images.length,1);
   delete f.rows.B.error;await syncWps(f.root,f.deps);b=(await f.read()).cases.find(c=>c.sourceRecordId.endsWith(':B'));assert.equal(b.sourceReadError,undefined);assert.equal(f.downloads.length,3);
   const before=await f.read();await assert.rejects(()=>syncWps(f.root,{...f.deps,source:async()=>{throw Error('WPS unavailable');}}),/unavailable/);assert.deepEqual(await f.read(),before);
+});
+
+test('WPS 同步只管理当前表的记录，不隐藏手动图稿、批量需求或其他表的记录',async t=>{
+ const f=await fixture(t);await syncWps(f.root,f.deps);
+ const manifest=await f.read();
+ const manual=[
+  {caseId:'studio',sourceRecordId:'upload:studio',entry:'studio',active:true,images:[]},
+  {caseId:'batch',sourceRecordId:'upload:batch',entry:'batch',active:true,images:[]},
+  {caseId:'deleted',sourceRecordId:'upload:deleted',entry:'studio',active:false,images:[]},
+  {caseId:'other',sourceRecordId:'other-file:1:A',active:true,images:[]},
+ ];
+ manifest.cases.push(...manual);await saveJSON(resolve(f.root,'manifest.json'),manifest);
+ f.rows.A.status='已完成';await syncWps(f.root,f.deps);await syncWps(f.root,f.deps);
+ const after=await f.read();assert.deepEqual(after.cases.slice(-manual.length),manual);
+ assert.equal(after.cases.find(c=>c.sourceRecordId==='file:1:A').active,false);
+ const scope=await jsonFile(resolve(f.root,'scope.json'));
+ assert.equal(scope.cases.studio.stage,'first_generation');assert.equal(scope.cases.deleted.stage,'status_excluded');
+});
+
+test('已删除的旧 WPS 单据不会被同步重新导入，未删除单据正常显示',async t=>{
+ const f=await fixture(t);await syncWps(f.root,f.deps);
+ const manifest=await f.read(),removed=manifest.cases.find(c=>c.sourceRecordId==='file:1:A');
+ manifest.cases=manifest.cases.filter(c=>c.caseId!==removed.caseId);
+ await saveJSON(resolve(f.root,'manifest.json'),manifest);
+ await saveJSON(resolve(f.root,'deleted-wps-records.json'),{sourceRecordIds:[removed.sourceRecordId]});
+ f.rows.A.text='归档后原表有变化';
+ await syncWps(f.root,f.deps);
+ const after=await f.read();
+ assert(!after.cases.some(c=>c.caseId===removed.caseId));
+ assert.deepEqual(f.readIds,[['A','B']]);
+ assert.equal((await jsonFile(resolve(f.root,'scope.json'))).cases[removed.caseId],undefined);
+ assert(!((await requirementWorkbench(f.root,after)).cases.some(c=>c.caseId===removed.caseId)));
+});
+
+test('WPS 工作台只读取同步维护的单据索引，不读取共享工作区的独立图稿',async t=>{
+ const f=await fixture(t);await syncWps(f.root,f.deps);
+ const manifest=await f.read();
+ manifest.cases.push({caseId:'studio',entry:'studio',sourceRecordId:'upload:studio',active:true,images:[{index:1,imageId:'studio-1',asset:'assets/studio.png'}]});
+ manifest.run.imageCount=3;
+ await saveJSON(resolve(f.root,'manifest.json'),manifest);
+ const wps=await workbenchData(f.root,{wpsOnly:true});
+ assert.deepEqual(wps.cases.map(c=>c.caseId),manifest.cases.filter(c=>c.caseId!=='studio').map(c=>c.caseId));
+ assert.equal(wps.run.imageCount,2);
+ const all=await workbenchData(f.root);
+ assert(all.cases.some(c=>c.caseId==='studio'));
+ const index=await jsonFile(resolve(f.root,'wps-case-index.json'));
+ assert.deepEqual(index.caseIds,wps.cases.map(c=>c.caseId));
 });

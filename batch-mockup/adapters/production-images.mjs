@@ -35,6 +35,7 @@ export async function configuredProduction() {
   }
   async function generate(input, dir) {
     const options = { ...productionPolicy.generation }; delete options.provider;
+    if(input.transparentBackground===true)options.background='transparent';
     const images = input.images; if (images.length > 16) throw new Error('素材超过接口支持的16张，未丢图或改编号');
     let body; const headers = { Authorization: `Bearer ${e.CLIPROXY_API_KEY}` };
     if (images.length) {

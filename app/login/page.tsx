@@ -1,0 +1,11 @@
+import { LoginClient } from '@/components/login-client';
+
+type LoginPageProps = { searchParams: Promise<{ next?: string; mode?: string }> };
+
+export default async function LoginPage({ searchParams }: LoginPageProps) {
+  const params = await searchParams;
+  // Only same-site paths are accepted so the redirect cannot be used to bounce elsewhere.
+  const next = params.next && /^\/(?!\/)[^\\\s]*$/u.test(params.next) ? params.next : '/products';
+  const mode = params.mode === 'register' || params.mode === 'reset' || params.mode === 'setup' ? params.mode : 'login';
+  return <LoginClient next={next} initialMode={mode} />;
+}
