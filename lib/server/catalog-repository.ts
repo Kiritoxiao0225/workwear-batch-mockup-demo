@@ -16,7 +16,7 @@ const itemSelect = `SELECT v.id,s.id AS style_id,s.reference_variant_id,s.style_
     'face',g.face,'status',CASE WHEN p.id IS NULL THEN 'unmarked' WHEN p.status='confirmed' AND p.id=g.confirmed_standard_id THEN 'confirmed' ELSE 'draft' END,
     'positions',COALESCE((SELECT jsonb_agg(position->>'key') FROM jsonb_array_elements(COALESCE(src.specification,p.specification)->'positions') position),'[]'::jsonb),
     'confirmedPositions',COALESCE((SELECT jsonb_agg(position->>'key') FROM jsonb_array_elements(COALESCE(cs.specification,c.specification)->'positions') position),'[]'::jsonb),
-    'origin',p.origin) ORDER BY CASE g.face WHEN 'front' THEN 0 ELSE 1 END),'[]'::jsonb)
+    'origin',p.origin,'confirmedId',g.confirmed_standard_id) ORDER BY CASE g.face WHEN 'front' THEN 0 ELSE 1 END),'[]'::jsonb)
    FROM garment_views g LEFT JOIN placement_standard_versions p ON p.id=g.latest_standard_id
    LEFT JOIN placement_standard_versions src ON src.id=p.source_standard_id
    LEFT JOIN placement_standard_versions c ON c.id=g.confirmed_standard_id

@@ -78,3 +78,14 @@ test('简单图也必须有固定七项，遗漏或重复的栏位不能悄悄�
  const d=draft();d.artworks[0].prompt=d.artworks[0].prompt.replace('颜色：白色。\n\n','');assert.throws(()=>validateRequirementDraft(d,[{id:'T-1',index:1}]),/七项/);
  const empty=draft();empty.artworks[0].prompt=empty.artworks[0].prompt.replace('颜色：白色。','颜色：');assert.throws(()=>validateRequirementDraft(empty,[{id:'T-1',index:1}]),/颜色为空/);
 });
+
+test('参考图比例单独记录在应用关系里：可为空，必须指向本单图片，不进入制作正文',()=>{
+ const images=[{id:'img-1',index:1},{id:'img-2',index:2}];
+ const draft=ref=>({artworks:[{id:'a1',name:'左胸',route:'generate',imageIds:['img-1'],prompt:text,applications:[{style:'S',color:'黑',position:'左胸',...(ref===undefined?{}:{sizeReference:ref})}]}],readingIssues:[]});
+ const saved=validateRequirementDraft(draft({imageId:'img-2',logoToBody:.22,note:'图2实拍左胸Logo约占衣身宽22%'}),images);
+ assert.deepEqual(saved.artworks[0].applications[0].sizeReference,{imageId:'img-2',logoToBody:.22,note:'图2实拍左胸Logo约占衣身宽22%'});
+ assert.equal(saved.artworks[0].prompt,text);
+ assert.equal(validateRequirementDraft(draft(null),images).artworks[0].applications[0].sizeReference,null);
+ assert.throws(()=>validateRequirementDraft(draft({imageId:'img-9',logoToBody:.22,note:''}),images),/参考图比例关联了不存在的图片/);
+ assert.throws(()=>validateRequirementDraft(draft({imageId:'img-2',logoToBody:1.5,note:''}),images),/格式无效/);
+});

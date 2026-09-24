@@ -5,7 +5,11 @@ import sharp from 'sharp';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {mockupGroups,matchGarment,garmentCanvas,renderMockups,saveMockupSelection,readMockupState,initialPlacement,hasManualSize,FRAME} from '../application/mockups.mjs';
+import {mockupGroups,matchGarment,garmentCanvas,renderMockups,saveMockupSelection,readMockupState,initialPlacement,hasManualSize,positionInfo,FRAME} from '../application/mockups.mjs';
+import {annotationOverlay,annotationText,colorIssue} from '../application/mockup-checks.mjs';
+import {missingGlyphs} from '../adapters/font-coverage.ts';
+import {readFile} from 'node:fs/promises';
+import {suggestedPlacement} from '../../lib/catalog-placement-suggestions.ts';
 import {atomicFile,assetPath,hash,saveJSON} from '../adapters/a-files.mjs';
 const artwork=(id,apps)=>({id,name:id,applications:apps});
 test('共享图稿只建立多个服装应用；同款色前后同框，候选版本不叠加',()=>{
@@ -22,7 +26,7 @@ test('真实像素合成：正背面同框、可见Alpha边界、改位置不更
  const root=await mkdtemp(join(tmpdir(),'mockups-test-'));
  try{
   const png=async(w,h,color)=>sharp({create:{width:w,height:h,channels:4,background:color}}).png().toBuffer();
-  const silhouette=Buffer.from('<svg width="200" height="200"><path fill="#ccc" d="M30 15H70L95 60L80 75L72 60V190H28V60L20 75L5 60ZM130 15H170L195 60L180 75L172 60V190H128V60L120 75L105 60Z"/></svg>');
+  const silhouette=Buffer.from('<svg width="200" height="200"><path fill="#ccc" d="M30 15H70L98 50L88 80L72 70V190H28V70L12 80L2 50ZM130 15H170L198 50L188 80L172 70V190H128V70L112 80L102 50Z"/></svg>');
   const garment=await sharp(silhouette).png().toBuffer(),frame=await png(FRAME.width,FRAME.height,'white');
   const detail={id:'11111111-1111-4111-8111-111111111111',assetVersionId:'asset1',styleCode:'S',colorName:'黑',sha256:hash(garment),width:200,height:200,views:[{face:'front',crop:{x:0,y:0,width:.5,height:1},history:[]},{face:'back',crop:{x:.5,y:0,width:.5,height:1},history:[]}]};
   const catalog={styles:async()=>[{styleCode:'S',colors:[{id:detail.id,colorName:'黑'}]}],detail:async()=>detail,bytes:async()=>garment,frame:async()=>frame};
@@ -43,7 +47,7 @@ test('未匹配款色写明原因，素材库补齐后自动匹配；宽高冲�
  const root=await mkdtemp(join(tmpdir(),'mockups-match-'));
  try{
   const png=async(w,h,color)=>sharp({create:{width:w,height:h,channels:4,background:color}}).png().toBuffer();
-  const silhouette=Buffer.from('<svg width="200" height="200"><path fill="#ccc" d="M30 15H70L95 60L80 75L72 60V190H28V60L20 75L5 60ZM130 15H170L195 60L180 75L172 60V190H128V60L120 75L105 60Z"/></svg>');
+  const silhouette=Buffer.from('<svg width="200" height="200"><path fill="#ccc" d="M30 15H70L98 50L88 80L72 70V190H28V70L12 80L2 50ZM130 15H170L198 50L188 80L172 70V190H128V70L112 80L102 50Z"/></svg>');
   const garment=await sharp(silhouette).png().toBuffer(),frame=await png(FRAME.width,FRAME.height,'white');
   const detail={id:'22222222-2222-4222-8222-222222222222',assetVersionId:'asset1',styleCode:'S',colorName:'卡其色',sha256:hash(garment),width:200,height:200,views:[{face:'front',crop:{x:0,y:0,width:.5,height:1},history:[]},{face:'back',crop:{x:.5,y:0,width:.5,height:1},history:[]}]};
   const colors=[{id:'33333333-3333-4333-8333-333333333333',colorName:'黑'}],catalog={styles:async()=>[{styleCode:'S',colors}],detail:async()=>detail,bytes:async()=>garment,frame:async()=>frame};
@@ -54,14 +58,18 @@ test('未匹配款色写明原因，素材库补齐后自动匹配；宽高冲�
   colors.push({id:detail.id,colorName:'卡其色'});state=await renderMockups(root,c,jobs,catalog);
   const card=state.cards[0];assert.equal(card.variantId,detail.id);assert.equal(card.status,'preview');assert.ok(card.render);assert.deepEqual(card.layers[0].sizeConflict,{width:4,height:1});
   assert.deepEqual(card.warnings,['左胸：客户写的宽4×高1厘米与图稿比例不一致，已按宽4厘米等比放置（高约2厘米），请核对尺寸。']);
+  // SOP 2.2: the customer's size is written on the mockup; both sides were given, so the height is stated too.
+  assert.equal(card.layers[0].annotation.text,'Logo 最大宽度：4cm　最大高度：2cm');assert.ok(card.hints.some(h=>h.startsWith('左胸：领口下约9.5厘米')));
   const revision=state.revision;state=await renderMockups(root,c,jobs,catalog);assert.equal(state.revision,revision);assert.deepEqual(state.cards[0].warnings,card.warnings);
  }finally{await rm(root,{recursive:true,force:true});}
 });
 
 const face={x:0,y:0,width:900,height:1000,bodyWidth:550,bodyCenter:450,bodyBasis:'alpha-torso-v1',crop:{width:900,height:1000},trim:{left:0,top:0},scale:1};
-test('胸标完整可见内容同时受7厘米宽高限制，衣袖不作为衣身宽度',()=>{
- for(const ratio of [.25,1,2]){const p=placementGeometry(face,{key:'leftChest',face:'front'},ratio);assert.ok(p.sizeCm.width<=7.001&&p.sizeCm.height<=7.001);assert.equal(p.height/p.width,ratio);assert.ok(p.x-p.width/2>face.bodyCenter);}
- const back=placementGeometry(face,{key:'backCenter',face:'back'},2);assert.equal(back.sizeCm.height,30);assert.equal(back.sizeCm.width,15);
+test('SOP默认尺寸：胸标宽8厘米（高不超9厘米），后背宽26厘米（高不超22厘米），衣袖不作为衣身宽度',()=>{
+ for(const ratio of [.25,1,2]){const p=placementGeometry(face,{key:'leftChest',face:'front'},ratio);assert.ok(p.sizeCm.width<=8.001&&p.sizeCm.height<=9.001);assert.ok(Math.abs(p.height/p.width-ratio)<1e-9);assert.ok(p.x-p.width/2>face.bodyCenter);}
+ assert.deepEqual(placementGeometry(face,{key:'leftChest',face:'front'},.25).sizeCm,{width:8,height:2});
+ const back=placementGeometry(face,{key:'backCenter',face:'back'},2);assert.equal(back.sizeCm.height,22);assert.equal(back.sizeCm.width,11);
+ assert.equal(placementGeometry(face,{key:'backCenter',face:'back'},.3).sizeCm.width,26);
  assert.throws(()=>placementGeometry({...face,bodyWidth:null},{key:'leftChest',face:'front'},1),/衣身宽度/);
 });
 test('明确尺寸换算单位；宽高与图稿比例冲突时按宽等比放置，不悄悄缩小客户尺寸',()=>{
@@ -70,13 +78,18 @@ test('明确尺寸换算单位；宽高与图稿比例冲突时按宽等比放�
  const p=placementGeometry(face,{key:'leftChest',face:'front'},2,'尺寸：高6cm\n输出：透明');assert.deepEqual(p.sizeCm,{width:3,height:6});assert.equal(p.sizeConflict,null);
  const q=placementGeometry(face,{key:'leftChest',face:'front'},2,'尺寸：7×7cm');assert.deepEqual(q.sizeConflict,{width:7,height:7});assert.deepEqual(q.sizeCm,{width:7,height:14});assert.equal(q.height/q.width,2);
  assert.equal(placementGeometry(face,{key:'leftChest',face:'front'},.45,'尺寸：宽2.3厘米、高1厘米').sizeConflict,null);
- assert.throws(()=>placementGeometry(face,{key:'leftChest',face:'front'},1,'尺寸：宽40cm'),/超出可印区域/);
+ assert.throws(()=>placementGeometry(face,{key:'leftChest',face:'front'},1,'尺寸：宽40cm'),/超出可印区域/);assert.throws(()=>placementGeometry(face,{key:'leftChest',face:'front'},.3,'尺寸：宽21cm'),/超出可印区域/);
 });
-test('已确认位置和排除区域生效，默认图案不压拉链',()=>{
- const standard={garmentFrame:{x:0,y:0,width:1,height:1},positions:[{key:'leftChest',anchor:{x:.55,y:.35},printableArea:{x:.5,y:.2,width:.3,height:.4}}],exclusions:[{area:{x:.5,y:.2,width:.08,height:.4}}]};
- const p=placementGeometry({...face,standard},{key:'leftChest',face:'front'},1);assert.ok(p.x-p.width/2>=.58*face.width);assert.ok(p.x+p.width/2<=.8*face.width);assert.equal(p.standard,true);
+test('结构点决定位置，避让区（拉链）生效且只做最小移动',()=>{
+ const px=face.bodyWidth/40,pt=(x,y)=>({x,y});
+ const structure={structureType:'jacket',neck:pt(450,120),leftShoulder:pt(170,200),rightShoulder:pt(730,200),leftArmpit:pt(175,430),rightArmpit:pt(725,430),bodyWidth:550,center:450,bounds:{x:0,y:0,width:900,height:1000},exclusions:[{x:450-2.5*px,y:120,width:5*px,height:880}]};
+ const p=placementGeometry({...face,structure,structureSource:'confirmed'},{key:'leftChest',face:'front'},.3);
+ assert.equal(p.standard,true);assert.ok(Math.abs(p.y-(120+9.5*px))<1e-6);assert.ok(p.x-p.width/2>=450+2.5*px);
+ // A 17 cm wide customer logo would touch the zipper; it moves outward instead of shrinking.
+ const wide=placementGeometry({...face,structure,structureSource:'confirmed'},{key:'leftChest',face:'front'},.25,'尺寸：宽17厘米');
+ assert.ok(Math.abs(wide.x-wide.width/2-(450+2.5*px))<.25*px+1e-6);assert.equal(wide.sizeCm.width,17);assert.deepEqual(wide.warnings,[]);
+ const back=placementGeometry({...face,face:'back',structure,structureSource:'confirmed'},{key:'backCenter',face:'back'},.3);assert.ok(Math.abs(back.y-315)<1e-6);assert.equal(back.x,450);
 });
-
 test('未标定衣身保留可调预览但不冒充厘米准确；明确厘米需求必须校准',()=>{
  const p=initialPlacement({...face,bodyWidth:null},{key:'leftChest',face:'front'},2);assert.equal(p.sizeCm,null);assert.equal(p.basis,'unconfirmed-preview');assert.throws(()=>initialPlacement({...face,bodyWidth:null},{key:'leftChest',face:'front'},2,'尺寸：高7cm'),/标定衣身/);
 });
@@ -96,5 +109,70 @@ test('保存旧版仅移动图层不把历史manual升级成手动缩放',async(
  let s=await saveMockupSelection(root,c,{revision:1,cardId:g.id,layers:[{...layer,x:.35}]});
  assert.equal(s.cards[0].layers[0].sizeManual,undefined);assert.equal(s.cards[0].layers[0].positionManual,true);
  s=await saveMockupSelection(root,c,{revision:s.revision,cardId:g.id,layers:[{...layer,x:.35,width:.06}]});assert.equal(s.cards[0].layers[0].sizeManual,true);
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test('位置写法：左前胸仍是胸标，袖子可合图，未写左右时提醒',()=>{
+ assert.equal(positionInfo('左前胸').key,'leftChest');assert.equal(positionInfo('右前胸').key,'rightChest');assert.equal(positionInfo('正面左胸口').key,'leftChest');
+ assert.equal(positionInfo('胸前居中').key,'frontCenter');assert.equal(positionInfo('正胸前').key,'frontCenter');
+ assert.deepEqual([positionInfo('胸前').key,!!positionInfo('胸前').note],['leftChest',true]);
+ assert.equal(positionInfo('左袖口').key,'leftSleeve');assert.equal(positionInfo('右袖').key,'rightSleeve');assert.deepEqual([positionInfo('袖子').key,!!positionInfo('袖子').note],['leftSleeve',true]);
+ assert.equal(positionInfo('后领下方').key,'upperBack');assert.equal(positionInfo('后背').key,'backCenter');assert.equal(positionInfo('帽子'),null);
+});
+test('尺寸标注文字可由效果图字体完整渲染',async()=>{
+ const font=await readFile(new URL('../../public/fonts/DOUYINSANSBOLD.TTF',import.meta.url));
+ for(const text of [annotationText({width:8,height:2.6},false),annotationText({width:7.25,height:6},true)])assert.deepEqual(missingGlyphs(font,text),[]);
+ assert.equal(annotationText({width:7.25,height:6},true),'Logo 最大宽度：7.3cm　最大高度：6cm');
+ const png=await annotationOverlay([{text:'Logo 宽度：8cm',withHeight:false,box:{left:100,top:100,w:200,h:60}}],600,400,{left:0,right:600,bottom:400});
+ const {data,info}=await sharp(png).raw().toBuffer({resolveWithObject:true});let red=0;for(let i=0;i<data.length;i+=info.channels)if(data[i+3]>200&&data[i]>150&&data[i+1]<80)red++;assert.ok(red>200);
+});
+test('配色：深浅接近或高饱和撞色给出提醒，对比清楚时不提醒',async()=>{
+ const solid=async(w,h,c)=>sharp({create:{width:w,height:h,channels:4,background:c}}).png().toBuffer();
+ const base=async c=>sharp({create:{width:200,height:200,channels:3,background:c}}).raw().toBuffer({resolveWithObject:true});
+ assert.match(await colorIssue(await solid(40,20,'#ffffff'),40,20,await base('#d8d8dc'),50,50),/深浅接近/);
+ assert.match(await colorIssue(await solid(40,20,'#1f9d2a'),40,20,await base('#d81e1e'),50,50),/深浅接近|撞色/);
+ assert.equal(await colorIssue(await solid(40,20,'#ffffff'),40,20,await base('#111111'),50,50),null);
+ assert.equal(await colorIssue(await solid(40,20,'#a88550'),40,20,await base('#c8c8cc'),50,50),null);
+});
+test('同款只标一次：未确认颜色在轮廓一致时沿用同款已确认结构点，不写入素材库',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'mockups-shared-'));
+ try{
+  const silhouette=Buffer.from('<svg width="200" height="200"><path fill="#ccc" d="M30 15H70L98 50L88 80L72 70V190H28V70L12 80L2 50ZM130 15H170L198 50L188 80L172 70V190H128V70L112 80L102 50Z"/></svg>');
+  const garment=await sharp(silhouette).png().toBuffer(),frame=await sharp({create:{width:FRAME.width,height:FRAME.height,channels:4,background:'white'}}).png().toBuffer();
+  const pt=(x,y)=>({x,y}),landmarks=[['neckCenter',pt(.5,.1)],['leftShoulder',pt(.2,.2)],['rightShoulder',pt(.8,.2)],['leftArmpit',pt(.28,.35)],['rightArmpit',pt(.72,.35)],['hemCenter',pt(.5,.95)]].map(([key,point])=>({key,label:key,point}));
+  const spec={schemaVersion:1,structureType:'crewneck',garmentFrame:{x:0,y:0,width:1,height:1},measuredWidthCm:null,landmarks,positions:[],exclusions:[],note:''};
+  const view=(face,x,confirmed)=>({id:face+x,face,crop:{x,y:0,width:.5,height:1},confirmedId:confirmed?'s-'+face:null,history:confirmed?[{id:'s-'+face,status:'confirmed',specification:spec}]:[]});
+  const detail=(id,colorName,confirmed)=>({id,assetVersionId:'v'+id,styleCode:'S',colorName,layout:'front_back',imageUrl:'x',sha256:hash(garment),width:200,height:200,views:[view('front',0,confirmed),view('back',.5,confirmed)]});
+  const a=detail('11111111-1111-4111-8111-00000000000a','白',true),b=detail('11111111-1111-4111-8111-00000000000b','黑',false);
+  const faces=[{face:'front',status:'confirmed',confirmedId:'s-front'},{face:'back',status:'confirmed',confirmedId:'s-back'}];
+  const catalog={styles:async()=>[{styleCode:'S',referenceVariantId:a.id,colors:[{id:a.id,colorName:'白',layout:'front_back',calibrationFaces:faces},{id:b.id,colorName:'黑',layout:'front_back',calibrationFaces:[]}]}],detail:async id=>id===a.id?a:b,bytes:async()=>garment,frame:async()=>frame};
+  const logo=await sharp({create:{width:20,height:10,channels:4,background:'red'}}).png().toBuffer(),file={asset:'production-results/logo.png',sha256:hash(logo)};await atomicFile(assetPath(root,file.asset),logo);
+  const c={caseId:'S',revision:1,draft:{artworks:[artwork('logo',[{style:'S',color:'黑',position:'左胸'},{style:'S',color:'白',position:'左胸'}])]}};
+  const state=await renderMockups(root,c,[{id:'job',artworkId:'logo',revision:1,final:file}],catalog);
+  const black=state.cards.find(x=>x.color==='黑'),white=state.cards.find(x=>x.color==='白');
+  assert.ok(black.hints.includes('正面沿用同款「白」已确认的结构点（轮廓一致）'));assert.equal(white.hints.some(h=>h.includes('沿用')),false);
+  assert.ok(Math.abs(black.layers[0].y-white.layers[0].y)<1e-9&&Math.abs(black.layers[0].x-white.layers[0].x)<1e-9);
+  assert.equal(b.views[0].history.length,0);
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+test('SOP 2.1：客户没写尺寸时按参考图比例定宽（不标注），超出可印范围退回默认并提醒',()=>{
+ const p=placementGeometry(face,{key:'leftChest',face:'front'},.3,'尺寸：原需求未指定图稿尺寸。',{sizeReference:{imageId:'i',logoToBody:.22,note:'图2实拍左胸Logo约占衣身宽22%'}});
+ assert.ok(Math.abs(p.sizeCm.width-8.8)<1e-9);assert.equal(p.referenced,true);assert.equal(p.requested,false);assert.match(p.rule,/^尺寸按参考图比例（图2实拍/);
+ const big=placementGeometry(face,{key:'leftChest',face:'front'},.3,'',{sizeReference:{imageId:'i',logoToBody:.6,note:''}});
+ assert.equal(big.sizeCm.width,8);assert.equal(big.referenced,false);assert.match(big.warnings[0],/超出该位置可印范围/);
+ // A customer size always wins over the reference ratio.
+ assert.equal(placementGeometry(face,{key:'leftChest',face:'front'},.3,'尺寸：宽7厘米',{sizeReference:{imageId:'i',logoToBody:.22,note:''}}).sizeCm.width,7);
+});
+test('只点了确认、结构点仍是模板原值的标准不当作校准：提醒重标并按轮廓估算',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'mockups-template-'));
+ try{
+  const silhouette=Buffer.from('<svg width="200" height="200"><path fill="#ccc" d="M30 15H70L98 50L88 80L72 70V190H28V70L12 80L2 50ZM130 15H170L198 50L188 80L172 70V190H128V70L112 80L102 50Z"/></svg>');
+  const garment=await sharp(silhouette).png().toBuffer(),frame=await sharp({create:{width:FRAME.width,height:FRAME.height,channels:4,background:'white'}}).png().toBuffer();
+  const template=suggestedPlacement('crewneck','front',{x:0,y:0,width:1,height:1});
+  const detail={id:'11111111-1111-4111-8111-00000000000c',assetVersionId:'v',styleCode:'S',colorName:'白',layout:'front_only',imageUrl:'x',sha256:hash(garment),width:200,height:200,views:[{id:'f',face:'front',crop:{x:0,y:0,width:.5,height:1},confirmedId:'t',history:[{id:'t',status:'confirmed',specification:template}]}]};
+  const catalog={styles:async()=>[{styleCode:'S',colors:[{id:detail.id,colorName:'白',layout:'front_only',calibrationFaces:[{face:'front',status:'confirmed',confirmedId:'t'}]}]}],detail:async()=>detail,bytes:async()=>garment,frame:async()=>frame};
+  const logo=await sharp({create:{width:20,height:10,channels:4,background:'red'}}).png().toBuffer(),file={asset:'production-results/logo.png',sha256:hash(logo)};await atomicFile(assetPath(root,file.asset),logo);
+  const state=await renderMockups(root,{caseId:'T',revision:1,draft:{artworks:[artwork('logo',[{style:'S',color:'白',position:'左胸'}])]}},[{id:'job',artworkId:'logo',revision:1,final:file}],catalog);
+  assert.ok(state.cards[0].warnings.some(w=>w.startsWith('正面：素材库确认的结构点仍是系统模板原值')));
  }finally{await rm(root,{recursive:true,force:true});}
 });

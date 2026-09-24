@@ -8,7 +8,9 @@ const artworkSchema = z.object({
   id: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/), name: z.string().min(1).max(200),
   route: z.enum(['generate', 'enhance', 'reuse']),
   transparentBackground: z.boolean().optional(),
-  applications: z.array(z.object({ style: line, color: line, position: line }).strict()).max(100),
+  // sizeReference: SOP 2.1 — only a reference photo/mockup shows the size; a ratio, never a customer size in cm.
+  applications: z.array(z.object({ style: line, color: line, position: line,
+    sizeReference: z.object({ imageId: z.string().min(1).max(100), logoToBody: z.number().min(.03).max(.95), note: z.string().max(300) }).strict().nullish() }).strict()).max(100),
   imageIds: z.array(z.string().min(1).max(100)).max(30), prompt: z.string().min(1).max(20000),
 }).strict();
 const draftSchema = z.object({ artworks: z.array(artworkSchema).max(40),
@@ -57,6 +59,7 @@ export function validateRequirementDraft(value, images) {
 
     ids.add(a.id);
     if (new Set(a.imageIds).size !== a.imageIds.length || a.imageIds.some(id => !valid.has(id))) throw fail(`${a.name}关联了不存在或重复的图片`);
+    if (a.applications.some(x => x.sizeReference && !valid.has(x.sizeReference.imageId))) throw fail(`${a.name}的参考图比例关联了不存在的图片`);
     // Validate binding only. Never correct, trim or rewrite the actual prompt.
     for (const match of a.prompt.matchAll(/图\s*([0-9０-９]+|[一二三四五六七八九十])/gu)) {
       const token = match[1].replace(/[０-９]/gu, c => String(c.charCodeAt(0) - 65296));

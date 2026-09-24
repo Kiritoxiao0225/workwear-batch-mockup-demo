@@ -8,6 +8,8 @@ export const calibrationFaceSchema = z.object({
   positions: z.array(positionKey),
   confirmedPositions: z.array(positionKey),
   origin: z.string().nullable(),
+  // The confirmed version in use (may differ from a newer draft); lets other colors notice a change.
+  confirmedId: z.uuid().nullable().optional(),
 });
 export type CalibrationFace = z.infer<typeof calibrationFaceSchema>;
 export function calibrationStatus(item: Pick<CatalogItem, 'faceCount' | 'confirmedFaces' | 'hasDraft'>) {

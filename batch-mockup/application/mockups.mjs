@@ -1,7 +1,12 @@
 import { resolve } from 'node:path';
 import sharp from 'sharp';
 import {torsoWidthRatio} from '../../lib/server/catalog-body-geometry.ts';
-import {placementGeometry,PLACEMENT_POLICY} from './mockup-placement.mjs';
+import {measureSilhouette} from '../../lib/server/catalog-structure-estimate.ts';
+import {sharedStyleStandards,styleConfirmationKey} from '../../lib/server/catalog-shared-standard.ts';
+import {catalogReferenceType,estimatedSopStandard,hasTemplateLandmarks} from '../../lib/catalog-placement-suggestions.ts';
+import {PROJECTED_BODY_WIDTH_CM,SOP_STRUCTURES,sopStructureFromStandard} from '../../lib/sop-placement.ts';
+import {placementGeometry,requestedDimensions,PLACEMENT_POLICY} from './mockup-placement.mjs';
+import {alphaSamples,annotationOverlay,annotationText,colorIssue,irregularShape,outsideGarment} from './mockup-checks.mjs';
 import { hash,jsonFile,saveJSON,readBytes,atomicFile,assetPath,fail } from '../adapters/a-files.mjs';
 const stamp=()=>new Date().toISOString();
 export const FRAME={width:3252,height:2301,area:{x:144,y:282,width:2964,height:1578},gap:108,version:'ant-shirt-confirmation-frame-v2'};
@@ -30,11 +35,21 @@ function garmentNote(styles,style,color){
  return named.flatMap(s=>s.colors).some(c=>colorKey(c.colorName)===colorKey(color))?`${style} 有多个颜色对应「${color}」，请选择颜色`:`${style} 没有「${color}」这个颜色，请选择颜色`;
 }
 const sizeWarnings=layers=>layers.filter(l=>l.sizeConflict&&l.sizeCm).map(l=>`${l.position}：客户写的宽${l.sizeConflict.width}×高${l.sizeConflict.height}厘米与图稿比例不一致，已按宽${l.sizeConflict.width}厘米等比放置（高约${+l.sizeCm.height.toFixed(2)}厘米），请核对尺寸。`);
-function positionInfo(position){
- if(/后背|背面|后领|背部/.test(position))return {face:'back',key:/后领/.test(position)?'upperBack':'backCenter',anchor:[.5,/后领/.test(position)?.22:.38],width:.45};
- if(/左胸/.test(position))return {face:'front',key:'leftChest',anchor:[.64,.34],width:.2};
- if(/右胸/.test(position))return {face:'front',key:'rightChest',anchor:[.36,.34],width:.2};
- if(/前胸|正面|前面|胸前|前中|大胸|中胸/.test(position))return {face:'front',key:'frontCenter',anchor:[.5,.42],width:.46};
+// Placement, color and outline checks are stored per layer so a cached render reports them again.
+const layerWarnings=layers=>[...sizeWarnings(layers),...layers.flatMap(l=>(l.checks||[]).map(x=>`${l.position}：${x}`))];
+// Left/right before 居中 so 左前胸 stays a chest logo; a bare 胸前 is the usual chest logo, not a full front print.
+// width is the pre-SOP default share of the face, kept only to recognize old untouched layers.
+export function positionInfo(position){
+ const p=String(position??'');
+ if(/后领|领后|后脖/.test(p))return {face:'back',key:'upperBack',width:.45};
+ if(/后背|背面|背部|后面|背后/.test(p))return {face:'back',key:'backCenter',width:.45};
+ if(/左袖|左臂/.test(p))return {face:'front',key:'leftSleeve',width:.1};
+ if(/右袖|右臂/.test(p))return {face:'front',key:'rightSleeve',width:.1};
+ if(/袖/.test(p))return {face:'front',key:'leftSleeve',width:.1,note:'未写明左右袖，按左袖放置，请核对'};
+ if(/右胸|右前胸/.test(p))return {face:'front',key:'rightChest',width:.2};
+ if(/左胸|左前胸/.test(p))return {face:'front',key:'leftChest',width:.2};
+ if(/居中|正胸|正前|前中|大胸|中胸|大图|前幅|正面|前面/.test(p))return {face:'front',key:'frontCenter',width:.46};
+ if(/胸/.test(p))return {face:'front',key:'leftChest',width:.2,note:'未写明左右胸，按左胸放置，请核对'};
  return null;
 }
 export async function saveMockupSelection(root,c,body){
@@ -54,7 +69,7 @@ async function rgbaTrim(bytes){
  if(right<left)throw fail('图片没有可见内容');
  const box={left,top,width:right-left+1,height:bottom-top+1};return {bytes:await sharp(bytes).extract(box).png().toBuffer(),box};
 }
-export async function garmentCanvas(garment,bytes,frame){
+export async function garmentCanvas(garment,bytes,frame,shared={}){
  if(!garment.views.some(v=>v.face==='front'))throw fail('服装目录缺少正面视图');
  const views=garment.views.filter(v=>['front','back'].includes(v.face)).sort((a,b)=>a.face==='front'?-1:b.face==='front'?1:0);
  const images=[];
@@ -66,18 +81,36 @@ export async function garmentCanvas(garment,bytes,frame){
  const layers=[],faces=[];
  for(const [n,img] of images.entries()){
   const w=Math.round(img.box.width*scale),h=Math.round(img.box.height*scale),x=Math.round(FRAME.area.x+n*(slotWidth+FRAME.gap)+(slotWidth-w)/2),y=Math.round(FRAME.area.y+(FRAME.area.height-h)/2);
-  layers.push({input:await sharp(img.bytes).resize(w,h).png().toBuffer(),left:x,top:y});
-  const standard=img.view.history?.find(s=>s.id===img.view.confirmedId&&s.status==='confirmed')?.specification;
-  const marks=standard?.landmarks||[],a=marks.find(p=>p.key==='leftArmpit'),b=marks.find(p=>p.key==='rightArmpit');
-  const confirmed=a&&b&&standard.garmentFrame;const widthRatio=confirmed?Math.abs(a.point.x-b.point.x)*standard.garmentFrame.width:await torsoWidthRatio(bytes,img.view.crop);
-  const center=confirmed?(standard.garmentFrame.x+(a.point.x+b.point.x)/2*standard.garmentFrame.width)*img.crop.width:img.box.left+img.box.width/2;
-  faces.push({face:img.view.face,x,y,width:w,height:h,crop:img.crop,trim:img.box,scale,standard:standard||null,bodyWidth:widthRatio?widthRatio*img.crop.width*scale:null,bodyCenter:x+(center-img.box.left)*scale,bodyBasis:confirmed?'confirmed-armpits':widthRatio?'alpha-torso-v1':'unconfirmed-preview'});
+  const garmentLayer=await sharp(img.bytes).resize(w,h).png().toBuffer();layers.push({input:garmentLayer,left:x,top:y});
+  const confirmedSpec=img.view.history?.find(s=>s.id===img.view.confirmedId&&s.status==='confirmed')?.specification;
+  const templateOnly=!!confirmedSpec&&SOP_STRUCTURES.includes(confirmedSpec.structureType)&&hasTemplateLandmarks(confirmedSpec,img.view.face,catalogReferenceType(garment.namespace??'',garment.styleCode??'').longSleeve);
+  const own=templateOnly?null:confirmedSpec,borrowed=!own&&shared[img.view.face];
+  const standard=own||borrowed?.specification;
+  // Crop-fraction point → frame pixels of this placed face.
+  const toFrame=p=>({x:x+(p.x*img.crop.width-img.box.left)*scale,y:y+(p.y*img.crop.height-img.box.top)*scale});
+  const bounds={x,y,width:w,height:h};
+  // The projected 40 cm width was measured on the lower torso silhouette; untouched template armpits are only a fallback.
+  // Long sleeves touching the body defeat the lower-torso width; the torso just under separated sleeves is the next evidence.
+  const m=await measureSilhouette(bytes,img.view.crop),alphaRatio=await torsoWidthRatio(bytes,img.view.crop)??m?.torsoAtArmpit??null;
+  let bodyWidth=alphaRatio?alphaRatio*img.crop.width*scale:null,basis=alphaRatio?'alpha-torso-v1':'unconfirmed-preview',structure=null,source='fallback';
+  if(standard&&SOP_STRUCTURES.includes(standard.structureType)){
+   const f=standard.garmentFrame,origin=toFrame({x:f.x,y:f.y}),s=sopStructureFromStandard(standard,{width:f.width*img.crop.width*scale,height:f.height*img.crop.height*scale},bodyWidth);
+   if(s){const move=p=>p&&{x:p.x+origin.x,y:p.y+origin.y};structure={...s,neck:move(s.neck),leftShoulder:move(s.leftShoulder),rightShoulder:move(s.rightShoulder),leftArmpit:move(s.leftArmpit),rightArmpit:move(s.rightArmpit),button2:move(s.button2),button3:move(s.button3),center:s.center+origin.x,bounds,exclusions:s.exclusions.map(e=>({...e,x:e.x+origin.x,y:e.y+origin.y}))};source=own?'confirmed':'shared';if(!bodyWidth){bodyWidth=s.bodyWidth;basis='confirmed-armpits';}}
+  }
+  if(!structure){
+   // Unconfirmed faces use the same estimated standard the catalog shows as its suggestion.
+   const reference=catalogReferenceType(garment.namespace??'',garment.styleCode??''),type=standard&&standard.structureType!=='unknown'?standard.structureType:reference.structure;
+   const frameBox={x:img.box.left/img.crop.width,y:img.box.top/img.crop.height,width:img.box.width/img.crop.width,height:img.box.height/img.crop.height};
+   const spec=m&&estimatedSopStandard(type,img.view.face,frameBox,m,{width:w,height:h},bodyWidth,reference.longSleeve),s=spec&&sopStructureFromStandard(spec,{width:w,height:h},bodyWidth);
+   if(s){const move=p=>p&&{x:p.x+x,y:p.y+y};structure={...s,neck:move(s.neck),leftShoulder:move(s.leftShoulder),rightShoulder:move(s.rightShoulder),leftArmpit:move(s.leftArmpit),rightArmpit:move(s.rightArmpit),center:s.center+x,bounds,exclusions:s.exclusions.map(e=>({...e,x:e.x+x,y:e.y+y}))};source=m.armpitDetected?'estimated':'estimated-rough';}
+  }
+  faces.push({face:img.view.face,x,y,width:w,height:h,crop:img.crop,trim:img.box,scale,standard:standard||null,bodyWidth,bodyCenter:structure?.center??x+w/2,bodyBasis:basis,structure,structureSource:source,sharedFrom:source==='shared'?borrowed.colorName:null,templateOnly,garmentAlpha:await alphaSamples(garmentLayer,w,h)});
  }
  const meta=await sharp(frame).metadata();if(meta.width!==FRAME.width||meta.height!==FRAME.height)throw fail('效果图边框尺寸不匹配');
  return {bytes:await sharp(frame).composite(layers).png().toBuffer(),faces};
 }
-export function initialPlacement(face,info,ratio=1,prompt=''){
- const provisional=!(face.bodyWidth>0);const p=placementGeometry(provisional?{...face,bodyWidth:face.width*.65}:face,info,ratio,prompt);if(provisional){if(p.requested)throw fail('此款尚未标定衣身，无法按客户厘米数精确放置，请在素材库确认左右腋点');p.sizeCm=null;p.basis='unconfirmed-preview';}return {...p,x:p.x/FRAME.width,y:p.y/FRAME.height,width:p.width/FRAME.width};
+export function initialPlacement(face,info,ratio=1,prompt='',options={}){
+ const provisional=!(face.bodyWidth>0);const p=placementGeometry(provisional?{...face,bodyWidth:face.width*.65}:face,info,ratio,prompt,options);if(provisional){if(p.requested)throw fail('此款尚未标定衣身，无法按客户厘米数精确放置，请在素材库确认左右腋点');p.sizeCm=null;p.basis='unconfirmed-preview';}return {...p,x:p.x/FRAME.width,y:p.y/FRAME.height,width:p.width/FRAME.width};
 }
 // Older UI marked every submitted layer manual, even when only its position changed.
 // A stored width still equal to that version's automatic width is not evidence of resizing.
@@ -97,6 +130,7 @@ export async function renderMockups(root,c,jobs,catalog){
    // Retry unmatched cards on every render so catalog or matching fixes reach existing requirements.
    if(!card.variantId){const found=matchGarment(styles,group.style,group.color);if(!found){const note=garmentNote(styles,group.style,group.color);if(card.status!=='needs_garment'||card.note!==note){card.status='needs_garment';card.note=note;changed=true;}continue;}card.variantId=found.id;changed=true;}
    const garment=await catalog.detail(card.variantId,card.assetVersionId||undefined);card.assetVersionId=garment.assetVersionId;
+   const style=styles.find(s=>s.colors?.some(v=>v.id===garment.id)),sharing=style?styleConfirmationKey(style,garment.id):null;
    const selected=[];const warnings=[];if(c.sourceChanged||c.sourceReadError)warnings.push('WPS 原稿有变化或读取失败，当前仅为之前图稿的预览');
    for(const [position,options] of Object.entries(group.slots)){
     const artId=card.selections[position],info=positionInfo(position);
@@ -105,32 +139,52 @@ export async function renderMockups(root,c,jobs,catalog){
     const job=jobs.filter(j=>j.artworkId===artId).at(-1),file=job?.repair?.file||job?.final;
     if(!file){warnings.push(position+'图稿尚未完成');continue;}
     if(job.revision!==c.revision)warnings.push(position+'使用之前要求制作的图稿，请核对');
-    if(file.transparentExterior===false)warnings.push(position+'图稿外围仍有背景，请先检查抠图或修补');selected.push({position,info,artId,job,file});
+    if(file.transparentExterior===false)warnings.push(position+'图稿外围仍有背景，请先检查抠图或修补');if(info.note)warnings.push(position+'：'+info.note);
+    const sizeReference=c.draft.artworks.find(a=>a.id===artId)?.applications.find(x=>x.style===group.style&&x.color===group.color&&x.position===position)?.sizeReference||null;
+    selected.push({position,info,artId,job,file,sizeReference});
    }
    for(const l of card.layers)if(l.placementBasis==='unconfirmed-preview')warnings.push(l.position+'：此款衣身尚未标定，当前为可调整的比例预览；厘米尺寸需在素材库确认左右腋点。');
-   const inputHash=hash(JSON.stringify({placementPolicy:PLACEMENT_POLICY,garment:garment.sha256,views:garment.views,frame:FRAME.version,selections:card.selections,layers:card.layers.map(({id,x,y,width})=>({id,x,y,width})),files:selected.map(s=>[s.file.sha256,c.draft.artworks.find(a=>a.id===s.artId)?.prompt])}));
-   if(card.render?.inputHash===inputHash&&['ready','preview'].includes(card.status)){warnings.push(...sizeWarnings(card.layers));if(JSON.stringify(card.warnings)!==JSON.stringify(warnings)){card.warnings=warnings;card.status=warnings.length?'preview':'ready';changed=true;}continue;}
-   const base=await garmentCanvas(garment,await catalog.bytes(garment),await catalog.frame());
+   const inputHash=hash(JSON.stringify({placementPolicy:PLACEMENT_POLICY,garment:garment.sha256,views:garment.views,sharing,frame:FRAME.version,selections:card.selections,layers:card.layers.map(({id,x,y,width})=>({id,x,y,width})),files:selected.map(s=>[s.file.sha256,c.draft.artworks.find(a=>a.id===s.artId)?.prompt,s.sizeReference])}));
+   if(card.render?.inputHash===inputHash&&['ready','preview'].includes(card.status)){warnings.push(...layerWarnings(card.layers));if(JSON.stringify(card.warnings)!==JSON.stringify(warnings)){card.warnings=warnings;card.status=warnings.length?'preview':'ready';changed=true;}continue;}
+   const garmentBytes=await catalog.bytes(garment);
+   const shared=style?await sharedStyleStandards(garment,garmentBytes,style,async id=>{const detail=await catalog.detail(id);return {detail,bytes:await catalog.bytes(detail)};}):{};
+   const base=await garmentCanvas(garment,garmentBytes,await catalog.frame(),shared);
    const baseHash=hash(base.bytes),baseAsset=`mockup-assets/base-${baseHash}.png`;await atomicFile(assetPath(root,baseAsset),base.bytes);
-   const composited=[],layers=[];
+   const composited=[],layers=[],notes=[],baseRaw=await sharp(base.bytes).raw().toBuffer({resolveWithObject:true});
+   for(const face of base.faces)if(selected.some(s=>s.info.face===face.face)&&face.structureSource!=='confirmed'){
+    const side=face.face==='front'?'正面':'背面';
+    if(face.structureSource==='shared'){notes.push(`${side}沿用同款「${face.sharedFrom}」已确认的结构点（轮廓一致）`);continue;}
+    if(face.templateOnly)warnings.push(`${side}：素材库确认的结构点仍是系统模板原值，已改按衣服轮廓估算；请在素材库拖到实际位置后重新确认`);
+    if(face.structureSource==='estimated-rough')warnings.push(`${side}：未能从衣服轮廓识别腋下线，位置按比例估算、可能偏差较大，请在素材库确认该款结构点`);
+    else notes.push(`${side}位置按衣服轮廓估算；在素材库确认该款结构点后更准确`);
+   }
    for(const s of selected){const face=base.faces.find(v=>v.face===s.info.face);if(!face){warnings.push(s.position+'需要背面，但该底图没有背面');continue;}
     const source=await readBytes(assetPath(root,s.file.asset));if(hash(source)!==s.file.sha256)throw fail('图稿内容校验失败');
     const trimmed=await rgbaTrim(source),trimSHA=hash(trimmed.bytes),asset=`mockup-assets/logo-${trimSHA}.png`;await atomicFile(assetPath(root,asset),trimmed.bytes);
     const id=hash(card.id+s.position).slice(0,24),prior=card.layers.find(l=>l.id===id&&l.artworkId===s.artId),keepPosition=prior?.positionManual??prior?.manual,keepSize=hasManualSize(prior,face,s.info);
-    const initial=keepPosition&&keepSize?prior:initialPlacement(face,s.info,trimmed.box.height/trimmed.box.width,c.draft.artworks.find(a=>a.id===s.artId)?.prompt);
+    const initial=keepPosition&&keepSize?prior:initialPlacement(face,s.info,trimmed.box.height/trimmed.box.width,c.draft.artworks.find(a=>a.id===s.artId)?.prompt,{sizeReference:s.sizeReference});
     if(initial.basis==='unconfirmed-preview'&&!warnings.some(w=>w.startsWith(s.position+'：此款衣身')))warnings.push(s.position+'：此款衣身尚未标定，当前为可调整的比例预览；厘米尺寸需在素材库确认左右腋点。');
-    const layer={id,artworkId:s.artId,jobId:s.job.id,sourceSHA256:s.file.sha256,position:s.position,face:s.info.face,x:keepPosition?prior.x:initial.x,y:keepPosition?prior.y:initial.y,width:keepSize?prior.width:initial.width,manual:prior?.manual||false,positionManual:!!keepPosition,sizeManual:!!keepSize,placementPolicy:PLACEMENT_POLICY,placementBasis:initial.basis||prior?.placementBasis,sizeCm:initial.sizeCm||null,sizeConflict:!keepSize&&initial.sizeConflict||null,asset,ratio:trimmed.box.height/trimmed.box.width};
+    const layer={id,artworkId:s.artId,jobId:s.job.id,sourceSHA256:s.file.sha256,position:s.position,face:s.info.face,x:keepPosition?prior.x:initial.x,y:keepPosition?prior.y:initial.y,width:keepSize?prior.width:initial.width,manual:prior?.manual||false,positionManual:!!keepPosition,sizeManual:!!keepSize,placementPolicy:PLACEMENT_POLICY,placementBasis:initial.basis||prior?.placementBasis,sizeCm:initial.sizeCm||null,sizeConflict:!keepSize&&initial.sizeConflict||null,requested:!!(initial.requested??prior?.requested),rule:initial.rule||prior?.rule||null,asset,ratio:trimmed.box.height/trimmed.box.width};
     let w=Math.max(1,Math.round(layer.width*FRAME.width)),h=Math.max(1,Math.round(w*layer.ratio));
     const limit=Math.min(1,FRAME.width/w,FRAME.height/h);w=Math.max(1,Math.round(w*limit));h=Math.max(1,Math.round(h*limit));
     const left=Math.max(0,Math.min(FRAME.width-w,Math.round(layer.x*FRAME.width-w/2))),top=Math.max(0,Math.min(FRAME.height-h,Math.round(layer.y*FRAME.height-h/2)));
     const renderedX=(left+w/2)/FRAME.width,renderedY=(top+h/2)/FRAME.height;layer.x=keepPosition&&Math.abs(renderedX-prior.x)<=.501/FRAME.width?prior.x:renderedX;layer.y=keepPosition&&Math.abs(renderedY-prior.y)<=.501/FRAME.height?prior.y:renderedY;layer.width=w/FRAME.width;
-    layers.push(layer);composited.push({input:await sharp(trimmed.bytes).resize(w,h).png().toBuffer(),left,top});
+    const pxPerCm=face.bodyWidth>0?face.bodyWidth/PROJECTED_BODY_WIDTH_CM:null,logo=await sharp(trimmed.bytes).resize(w,h).png().toBuffer(),shape=await alphaSamples(logo,w,h);
+    // A manual resize is reported as what is now on the garment; an automatic size keeps its exact rule value.
+    if(pxPerCm&&(keepSize||!layer.sizeCm))layer.sizeCm={width:w/pxPerCm,height:h/pxPerCm};
+    layer.checks=[...(keepPosition&&keepSize?[]:initial.warnings||[]),...[outsideGarment(shape,left,top,face)>.03?'Logo 有部分超出衣服轮廓，请调整位置或尺寸':null,await colorIssue(logo,w,h,baseRaw,left,top)].filter(Boolean)];
+    if(layer.rule&&!layer.positionManual)notes.push(`${s.position}：${layer.rule}${layer.sizeCm?`，约宽${+layer.sizeCm.width.toFixed(1)}×高${+layer.sizeCm.height.toFixed(1)}厘米`:''}`);
+    // SOP 2.2: customer-fixed sizes are written on the mockup; irregular outlines also give the height.
+    if(layer.requested&&layer.sizeCm){const withHeight=irregularShape(shape)||!!requestedDimensions(c.draft.artworks.find(a=>a.id===s.artId)?.prompt)?.height;layer.annotation={text:annotationText(layer.sizeCm,withHeight),withHeight,box:{left,top,w,h}};}else delete layer.annotation;
+    layers.push(layer);composited.push({input:logo,left,top});
    }
-   warnings.push(...sizeWarnings(layers));
+   warnings.push(...layerWarnings(layers));
+   const overlay=await annotationOverlay(layers.filter(l=>l.annotation).map(l=>l.annotation),FRAME.width,FRAME.height,{left:FRAME.area.x,right:FRAME.area.x+FRAME.area.width,bottom:FRAME.area.y+FRAME.area.height});
+   if(overlay)composited.push({input:overlay,left:0,top:0});
    const bytes=await sharp(base.bytes).composite(composited).png().toBuffer(),sha256=hash(bytes),asset=`mockup-results/${card.id}/${sha256}.png`;await atomicFile(assetPath(root,asset),bytes);
    if(card.render&&card.render.sha256!==sha256)state.history.push({cardId:card.id,...card.render});
    card.layers=layers;card.base={asset:baseAsset,sha256:baseHash};card.garment={id:garment.id,style:garment.styleCode,color:garment.colorName,assetVersionId:garment.assetVersionId,sha256:garment.sha256};
-   card.render={asset,sha256,bytes:bytes.length,width:FRAME.width,height:FRAME.height,inputHash:hash(JSON.stringify({placementPolicy:PLACEMENT_POLICY,garment:garment.sha256,views:garment.views,frame:FRAME.version,selections:card.selections,layers:layers.map(({id,x,y,width})=>({id,x,y,width})),files:selected.map(s=>[s.file.sha256,c.draft.artworks.find(a=>a.id===s.artId)?.prompt])})),renderedAt:stamp()};card.warnings=warnings;card.status=warnings.length?'preview':'ready';card.note='尺寸按55厘米衣身基准和可印区域换算；人工排版保留。';changed=true;
+   card.render={asset,sha256,bytes:bytes.length,width:FRAME.width,height:FRAME.height,inputHash:hash(JSON.stringify({placementPolicy:PLACEMENT_POLICY,garment:garment.sha256,views:garment.views,sharing,frame:FRAME.version,selections:card.selections,layers:layers.map(({id,x,y,width})=>({id,x,y,width})),files:selected.map(s=>[s.file.sha256,c.draft.artworks.find(a=>a.id===s.artId)?.prompt,s.sizeReference])})),renderedAt:stamp()};card.warnings=warnings;card.hints=notes;card.status=warnings.length?'preview':'ready';card.note='按效果图SOP放置，尺寸按投影衣身40厘米换算；人工排版保留。';changed=true;
   }catch(e){card.status='failed';card.error=e.message;changed=true;}
  }
  const retained=state.cards.filter(card=>groups.some(g=>g.id===card.id));if(retained.length!==state.cards.length)changed=true;state.cards=retained;

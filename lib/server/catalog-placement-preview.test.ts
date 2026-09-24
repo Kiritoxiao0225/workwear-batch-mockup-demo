@@ -28,9 +28,10 @@ describe('catalog placement preview', () => {
     const detail = freshDetail();
     const saved = { ...emptyStandard(), note: 'keep my draft' };
     detail.views.forEach(v => { v.latest = { id: v.id, revision: 1, status: 'draft', specification: saved, createdAt: '2026-09-05T00:00:00.000Z', createdBy: 'reviewer', origin: 'manual' }; });
+    vi.mocked(readCatalogFile).mockRejectedValue(new Error('文件暂时不可读'));
+    // The torso width is read for saved faces too, but an unreadable image never blocks a saved standard.
     const result = await catalogPlacementPreview(detail);
-    expect(result.faces.every(f => f.specification.note === saved.note && f.specification.positions.length === 0)).toBe(true);
-    expect(readCatalogFile).not.toHaveBeenCalled();
+    expect(result.faces.every(f => f.specification.note === saved.note && f.specification.positions.length === 0 && f.bodyWidthRatio === null)).toBe(true);
   });
   it('reports opaque photos as needing boundary adjustment, and propagates file failures', async () => {
     const detail = freshDetail();

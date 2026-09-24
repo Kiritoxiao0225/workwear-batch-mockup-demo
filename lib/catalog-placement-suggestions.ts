@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { allowedPositions, boxSchema, emptyStandard, requiredLandmarks, standardSchema, type Box, type PlacementStandard, type PositionKey, type StructureType } from '@/lib/catalog';
+import { PROJECTED_BODY_WIDTH_CM, SOP_STRUCTURES, estimatedLandmarks, sopEstimatedExclusions, sopStandardPositions, sopStructureFromStandard } from '@/lib/sop-placement';
 
 // Reference types were checked against the 21 styles in normalized-garments-v1.
 // They supply editable suggestions, never confirmed image understanding.
@@ -18,7 +19,8 @@ export function catalogReferenceType(namespace: string, styleCode: string) {
 }
 export const placementPreviewSchema = z.object({
   assetVersionId: z.uuid(),
-  faces: z.array(z.object({ viewId: z.uuid(), frame: boxSchema.nullable(), specification: standardSchema, basis: z.string() }).strict()),
+  // bodyWidthRatio: projected torso width as a share of the face crop width, the same measure the composite uses.
+  faces: z.array(z.object({ viewId: z.uuid(), frame: boxSchema.nullable(), specification: standardSchema, basis: z.string(), bodyWidthRatio: z.number().positive().max(1).nullable().optional() }).strict()),
 }).strict();
 export type CatalogPlacementPreview = z.infer<typeof placementPreviewSchema>;
 
@@ -62,6 +64,40 @@ export function suggestedPlacement(structure: StructureType, face: 'front' | 'ba
     }
   }
   spec.positions = spec.positions.filter(p => allowedPositions(structure, face).includes(p.key));
+  return standardSchema.parse(spec);
+}
+
+/**
+ * A confirmed standard whose structure points are exactly the template was confirmed without
+ * being marked; it is no calibration evidence and must not override the silhouette estimate.
+ */
+export function hasTemplateLandmarks(spec: PlacementStandard, face: 'front' | 'back', longSleeve = false) {
+  const template = suggestedPlacement(spec.structureType, face, spec.garmentFrame, longSleeve).landmarks;
+  const core = ['neckCenter', 'leftShoulder', 'rightShoulder', 'leftArmpit', 'rightArmpit'];
+  return core.every(key => { const a = spec.landmarks.find(l => l.key === key)?.point, b = template.find(l => l.key === key)?.point; return !!a && !!b && Math.abs(a.x - b.x) < .002 && Math.abs(a.y - b.y) < .002; });
+}
+/** Positions a structure offers under the SOP; a zipped or open front has no full front print. */
+export function sopPositionKeys(structure: StructureType, face: 'front' | 'back') {
+  return allowedPositions(structure === 'unknown' ? 'crewneck' : structure, face).filter(key => !(key === 'frontCenter' && ['jacket', 'shell', 'vest'].includes(structure)));
+}
+const clampBox = (b: Box): Box => { const x = Math.max(0, Math.min(.999, b.x)), y = Math.max(0, Math.min(.999, b.y)); return { x, y, width: Math.max(.001, Math.min(1 - x, b.x + b.width - x)), height: Math.max(.001, Math.min(1 - y, b.y + b.height - y)) }; };
+/**
+ * The unconfirmed standard of one face: structure points estimated from its silhouette,
+ * template exclusions plus the placket/zipper/hood located from those points, and positions
+ * from the SOP rules. The catalog shows it as the suggestion and the composite uses it as is.
+ * frame: silhouette bounds in crop fractions; pixel: that frame in pixels; measure: crop fractions.
+ */
+export function estimatedSopStandard(structure: StructureType, face: 'front' | 'back', frame: Box, measure: { top: number; bottom: number; armpit: number; center: number; bodyWidth: number }, pixel: { width: number; height: number }, bodyWidthPx: number | null, longSleeve = false): PlacementStandard | null {
+  if (structure !== 'unknown' && !SOP_STRUCTURES.includes(structure)) return null;
+  const base = structure === 'unknown' ? { ...emptyStandard(), garmentFrame: frame } : suggestedPlacement(structure, face, frame, longSleeve);
+  const local = (p: { x: number; y: number }) => ({ x: Math.max(0, Math.min(1, (p.x - frame.x) / frame.width)), y: Math.max(0, Math.min(1, (p.y - frame.y) / frame.height)) });
+  const spec: PlacementStandard = { ...base, structureType: structure, landmarks: estimatedLandmarks(structure, face, measure).map(l => ({ ...l, point: local(l.point) })), positions: [] };
+  const s = sopStructureFromStandard(spec, pixel, bodyWidthPx);
+  if (!s) return null;
+  const replaced = new Set(['placket', 'zipper', 'hood', 'hood-neck']);
+  spec.exclusions = [...base.exclusions.filter(e => !replaced.has(e.id)), ...sopEstimatedExclusions(structure, face, s, s.bodyWidth / PROJECTED_BODY_WIDTH_CM)
+    .map(e => ({ id: e.id, label: e.label, area: clampBox({ x: e.box.x / pixel.width, y: e.box.y / pixel.height, width: e.box.width / pixel.width, height: e.box.height / pixel.height }) }))];
+  spec.positions = sopStandardPositions(spec, face, pixel, bodyWidthPx, sopPositionKeys(structure, face)) ?? [];
   return standardSchema.parse(spec);
 }
 
