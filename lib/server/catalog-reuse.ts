@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { alignmentSchema, assertConfirmedStandard, projectStandard, standardSchema, type CatalogUser, type ReuseFace, type ReusePreview } from '@/lib/catalog';
+import { alignmentSchema, assertConfirmedStandard, projectStandard, standardSchema, type CatalogDetail, type CatalogUser, type ReuseFace, type ReusePreview } from '@/lib/catalog';
 import { CatalogHttpError } from './catalog-auth';
 import { ALIGNMENT_VERSION, compareSilhouettes, garmentSilhouette } from './catalog-alignment';
 import { catalogDatabase, catalogTransaction } from './catalog-database';
@@ -9,10 +9,17 @@ import { catalogDetail, catalogStyle } from './catalog-repository';
 
 const assessmentSchema = z.object({ algorithm: z.literal(ALIGNMENT_VERSION), score: z.number().min(0).max(1).nullable(), status: z.enum(['aligned', 'review']), reason: z.string() }).strict();
 function assertEditor(actor: CatalogUser) { if (actor.role === 'viewer') throw new CatalogHttpError(403, '当前账号只有查看权限'); }
-async function assetBytes(assetVersionId: string) {
-  const result = await catalogDatabase().query('SELECT file_id FROM garment_asset_versions WHERE id=$1', [assetVersionId]);
-  if (!result.rowCount) throw new CatalogHttpError(404, `底图版本不存在：${assetVersionId}`);
-  return (await readCatalogFile(z.uuid().parse(result.rows[0].file_id))).bytes;
+// Silhouettes come from the thumbnail, like the automatic sharing: it keeps the asset version's
+// alpha layout at a fraction of the original's size, and the original download was most of the wait.
+async function silhouetteBytes(detail: CatalogDetail) {
+  return (await readCatalogFile(z.uuid().parse(detail.thumbnailUrl.split('/').at(-1)))).bytes;
+}
+// Colors are checked a few at a time; results keep the style's color order.
+async function inBatches<T, R>(items: T[], size: number, run: (item: T) => Promise<R>) {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(size, items.length) }, async () => { while (next < items.length) { const i = next++; out[i] = await run(items[i]); } }));
+  return out;
 }
 export async function previewStandardReuse(raw: unknown, actor: CatalogUser, tenantId: string): Promise<ReusePreview> {
   assertEditor(actor);
@@ -24,15 +31,14 @@ export async function previewStandardReuse(raw: unknown, actor: CatalogUser, ten
   if (!sourceViews.length) throw new CatalogHttpError(422, '请先在代表颜色上保存至少一面的人工确认标准；草稿或继承标准不能作为来源');
   const style = await catalogStyle(source.styleId, tenantId);
   if (style.colors.length > 100) throw new CatalogHttpError(422, `款式包含 ${style.colors.length} 个颜色，超过单次检查上限 100`);
-  const bytes = await assetBytes(source.assetVersionId);
+  const bytes = await silhouetteBytes(source);
   const sourceMasks = new Map<string, Awaited<ReturnType<typeof garmentSilhouette>>>();
   for (const view of sourceViews) sourceMasks.set(view.face, await garmentSilhouette(bytes, view.crop));
-  const colors: ReusePreview['colors'] = [];
-  for (const item of style.colors.filter(c => c.id !== source.id)) {
+  const colors: ReusePreview['colors'] = await inBatches(style.colors.filter(c => c.id !== source.id), 4, async item => {
     const faces: ReuseFace[] = [];
     try {
       const target = await catalogDetail(item.id, undefined, tenantId);
-      const targetBytes = await assetBytes(target.assetVersionId);
+      const targetBytes = await silhouetteBytes(target);
       for (const view of target.views) {
         const sourceView = sourceViews.find(v => v.face === view.face);
         const blocked = (reason: string): ReuseFace => ({ checkId: null, face: view.face, crop: view.crop, status: 'blocked', reason, score: null, specification: null });
@@ -52,8 +58,8 @@ export async function previewStandardReuse(raw: unknown, actor: CatalogUser, ten
       faces.length = 0;
       faces.push({ checkId: null, face: 'front', crop: { x: 0, y: 0, width: item.layout === 'front_back' ? .5 : 1, height: 1 }, status: 'blocked', reason: `检查失败：${error instanceof Error ? error.message : String(error)}`, score: null, specification: null });
     }
-    colors.push({ item, faces });
-  }
+    return { item, faces };
+  });
   return { source, colors };
 }
 
