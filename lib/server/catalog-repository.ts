@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { alignmentSchema, projectStandard, assertConfirmedStandard, boxSchema, standardSchema, type CatalogStyle, type CatalogDetail, type CatalogItem, type CatalogUser, type StandardVersion } from '@/lib/catalog';
 import { calibrationFaceSchema } from '@/lib/catalog-calibration-status';
+import { catalogReferenceType, hasTemplateLandmarks } from '@/lib/catalog-placement-suggestions';
+import { SOP_STRUCTURES } from '@/lib/sop-placement';
 import { CatalogHttpError } from './catalog-auth';
 import { catalogDatabase, catalogTransaction } from './catalog-database';
 
@@ -16,11 +18,13 @@ const itemSelect = `SELECT v.id,s.id AS style_id,s.reference_variant_id,s.style_
     'face',g.face,'status',CASE WHEN p.id IS NULL THEN 'unmarked' WHEN p.status='confirmed' AND p.id=g.confirmed_standard_id THEN 'confirmed' ELSE 'draft' END,
     'positions',COALESCE((SELECT jsonb_agg(position->>'key') FROM jsonb_array_elements(COALESCE(src.specification,p.specification)->'positions') position),'[]'::jsonb),
     'confirmedPositions',COALESCE((SELECT jsonb_agg(position->>'key') FROM jsonb_array_elements(COALESCE(cs.specification,c.specification)->'positions') position),'[]'::jsonb),
-    'origin',p.origin,'confirmedId',g.confirmed_standard_id) ORDER BY CASE g.face WHEN 'front' THEN 0 ELSE 1 END),'[]'::jsonb)
+    'origin',p.origin,'confirmedId',g.confirmed_standard_id,
+    'confirmedOrigin',c.origin,'sourceColor',csv.color_name,'sourceCurrent',c.origin='inherited' AND csg.confirmed_standard_id=c.source_standard_id) ORDER BY CASE g.face WHEN 'front' THEN 0 ELSE 1 END),'[]'::jsonb)
    FROM garment_views g LEFT JOIN placement_standard_versions p ON p.id=g.latest_standard_id
    LEFT JOIN placement_standard_versions src ON src.id=p.source_standard_id
    LEFT JOIN placement_standard_versions c ON c.id=g.confirmed_standard_id
    LEFT JOIN placement_standard_versions cs ON cs.id=c.source_standard_id
+   LEFT JOIN garment_views csg ON csg.id=cs.view_id LEFT JOIN garment_asset_versions csa ON csa.id=csg.asset_version_id LEFT JOIN garment_variants csv ON csv.id=csa.variant_id
    WHERE g.asset_version_id=a.id) AS calibration_faces
   FROM garment_variants v JOIN garment_styles s ON s.id=v.style_id JOIN garment_asset_versions a ON a.id=v.current_asset_version_id JOIN files f ON f.id=a.file_id`;
 /**
@@ -152,7 +156,7 @@ async function saveStandards(inputs: z.infer<typeof saveStandardSchema>[], actor
   return catalogTransaction(async client => {
     // The client supplies the asset version id, so ownership has to be proven here rather
     // than assumed from whatever list the caller happened to render.
-    const owner = await client.query('SELECT v.style_id FROM garment_asset_versions a JOIN garment_variants v ON v.id=a.variant_id JOIN garment_styles s ON s.id=v.style_id WHERE a.id=$1 AND s.tenant_id=$2', [assetVersionId, tenantId]);
+    const owner = await client.query('SELECT v.style_id,s.style_code,s.source_namespace FROM garment_asset_versions a JOIN garment_variants v ON v.id=a.variant_id JOIN garment_styles s ON s.id=v.style_id WHERE a.id=$1 AND s.tenant_id=$2', [assetVersionId, tenantId]);
     if (!owner.rowCount) throw new CatalogHttpError(404, '底图不存在');
     await client.query('SELECT id FROM garment_styles WHERE id=$1 FOR UPDATE', [owner.rows[0].style_id]);
     const result = await client.query('SELECT g.*,a.variant_id,v.current_asset_version_id FROM garment_views g JOIN garment_asset_versions a ON a.id=g.asset_version_id JOIN garment_variants v ON v.id=a.variant_id WHERE g.asset_version_id=$1 ORDER BY g.id FOR UPDATE OF g,v', [assetVersionId]);
@@ -169,6 +173,9 @@ async function saveStandards(inputs: z.infer<typeof saveStandardSchema>[], actor
       if (input.confirm) {
         try { assertConfirmedStandard(input.specification, view.face); }
         catch (error) { throw new CatalogHttpError(422, `${face}：${error instanceof Error ? error.message : String(error)}；本次未保存任何面`); }
+        // Untouched template points are no calibration: mockups and other colors would ignore them anyway.
+        const longSleeve = catalogReferenceType(owner.rows[0].source_namespace, owner.rows[0].style_code).longSleeve;
+        if (SOP_STRUCTURES.includes(input.specification.structureType) && hasTemplateLandmarks(input.specification, view.face, longSleeve)) throw new CatalogHttpError(422, `${face}：结构点仍是系统模板位置，请拖到衣服实际位置后再确认；本次未保存任何面`);
       }
     }
     const standards = [];

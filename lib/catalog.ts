@@ -47,6 +47,9 @@ export const alignmentSchema = z.object({ scaleX: z.number().positive().max(10),
 export type CatalogAlignment = z.infer<typeof alignmentSchema>;
 export type ReuseFace = { checkId: string | null; face: 'front' | 'back'; crop: Box; status: 'aligned' | 'review' | 'blocked'; reason: string; score: number | null; specification: PlacementStandard | null };
 export type ReusePreview = { source: CatalogDetail; colors: { item: CatalogItem; faces: ReuseFace[] }[] };
+/** Result of 确认并应用到全款, per color and face. */
+export type StyleSyncFace = { face: 'front' | 'back'; state: 'current' | 'updated' | 'applied' | 'own' | 'review' | 'blocked'; reason: string };
+export type StyleSync = { sourceVariantId: string; sourceColor: string; colors: { variantId: string; colorName: string; faces: StyleSyncFace[] }[] };
 
 // Inherited versions pin the manual source and only store an image-space transform.
 export function projectStandard(source: PlacementStandard, alignment: CatalogAlignment): PlacementStandard {

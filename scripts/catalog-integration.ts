@@ -16,7 +16,9 @@ import { catalogDatabase, closeCatalogDatabase, migrateCatalog } from '../lib/se
 import { fileSha256, readCatalogFile } from '../lib/server/catalog-files';
 import { buildCatalogManifest, importCatalogAsset, importCatalogManifest, verifyCatalogFiles } from '../lib/server/catalog-import';
 import { catalogDetail, listCatalog, listCatalogStyles, savePlacementStandard } from '../lib/server/catalog-repository';
-import { previewStandardReuse, applyStandardReuse } from '../lib/server/catalog-reuse';
+import { previewStandardReuse, applyStandardReuse, syncStyleStandards } from '../lib/server/catalog-reuse';
+import { colorSyncState } from '../lib/catalog-calibration-status';
+import { suggestedPlacement } from '../lib/catalog-placement-suggestions';
 import { POST as uploadCatalogImage } from '../app/api/catalog/upload/route';
 
 const root = await mkdtemp(path.join(tmpdir(), 'garment-catalog-test-'));
@@ -214,6 +216,56 @@ try {
   assert.equal((await catalogDetail(reuseTarget.variantId, undefined, '00000000-0000-0000-0000-000000000001')).confirmedFaces, 0);
   assert.equal((await catalogDetail(reuseTarget.variantId, inherited.assetVersionId, '00000000-0000-0000-0000-000000000001')).views[0].latest!.origin, 'inherited');
   pass('批量操作遇并发草稿全部回滚、已有标准不覆盖、来源改版不漂移、换图重新校准');
+  {
+    const T = '00000000-0000-0000-0000-000000000001', tenantStyle = async () => (await listCatalogStyles({ q: 'SYNC-01' }, T)).items[0];
+    const rep = await importCatalogAsset({ namespace: 'test', styleCode: 'SYNC-01', colorName: '代表色', layout: 'front_back', bytes: reusableBytes, filename: 'sync-rep.png', sources: [], provenance: {} });
+    const follower = await importCatalogAsset({ namespace: 'test', styleCode: 'SYNC-01', colorName: '跟随色', layout: 'front_back', bytes: await garment('#991122', .9, 12), filename: 'sync-follow.png', sources: [], provenance: {} });
+    const own = await importCatalogAsset({ namespace: 'test', styleCode: 'SYNC-01', colorName: '单独色', layout: 'front_back', bytes: await garment('#223399', .9, 8), filename: 'sync-own.png', sources: [], provenance: {} });
+    const opaque = await importCatalogAsset({ namespace: 'test', styleCode: 'SYNC-01', colorName: '不透明色', layout: 'front_back', bytes: picture, filename: 'sync-opaque.png', sources: [], provenance: {} });
+    const repDetail = await catalogDetail(rep.variantId, undefined, T);
+    const faceSpec = (face: 'front' | 'back', note = '') => ({ ...spec, note, positions: [{ ...spec.positions[0], key: face === 'front' ? 'frontCenter' as const : 'backCenter' as const }] });
+    // Untouched template points cannot be confirmed; a draft of them can still be saved.
+    const template = suggestedPlacement('crewneck', 'front', { x: .1, y: .1, width: .8, height: .8 });
+    await assert.rejects(() => savePlacementStandard({ viewId: repDetail.views[0].id, assetVersionId: repDetail.assetVersionId, expectedRevision: 0, confirm: true, specification: template }, actor, T), /模板位置/);
+    for (const face of repDetail.views) await savePlacementStandard({ viewId: face.id, assetVersionId: repDetail.assetVersionId, expectedRevision: 0, confirm: true, specification: faceSpec(face.face) }, actor, T);
+    const ownDetail = await catalogDetail(own.variantId, undefined, T);
+    await savePlacementStandard({ viewId: ownDetail.views[0].id, assetVersionId: ownDetail.assetVersionId, expectedRevision: 0, confirm: false, specification: faceSpec('front', 'own') }, actor, T);
+    await assert.rejects(() => syncStyleStandards({ variantId: rep.variantId }, { ...actor, role: 'viewer' }, T), /查看权限/);
+    const first = await syncStyleStandards({ variantId: rep.variantId }, actor, T);
+    const states = (name: string, result = first) => result.colors.find(c => c.colorName === name)!.faces.map(f => f.state).join('/');
+    assert.equal(states('跟随色'), 'applied/applied'); assert.equal(states('单独色'), 'own/applied'); assert.equal(states('不透明色'), 'review/review');
+    let style = await tenantStyle();
+    assert.equal(style.referenceVariantId, rep.variantId);
+    assert.equal(colorSyncState(style.referenceVariantId, style.colors.find(c => c.id === follower.variantId)!).key, 'following');
+    assert.equal(colorSyncState(style.referenceVariantId, style.colors.find(c => c.id === rep.variantId)!).key, 'reference');
+    assert.equal(colorSyncState(style.referenceVariantId, style.colors.find(c => c.id === opaque.variantId)!).key, 'pending');
+    const followed = await catalogDetail(follower.variantId, undefined, T);
+    assert.equal(states('跟随色', await syncStyleStandards({ variantId: rep.variantId }, actor, T)), 'current/current');
+    await assert.rejects(() => syncStyleStandards({ variantId: follower.variantId }, actor, T), /请先在这个颜色上确认|代表色是/);
+    // Re-confirming the reference leaves followers on the old version until it is applied to the style, then moves them with the checked alignment.
+    const moved = { ...faceSpec('front', 'moved'), positions: [{ ...spec.positions[0], key: 'frontCenter' as const, anchor: { x: .5, y: .45 }, printableArea: { x: .3, y: .25, width: .4, height: .4 } }] };
+    await savePlacementStandard({ viewId: repDetail.views[0].id, assetVersionId: repDetail.assetVersionId, expectedRevision: 1, confirm: true, specification: moved }, actor, T);
+    style = await tenantStyle();
+    assert.equal(colorSyncState(style.referenceVariantId, style.colors.find(c => c.id === follower.variantId)!).key, 'stale');
+    assert.deepEqual((await catalogDetail(follower.variantId, undefined, T)).views[0].latest!.specification, followed.views[0].latest!.specification);
+    const second = await syncStyleStandards({ variantId: rep.variantId }, actor, T);
+    assert.equal(states('跟随色', second), 'updated/current'); assert.equal(states('单独色', second), 'own/current');
+    const updated = await catalogDetail(follower.variantId, undefined, T);
+    const before = followed.views[0].latest!.specification.positions[0].anchor, after = updated.views[0].latest!.specification.positions[0].anchor;
+    assert.ok(Math.abs(before.x - after.x) < 1e-9 && after.y < before.y, 'follower moved like the reference, same alignment');
+    assert.equal(updated.views[0].latest!.source!.revision, 2); assert.equal(updated.views[1].revision, followed.views[1].revision);
+    style = await tenantStyle();
+    assert.equal(colorSyncState(style.referenceVariantId, style.colors.find(c => c.id === follower.variantId)!).key, 'following');
+    // The review dialog still offers the outline that did not line up, and applying it makes that color a follower too.
+    const review = await previewStandardReuse({ variantId: rep.variantId }, actor, T);
+    const opaqueFaces = review.colors.find(c => c.item.id === opaque.variantId)!.faces;
+    assert.ok(opaqueFaces.every(f => f.status === 'review' && f.checkId));
+    assert.ok(review.colors.find(c => c.item.id === follower.variantId)!.faces.every(f => f.status === 'blocked' && f.specification));
+    await applyStandardReuse({ sourceVariantId: rep.variantId, checkIds: opaqueFaces.map(f => f.checkId!), reviewed: true }, actor, T);
+    assert.equal(states('不透明色', await syncStyleStandards({ variantId: rep.variantId }, actor, T)), 'current/current');
+    assert.equal((await catalogDatabase().query("SELECT count(*)::int AS n FROM audit_events WHERE action='standard.sync'")).rows[0].n, 4);
+  }
+  pass('确认并应用到全款：首次套用、单独打点保留、轮廓不一致转核对、代表色改版后跟随色按原对齐更新、模板点不能确认');
   const uploadLogin = await loginCatalog(actor.email, password);
   const uploadForm = new FormData(); uploadForm.set('styleId', reference.styleId); uploadForm.set('colorName', '新增颜色'); uploadForm.set('layout', 'front_back'); uploadForm.set('layoutConfirmed', 'true'); uploadForm.set('file', new File([new Uint8Array(reusableBytes)], 'new-color.png', { type: 'image/png' }));
   const uploadResponse = await uploadCatalogImage(new NextRequest('http://localhost/api/catalog/upload', { method: 'POST', body: uploadForm, headers: { Cookie: `catalog_session=${uploadLogin.token}`, Origin: 'http://localhost' } }));

@@ -8,7 +8,7 @@ import { AppHeader } from '@/components/app-header';
 import { CatalogImagePreview } from '@/components/catalog-image-preview';
 import { CatalogCalibration } from '@/components/catalog-calibration';
 import { POSITION_LABELS, type CatalogDetail, type CatalogStyle } from '@/lib/catalog';
-import { calibrationStatus } from '@/lib/catalog-calibration-status';
+import { colorSyncState } from '@/lib/catalog-calibration-status';
 import { useProjectSession } from '@/components/project-session';
 import { placementPreviewSchema, type CatalogPlacementPreview } from '@/lib/catalog-placement-suggestions';
 
@@ -24,18 +24,20 @@ function StyleCard({ style, priority, viewer, open, preview }: { style: CatalogS
   const [failedThumbnail, setFailedThumbnail] = useState<string | null>(null);
   const preferred = style.matchedIds.includes(style.referenceVariantId ?? '') ? style.referenceVariantId : style.colors.find(c => style.matchedIds.includes(c.id))?.id;
   const item = style.colors.find(c => c.id === selectedId) ?? style.colors.find(c => c.id === preferred) ?? style.colors[0];
-  const ready = style.colors.filter(c => calibrationStatus(c).key === 'confirmed').length;
-  const status = calibrationStatus(item);
+  const states = style.colors.map(c => colorSyncState(style.referenceVariantId, c));
+  const ready = states.filter(s => s.effective).length, stale = states.filter(s => s.key === 'stale').length;
+  const reference = style.colors.find(c => c.id === style.referenceVariantId);
+  const status = colorSyncState(style.referenceVariantId, item);
   const thumbnail = item.signedThumbnailUrl && failedThumbnail !== item.signedThumbnailUrl ? item.signedThumbnailUrl : item.thumbnailUrl;
   return <article className="catalog-card catalog-style-card"><button type="button" className="catalog-card-image" onClick={() => preview(item.id)} aria-label={`查看 ${item.styleCode} ${item.colorName} 高清图`}><Image src={thumbnail} onError={() => setFailedThumbnail(thumbnail)} alt={`${item.styleCode} ${item.colorName}`} fill sizes="(max-width: 680px) 50vw, (max-width: 1100px) 33vw, 25vw" priority={priority} unoptimized /><span className="catalog-color-count">{style.colors.length} 色</span></button>
     <div className="catalog-card-copy"><div><h2>{style.styleCode}</h2><span>{item.colorName}</span></div>
-      <div className="catalog-color-options" aria-label={`${style.styleCode}的颜色`}>{style.colors.map(color => <button type="button" key={color.id} aria-pressed={item.id === color.id} title={`${color.colorName} · ${calibrationStatus(color).label}${color.id === style.referenceVariantId ? ' · 代表颜色' : ''}`} className={style.matchedIds.includes(color.id) ? '' : 'not-matched'} onClick={() => setSelectedId(color.id)}><span className={`catalog-status-symbol ${calibrationStatus(color).key}`} aria-hidden="true">{calibrationStatus(color).symbol}</span> {color.colorName}{color.id === style.referenceVariantId ? ' ★' : ''}</button>)}</div>
+      <div className="catalog-color-options" aria-label={`${style.styleCode}的颜色`}>{style.colors.map(color => <button type="button" key={color.id} aria-pressed={item.id === color.id} title={`${color.colorName} · ${colorSyncState(style.referenceVariantId, color).label}`} className={style.matchedIds.includes(color.id) ? '' : 'not-matched'} onClick={() => setSelectedId(color.id)}><span className={`catalog-status-symbol ${colorSyncState(style.referenceVariantId, color).key}`} aria-hidden="true">{colorSyncState(style.referenceVariantId, color).symbol}</span> {color.colorName}</button>)}</div>
       <section className="catalog-calibration-summary" aria-label={`${item.colorName}校准状态`}>
         <strong className={`catalog-calibration-badge ${status.key}`}>{status.symbol} {item.colorName} · {status.label}</strong>
         {item.calibrationFaces?.map(face => <div key={face.face} className="catalog-face-status"><b>{face.face === 'front' ? '正面' : '背面'} · {face.status === 'confirmed' ? '已确认' : face.status === 'draft' ? '草稿待确认' : '未校准'}</b><p>{face.positions.length ? `${face.status === 'confirmed' ? '已确认位置' : '草稿位置'}：${face.positions.map(key => POSITION_LABELS[key]).join('、')}` : '尚无已保存位置'}</p>{face.status === 'draft' && face.confirmedPositions.length > 0 && <p>旧版已确认：{face.confirmedPositions.map(key => POSITION_LABELS[key]).join('、')}；本次修改待确认</p>}{face.status === 'confirmed' && face.origin === 'inherited' && <p>来自同款复用</p>}</div>)}
         {item.layout === 'front_only' && <p className="catalog-no-back">仅正面素材，无背面</p>}
       </section>
-      <small>全款 {ready}/{style.colors.length} 色已确认 · 其余 {style.colors.length - ready} 色待处理</small>
+      <small className="catalog-style-sync">{reference ? `代表色「${reference.colorName}」` : '尚未确定代表色：在任一颜色上确认位置并应用到全款'} · 全款 {ready}/{style.colors.length} 色已生效{stale ? ` · ${stale} 色待同步` : ''}</small>
       <button className="button" type="button" onClick={() => open(item.id)}>{viewer ? '查看印花位置' : item.hasDraft ? '继续调整位置' : '查看印花位置'}</button>
     </div></article>;
 }
@@ -124,7 +126,7 @@ export function CatalogLibraryClient() {
     <div className="catalog-count"><span>{page?.total ?? '—'} 个款式 · {page?.totalColors ?? '—'} 个颜色{query || status !== 'all' ? ` · ${page?.matchingColors ?? 0} 个颜色符合筛选` : ''}{loading ? ' · 正在读取…' : ''}</span><button className="button" type="button" onClick={() => setReload(n => n + 1)}>刷新</button></div>
     {page?.importIssues.length ? <details className="catalog-issues"><summary>{page.importIssues.length} 项导入待处理</summary>{page.importIssues.map((issue, i) => <p key={`${issue.filename}-${i}`}><strong>{issue.filename}</strong> · {issue.error}</p>)}</details> : null}
     {!loading && page?.items.length === 0 && <div className="empty-state">{query || status !== 'all' ? '没有符合条件的素材。' : '还没有商品素材，可以添加图片或运行整批导入。'}</div>}
-    <p className="catalog-status-legend">颜色状态：✓ 已确认 · ◐ 草稿或部分确认 · ○ 未校准；绿色描边表示当前选色。</p><div className="catalog-grid">{page?.items.map((style, index) => <StyleCard key={`${style.id}:${query}:${status}`} style={style} priority={index < 4} viewer={user.role === 'viewer'} open={id => void openDetail(id)} preview={id => setImagePreview({ style, id })} />)}</div>
+    <p className="catalog-status-legend">颜色状态：★ 代表色 · ● 跟随代表色 · ↻ 代表色已更新、待同步 · ◆ 单独打点 · ◐ 草稿待确认 · ○ 未应用；「已生效」指效果图已在用确认过的点。绿色描边表示当前选色。</p><div className="catalog-grid">{page?.items.map((style, index) => <StyleCard key={`${style.id}:${query}:${status}`} style={style} priority={index < 4} viewer={user.role === 'viewer'} open={id => void openDetail(id)} preview={id => setImagePreview({ style, id })} />)}</div>
     <div className="catalog-pagination"><button className="button" type="button" disabled={pageNumber <= 1 || loading} onClick={() => setPageNumber(n => n - 1)}>上一页</button><span>第 {pageNumber} / {Math.max(1, Math.ceil((page?.total ?? 0) / (page?.pageSize ?? 24)))} 页</span><button className="button" type="button" disabled={loading || pageNumber * (page?.pageSize ?? 24) >= (page?.total ?? 0)} onClick={() => setPageNumber(n => n + 1)}>下一页</button></div>
     </>}
   </main>{imagePreview && user && <CatalogImagePreview items={imagePreview.style.colors} initialId={imagePreview.id} close={() => setImagePreview(null)} />}{opening && user && <div className="catalog-backdrop catalog-opening"><section className="catalog-upload" role="dialog" aria-modal="true" aria-labelledby="opening-title"><h2 id="opening-title">{openingError ? '位置标记未能打开' : '正在打开印花位置…'}</h2><p role={openingError ? 'alert' : 'status'}>{openingError || '正在读取这件衣服的正反面、已保存标记和建议位置。'}</p><div className="catalog-upload-actions"><button className="button" type="button" onClick={() => { detailRequest.current++; setOpening(null); }}>关闭</button>{openingError && <button className="button primary" type="button" onClick={() => void openDetail(opening.id, opening.assetVersionId)}>重试</button>}</div></section></div>}{detail && detailStyle && user && !upload && <CatalogCalibration key={detail.assetVersionId} detail={detail} preview={detail.placementPreview} style={detailStyle} user={user} close={closeDetail} saved={saved} replace={() => setUpload({ target: detail })} addColor={() => setUpload({ target: null, style: detailStyle })} loadVersion={assetVersionId => void openDetail(detail.id, assetVersionId)} selectColor={id => void openDetail(id)} />}{upload && user && <UploadDialog target={upload.target} style={upload.style} close={() => setUpload(null)} saved={async id => { await saved(id); setUpload(null); }} />}</div>;
