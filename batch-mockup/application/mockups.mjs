@@ -19,7 +19,17 @@ export function mockupGroups(c){
    selections:Object.fromEntries(Object.entries(g.slots).map(([p,choices])=>[p,choices.length===1?choices[0].id:multi===1?choices[n]?.id||null:null]))});
  }return cards;
 }
-export function exactGarment(styles,style,color){const hits=styles.filter(s=>s.styleCode===style).flatMap(s=>s.colors).filter(c=>c.colorName===color);return hits.length===1?hits[0]:null;}
+// Requirement text and catalog names often differ only by a 色 suffix or 橙/橘 wording; an exact name wins,
+// and anything but one unambiguous hit is left for the designer to choose.
+const colorKey=v=>String(v??'').replace(/\s/g,'').replace(/色$/,'').replace(/[橙桔]/g,'橘');
+export function matchGarment(styles,style,color){const colors=styles.filter(s=>s.styleCode===style).flatMap(s=>s.colors),exact=colors.filter(c=>c.colorName===color),hits=exact.length?exact:colors.filter(c=>colorKey(c.colorName)===colorKey(color));return hits.length===1?hits[0]:null;}
+function garmentNote(styles,style,color){
+ if(!style||!color)return '需求里没有写明款式或颜色，请选择款式和颜色';
+ const named=styles.filter(s=>s.styleCode===style);
+ if(!named.length)return `素材库没有款式 ${style}，请选择款式和颜色`;
+ return named.flatMap(s=>s.colors).some(c=>colorKey(c.colorName)===colorKey(color))?`${style} 有多个颜色对应「${color}」，请选择颜色`:`${style} 没有「${color}」这个颜色，请选择颜色`;
+}
+const sizeWarnings=layers=>layers.filter(l=>l.sizeConflict&&l.sizeCm).map(l=>`${l.position}：客户写的宽${l.sizeConflict.width}×高${l.sizeConflict.height}厘米与图稿比例不一致，已按宽${l.sizeConflict.width}厘米等比放置（高约${+l.sizeCm.height.toFixed(2)}厘米），请核对尺寸。`);
 function positionInfo(position){
  if(/后背|背面|后领|背部/.test(position))return {face:'back',key:/后领/.test(position)?'upperBack':'backCenter',anchor:[.5,/后领/.test(position)?.22:.38],width:.45};
  if(/左胸/.test(position))return {face:'front',key:'leftChest',anchor:[.64,.34],width:.2};
@@ -81,10 +91,11 @@ export function hasManualSize(prior,face,info){
 export async function renderMockups(root,c,jobs,catalog){
  const state=await readMockupState(root,c.caseId),groups=mockupGroups(c),styles=await catalog.styles();let changed=false;
  for(const group of groups){
-  let card=state.cards.find(x=>x.id===group.id);if(!card){const selected=exactGarment(styles,group.style,group.color);card={...group,variantId:selected?.id||null,assetVersionId:null,layers:[],status:'pending'};state.cards.push(card);changed=true;}
+  let card=state.cards.find(x=>x.id===group.id);if(!card){card={...group,variantId:null,assetVersionId:null,layers:[],status:'pending'};state.cards.push(card);changed=true;}
   if(JSON.stringify(card.slots)!==JSON.stringify(group.slots)){card.slots=group.slots;card.selections=Object.fromEntries(Object.entries(group.slots).map(([p,opts])=>[p,opts.some(a=>a.id===card.selections[p])?card.selections[p]:group.selections[p]]));card.status='pending';changed=true;}
   try{
-   if(!card.variantId){card.status='needs_garment';card.note='请选择款式和颜色';continue;}
+   // Retry unmatched cards on every render so catalog or matching fixes reach existing requirements.
+   if(!card.variantId){const found=matchGarment(styles,group.style,group.color);if(!found){const note=garmentNote(styles,group.style,group.color);if(card.status!=='needs_garment'||card.note!==note){card.status='needs_garment';card.note=note;changed=true;}continue;}card.variantId=found.id;changed=true;}
    const garment=await catalog.detail(card.variantId,card.assetVersionId||undefined);card.assetVersionId=garment.assetVersionId;
    const selected=[];const warnings=[];if(c.sourceChanged||c.sourceReadError)warnings.push('WPS 原稿有变化或读取失败，当前仅为之前图稿的预览');
    for(const [position,options] of Object.entries(group.slots)){
@@ -98,7 +109,7 @@ export async function renderMockups(root,c,jobs,catalog){
    }
    for(const l of card.layers)if(l.placementBasis==='unconfirmed-preview')warnings.push(l.position+'：此款衣身尚未标定，当前为可调整的比例预览；厘米尺寸需在素材库确认左右腋点。');
    const inputHash=hash(JSON.stringify({placementPolicy:PLACEMENT_POLICY,garment:garment.sha256,views:garment.views,frame:FRAME.version,selections:card.selections,layers:card.layers.map(({id,x,y,width})=>({id,x,y,width})),files:selected.map(s=>[s.file.sha256,c.draft.artworks.find(a=>a.id===s.artId)?.prompt])}));
-   if(card.render?.inputHash===inputHash&&['ready','preview'].includes(card.status)){if(JSON.stringify(card.warnings)!==JSON.stringify(warnings)){card.warnings=warnings;card.status=warnings.length?'preview':'ready';changed=true;}continue;}
+   if(card.render?.inputHash===inputHash&&['ready','preview'].includes(card.status)){warnings.push(...sizeWarnings(card.layers));if(JSON.stringify(card.warnings)!==JSON.stringify(warnings)){card.warnings=warnings;card.status=warnings.length?'preview':'ready';changed=true;}continue;}
    const base=await garmentCanvas(garment,await catalog.bytes(garment),await catalog.frame());
    const baseHash=hash(base.bytes),baseAsset=`mockup-assets/base-${baseHash}.png`;await atomicFile(assetPath(root,baseAsset),base.bytes);
    const composited=[],layers=[];
@@ -108,13 +119,14 @@ export async function renderMockups(root,c,jobs,catalog){
     const id=hash(card.id+s.position).slice(0,24),prior=card.layers.find(l=>l.id===id&&l.artworkId===s.artId),keepPosition=prior?.positionManual??prior?.manual,keepSize=hasManualSize(prior,face,s.info);
     const initial=keepPosition&&keepSize?prior:initialPlacement(face,s.info,trimmed.box.height/trimmed.box.width,c.draft.artworks.find(a=>a.id===s.artId)?.prompt);
     if(initial.basis==='unconfirmed-preview'&&!warnings.some(w=>w.startsWith(s.position+'：此款衣身')))warnings.push(s.position+'：此款衣身尚未标定，当前为可调整的比例预览；厘米尺寸需在素材库确认左右腋点。');
-    const layer={id,artworkId:s.artId,jobId:s.job.id,sourceSHA256:s.file.sha256,position:s.position,face:s.info.face,x:keepPosition?prior.x:initial.x,y:keepPosition?prior.y:initial.y,width:keepSize?prior.width:initial.width,manual:prior?.manual||false,positionManual:!!keepPosition,sizeManual:!!keepSize,placementPolicy:PLACEMENT_POLICY,placementBasis:initial.basis||prior?.placementBasis,sizeCm:initial.sizeCm||null,asset,ratio:trimmed.box.height/trimmed.box.width};
+    const layer={id,artworkId:s.artId,jobId:s.job.id,sourceSHA256:s.file.sha256,position:s.position,face:s.info.face,x:keepPosition?prior.x:initial.x,y:keepPosition?prior.y:initial.y,width:keepSize?prior.width:initial.width,manual:prior?.manual||false,positionManual:!!keepPosition,sizeManual:!!keepSize,placementPolicy:PLACEMENT_POLICY,placementBasis:initial.basis||prior?.placementBasis,sizeCm:initial.sizeCm||null,sizeConflict:!keepSize&&initial.sizeConflict||null,asset,ratio:trimmed.box.height/trimmed.box.width};
     let w=Math.max(1,Math.round(layer.width*FRAME.width)),h=Math.max(1,Math.round(w*layer.ratio));
     const limit=Math.min(1,FRAME.width/w,FRAME.height/h);w=Math.max(1,Math.round(w*limit));h=Math.max(1,Math.round(h*limit));
     const left=Math.max(0,Math.min(FRAME.width-w,Math.round(layer.x*FRAME.width-w/2))),top=Math.max(0,Math.min(FRAME.height-h,Math.round(layer.y*FRAME.height-h/2)));
     const renderedX=(left+w/2)/FRAME.width,renderedY=(top+h/2)/FRAME.height;layer.x=keepPosition&&Math.abs(renderedX-prior.x)<=.501/FRAME.width?prior.x:renderedX;layer.y=keepPosition&&Math.abs(renderedY-prior.y)<=.501/FRAME.height?prior.y:renderedY;layer.width=w/FRAME.width;
     layers.push(layer);composited.push({input:await sharp(trimmed.bytes).resize(w,h).png().toBuffer(),left,top});
    }
+   warnings.push(...sizeWarnings(layers));
    const bytes=await sharp(base.bytes).composite(composited).png().toBuffer(),sha256=hash(bytes),asset=`mockup-results/${card.id}/${sha256}.png`;await atomicFile(assetPath(root,asset),bytes);
    if(card.render&&card.render.sha256!==sha256)state.history.push({cardId:card.id,...card.render});
    card.layers=layers;card.base={asset:baseAsset,sha256:baseHash};card.garment={id:garment.id,style:garment.styleCode,color:garment.colorName,assetVersionId:garment.assetVersionId,sha256:garment.sha256};

@@ -34,14 +34,15 @@ export function placementGeometry(face,info,ratio,prompt=''){
  area=intersection(area,{x:face.x,y:face.y,width:face.width,height:face.height});if(!area)throw Error('印花位置标准不在衣服范围内，请在素材库核对');
  let areas=[area];for(const e of exclusions)areas=areas.flatMap(a=>subtract(a,e));if(!areas.length)throw Error('印花区域被领口或拉链占用，请在素材库核对');
  const key=info.face==='back'?'back':info.key,limits=defaultPrintSize({key,catalogPosition:info.key}),requested=requestedDimensions(prompt);
- let width,height;
+ let width,height,sizeConflict=null;
  if(requested){
   width=requested.width??requested.height/ratio;height=requested.height??width*ratio;
-  if(requested.width&&requested.height&&Math.abs(height/width-ratio)/ratio>.05)throw Error('指定宽高与图稿比例不一致，请核对尺寸，不能拉伸Logo');
+  // Customer sizes are often rounded; keep the width and scale proportionally instead of stretching the logo.
+  if(requested.width&&requested.height&&Math.abs(height/width-ratio)/ratio>.05){sizeConflict={width:requested.width,height:requested.height};height=width*ratio;}
  }else{width=Math.min(limits.width,limits.height/ratio);height=width*ratio;}
  if(!(width>0&&height>0&&width<=55&&height<=100))throw Error('图稿尺寸超出支持范围，请核对厘米数值');
  const desired={width:width*pixelPerCm,height:height*pixelPerCm};
  const choices=areas.map(a=>{const scale=Math.min(1,a.width/desired.width,a.height/desired.height);const w=desired.width*scale,h=desired.height*scale;const x=clamp(anchor.x,a.x+w/2,a.x+a.width-w/2),y=clamp(anchor.y,a.y+h/2,a.y+a.height-h/2);return {x,y,width:w,height:h,fit:scale,distance:Math.hypot(x-anchor.x,y-anchor.y),area:a};}).sort((a,b)=>b.fit-a.fit||a.distance-b.distance);
  const chosen=choices[0];if(requested&&chosen.fit<.999)throw Error('客户指定尺寸超出可印区域，未擅自缩小，请核对位置与尺寸');
- return {...chosen,requested:!!requested,policy:PLACEMENT_POLICY,sizeCm:{width:chosen.width/pixelPerCm,height:chosen.height/pixelPerCm},basis:face.bodyBasis,standard:!!p};
+ return {...chosen,requested:!!requested,sizeConflict,policy:PLACEMENT_POLICY,sizeCm:{width:chosen.width/pixelPerCm,height:chosen.height/pixelPerCm},basis:face.bodyBasis,standard:!!p};
 }

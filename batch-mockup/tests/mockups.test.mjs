@@ -5,7 +5,7 @@ import sharp from 'sharp';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {mockupGroups,exactGarment,garmentCanvas,renderMockups,saveMockupSelection,readMockupState,initialPlacement,hasManualSize,FRAME} from '../application/mockups.mjs';
+import {mockupGroups,matchGarment,garmentCanvas,renderMockups,saveMockupSelection,readMockupState,initialPlacement,hasManualSize,FRAME} from '../application/mockups.mjs';
 import {atomicFile,assetPath,hash,saveJSON} from '../adapters/a-files.mjs';
 const artwork=(id,apps)=>({id,name:id,applications:apps});
 test('共享图稿只建立多个服装应用；同款色前后同框，候选版本不叠加',()=>{
@@ -14,7 +14,10 @@ test('共享图稿只建立多个服装应用；同款色前后同框，候选�
  c.draft.artworks.push(artwork('other',[{style:'S',color:'黑',position:'左胸'}]));const multi=mockupGroups(c).filter(g=>g.color==='黑');assert.equal(multi.length,2);assert.equal(multi[0].selections['后背'],'back');assert.equal(multi[1].selections['左胸'],'other');
  c.draft.artworks.push(artwork('back2',[{style:'S',color:'黑',position:'后背'}]));for(const g of mockupGroups(c).filter(g=>g.color==='黑'))assert.deepEqual(g.selections,{'左胸':null,'后背':null});
 });
-test('款色必须唯一精确匹配，不猜缺省颜色',()=>{const x={id:'1',colorName:'白色'};assert.equal(exactGarment([{styleCode:'A',colors:[x]}],'A','白色'),x);assert.equal(exactGarment([{styleCode:'A',colors:[x]}],'A','白'),null);assert.equal(exactGarment([{styleCode:'A',colors:[x]},{styleCode:'A',colors:[x]}],'A','白色'),null);});
+test('款色容忍色字和橙橘写法差异，但只接受唯一结果',()=>{const x={id:'1',colorName:'白色'},orange={id:'2',colorName:'橘色'},tangerine={id:'3',colorName:'橙色'};
+ assert.equal(matchGarment([{styleCode:'A',colors:[x]}],'A','白色'),x);assert.equal(matchGarment([{styleCode:'A',colors:[x]}],'A','白'),x);assert.equal(matchGarment([{styleCode:'A',colors:[x,orange]}],'A','橙色'),orange);
+ assert.equal(matchGarment([{styleCode:'A',colors:[x]},{styleCode:'A',colors:[x]}],'A','白色'),null);assert.equal(matchGarment([{styleCode:'A',colors:[orange,tangerine]}],'A','桔色'),null);assert.equal(matchGarment([{styleCode:'A',colors:[orange,tangerine]}],'A','橙色'),tangerine);
+ assert.equal(matchGarment([{styleCode:'A',colors:[x]}],'B','白色'),null);assert.equal(matchGarment([{styleCode:'A',colors:[x]}],'A','黑色'),null);assert.equal(matchGarment([{styleCode:'A',colors:[x]}],'A',undefined),null);});
 test('真实像素合成：正背面同框、可见Alpha边界、改位置不更改另一层、修补更新保留位置',async()=>{
  const root=await mkdtemp(join(tmpdir(),'mockups-test-'));
  try{
@@ -36,6 +39,24 @@ test('真实像素合成：正背面同框、可见Alpha边界、改位置不更
   assert.equal((await garmentCanvas(detail,garment,frame)).faces.length,2);
  }finally{await rm(root,{recursive:true,force:true});}
 });
+test('未匹配款色写明原因，素材库补齐后自动匹配；宽高冲突按宽等比出图并保留提醒',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'mockups-match-'));
+ try{
+  const png=async(w,h,color)=>sharp({create:{width:w,height:h,channels:4,background:color}}).png().toBuffer();
+  const silhouette=Buffer.from('<svg width="200" height="200"><path fill="#ccc" d="M30 15H70L95 60L80 75L72 60V190H28V60L20 75L5 60ZM130 15H170L195 60L180 75L172 60V190H128V60L120 75L105 60Z"/></svg>');
+  const garment=await sharp(silhouette).png().toBuffer(),frame=await png(FRAME.width,FRAME.height,'white');
+  const detail={id:'22222222-2222-4222-8222-222222222222',assetVersionId:'asset1',styleCode:'S',colorName:'卡其色',sha256:hash(garment),width:200,height:200,views:[{face:'front',crop:{x:0,y:0,width:.5,height:1},history:[]},{face:'back',crop:{x:.5,y:0,width:.5,height:1},history:[]}]};
+  const colors=[{id:'33333333-3333-4333-8333-333333333333',colorName:'黑'}],catalog={styles:async()=>[{styleCode:'S',colors}],detail:async()=>detail,bytes:async()=>garment,frame:async()=>frame};
+  const logo=await png(20,10,'red'),file={asset:'production-results/logo.png',sha256:hash(logo)};await atomicFile(assetPath(root,file.asset),logo);
+  const c={caseId:'B',revision:1,draft:{artworks:[{...artwork('logo',[{style:'S',color:'卡其',position:'左胸'}]),prompt:'尺寸：宽4厘米、高1厘米\n输出：透明'}]}};
+  const jobs=[{id:'job',artworkId:'logo',revision:1,final:file}];
+  let state=await renderMockups(root,c,jobs,catalog);assert.equal(state.cards[0].status,'needs_garment');assert.equal(state.cards[0].note,'S 没有「卡其」这个颜色，请选择颜色');
+  colors.push({id:detail.id,colorName:'卡其色'});state=await renderMockups(root,c,jobs,catalog);
+  const card=state.cards[0];assert.equal(card.variantId,detail.id);assert.equal(card.status,'preview');assert.ok(card.render);assert.deepEqual(card.layers[0].sizeConflict,{width:4,height:1});
+  assert.deepEqual(card.warnings,['左胸：客户写的宽4×高1厘米与图稿比例不一致，已按宽4厘米等比放置（高约2厘米），请核对尺寸。']);
+  const revision=state.revision;state=await renderMockups(root,c,jobs,catalog);assert.equal(state.revision,revision);assert.deepEqual(state.cards[0].warnings,card.warnings);
+ }finally{await rm(root,{recursive:true,force:true});}
+});
 
 const face={x:0,y:0,width:900,height:1000,bodyWidth:550,bodyCenter:450,bodyBasis:'alpha-torso-v1',crop:{width:900,height:1000},trim:{left:0,top:0},scale:1};
 test('胸标完整可见内容同时受7厘米宽高限制，衣袖不作为衣身宽度',()=>{
@@ -43,11 +64,12 @@ test('胸标完整可见内容同时受7厘米宽高限制，衣袖不作为衣�
  const back=placementGeometry(face,{key:'backCenter',face:'back'},2);assert.equal(back.sizeCm.height,30);assert.equal(back.sizeCm.width,15);
  assert.throws(()=>placementGeometry({...face,bodyWidth:null},{key:'leftChest',face:'front'},1),/衣身宽度/);
 });
-test('明确尺寸换算单位；不猜宽高冲突，也不悄悄缩小客户尺寸',()=>{
+test('明确尺寸换算单位；宽高与图稿比例冲突时按宽等比放置，不悄悄缩小客户尺寸',()=>{
  assert.deepEqual(requestedDimensions('尺寸：宽70mm\n输出：透明'),{width:7,explicit:true});
  assert.equal(requestedDimensions('尺寸：原文未指定\n输出：透明'),null);
- const p=placementGeometry(face,{key:'leftChest',face:'front'},2,'尺寸：高6cm\n输出：透明');assert.deepEqual(p.sizeCm,{width:3,height:6});
- assert.throws(()=>placementGeometry(face,{key:'leftChest',face:'front'},2,'尺寸：7×7cm'),/比例不一致/);
+ const p=placementGeometry(face,{key:'leftChest',face:'front'},2,'尺寸：高6cm\n输出：透明');assert.deepEqual(p.sizeCm,{width:3,height:6});assert.equal(p.sizeConflict,null);
+ const q=placementGeometry(face,{key:'leftChest',face:'front'},2,'尺寸：7×7cm');assert.deepEqual(q.sizeConflict,{width:7,height:7});assert.deepEqual(q.sizeCm,{width:7,height:14});assert.equal(q.height/q.width,2);
+ assert.equal(placementGeometry(face,{key:'leftChest',face:'front'},.45,'尺寸：宽2.3厘米、高1厘米').sizeConflict,null);
  assert.throws(()=>placementGeometry(face,{key:'leftChest',face:'front'},1,'尺寸：宽40cm'),/超出可印区域/);
 });
 test('已确认位置和排除区域生效，默认图案不压拉链',()=>{
