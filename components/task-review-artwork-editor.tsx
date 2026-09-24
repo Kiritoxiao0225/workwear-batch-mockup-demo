@@ -14,6 +14,12 @@ import { DEFAULT_ARTWORK_FONT, ARTWORK_TEXT_COLORS } from '@/lib/artwork-text-de
 type Props = { repairEnabled?: boolean; repairOriginalURL?: string; title: string; originalRequirement: string; initialDraft: ArtworkDraft; saving: boolean; onCancel: () => void; onSave: (draft: ArtworkDraft) => Promise<void>; renderPreview?: (draft: ArtworkDraft) => ReactNode; saveLabel?: string; saveHint?: string; defaultTextColor?: () => Promise<string> };
 const FONTS = [[DEFAULT_ARTWORK_FONT, '抖音美好体（默认）'], ['Noto Sans SC, PingFang SC, Microsoft YaHei, sans-serif', '现代黑体'], ['PingFang SC, Microsoft YaHei, sans-serif', '苹方 / 微软雅黑'], ['STKaiti, KaiTi, serif', '楷体'], ['STSong, SimSun, serif', '宋体'], ['FZKai-Z03, STKaiti, serif', '标题楷体']];
 const S = ARTWORK_CANVAS_SIZE;
+const REPAIR_TOOLS: Record<RepairTool, { label: string; symbol: string; title: string; start: string; heading: string; help: string; note: string }> = {
+  fill: { label: '补空白', symbol: '◒', title: '点击画布空洞补回整块', start: '直接点画布里的透明空洞，一次补回整块。', heading: '点一下，补回空洞', help: '点击图案内部仍然透明的地方。默认补满这一整块空洞。', note: '被图案分隔的空洞，分别点击。与外部背景连通的空白不会整片填回。' },
+  clear: { label: '去空白', symbol: '◌', title: '点击残留底色去掉整块', start: '直接点没抠干净的底色，一次去掉整块。', heading: '点一下，去掉残留底色', help: '点击没抠干净的底色（如字里、缝隙里残留的白底），颜色相近的部分会变透明，边缘杂边一起淡化。', note: '被图案隔开的残留，分别点击；去多了可用顶部“撤销”，或用保留笔补回。' },
+  keep: { label: '保留笔', symbol: '＋', title: '涂抹恢复原图内容', start: '在当前图层上涂抹，恢复原图中的内容。', heading: '涂抹，恢复内容', help: '画笔经过的区域会恢复抠图前的原始内容。', note: '保留笔也会恢复经过的背景，放大画布更方便控制边缘。' },
+  remove: { label: '去除笔', symbol: '−', title: '涂抹去除多余部分', start: '在当前图层上涂抹，去除多余像素。', heading: '涂抹，去除内容', help: '画笔经过的像素会变成透明，其他区域保持原样。', note: '可以随时用顶部“撤销”回退这一笔。' },
+};
 const labelOf = (layer: ArtworkLayer) => layer.value.label || (layer.kind === 'graphic' ? `图形 ${layer.index + 1}` : `文字 ${layer.index + 1}`);
 function boundsOf(layer: ArtworkLayer): ArtworkBounds {
   if (layer.kind === 'text') return artworkTextLayout(layer.value).bounds;
@@ -101,10 +107,9 @@ export function TaskReviewArtworkEditor({ title, originalRequirement, initialDra
   const draft = history.present;
   const [selectedIds, setSelectedIds] = useState<string[]>(() => artworkLayers(editableArtworkDraft(initialDraft)).filter(layer => layer.value.visible !== false).slice(-1).map(layer => layer.id));
   const selectedId = selectedIds.length === 1 ? selectedIds[0] : null;
-  const [repairScope,setRepairScope]=useState<'region'|'brush'>('region'),[repairRadius,setRepairRadius]=useState(48),[repairMessage,setRepairMessage]=useState(''),[canRestore,setCanRestore]=useState(false);
+  const [repairScope,setRepairScope]=useState<'region'|'brush'>('region'),[repairRadius,setRepairRadius]=useState(48),[repairMessage,setRepairMessage]=useState(''),[canRestore,setCanRestore]=useState(false),[clearScope,setClearScope]=useState<'region'|'color'>('region'),[clearTolerance,setClearTolerance]=useState(32);
   const [tool, setTool] = useState<'auto' | 'marquee' | 'lasso' | RepairTool>('auto');
-  const repairMode:RepairTool|null=tool==='fill'||tool==='keep'||tool==='remove'?tool:null;
-  const repairLabel=repairMode==='fill'?'补空白':repairMode==='keep'?'保留笔':'去除笔';
+  const repairMode:RepairTool|null=tool==='auto'||tool==='marquee'||tool==='lasso'?null:tool;
   const [background, setBackground] = useState<'checker' | 'white' | 'dark'>('checker');
   const inspector = useRef<HTMLElement>(null), dialog = useRef<HTMLElement>(null), textInput = useRef<HTMLTextAreaElement>(null), focusNewText = useRef(false);
   const [pointerCursor, setPointerCursor] = useState('crosshair');
@@ -145,7 +150,7 @@ export function TaskReviewArtworkEditor({ title, originalRequirement, initialDra
   };
   const startRepair=(mode:RepairTool)=>{
     const candidate=graphic&&graphic.visible!==false?selected:layers.find(layer=>layer.kind==='graphic'&&layer.value.visible!==false);
-    if(!candidate)return;finishGesture();clearSelection();setSelectedIds([candidate.id]);setPreviewOpen(false);setTool(mode);setRepairMessage(mode==='fill'?'直接点画布里的透明空洞，一次补回整块。':mode==='keep'?'在当前图层上涂抹，恢复原图中的内容。':'在当前图层上涂抹，去除多余像素。');if(inspector.current)inspector.current.scrollTop=0;
+    if(!candidate)return;finishGesture();clearSelection();setSelectedIds([candidate.id]);setPreviewOpen(false);setTool(mode);setRepairMessage(REPAIR_TOOLS[mode].start);if(inspector.current)inspector.current.scrollTop=0;
   };
   const addText = async () => {
     if (busy) return;
@@ -353,7 +358,7 @@ export function TaskReviewArtworkEditor({ title, originalRequirement, initialDra
       <button type="button" disabled={busy} aria-label="框选拆层" aria-pressed={tool==='marquee'} onClick={()=>{setTool('marquee');clearSelection();setPreviewOpen(false);}}><EditorIcon name="select"/>框选</button>
       <button type="button" disabled={busy} aria-label="多边形套索" aria-pressed={tool==='lasso'} onClick={()=>{finishGesture();setTool('lasso');clearSelection();setSelectedIds([]);setPreviewOpen(false);}}><EditorIcon name="lasso"/>套索</button>
       <span className="artwork-v2-divider"/><span className="tool-group-label">修补</span>
-      {(['fill','keep','remove'] as const).map(mode=><button type="button" className="flat-repair-tool" key={mode} aria-label={mode==='fill'?'补空白':mode==='keep'?'保留笔':'去除笔'} disabled={busy||!layers.some(layer=>layer.kind==='graphic'&&layer.value.visible!==false)} aria-pressed={tool===mode} title={mode==='fill'?'点击画布空洞补回整块':mode==='keep'?'涂抹恢复原图内容':'涂抹去除多余部分'} onClick={()=>startRepair(mode)}><span className={'flat-tool-symbol '+mode} aria-hidden="true">{mode==='fill'?'◒':mode==='keep'?'＋':'−'}</span>{mode==='fill'?'补空白':mode==='keep'?'保留笔':'去除笔'}</button>)}
+      {(['fill','clear','keep','remove'] as const).map(mode=><button type="button" className="flat-repair-tool" key={mode} aria-label={REPAIR_TOOLS[mode].label} disabled={busy||!layers.some(layer=>layer.kind==='graphic'&&layer.value.visible!==false)} aria-pressed={tool===mode} title={REPAIR_TOOLS[mode].title} onClick={()=>startRepair(mode)}><span className={'flat-tool-symbol '+mode} aria-hidden="true">{REPAIR_TOOLS[mode].symbol}</span>{REPAIR_TOOLS[mode].label}</button>)}
       <span className="artwork-v2-divider"/>
       <button type="button" disabled={busy||(!history.past.length&&!gestureChanged)} onClick={()=>travel('undo')} aria-label="撤销" title="撤销 ⌘Z"><EditorIcon name="undo"/></button>
       <button type="button" disabled={busy||!history.future.length} onClick={()=>travel('redo')} aria-label="重做" title="重做 ⇧⌘Z"><EditorIcon name="redo"/></button>
@@ -380,7 +385,7 @@ export function TaskReviewArtworkEditor({ title, originalRequirement, initialDra
         {layers.filter(layer => layer.value.visible !== false).map(layer => {
           const bounds = layer.kind === 'graphic' ? artworkGraphicFrame(layer.value) : boundsOf(layer);
           return <button type="button" key={layer.id} data-layer-id={layer.id} aria-label={`${labelOf(layer)}图层`} aria-pressed={selectedIds.includes(layer.id)} className={`artwork-editor-layer ${layer.kind}${!selection && selectedIds.includes(layer.id) ? ' selected' : ''}`} style={{ left: (bounds.left - surface.left) * scale, top: (bounds.top - surface.top) * scale, width: bounds.width * scale, height: bounds.height * scale, transform: layer.kind === 'graphic' ? `rotate(${layer.value.rotation}deg)` : undefined, zIndex: layers.findIndex(item => item.id === layer.id) + 1, cursor: 'inherit' }} disabled={busy} onClick={event => { if (event.detail === 0) { event.stopPropagation(); choose(layer.id); } }}>
-            {layer.kind === 'graphic' ? (repairMode&&selectedId===layer.id?<InlineRepair graphic={layer.value} originalURL={layer.id===initialDraft.graphic.id&&!layer.value.sourceBounds?repairOriginalURL:undefined} mode={repairMode} scope={repairScope} radius={repairRadius} displayWidth={bounds.width*scale} displayHeight={bounds.height*scale} onCommit={url=>change(current=>updateArtworkLayer(current,layer.id,{sourceUrl:url}))} onStatus={setRepairMessage} onReady={setCanRestore}/>:<GraphicView graphic={layer.value} onError={setError}/>) : <TextView text={layer.value} scale={scale} onError={setError} onFontLoaded={fontLoaded}/>}
+            {layer.kind === 'graphic' ? (repairMode&&selectedId===layer.id?<InlineRepair graphic={layer.value} originalURL={layer.id===initialDraft.graphic.id&&!layer.value.sourceBounds?repairOriginalURL:undefined} mode={repairMode} scope={repairScope} clearScope={clearScope} tolerance={clearTolerance} radius={repairRadius} displayWidth={bounds.width*scale} displayHeight={bounds.height*scale} onCommit={url=>change(current=>updateArtworkLayer(current,layer.id,{sourceUrl:url}))} onStatus={setRepairMessage} onReady={setCanRestore}/>:<GraphicView graphic={layer.value} onError={setError}/>) : <TextView text={layer.value} scale={scale} onError={setError} onFontLoaded={fontLoaded}/>}
             {selectedId === layer.id && !selection && tool === 'auto' && <span className="artwork-editor-resize" title="拖动等比缩放" onPointerDown={event => beginMove(event, layer, true)}/>}
           </button>;
         })}
@@ -409,13 +414,14 @@ export function TaskReviewArtworkEditor({ title, originalRequirement, initialDra
         <div className="artwork-v2-canvas-footer"><div className="artwork-v2-backgrounds"><span>背景</span>{(['checker', 'white', 'dark'] as const).map(value => <button type="button" key={value} className={`artwork-background-${value}`} aria-label={value === 'checker' ? '透明棋盘背景' : value === 'white' ? '白色背景' : '深色背景'} aria-pressed={background === value} onClick={() => setBackground(value)}/>)}</div><div className="artwork-editor-zoom"><button type="button" aria-label="缩小视图" onClick={() => setZoom(value => Math.max(.5, value - .25))}>−</button><span>{Math.round(zoom * 100)}%</span><button type="button" aria-label="放大视图" onClick={() => setZoom(value => Math.min(3, value + .25))}>＋</button><button type="button" onClick={() => setZoom(1)}>适应全部</button></div></div>
       </div>
       <aside className="artwork-editor-inspector" ref={inspector} aria-label="属性面板">
-        <div className="artwork-v2-property-title"><span>{text ? 'T' : graphic ? <EditorIcon name="layers"/> : <EditorIcon name="select"/>}</span><strong>{repairMode ? repairLabel : selection ? '选区编辑' : text ? '文字编辑' : graphic ? '图片编辑' : selectedIds.length > 1 ? '多图层选择' : '整体图案'}</strong><small>{repairMode?'直接在画布操作':selection ? '仅圈内像素' : text ? '独立文字图层' : graphic ? '图片图层' : ''}</small></div>
+        <div className="artwork-v2-property-title"><span>{text ? 'T' : graphic ? <EditorIcon name="layers"/> : <EditorIcon name="select"/>}</span><strong>{repairMode ? REPAIR_TOOLS[repairMode].label : selection ? '选区编辑' : text ? '文字编辑' : graphic ? '图片编辑' : selectedIds.length > 1 ? '多图层选择' : '整体图案'}</strong><small>{repairMode?'直接在画布操作':selection ? '仅圈内像素' : text ? '独立文字图层' : graphic ? '图片图层' : ''}</small></div>
         <fieldset className="artwork-properties" disabled={busy} onFocusCapture={event => { if (event.target instanceof HTMLElement && event.target.matches('input,textarea')) beginGesture(); }} onBlurCapture={finishGesture}>
-          {repairMode&&<section className="artwork-v2-property-section flat-repair-settings"><span className="flat-current-layer">当前图层 · {graphic?.label||'图片'}</span><h3>{repairMode==='fill'?'点一下，补回空洞':repairMode==='keep'?'涂抹，恢复内容':'涂抹，去除内容'}</h3><p className="flat-repair-help">{repairMode==='fill'?'点击图案内部仍然透明的地方。默认补满这一整块空洞。':repairMode==='keep'?'画笔经过的区域会恢复抠图前的原始内容。':'画笔经过的像素会变成透明，其他区域保持原样。'}</p>
+          {repairMode&&<section className="artwork-v2-property-section flat-repair-settings"><span className="flat-current-layer">当前图层 · {graphic?.label||'图片'}</span><h3>{REPAIR_TOOLS[repairMode].heading}</h3><p className="flat-repair-help">{REPAIR_TOOLS[repairMode].help}</p>
             {repairMode==='fill'&&<><label>补回范围</label><div className="artwork-editor-segmented"><button type="button" aria-pressed={repairScope==='region'} onClick={()=>setRepairScope('region')}>整块空洞</button><button type="button" aria-pressed={repairScope==='brush'} onClick={()=>setRepairScope('brush')}>画笔圈内</button></div></>}
-            {(repairMode!=='fill'||repairScope==='brush')&&<label>画笔直径 · {repairRadius*2} px<input aria-label="修补画笔大小" type="range" min="2" max="256" value={repairRadius*2} onChange={e=>setRepairRadius(+e.target.value/2)}/></label>}
-            {repairMode!=='remove'&&!canRestore&&<p className="flat-restore-note">正在核对原图；若当前图层没有对应原图，可使用去除笔。</p>}
-            <div className="flat-repair-note">{repairMode==='fill'?'被图案分隔的空洞，分别点击。与外部背景连通的空白不会整片填回。':repairMode==='keep'?'保留笔也会恢复经过的背景，放大画布更方便控制边缘。':'可以随时用顶部“撤销”回退这一笔。'}<br/><br/>修改直接进入当前草稿，和改字、选区共用顶部撤销与底部保存。</div>
+            {repairMode==='clear'&&<><label>去除范围</label><div className="artwork-editor-segmented"><button type="button" aria-pressed={clearScope==='region'} onClick={()=>setClearScope('region')}>相连一块</button><button type="button" aria-pressed={clearScope==='color'} onClick={()=>setClearScope('color')}>全图同色</button></div>{clearScope==='color'&&<p className="flat-restore-note">整个图层里相近的颜色都会去掉；图案本身有同色部分时，请改用“相连一块”。</p>}<label>颜色容差 · {clearTolerance}<input aria-label="去空白颜色容差" type="range" min="0" max="128" value={clearTolerance} onChange={e=>setClearTolerance(+e.target.value)}/></label></>}
+            {(repairMode==='keep'||repairMode==='remove'||repairMode==='fill'&&repairScope==='brush')&&<label>画笔直径 · {repairRadius*2} px<input aria-label="修补画笔大小" type="range" min="2" max="256" value={repairRadius*2} onChange={e=>setRepairRadius(+e.target.value/2)}/></label>}
+            {(repairMode==='fill'||repairMode==='keep')&&!canRestore&&<p className="flat-restore-note">正在核对原图；若当前图层没有对应原图，可使用去除笔。</p>}
+            <div className="flat-repair-note">{REPAIR_TOOLS[repairMode].note}<br/><br/>修改直接进入当前草稿，和改字、选区共用顶部撤销与底部保存。</div>
           </section>}
           {selection && <section className="artwork-v2-property-section">
             {canEditSelection ? <><label>选区颜色</label>{colorControls}<button type="button" className="artwork-v2-wide" onClick={() => setGraphicColor({ mode: 'original', color: null })}>选区保留原色</button><p className="artwork-v2-note">只修改圈内的图片像素，圈外保持不变。改色时自动拆成独立图层，可一次撤销。</p></> : <p className="artwork-v2-note">{selectedIds.length ? '选区包含独立文字，请先选择图片区域后改色。' : '选区内没有可见内容，请重新圈选。'}</p>}

@@ -5,13 +5,13 @@ import {loadArtworkImage} from '@/lib/client/render-artwork';
 import {recolorArtworkPixels} from '@/lib/artwork-layers';
 import {spreadArtworkInk} from '@/lib/artwork-ink-spread';
 
-export type RepairTool='fill'|'keep'|'remove';
+export type RepairTool='fill'|'clear'|'keep'|'remove';
 type RepairData={w:number;h:number;work:HTMLCanvasElement;current:Uint8ClampedArray;source:Uint8ClampedArray;mask?:Uint8ClampedArray;canRestore:boolean};
 type BrushStroke={mode:'keep'|'remove';radius:number;last:RepairPoint;changed:boolean};
-type Props={graphic:ArtworkGraphicLayer;originalURL?:string;mode:RepairTool;scope:'region'|'brush';radius:number;displayWidth:number;displayHeight:number;onCommit:(url:string)=>void;onStatus:(text:string)=>void;onReady:(canRestore:boolean)=>void};
+type Props={graphic:ArtworkGraphicLayer;originalURL?:string;mode:RepairTool;scope:'region'|'brush';clearScope:'region'|'color';tolerance:number;radius:number;displayWidth:number;displayHeight:number;onCommit:(url:string)=>void;onStatus:(text:string)=>void;onReady:(canRestore:boolean)=>void};
 
 // Paint directly into the selected layer; the parent owns the common undo/save history.
-export function InlineRepair({graphic,originalURL,mode,scope,radius,displayWidth,displayHeight,onCommit,onStatus,onReady}:Props){
+export function InlineRepair({graphic,originalURL,mode,scope,clearScope,tolerance,radius,displayWidth,displayHeight,onCommit,onStatus,onReady}:Props){
  const canvas=useRef<HTMLCanvasElement>(null),data=useRef<RepairData|null>(null),stroke=useRef<BrushStroke|null>(null),emitted=useRef<string|null>(null);
  const callbacks=useRef({onCommit,onStatus,onReady});useEffect(()=>{callbacks.current={onCommit,onStatus,onReady};});
  const [cursor,setCursor]=useState<{x:number;y:number}|null>(null),[ready,setReady]=useState(false),[rasterWidth,setRasterWidth]=useState(1);
@@ -50,16 +50,17 @@ export function InlineRepair({graphic,originalURL,mode,scope,radius,displayWidth
   const x=crop.left+(nx*frame.width-spread)/graphic.width*crop.width,y=crop.top+(ny*frame.height-spread)/graphic.height*crop.height;
   return [Math.max(0,Math.min(d.w-1,x)),Math.max(0,Math.min(d.h-1,y))];
  };
- function apply(value:RepairStroke){const d=data.current!;try{const result=applyRepairStroke(d.current,d.source,d.current,d.w,d.h,value);draw();callbacks.current.onStatus(value.mode==='fill'?`已补回${scope==='region'?'整块空洞':'圈内空白'} · ${(result?.restoredPixels??0).toLocaleString()} 个像素`:value.mode==='keep'?'已恢复画笔经过的原图内容':'已去除画笔经过的区域');return true;}catch(e){callbacks.current.onStatus(e instanceof Error?e.message:String(e));return false;}}
+ function apply(value:RepairStroke){const d=data.current!;try{const result=applyRepairStroke(d.current,d.source,d.current,d.w,d.h,value);draw();callbacks.current.onStatus(value.mode==='fill'?`已补回${scope==='region'?'整块空洞':'圈内空白'} · ${(result?.restoredPixels??0).toLocaleString()} 个像素`:value.mode==='clear'?`已去除${clearScope==='region'?'相连':'全图同色'}底色 · ${(result?.clearedPixels??0).toLocaleString()} 个像素`:value.mode==='keep'?'已恢复画笔经过的原图内容':'已去除画笔经过的区域');return true;}catch(e){callbacks.current.onStatus(e instanceof Error?e.message:String(e));return false;}}
  function commit(){const d=data.current!;d.work.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(d.current),d.w,d.h),0,0);const url=d.work.toDataURL('image/png');emitted.current=url;callbacks.current.onCommit(url);}
  function down(e:PointerEvent<HTMLCanvasElement>){e.stopPropagation();e.preventDefault();if(!ready||e.button!==0)return;
-  const d=data.current!;if(mode!=='remove'&&!d.canRestore){callbacks.current.onStatus('这个图层没有对应的抠图前原图，可使用去除笔。');return;}
+  const d=data.current!;if((mode==='fill'||mode==='keep')&&!d.canRestore){callbacks.current.onStatus('这个图层没有对应的抠图前原图，可使用去除笔。');return;}
   e.currentTarget.focus({preventScroll:true});const p=point(e);e.currentTarget.setPointerCapture(e.pointerId);
   if(mode==='fill'){if(apply({mode,scope,point:p,...(scope==='brush'?{radius}:{})}))commit();return;}
+  if(mode==='clear'){if(apply({mode,scope:clearScope,point:p,tolerance}))commit();return;}
   stroke.current={mode,radius,last:p,changed:apply({mode,radius,points:[p]})};
  }
  function move(e:PointerEvent<HTMLCanvasElement>){e.stopPropagation();if(!ready)return;const p=point(e),s=stroke.current;if(s){s.changed=apply({mode:s.mode,radius:s.radius,points:[s.last,p]})||s.changed;s.last=p;}}
  function end(e:PointerEvent<HTMLCanvasElement>){e.stopPropagation();const s=stroke.current;stroke.current=null;if(s?.changed)commit();}
- const cropWidth=graphic.sourceBounds?.width??rasterWidth;
- return <><canvas ref={canvas} className="inline-repair-canvas" aria-label="直接修补当前图层" tabIndex={0} style={{cursor:mode==='fill'&&scope==='region'?'crosshair':'none'}} onPointerDown={down} onPointerMove={move} onPointerUp={end} onPointerCancel={end} onPointerLeave={()=>setCursor(null)}/>{cursor&&!(mode==='fill'&&scope==='region')&&<i className={'repair-brush-cursor '+mode} style={{left:cursor.x*100+'%',top:cursor.y*100+'%',width:radius*2/cropWidth*(graphic.width/frame.width)*100+'%',aspectRatio:'1'}}/>}</>;
+ const cropWidth=graphic.sourceBounds?.width??rasterWidth,clicking=mode==='clear'||mode==='fill'&&scope==='region';
+ return <><canvas ref={canvas} className="inline-repair-canvas" aria-label="直接修补当前图层" tabIndex={0} style={{cursor:clicking?'crosshair':'none'}} onPointerDown={down} onPointerMove={move} onPointerUp={end} onPointerCancel={end} onPointerLeave={()=>setCursor(null)}/>{cursor&&!clicking&&<i className={'repair-brush-cursor '+mode} style={{left:cursor.x*100+'%',top:cursor.y*100+'%',width:radius*2/cropWidth*(graphic.width/frame.width)*100+'%',aspectRatio:'1'}}/>}</>;
 }

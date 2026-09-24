@@ -172,3 +172,28 @@ test('原图本身透明的区域不编造像素；非法补空白请求在计�
   ]) assert.throws(() => validateRepairStrokes([stroke], 6, 6), /范围或坐标/);
   assert.throws(() => validateRepairStrokes(Array(11).fill({ mode: 'fill', scope: 'region', point: [1, 1] }), 4000, 4000), /分次保存/);
 });
+
+test('去空白一点去掉相连残留底色并淡化杂边，全图同色才会去掉隔开的残留', () => {
+  const width = 12, height = 12, original = new Uint8Array(width * height * 4), at = (x, y) => (y * width + x) * 4;
+  for (let y = 1; y <= 10; y++) for (let x = 1; x <= 10; x++) original.set([10, 20, 30, 255], at(x, y));
+  for (let y = 4; y <= 6; y++) for (let x = 4; x <= 6; x++) original.set([255, 255, 255, 255], at(x, y));
+  original.set([240, 240, 240, 255], at(5, 5));
+  original.set([133, 138, 143, 255], at(7, 5));
+  original.set([255, 255, 255, 255], at(9, 9));
+  const region = { mode: 'clear', scope: 'region', point: [4.5, 4.5], tolerance: 32 }, target = new Uint8Array(original);
+  validateRepairStrokes([region], width, height);
+  assert.equal(applyRepairStroke(target, original, original, width, height, region).clearedPixels, 9);
+  for (let i = 0; i < width * height; i++) {
+    const x = i % width, y = Math.floor(i / width), p = i * 4;
+    const expected = x >= 4 && x <= 6 && y >= 4 && y <= 6 ? [...original.subarray(p, p + 3), 0] : x === 7 && y === 5 ? [10, 20, 30, 108] : original.subarray(p, p + 4);
+    assert.deepEqual(target.subarray(p, p + 4), Uint8Array.from(expected), `pixel ${x},${y}`);
+  }
+  const everywhere = new Uint8Array(original);
+  assert.equal(applyRepairStroke(everywhere, original, original, width, height, { ...region, scope: 'color' }).clearedPixels, 10);
+  assert.equal(everywhere[at(9, 9) + 3], 0);
+  assert.equal(everywhere[at(2, 2) + 3], 255);
+  assert.throws(() => applyRepairStroke(new Uint8Array(original), original, original, width, height, { ...region, point: [0, 0] }), /已经是透明/);
+  for (const stroke of [{ ...region, scope: 'all' }, { ...region, tolerance: 200 }, { mode: 'clear', scope: 'region', point: [1, 1] }, { ...region, point: [12, 1] }]) {
+    assert.throws(() => validateRepairStrokes([stroke], width, height), /去空白范围或坐标/);
+  }
+});
