@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { emptyStandard, type Box, type CatalogDetail, type CatalogStyle } from '@/lib/catalog';
 import { catalogReferenceType, estimatedSopStandard, placementPreviewSchema, suggestedPlacement } from '@/lib/catalog-placement-suggestions';
+import { plausibleTorso } from '@/lib/sop-placement';
 import { garmentSilhouette } from './catalog-alignment';
 import { torsoWidthRatio } from './catalog-body-geometry';
 import { readCatalogFile } from './catalog-files';
@@ -46,8 +47,10 @@ export async function catalogPlacementPreview(detail: CatalogDetail, sharing?: S
   let shared: Partial<Record<'front' | 'back', SharedStandard>> = {};
   if (sharing && detail.views.some(v => !v.latest)) shared = await sharedStyleStandards(detail, (await readCatalogFile(fileId)).bytes, sharing.style, sharing.load);
   const faces = detail.views.map((view, index) => {
-    const { frame, measure, bodyWidthRatio } = geometry[index];
+    const { frame, measure, bodyWidthRatio: measured } = geometry[index];
     const borrowed = !view.latest && shared[view.face];
+    const standard = view.latest?.specification ?? (borrowed || null)?.specification, outline = standard?.garmentFrame ?? frame;
+    const bodyWidthRatio = outline ? plausibleTorso(standard?.structureType ?? reference.structure, measured, outline.width) : measured;
     if (borrowed) return { viewId: view.id, frame: borrowed.specification.garmentFrame, specification: borrowed.specification, bodyWidthRatio,
       basis: `沿用同款「${borrowed.colorName}」已确认的结构点（轮廓一致），效果图也按此放置。如本色需要不同位置，调整后保存为本色标准。` };
     if (view.latest) return { viewId: view.id, frame: view.latest.specification.garmentFrame, specification: view.latest.specification, basis: '已保存的位置标记', bodyWidthRatio };

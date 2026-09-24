@@ -2,12 +2,25 @@ import type { Box, PlacementStandard, Point, PositionKey, StructureType } from '
 
 // Rules from 效果图制作与质量标准 V1.0 (2026-08-17). One copy serves both the catalog
 // preview and the composite, so what the catalog shows is what a mockup uses.
-export const SOP_PLACEMENT_POLICY = 'sop-v1';
+// v2: confirmed armpits set the body width, and sleeve-merged torso measurements are rejected.
+export const SOP_PLACEMENT_POLICY = 'sop-v2';
 // Catalog photos are ghost-mannequin renders: the visible torso is the body's projected
 // width, not a flat half-chest. The SOP examples (chest 9 cm ≈ 22%, back 28 cm ≈ 70% of
 // that width) and the photos' own shoulder/placket proportions both agree on about 40 cm.
 export const PROJECTED_BODY_WIDTH_CM = 40;
 export const SOP_STRUCTURES: StructureType[] = ['polo', 'crewneck', 'hoodie', 'jacket', 'shell', 'vest'];
+// Long sleeves hanging against the body merge with it in the silhouette. On the catalog, a torso
+// measured below separated sleeves is 53–62% of the garment width, a merged one 85–99%; the
+// 58% midpoint stands in for the body until a person marks the armpits.
+const MERGED_TORSO_SHARE = .8;
+export const UNMEASURED_TORSO_SHARE = .58;
+const SLEEVELESS: StructureType[] = ['vest', 'apron', 'cap'];
+/** A torso width (any unit) that is really torso plus sleeves, measured against the garment width in the same unit. */
+export function torsoMergedWithSleeves(structure: StructureType, torso: number, garmentWidth: number) {
+  return !SLEEVELESS.includes(structure) && torso >= garmentWidth * MERGED_TORSO_SHARE;
+}
+export const plausibleTorso = (structure: StructureType, torso: number | null | undefined, garmentWidth: number) =>
+  torso && !torsoMergedWithSleeves(structure, torso, garmentWidth) ? torso : null;
 export type SopKey = 'leftChest' | 'rightChest' | 'frontCenter' | 'leftSleeve' | 'rightSleeve' | 'upperBack' | 'backCenter';
 export const SOP_FACE: Record<SopKey, 'front' | 'back'> = { leftChest: 'front', rightChest: 'front', frontCenter: 'front', leftSleeve: 'front', rightSleeve: 'front', upperBack: 'back', backCenter: 'back' };
 // Chest logos sit about 9.5 cm below the front neck point, which is where the 2nd–3rd

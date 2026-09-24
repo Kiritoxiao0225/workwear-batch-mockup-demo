@@ -3,7 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { resolve, extname } from 'node:path';
 import { hash, jsonFile, saveJSON, atomicFile, assetPath, fail, readBytes, materialize, listDirectories, checkpoint } from '../adapters/a-files.mjs';
 import { requirementWorkbench, validateRequirementDraft } from './requirements.mjs';
-import { productionPolicy, inspectPixels } from '../adapters/production-images.mjs';
+import { productionPolicy, inspectPixels, withoutFaintSpecks } from '../adapters/production-images.mjs';
 import { readRepairState } from './production-repair.mjs';
 
 const stamp=()=>new Date().toISOString();
@@ -84,7 +84,7 @@ export async function executeProduction(root,id,providers,onProgress=()=>{}) {
     else if(job.raw.transparentExterior){job.final=job.raw;job.backgroundDecision='实际像素已有透明外围，跳过抠图';}
     else{
       job.backgroundDecision='未检测到完整透明外围，使用美图抠图';await save();
-      const bytes=await step('cutout',dir=>materialize(assetPath(root,job.raw.asset)).then(path=>providers.cutout(path,dir)));job.final=await publish(bytes,'cutout');
+      const bytes=await step('cutout',dir=>materialize(assetPath(root,job.raw.asset)).then(path=>providers.cutout(path,dir)));job.final=await publish(await withoutFaintSpecks(bytes),'cutout');
       if(!job.final.transparentExterior){
         job.warning='抠图结果的外围透明检查未通过，请放大核对；未自动重跑';
         if(input.transparentBackground===true)throw new Error('透明背景检查未通过，已保留候选图片；没有自动重复抠图');

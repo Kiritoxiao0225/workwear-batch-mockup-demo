@@ -11,6 +11,8 @@ import {missingGlyphs} from '../adapters/font-coverage.ts';
 import {readFile} from 'node:fs/promises';
 import {suggestedPlacement} from '../../lib/catalog-placement-suggestions.ts';
 import {atomicFile,assetPath,hash,saveJSON} from '../adapters/a-files.mjs';
+import {clearFaintSpecks} from '../adapters/production-images.mjs';
+import {plausibleTorso} from '../../lib/sop-placement.ts';
 const artwork=(id,apps)=>({id,name:id,applications:apps});
 test('共享图稿只建立多个服装应用；同款色前后同框，候选版本不叠加',()=>{
  const c={caseId:'A',draft:{artworks:[artwork('logo',[{style:'S',color:'黑',position:'左胸'},{style:'S',color:'白',position:'左胸'}]),artwork('back',[{style:'S',color:'黑',position:'后背'},{style:'S',color:'白',position:'后背'}])]}};
@@ -181,4 +183,18 @@ test('只点了确认、结构点仍是模板原值的标准不当作校准：�
   const state=await renderMockups(root,{caseId:'T',revision:1,draft:{artworks:[artwork('logo',[{style:'S',color:'白',position:'左胸'}])]}},[{id:'job',artworkId:'logo',revision:1,final:file}],catalog);
   assert.ok(state.cards[0].warnings.some(w=>w.startsWith('正面：素材库确认的结构点仍是系统模板原值')));
  }finally{await rm(root,{recursive:true,force:true});}
+});
+test('残留杂点：只清除远离图案、又淡又小的孤立像素，实心小点和贴着图案的柔光保留',()=>{
+ const w=100,h=100,px=new Uint8Array(w*h*4),set=(x,y,a)=>{px[(y*w+x)*4+3]=a;},alpha=(x,y)=>px[(y*w+x)*4+3];
+ for(let y=20;y<60;y++)for(let x=20;x<60;x++)set(x,y,255);
+ for(let x=20;x<60;x++)set(x,60,30);// soft edge touching the design
+ set(99,99,20);// the corner speck seen on a real cutout
+ set(80,20,255);set(81,20,255);// a tiny but solid dot is design
+ assert.equal(clearFaintSpecks(px,w,h),1);
+ assert.equal(alpha(99,99),0);assert.equal(alpha(40,60),30);assert.equal(alpha(80,20),255);assert.equal(alpha(40,40),255);
+});
+test('长袖贴身时轮廓测宽等于整件宽度，不当作衣身；无袖款整件宽就是衣身',()=>{
+ assert.equal(plausibleTorso('jacket',.742,.748),null);
+ assert.equal(plausibleTorso('polo',.47,.786),.47);
+ assert.equal(plausibleTorso('vest',.7,.72),.7);
 });

@@ -15,13 +15,14 @@ function localPoint(p: Point, frame: Box): Point { return { x: frame.x + p.x * f
 function localBox(b: Box, frame: Box): Box { return { ...localPoint(b, frame), width: b.width * frame.width, height: b.height * frame.height }; }
 const clamp = (n: number, max = 1) => Math.max(0, Math.min(max, n));
 // Garment structures follow the effect-image SOP: positions come from structure points, the same rule the composite uses.
+// The body width is the marked armpit distance, which the composite also uses once the face is confirmed.
 const sopDerived = (spec: PlacementStandard) => SOP_STRUCTURES.includes(spec.structureType);
 function facePixels(spec: PlacementStandard, view: CatalogView, detail: CatalogDetail) {
   return { width: spec.garmentFrame.width * view.crop.width * detail.width, height: spec.garmentFrame.height * view.crop.height * detail.height };
 }
-function derivePositions(spec: PlacementStandard, view: CatalogView, detail: CatalogDetail, bodyWidthRatio: number | null | undefined): PlacementStandard {
+function derivePositions(spec: PlacementStandard, view: CatalogView, detail: CatalogDetail): PlacementStandard {
   if (!sopDerived(spec)) return spec;
-  const positions = sopStandardPositions(spec, view.face, facePixels(spec, view, detail), bodyWidthRatio ? bodyWidthRatio * view.crop.width * detail.width : null, sopPositionKeys(spec.structureType, view.face));
+  const positions = sopStandardPositions(spec, view.face, facePixels(spec, view, detail), null, sopPositionKeys(spec.structureType, view.face));
   return positions ? { ...spec, positions } : spec;
 }
 const landmarkLabel = (key: string, label: string, face: 'front' | 'back') => key === 'neckCenter' ? (face === 'front' ? '前领口中心' : '后领中心') : label;
@@ -141,8 +142,7 @@ export function CatalogCalibration({ detail, preview, style, user, close, saved,
   const savingRef = useRef(false);
   const [saveNotice, setSaveNotice] = useState('');
   const dirtyRef = useRef(new Set<string>());
-  const bodyRatio = (id: string) => preview.faces.find(f => f.viewId === id)?.bodyWidthRatio;
-  const derived = (id: string, next: PlacementStandard) => derivePositions(next, detail.views.find(v => v.id === id)!, detail, bodyRatio(id));
+  const derived = (id: string, next: PlacementStandard) => derivePositions(next, detail.views.find(v => v.id === id)!, detail);
   const [specs, setSpecs] = useState<Record<string, PlacementStandard>>(() => Object.fromEntries(detail.views.map(v => [v.id, derived(v.id, v.latest?.specification ?? preview.faces.find(f => f.viewId === v.id)!.specification)])));
   const [activeId, setActiveId] = useState(detail.views[0].id);
   const [error, setError] = useState('');
@@ -261,7 +261,7 @@ export function CatalogCalibration({ detail, preview, style, user, close, saved,
         if (spec.landmarks.some(l => l.key === 'button2')) { change({ ...spec, landmarks: spec.landmarks.filter(l => !l.key.startsWith('button')) }); return; }
         const neck = spec.landmarks.find(l => l.key === 'neckCenter'), left = spec.landmarks.find(l => l.key === 'leftArmpit'), right = spec.landmarks.find(l => l.key === 'rightArmpit');
         if (!neck || !left || !right) { setError('请先标出领口中心和左右腋点'); return; }
-        const pixel = facePixels(spec, view, detail), ratio = bodyRatio(view.id), cm = (ratio ? ratio * view.crop.width * detail.width : Math.abs(right.point.x - left.point.x) * pixel.width) / PROJECTED_BODY_WIDTH_CM / pixel.height;
+        const pixel = facePixels(spec, view, detail), cm = Math.abs(right.point.x - left.point.x) * pixel.width / PROJECTED_BODY_WIDTH_CM / pixel.height;
         change({ ...spec, landmarks: [...spec.landmarks, { key: 'button2', label: '第二粒扣', point: { x: neck.point.x, y: clamp(neck.point.y + 6.5 * cm) } }, { key: 'button3', label: '第三粒扣', point: { x: neck.point.x, y: clamp(neck.point.y + 13 * cm) } }] }); setLayer('all');
       }}>{spec.landmarks.some(l => l.key === 'button2') ? '移除扣位标记' : '标出第二、三粒扣'}</button>}</div>}
       <div className="cal-position-list" aria-label="选择印花位置">{spec.positions.map(p => <button type="button" key={p.key} aria-pressed={currentPosition?.key === p.key} onClick={() => { setSelectedKey(p.key); setLayer(sopDerived(spec) ? 'all' : 'placement'); }}>{POSITION_LABELS[p.key]}<small>{currentPosition?.key === p.key ? '正在调整' : '点击查看'}</small></button>)}</div>

@@ -19,6 +19,39 @@ export async function inspectPixels(bytes) {
     transparentRatio: transparent / (info.width * info.height), clearEdgeRatio: clearEdge / edge,
     transparentExterior: visible > 0 && transparent / (info.width * info.height) > 0.01 && clearEdge / edge >= 0.95 };
 }
+// Cutout and editing can leave isolated, nearly invisible pixels (one sat in the corner of a
+// 1254 px artwork at alpha 20); trimming counts them and pushes the logo off center on the
+// garment. Detached pieces that are both faint and tiny are cleared. Soft glows and shadows
+// are larger or touch the design and stay; the size never changes, so repair still aligns
+// the result with its pre-cutout original.
+const SPECK_ALPHA = 64, SPECK_AREA = 1 / 2000;
+export function clearFaintSpecks(data, width, height, channels = 4) {
+  const n = width * height, limit = Math.max(16, n * SPECK_AREA), seen = new Uint8Array(n), stack = new Int32Array(n);
+  const alpha = p => data[p * channels + channels - 1];
+  let cleared = 0;
+  for (let start = 0; start < n; start++) {
+    if (seen[start] || alpha(start) < 8) continue;
+    const piece = []; let top = 0, strongest = 0;
+    seen[start] = 1; stack[top++] = start;
+    while (top) {
+      const p = stack[--top], x = p % width, y = (p - x) / width;
+      strongest = Math.max(strongest, alpha(p)); if (piece.length <= limit) piece.push(p);
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const nx = x + dx, ny = y + dy, q = ny * width + nx;
+        if (nx >= 0 && ny >= 0 && nx < width && ny < height && !seen[q] && alpha(q) >= 8) { seen[q] = 1; stack[top++] = q; }
+      }
+    }
+    if (strongest < SPECK_ALPHA && piece.length <= limit) { for (const p of piece) data[p * channels + channels - 1] = 0; cleared += piece.length; }
+  }
+  return cleared;
+}
+/** PNG bytes without faint specks; unchanged bytes when there are none or the image has no alpha. */
+export async function withoutFaintSpecks(bytes) {
+  const image = sharp(bytes, { limitInputPixels: 50_000_000, failOn: 'error' });
+  if (!(await image.metadata()).hasAlpha) return bytes;
+  const { data, info } = await image.raw().toBuffer({ resolveWithObject: true });
+  return clearFaintSpecks(data, info.width, info.height, info.channels) ? sharp(data, { raw: { width: info.width, height: info.height, channels: info.channels } }).png().toBuffer() : bytes;
+}
 export async function configuredProduction() {
   const e = process.env.A_ANALYSIS_ENV_FILE ? { ...parseEnv(await readFile(process.env.A_ANALYSIS_ENV_FILE, 'utf8')), ...process.env } : process.env;
   if (e.ARTWORK_IMAGE_PROVIDER !== 'cliproxy' || !e.CLIPROXY_API_KEY) throw new Error('当前生图配置不是已选CLIProxy，未调用其他供应商');

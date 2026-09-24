@@ -2,7 +2,7 @@ import { resolve } from 'node:path';
 import sharp from 'sharp';
 import { assertArtworkDraft } from '../../lib/artwork-editor.ts';
 import { hash, jsonFile, saveJSON, atomicFile, assetPath, fail, readBytes } from '../adapters/a-files.mjs';
-import { inspectPixels } from '../adapters/production-images.mjs';
+import { inspectPixels, withoutFaintSpecks } from '../adapters/production-images.mjs';
 import { readRepairState } from './production-repair.mjs';
 const directory=(root,id)=>{if(!/^[a-f0-9]{64}$/.test(id||''))throw fail('制作编号无效');return resolve(root,'production-jobs',id);};
 export async function readProductionEdit(root,id){
@@ -42,6 +42,8 @@ export async function saveProductionEdit(root,body){
  async function savePNG(url,label){
   if(typeof url!=='string'||!/^data:image\/png;base64,[a-zA-Z0-9+/=]+$/.test(url)||url.length>24_000_000)throw fail('仅支持有效PNG图片');
   let bytes;try{bytes=await sharp(Buffer.from(url.split(',')[1],'base64'),{limitInputPixels:16_000_000}).toColourspace('srgb').png().toBuffer();}catch{throw fail('PNG图片无法读取或尺寸过大');}
+  // Layer sources and recolor masks stay pixel-exact for later edits; only the flattened result is cleaned.
+  if(label==='result')bytes=await withoutFaintSpecks(bytes);
   const sha256=hash(bytes),asset=`production-results/${body.jobId}/edit-${label}-${sha256}.png`;
   await atomicFile(assetPath(root,asset),bytes);if(hash(await readBytes(assetPath(root,asset)))!==sha256)throw fail('图片保存校验失败',500);
   return {asset,sha256,bytes:bytes.length,...await inspectPixels(bytes)};

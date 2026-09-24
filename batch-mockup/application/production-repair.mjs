@@ -1,7 +1,7 @@
 import sharp from 'sharp';
 import { resolve } from 'node:path';
 import { hash, jsonFile, saveJSON, atomicFile, assetPath, fail, readBytes } from '../adapters/a-files.mjs';
-import { inspectPixels } from '../adapters/production-images.mjs';
+import { clearFaintSpecks, inspectPixels } from '../adapters/production-images.mjs';
 import { applyRepairStroke, validateRepairStrokes } from './repair-pixels.mjs';
 
 function jobDir(root, id) {
@@ -44,6 +44,7 @@ export async function saveProductionRepair(root, body) {
   const pixels = Buffer.from(base), { width, height } = input.raw;
   try { for (const stroke of body.strokes) applyRepairStroke(pixels, source, original, width, height, stroke); }
   catch (e) { throw fail(e.message); }
+  clearFaintSpecks(pixels, width, height);
   const bytes = await sharp(pixels, { raw: { width, height, channels: 4 } }).png().toBuffer();
   const inspected = await inspectPixels(bytes);
   if (!inspected.visiblePixels) throw fail('修补结果完全透明，请撤销部分去除操作后再保存');

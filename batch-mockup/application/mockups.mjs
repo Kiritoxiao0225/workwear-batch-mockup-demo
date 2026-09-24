@@ -4,8 +4,9 @@ import {torsoWidthRatio} from '../../lib/server/catalog-body-geometry.ts';
 import {measureSilhouette} from '../../lib/server/catalog-structure-estimate.ts';
 import {sharedStyleStandards,styleConfirmationKey} from '../../lib/server/catalog-shared-standard.ts';
 import {catalogReferenceType,estimatedSopStandard,hasTemplateLandmarks} from '../../lib/catalog-placement-suggestions.ts';
-import {PROJECTED_BODY_WIDTH_CM,SOP_STRUCTURES,sopStructureFromStandard} from '../../lib/sop-placement.ts';
+import {PROJECTED_BODY_WIDTH_CM,SOP_STRUCTURES,UNMEASURED_TORSO_SHARE,plausibleTorso,sopStructureFromStandard} from '../../lib/sop-placement.ts';
 import {placementGeometry,requestedDimensions,PLACEMENT_POLICY} from './mockup-placement.mjs';
+import {clearFaintSpecks} from '../adapters/production-images.mjs';
 import {alphaSamples,annotationOverlay,annotationText,colorIssue,irregularShape,outsideGarment} from './mockup-checks.mjs';
 import { hash,jsonFile,saveJSON,readBytes,atomicFile,assetPath,fail } from '../adapters/a-files.mjs';
 const stamp=()=>new Date().toISOString();
@@ -64,12 +65,14 @@ export async function saveMockupSelection(root,c,body){
   card.layers=body.layers.map(l=>{const prior=card.layers.find(p=>p.id===l.id);if(!prior||!['x','y','width'].every(k=>typeof l[k]==='number'&&Number.isFinite(l[k]))||l.width<.005||l.width>1||l.x<0||l.x>1||l.y<0||l.y>1)throw fail('位置或缩放无效');const moved=l.x!==prior.x||l.y!==prior.y,resized=l.width!==prior.width;return {...prior,x:l.x,y:l.y,width:l.width,manual:prior.manual||moved||resized,positionManual:prior.positionManual??prior.manual??moved,sizeManual:prior.sizeManual??(resized?true:undefined),...(moved?{positionManual:true}:{}),...(resized?{sizeManual:true}:{})};});}
  card.status='pending';state.revision++;state.updatedAt=stamp();await saveJSON(statePath(root,c.caseId),state);return state;
 }
+// Older artworks predate speck cleaning at output, so trimming applies the same rule.
 async function rgbaTrim(bytes){
  const {data,info}=await sharp(bytes,{limitInputPixels:80000000,failOn:'error'}).ensureAlpha().raw().toBuffer({resolveWithObject:true});
+ const cleaned=clearFaintSpecks(data,info.width,info.height,info.channels);
  let left=info.width,top=info.height,right=-1,bottom=-1;
  for(let y=0;y<info.height;y++)for(let x=0;x<info.width;x++)if(data[(y*info.width+x)*4+3]>7){left=Math.min(left,x);top=Math.min(top,y);right=Math.max(right,x);bottom=Math.max(bottom,y);}
  if(right<left)throw fail('图片没有可见内容');
- const box={left,top,width:right-left+1,height:bottom-top+1};return {bytes:await sharp(bytes).extract(box).png().toBuffer(),box};
+ const box={left,top,width:right-left+1,height:bottom-top+1};return {bytes:await (cleaned?sharp(data,{raw:{width:info.width,height:info.height,channels:info.channels}}):sharp(bytes)).extract(box).png().toBuffer(),box};
 }
 export async function garmentCanvas(garment,bytes,frame,shared={}){
  if(!garment.views.some(v=>v.face==='front'))throw fail('服装目录缺少正面视图');
@@ -91,18 +94,19 @@ export async function garmentCanvas(garment,bytes,frame,shared={}){
   // Crop-fraction point → frame pixels of this placed face.
   const toFrame=p=>({x:x+(p.x*img.crop.width-img.box.left)*scale,y:y+(p.y*img.crop.height-img.box.top)*scale});
   const bounds={x,y,width:w,height:h};
-  // The projected 40 cm width was measured on the lower torso silhouette; untouched template armpits are only a fallback.
+  // Marked armpits are the body width once confirmed (own or shared), as in the catalog view; otherwise the
+  // lower-torso silhouette gives it, unless long sleeves merged with the body there and it spans the whole garment.
   // Long sleeves touching the body defeat the lower-torso width; the torso just under separated sleeves is the next evidence.
-  const m=await measureSilhouette(bytes,img.view.crop),alphaRatio=await torsoWidthRatio(bytes,img.view.crop)??m?.torsoAtArmpit??null;
+  const reference=catalogReferenceType(garment.namespace??'',garment.styleCode??''),type=standard&&standard.structureType!=='unknown'?standard.structureType:reference.structure;
+  const frameBox={x:img.box.left/img.crop.width,y:img.box.top/img.crop.height,width:img.box.width/img.crop.width,height:img.box.height/img.crop.height};
+  const m=await measureSilhouette(bytes,img.view.crop),alphaRatio=plausibleTorso(type,await torsoWidthRatio(bytes,img.view.crop)??m?.torsoAtArmpit??null,frameBox.width);
   let bodyWidth=alphaRatio?alphaRatio*img.crop.width*scale:null,basis=alphaRatio?'alpha-torso-v1':'unconfirmed-preview',structure=null,source='fallback';
   if(standard&&SOP_STRUCTURES.includes(standard.structureType)){
-   const f=standard.garmentFrame,origin=toFrame({x:f.x,y:f.y}),s=sopStructureFromStandard(standard,{width:f.width*img.crop.width*scale,height:f.height*img.crop.height*scale},bodyWidth);
-   if(s){const move=p=>p&&{x:p.x+origin.x,y:p.y+origin.y};structure={...s,neck:move(s.neck),leftShoulder:move(s.leftShoulder),rightShoulder:move(s.rightShoulder),leftArmpit:move(s.leftArmpit),rightArmpit:move(s.rightArmpit),button2:move(s.button2),button3:move(s.button3),center:s.center+origin.x,bounds,exclusions:s.exclusions.map(e=>({...e,x:e.x+origin.x,y:e.y+origin.y}))};source=own?'confirmed':'shared';if(!bodyWidth){bodyWidth=s.bodyWidth;basis='confirmed-armpits';}}
+   const f=standard.garmentFrame,origin=toFrame({x:f.x,y:f.y}),s=sopStructureFromStandard(standard,{width:f.width*img.crop.width*scale,height:f.height*img.crop.height*scale},null);
+   if(s){const move=p=>p&&{x:p.x+origin.x,y:p.y+origin.y};structure={...s,neck:move(s.neck),leftShoulder:move(s.leftShoulder),rightShoulder:move(s.rightShoulder),leftArmpit:move(s.leftArmpit),rightArmpit:move(s.rightArmpit),button2:move(s.button2),button3:move(s.button3),center:s.center+origin.x,bounds,exclusions:s.exclusions.map(e=>({...e,x:e.x+origin.x,y:e.y+origin.y}))};source=own?'confirmed':'shared';bodyWidth=s.bodyWidth;basis='confirmed-armpits';}
   }
   if(!structure){
    // Unconfirmed faces use the same estimated standard the catalog shows as its suggestion.
-   const reference=catalogReferenceType(garment.namespace??'',garment.styleCode??''),type=standard&&standard.structureType!=='unknown'?standard.structureType:reference.structure;
-   const frameBox={x:img.box.left/img.crop.width,y:img.box.top/img.crop.height,width:img.box.width/img.crop.width,height:img.box.height/img.crop.height};
    const spec=m&&estimatedSopStandard(type,img.view.face,frameBox,m,{width:w,height:h},bodyWidth,reference.longSleeve),s=spec&&sopStructureFromStandard(spec,{width:w,height:h},bodyWidth);
    if(s){const move=p=>p&&{x:p.x+x,y:p.y+y};structure={...s,neck:move(s.neck),leftShoulder:move(s.leftShoulder),rightShoulder:move(s.rightShoulder),leftArmpit:move(s.leftArmpit),rightArmpit:move(s.rightArmpit),center:s.center+x,bounds,exclusions:s.exclusions.map(e=>({...e,x:e.x+x,y:e.y+y}))};source=m.armpitDetected?'estimated':'estimated-rough';}
   }
@@ -112,7 +116,7 @@ export async function garmentCanvas(garment,bytes,frame,shared={}){
  return {bytes:await sharp(frame).composite(layers).png().toBuffer(),faces};
 }
 export function initialPlacement(face,info,ratio=1,prompt='',options={}){
- const provisional=!(face.bodyWidth>0);const p=placementGeometry(provisional?{...face,bodyWidth:face.width*.65}:face,info,ratio,prompt,options);if(provisional){if(p.requested)throw fail('此款尚未标定衣身，无法按客户厘米数精确放置，请在素材库确认左右腋点');p.sizeCm=null;p.basis='unconfirmed-preview';}return {...p,x:p.x/FRAME.width,y:p.y/FRAME.height,width:p.width/FRAME.width};
+ const provisional=!(face.bodyWidth>0);const p=placementGeometry(provisional?{...face,bodyWidth:face.width*UNMEASURED_TORSO_SHARE}:face,info,ratio,prompt,options);if(provisional){if(p.requested)throw fail('此款尚未标定衣身，无法按客户厘米数精确放置，请在素材库确认左右腋点');p.sizeCm=null;p.basis='unconfirmed-preview';}return {...p,x:p.x/FRAME.width,y:p.y/FRAME.height,width:p.width/FRAME.width};
 }
 // Older UI marked every submitted layer manual, even when only its position changed.
 // A stored width still equal to that version's automatic width is not evidence of resizing.

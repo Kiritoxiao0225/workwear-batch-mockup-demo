@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { allowedPositions, boxSchema, emptyStandard, requiredLandmarks, standardSchema, type Box, type PlacementStandard, type PositionKey, type StructureType } from '@/lib/catalog';
-import { PROJECTED_BODY_WIDTH_CM, SOP_STRUCTURES, estimatedLandmarks, sopEstimatedExclusions, sopStandardPositions, sopStructureFromStandard } from '@/lib/sop-placement';
+import { PROJECTED_BODY_WIDTH_CM, SOP_STRUCTURES, UNMEASURED_TORSO_SHARE, estimatedLandmarks, plausibleTorso, sopEstimatedExclusions, sopStandardPositions, sopStructureFromStandard } from '@/lib/sop-placement';
 
 // Reference types were checked against the 21 styles in normalized-garments-v1.
 // They supply editable suggestions, never confirmed image understanding.
@@ -91,7 +91,9 @@ export function estimatedSopStandard(structure: StructureType, face: 'front' | '
   if (structure !== 'unknown' && !SOP_STRUCTURES.includes(structure)) return null;
   const base = structure === 'unknown' ? { ...emptyStandard(), garmentFrame: frame } : suggestedPlacement(structure, face, frame, longSleeve);
   const local = (p: { x: number; y: number }) => ({ x: Math.max(0, Math.min(1, (p.x - frame.x) / frame.width)), y: Math.max(0, Math.min(1, (p.y - frame.y) / frame.height)) });
-  const spec: PlacementStandard = { ...base, structureType: structure, landmarks: estimatedLandmarks(structure, face, measure).map(l => ({ ...l, point: local(l.point) })), positions: [] };
+  // Armpits sit at the width the composite uses, so the untouched catalog view matches the mockup.
+  const torso = bodyWidthPx ? bodyWidthPx / pixel.width * frame.width : plausibleTorso(structure, measure.bodyWidth, frame.width) ?? frame.width * UNMEASURED_TORSO_SHARE;
+  const spec: PlacementStandard = { ...base, structureType: structure, landmarks: estimatedLandmarks(structure, face, { ...measure, bodyWidth: torso }).map(l => ({ ...l, point: local(l.point) })), positions: [] };
   const s = sopStructureFromStandard(spec, pixel, bodyWidthPx);
   if (!s) return null;
   const replaced = new Set(['placket', 'zipper', 'hood', 'hood-neck']);
