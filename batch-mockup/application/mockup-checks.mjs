@@ -1,12 +1,10 @@
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 import { createCanvas, GlobalFonts } from '@napi-rs/canvas';
+import {judgeLogoColors} from '../../lib/logo-color-sop.ts';
+import {colorProblem,garmentColorUnder,logoColorAnalysis} from './mockup-color.mjs';
 const FONT='MockupNote';let fontReady=false;
 function ensureFont(){if(fontReady)return;if(!GlobalFonts.registerFromPath(fileURLToPath(new URL('../../public/fonts/DOUYINSANSBOLD.TTF',import.meta.url)),FONT))throw Error('效果图标注字体加载失败');fontReady=true;}
-const linear=v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;};
-const luminance=(r,g,b)=>.2126*linear(r)+.7152*linear(g)+.0722*linear(b);
-const contrast=(a,b)=>(Math.max(a,b)+.05)/(Math.min(a,b)+.05);
-function hsv(r,g,b){const max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min;let h=0;if(d){h=max===r?((g-b)/d)%6:max===g?(b-r)/d+2:(r-g)/d+4;h*=60;if(h<0)h+=360;}return {h,s:max?d/max:0};}
 /** Downsampled alpha of a placed image, used for garment coverage and logo shape. */
 export async function alphaSamples(bytes,width,height,step=4){
  const w=Math.max(1,Math.ceil(width/step)),h=Math.max(1,Math.ceil(height/step));
@@ -26,22 +24,13 @@ export function outsideGarment(logo,left,top,face){
   if(gx<0||gy<0||gx>=g.width||gy>=g.height||g.data[gy*g.width+gx]<128)out++;}
  return total?out/total:0;
 }
-/**
- * SOP 5: a logo needs a clear lightness step from the garment and should not be a
- * saturated opposite hue (大红配大绿). Only reports; the artwork color is never changed.
- */
+/** SOP 5: the logo as placed, judged against the garment under it. Only reports; recoloring is decided in mockups. */
 export async function colorIssue(logoBytes,w,h,baseRaw,left,top){
- const {data:logo}=await sharp(logoBytes).resize(w,h,{fit:'fill'}).ensureAlpha().raw().toBuffer({resolveWithObject:true});
- const garment=[],hues=[];
- for(let y=0;y<h;y+=2)for(let x=0;x<w;x+=2){const X=left+x,Y=top+y;if(X<0||Y<0||X>=baseRaw.info.width||Y>=baseRaw.info.height)continue;const i=(Y*baseRaw.info.width+X)*baseRaw.info.channels,r=baseRaw.data[i],g=baseRaw.data[i+1],b=baseRaw.data[i+2];garment.push(luminance(r,g,b));hues.push(hsv(r,g,b));}
- if(!garment.length)return null;
- const order=garment.map((l,i)=>[l,i]).sort((a,b)=>a[0]-b[0]),[bg,mid]=order[order.length>>1],back=hues[mid];
- let total=0,readable=0,clash=0;
- for(let i=0;i<w*h;i+=3){if(logo[i*4+3]<128)continue;const r=logo[i*4],g=logo[i*4+1],b=logo[i*4+2];total++;if(contrast(luminance(r,g,b),bg)>=1.8)readable++;const c=hsv(r,g,b),d=Math.abs(c.h-back.h),hue=Math.min(d,360-d);if(c.s>=.55&&back.s>=.55&&hue>=100)clash++;}
- if(!total)return null;
- if(readable/total<.5)return 'Logo 与衣服颜色深浅接近，3 米外可能看不清；SOP：深色衣服配浅色 Logo、浅色衣服配深色 Logo，请核对颜色';
- if(clash/total>.5)return 'Logo 与衣服为高饱和撞色，容易刺眼、显得不专业；SOP 建议改用低饱和大面积配小面积点缀，请核对颜色';
- return null;
+ const garment=garmentColorUnder(baseRaw,left,top,w,h),analysis=garment&&await logoColorAnalysis(logoBytes);
+ if(!analysis)return null;
+ const verdict=judgeLogoColors(analysis,garment);
+ if(verdict.ok)return null;
+ return verdict.reason==='clash'?`${colorProblem(verdict)}；SOP 建议改用低饱和大面积配小面积点缀，请核对颜色`:`${colorProblem(verdict)}；SOP：深色衣服配浅色 Logo、浅色衣服配深色 Logo，请核对颜色`;
 }
 const cm=v=>`${+v.toFixed(1)}cm`;
 /** SOP 2.2: when the customer fixed a size, the mockup states it; irregular logos also state the height. */

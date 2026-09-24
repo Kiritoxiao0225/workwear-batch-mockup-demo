@@ -5,6 +5,12 @@ import { hash, jsonFile, saveJSON, atomicFile, assetPath, fail, readBytes } from
 import { inspectPixels, withoutFaintSpecks } from '../adapters/production-images.mjs';
 import { readRepairState } from './production-repair.mjs';
 const directory=(root,id)=>{if(!/^[a-f0-9]{64}$/.test(id||''))throw fail('制作编号无效');return resolve(root,'production-jobs',id);};
+/** A saved edit that gives an image layer a solid color is the designer's color choice for the artwork. */
+export async function editRecolorsArtwork(root,job){
+ const revision=job?.repair?.draftRevision;if(!revision)return false;
+ const draft=(await jsonFile(resolve(directory(root,job.id),`edit-${revision}.json`),null))?.draft;
+ return !!draft&&[draft.graphic,...draft.extraGraphics||[]].some(g=>g?.recolor?.mode==='solid');
+}
 export async function readProductionEdit(root,id){
  const dir=directory(root,id),job=await jsonFile(resolve(dir,'state.json'),null);
  if(!job?.raw||['running','queued','unknown'].includes(job.status))throw fail('制作尚未完成，暂不能编辑',409);

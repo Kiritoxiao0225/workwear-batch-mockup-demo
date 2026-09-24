@@ -198,3 +198,52 @@ test('长袖贴身时轮廓测宽等于整件宽度，不当作衣身；无袖�
  assert.equal(plausibleTorso('polo',.47,.786),.47);
  assert.equal(plausibleTorso('vest',.7,.72),.7);
 });
+const colorFixture=async root=>{
+ const shape=(body,accent='')=>Buffer.from(`<svg width="200" height="200"><path fill="${body}" d="M30 15H70L98 50L88 80L72 70V190H28V70L12 80L2 50ZM130 15H170L198 50L188 80L172 70V190H128V70L112 80L102 50Z"/>${accent}</svg>`);
+ const frame=await sharp({create:{width:FRAME.width,height:FRAME.height,channels:4,background:'white'}}).png().toBuffer();
+ const garments={},styles=[];
+ const add=async(id,colorName,svg)=>{const bytes=await sharp(svg).png().toBuffer();garments[id]={bytes,detail:{id,assetVersionId:'a'+id,styleCode:'S',colorName,sha256:hash(bytes),width:200,height:200,views:[{face:'front',crop:{x:0,y:0,width:.5,height:1},history:[]},{face:'back',crop:{x:.5,y:0,width:.5,height:1},history:[]}]}};styles.push({id,colorName});};
+ await add('44444444-4444-4444-8444-444444444441','理想绿',shape('#2b4b48'));
+ await add('44444444-4444-4444-8444-444444444442','白色',shape('#f4f4f4'));
+ // 米白 body with wine sleeves on both faces: a two-tone garment.
+ await add('44444444-4444-4444-8444-444444444443','米白酒红',shape('#efe6d2','<path fill="#7a1f2b" d="M30 15L2 50L12 80L28 70ZM70 15L98 50L88 80L72 70ZM130 15L102 50L112 80L128 70ZM170 15L198 50L188 80L172 70Z"/>'));
+ const catalog={styles:async()=>[{styleCode:'S',colors:styles}],detail:async id=>garments[id].detail,bytes:async d=>garments[d.id].bytes,frame:async()=>frame};
+ const logo=async color=>{const bytes=await sharp({create:{width:100,height:100,channels:4,background:'#0000'}}).composite([{input:await sharp({create:{width:60,height:40,channels:4,background:color}}).png().toBuffer(),left:20,top:30}]).png().toBuffer();const file={asset:`production-results/${color.slice(1)}.png`,sha256:hash(bytes),width:100,height:100};await atomicFile(assetPath(root,file.asset),bytes);return file;};
+ const prompt=color=>`【后背图稿】\n\n主体：使用图1完整Logo。\n\n文字：沿用图1已有文字，不改写。\n\n字体：沿用图1。\n\n颜色：${color}\n\n排版：保持图1原有构图。\n\n尺寸：原需求未指定图稿尺寸。\n\n输出：一张独立平面图稿。`;
+ const render=(caseId,colors,color,job)=>renderMockups(root,{caseId,revision:1,draft:{artworks:[{...artwork('logo',colors.map(c=>({style:'S',color:c,position:'后背'}))),prompt:prompt(color)}]}},[job],catalog);
+ const pixel=async(asset,x,y)=>{const {data,info}=await sharp(await readFile(assetPath(root,asset))).raw().toBuffer({resolveWithObject:true});const i=(Math.round(y)*info.width+Math.round(x))*info.channels;return [data[i],data[i+1],data[i+2]];};
+ return {logo,render,pixel};
+};
+test('SOP 5 自动改色：深衣服上看不清的 Logo 改成白色，改色文件就是这个衣色的配色版本；客户指定颜色时不改',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'mockups-color-'));
+ try{
+  const {logo,render,pixel}=await colorFixture(root),file=await logo('#031827'),job={id:'a'.repeat(64),artworkId:'logo',revision:1,final:file};
+  let card=(await render('C1',['理想绿'],'沿用图1原有配色。',job)).cards[0];const layer=card.layers[0];
+  assert.deepEqual(layer.colorResult,{color:'#ffffff',source:'auto',blocked:null,recommended:{color:'#ffffff',label:'白色'}});
+  assert.deepEqual(await pixel(card.render.asset,layer.x*FRAME.width,layer.y*FRAME.height),[255,255,255]);
+  // The recolored file is what the artwork column offers for this garment color; the artwork itself is untouched.
+  assert.notEqual(layer.asset,layer.sourceAsset);assert.deepEqual(await pixel(layer.asset,5,5),[255,255,255]);assert.equal(job.repair,undefined);
+  assert.ok(card.hints.some(h=>h.startsWith('后背：Logo 与衣服颜色深浅接近')&&h.includes('已按 SOP 改为白色')&&h.includes('图稿列有这个颜色的版本可下载')));assert.deepEqual(card.warnings,[]);
+  const again=(await render('C1',['理想绿'],'沿用图1原有配色。',job)).cards[0];assert.equal(again.render.sha256,card.render.sha256);
+  card=(await render('C1',['理想绿'],'Logo 保持藏蓝色，客户指定。',job)).cards[0];
+  assert.equal(card.layers[0].colorResult.blocked,'customer');assert.equal(card.layers[0].asset,card.layers[0].sourceAsset);
+  assert.ok(card.warnings.some(w=>w.includes('图稿写明了颜色要求，未自动改色；建议改为白色')));
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+test('SOP 5 自动改色：设计师在编辑器设过颜色不改；一份图稿配不同衣色各自判断；撞色款取衣服第二多的颜色',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'mockups-color-'));
+ try{
+  const {logo,render}=await colorFixture(root),navy=await logo('#031827');
+  const edited='b'.repeat(64);await saveJSON(join(root,'production-jobs',edited,'edit-1.json'),{draft:{graphic:{recolor:{mode:'solid',color:'#031827'}},extraGraphics:[]}});
+  const manual=(await render('C2',['理想绿'],'沿用图1原有配色。',{id:edited,artworkId:'logo',revision:1,final:navy,repair:{file:navy,draftRevision:1}})).cards[0];
+  assert.equal(manual.layers[0].colorResult.source,'manual');assert.equal(manual.layers[0].asset,manual.layers[0].sourceAsset);assert.ok(manual.warnings.some(w=>w.includes('深浅接近')));
+
+  const shared='c'.repeat(64),both=await render('C3',['理想绿','白色'],'沿用图1原有配色。',{id:shared,artworkId:'logo',revision:1,final:navy});
+  const green=both.cards.find(c=>c.color==='理想绿'),white=both.cards.find(c=>c.color==='白色');
+  assert.equal(green.layers[0].colorResult.color,'#ffffff');assert.equal(white.layers[0].colorResult.color,null);
+  assert.deepEqual([...green.warnings,...white.warnings],[]);assert.equal(white.layers[0].asset,white.layers[0].sourceAsset);
+
+  const pale=await logo('#d9d9d9'),twoTone=(await render('C4',['米白酒红'],'沿用图1原有配色。',{id:'d'.repeat(64),artworkId:'logo',revision:1,final:pale})).cards[0];
+  assert.equal(twoTone.layers[0].colorResult.recommended.label,'衣服撞色');assert.ok(twoTone.hints.some(h=>/已按 SOP 改为衣服撞色 #7a[12][0-9a-f]2b/.test(h)));
+ }finally{await rm(root,{recursive:true,force:true});}
+});

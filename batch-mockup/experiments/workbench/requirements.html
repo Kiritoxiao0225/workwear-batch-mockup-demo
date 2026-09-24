@@ -65,7 +65,7 @@ function compactPrompt(c,art){return `<div class="compact-prompt">${promptParts(
 // Preview contrast is CSS only; image bytes and saved artwork never change.
 const previewTones=new Map();
 function paintPreview(image){
-const frame=image.closest('.production-image');if(!frame)return;
+const frame=image.closest('.production-image,.color-version-image');if(!frame)return;
 const key=image.currentSrc||image.src;
 if(image.complete&&image.naturalWidth&&!previewTones.has(key)){
  let tone='gray';
@@ -74,11 +74,16 @@ if(image.complete&&image.naturalWidth&&!previewTones.has(key)){
 }
 frame.dataset.previewTone=previewTones.get(key)||'gray';
 }
-document.addEventListener('load',e=>{if(e.target.matches?.('.production-image img'))paintPreview(e.target)},true);
+document.addEventListener('load',e=>{if(e.target.matches?.('.production-image img,.color-version-image img'))paintPreview(e.target)},true);
+// Mockups recolor a logo per garment color (SOP 5); each color they chose is a version to print from.
+function colorVersions(c,artId){const versions=new Map();
+for(const card of c.mockups?.cards||[])for(const l of card.layers||[]){const r=l.colorResult;if(l.artworkId!==artId||r?.source!=='auto'||!r.color)continue;
+ const v=versions.get(r.color)||{label:['图稿原有色','衣服撞色'].includes(r.recommended.label)?r.recommended.label+' '+r.color:r.recommended.label,asset:l.asset,garments:new Set()};v.garments.add(card.garment?.color||card.color);versions.set(r.color,v);}
+return [...versions.values()];}
 function productionHTML(c){
 const labels={queued:'排队中',running:'制作中',returned:'已返回 · 待看图',partial:'已有原图 · 抠图未完成',blocked:'缺少制作条件',failed:'制作失败',unknown:'结果未知 · 未重试'};
 return `<div class="production-gallery" style="--items:${Math.min(c.draft?.artworks.length||1,3)}">`+(c.draft?.artworks||[]).map(a=>{const j=c.productions?.filter(j=>j.artworkId===a.id).at(-1),file=j?.repair?.file||j?.final||j?.raw;
-return `<div class="production-card"><h3>${esc(a.name)}</h3><div class="production-state">${j?labels[j.status]||j.status:'尚未制作'}${j?.repair?' · 已人工修改':''}</div>${file?`<button class="production-image" data-preview-tone="gray" data-action="artwork-edit" data-case="${esc(c.caseId)}" data-job="${j.id}" aria-label="编辑 ${esc(c.caseId+' '+a.name)}"><img src="/${esc(file.asset)}" loading="lazy" alt="${esc(c.caseId+' '+a.name)}"></button>`:'<div class="production-empty">等待制作结果</div>'}<button class="regenerate-artwork" data-action="generate" data-art="${esc(a.id)}" data-case="${esc(c.caseId)}" ${!data.generationEnabled?'disabled':''}>${j?'重新生成':'生成图稿'}</button>${j&&(j.revision!==c.revision||j.supplementRevision!==c.supplement.revision)?'<div class="issue">要求已修改，此图使用的是之前保存的版本。</div>':''}${j?.error?`<div class="issue">${esc(j.error)}</div>`:''}${j?.warning?`<div class="issue">${esc(j.warning)}</div>`:''}${j&&data.productionReview?.[j.id]?`<div class="issue"><strong>图稿初查提醒</strong>${esc(data.productionReview[j.id].note)}</div>`:''}</div>`}).join('')+'</div>';
+return `<div class="production-card"><h3>${esc(a.name)}</h3><div class="production-state">${j?labels[j.status]||j.status:'尚未制作'}${j?.repair?' · 已人工修改':''}</div>${file?`<button class="production-image" data-preview-tone="gray" data-action="artwork-edit" data-case="${esc(c.caseId)}" data-job="${j.id}" aria-label="编辑 ${esc(c.caseId+' '+a.name)}"><img src="/${esc(file.asset)}" loading="lazy" alt="${esc(c.caseId+' '+a.name)}"></button>`:'<div class="production-empty">等待制作结果</div>'}${colorVersions(c,a.id).map(v=>`<a class="color-version" href="/${esc(v.asset)}" download="${esc(c.caseId+'-'+a.name+'-'+v.label)}.png" title="下载${esc(v.label)}版"><span class="color-version-image" data-preview-tone="gray"><img src="/${esc(v.asset)}" loading="lazy" alt="${esc(a.name+' '+v.label+'版')}"></span><span>${esc(v.label)}版 · ${esc([...v.garments].join('、'))}用 · 下载</span></a>`).join('')}<button class="regenerate-artwork" data-action="generate" data-art="${esc(a.id)}" data-case="${esc(c.caseId)}" ${!data.generationEnabled?'disabled':''}>${j?'重新生成':'生成图稿'}</button>${j&&(j.revision!==c.revision||j.supplementRevision!==c.supplement.revision)?'<div class="issue">要求已修改，此图使用的是之前保存的版本。</div>':''}${j?.error?`<div class="issue">${esc(j.error)}</div>`:''}${j?.warning?`<div class="issue">${esc(j.warning)}</div>`:''}${j&&data.productionReview?.[j.id]?`<div class="issue"><strong>图稿初查提醒</strong>${esc(data.productionReview[j.id].note)}</div>`:''}</div>`}).join('')+'</div>';
 }
 function render(){if(!data||inlineActive()||mockupEditor.isEditing()||$('#requirement-drawer').open)return;const q=$('#search').value.toLowerCase(),filter=$('#filter').value;
 const list=data.cases.map(current).filter(c=>JSON.stringify([c.caseId,c.sourceText,c.draft]).toLowerCase().includes(q)).filter(c=>filter==='history'||c.active!==false).filter(c=>filter==='all'||filter==='history'||filter==='issue'&&(c.draft?.readingIssues.length||c.notes.length||c.needsReanalysis||c.analysis?.error));
@@ -106,7 +111,7 @@ ${a?.error?`<div class="issue">${esc(a.error)}</div>`:''}
 <div class="actions analysis-actions ${!c.draft||c.needsReanalysis||a?.error||a?.proposedDraft?'needs-analysis':''}"><button data-action="analyze" data-case="${esc(c.caseId)}" ${a?.status==='running'||busy.has(c.caseId)?'disabled':''}>${c.draft?'重新识别本条':'识别本条'}</button>${a?.proposedDraft?`<button data-action="adopt" data-case="${esc(c.caseId)}">查看新识别结果</button>`:''}</div><details class="more-settings" data-detail="settings-${esc(c.caseId)}"><summary>其他设置</summary><div class="actions"><button data-action="edit" data-case="${esc(c.caseId)}" ${!c.draft?'disabled':''}>款色、路线与素材关联</button></div></details></div></td>
 <td><div class="cell-body">${productionHTML(c)}</div></td><td><div class="cell-body">${mockupEditor.html(c)}</div></td></tr>`}).join('')||'<tr><td colspan="4" class="empty">没有匹配的需求</td></tr>';
 for(const row of $('#rows').querySelectorAll('tr[id]')){const n=row.querySelectorAll('.issue').length;if(n){const b=document.createElement('button');b.className='compact-warning';b.dataset.action='expand-row';b.dataset.case=row.id;b.textContent=`${n} 项提醒 · 展开查看`;row.querySelector('.source .meta').after(b);}}
-for(const image of document.querySelectorAll('.production-image img'))paintPreview(image);
+for(const image of document.querySelectorAll('.production-image img,.color-version-image img'))paintPreview(image);
 mockupEditor.hydrate(list);
 for(const el of document.querySelectorAll('details'))if(opened.has(el.dataset.detail))el.open=true;for(const [id,w] of autosaves)saveUI(id,w.snapshot());
 }

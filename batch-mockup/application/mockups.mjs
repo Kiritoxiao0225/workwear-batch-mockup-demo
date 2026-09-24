@@ -8,6 +8,9 @@ import {PROJECTED_BODY_WIDTH_CM,SOP_STRUCTURES,UNMEASURED_TORSO_SHARE,plausibleT
 import {placementGeometry,requestedDimensions,PLACEMENT_POLICY} from './mockup-placement.mjs';
 import {clearFaintSpecks} from '../adapters/production-images.mjs';
 import {alphaSamples,annotationOverlay,annotationText,colorIssue,irregularShape,outsideGarment} from './mockup-checks.mjs';
+import {LOGO_COLOR_POLICY,analyzeLogoColors,decideLogoColor,garmentAccents,promptFixesLogoColor} from '../../lib/logo-color-sop.ts';
+import {colorMessages,garmentColorUnder,logoColorAnalysis,recolorLogo} from './mockup-color.mjs';
+import {editRecolorsArtwork} from './production-edit.mjs';
 import { hash,jsonFile,saveJSON,readBytes,atomicFile,assetPath,fail } from '../adapters/a-files.mjs';
 const stamp=()=>new Date().toISOString();
 export const FRAME={width:3252,height:2301,area:{x:144,y:282,width:2964,height:1578},gap:108,version:'ant-shirt-confirmation-frame-v2'};
@@ -87,6 +90,8 @@ export async function garmentCanvas(garment,bytes,frame,shared={}){
  for(const [n,img] of images.entries()){
   const w=Math.round(img.box.width*scale),h=Math.round(img.box.height*scale),x=Math.round(FRAME.area.x+n*(slotWidth+FRAME.gap)+(slotWidth-w)/2),y=Math.round(FRAME.area.y+(FRAME.area.height-h)/2);
   const garmentLayer=await sharp(img.bytes).resize(w,h).png().toBuffer();layers.push({input:garmentLayer,left:x,top:y});
+  // SOP 5 1.2: the garment's colors by area; the largest is the body, the rest are 撞色 a logo may take.
+  const tone=await sharp(garmentLayer).resize(320,320,{fit:'inside'}).ensureAlpha().raw().toBuffer({resolveWithObject:true});
   const confirmedSpec=img.view.history?.find(s=>s.id===img.view.confirmedId&&s.status==='confirmed')?.specification;
   const templateOnly=!!confirmedSpec&&SOP_STRUCTURES.includes(confirmedSpec.structureType)&&hasTemplateLandmarks(confirmedSpec,img.view.face,catalogReferenceType(garment.namespace??'',garment.styleCode??'').longSleeve);
   const own=templateOnly?null:confirmedSpec,borrowed=!own&&shared[img.view.face];
@@ -110,7 +115,7 @@ export async function garmentCanvas(garment,bytes,frame,shared={}){
    const spec=m&&estimatedSopStandard(type,img.view.face,frameBox,m,{width:w,height:h},bodyWidth,reference.longSleeve),s=spec&&sopStructureFromStandard(spec,{width:w,height:h},bodyWidth);
    if(s){const move=p=>p&&{x:p.x+x,y:p.y+y};structure={...s,neck:move(s.neck),leftShoulder:move(s.leftShoulder),rightShoulder:move(s.rightShoulder),leftArmpit:move(s.leftArmpit),rightArmpit:move(s.rightArmpit),center:s.center+x,bounds,exclusions:s.exclusions.map(e=>({...e,x:e.x+x,y:e.y+y}))};source=m.armpitDetected?'estimated':'estimated-rough';}
   }
-  faces.push({face:img.view.face,x,y,width:w,height:h,crop:img.crop,trim:img.box,scale,standard:standard||null,bodyWidth,bodyCenter:structure?.center??x+w/2,bodyBasis:basis,structure,structureSource:source,sharedFrom:source==='shared'?borrowed.colorName:null,templateOnly,garmentAlpha:await alphaSamples(garmentLayer,w,h)});
+  faces.push({face:img.view.face,x,y,width:w,height:h,crop:img.crop,trim:img.box,scale,standard:standard||null,bodyWidth,bodyCenter:structure?.center??x+w/2,bodyBasis:basis,structure,structureSource:source,sharedFrom:source==='shared'?borrowed.colorName:null,templateOnly,garmentAlpha:await alphaSamples(garmentLayer,w,h),accents:garmentAccents(analyzeLogoColors(tone.data,tone.info.width,tone.info.height))});
  }
  const meta=await sharp(frame).metadata();if(meta.width!==FRAME.width||meta.height!==FRAME.height)throw fail('效果图边框尺寸不匹配');
  return {bytes:await sharp(frame).composite(layers).png().toBuffer(),faces};
@@ -150,7 +155,8 @@ export async function renderMockups(root,c,jobs,catalog){
     selected.push({position,info,artId,job,file,sizeReference});
    }
    for(const l of card.layers)if(l.placementBasis==='unconfirmed-preview')warnings.push(l.position+'：此款衣身尚未标定，当前为可调整的比例预览；厘米尺寸需在素材库确认左右腋点。');
-   const inputHash=hash(JSON.stringify({placementPolicy:PLACEMENT_POLICY,garment:garment.sha256,views:garment.views,sharing,annotateSize:!!card.annotateSize,frame:FRAME.version,selections:card.selections,layers:card.layers.map(({id,x,y,width})=>({id,x,y,width})),files:selected.map(s=>[s.file.sha256,c.draft.artworks.find(a=>a.id===s.artId)?.prompt,s.sizeReference])}));
+   const renderKey=layers=>hash(JSON.stringify({placementPolicy:PLACEMENT_POLICY,colorPolicy:LOGO_COLOR_POLICY,garment:garment.sha256,views:garment.views,sharing,annotateSize:!!card.annotateSize,frame:FRAME.version,selections:card.selections,layers:layers.map(({id,x,y,width})=>({id,x,y,width})),files:selected.map(s=>[s.file.sha256,c.draft.artworks.find(a=>a.id===s.artId)?.prompt,s.sizeReference])}));
+   const inputHash=renderKey(card.layers);
    if(card.render?.inputHash===inputHash&&['ready','preview'].includes(card.status)){warnings.push(...layerWarnings(card.layers));if(JSON.stringify(card.warnings)!==JSON.stringify(warnings)){card.warnings=warnings;card.status=warnings.length?'preview':'ready';changed=true;}continue;}
    const garmentBytes=await catalog.bytes(garment);
    const shared=style?await sharedStyleStandards(garment,garmentBytes,style,async id=>{const detail=await catalog.detail(id);return {detail,bytes:await catalog.bytes(detail)};}):{};
@@ -170,15 +176,21 @@ export async function renderMockups(root,c,jobs,catalog){
     const id=hash(card.id+s.position).slice(0,24),prior=card.layers.find(l=>l.id===id&&l.artworkId===s.artId),keepPosition=prior?.positionManual??prior?.manual,keepSize=hasManualSize(prior,face,s.info);
     const initial=keepPosition&&keepSize?prior:initialPlacement(face,s.info,trimmed.box.height/trimmed.box.width,c.draft.artworks.find(a=>a.id===s.artId)?.prompt,{sizeReference:s.sizeReference});
     if(initial.basis==='unconfirmed-preview'&&!warnings.some(w=>w.startsWith(s.position+'：此款衣身')))warnings.push(s.position+'：此款衣身尚未标定，当前为可调整的比例预览；厘米尺寸需在素材库确认左右腋点。');
-    const layer={id,artworkId:s.artId,jobId:s.job.id,sourceSHA256:s.file.sha256,position:s.position,face:s.info.face,x:keepPosition?prior.x:initial.x,y:keepPosition?prior.y:initial.y,width:keepSize?prior.width:initial.width,manual:prior?.manual||false,positionManual:!!keepPosition,sizeManual:!!keepSize,placementPolicy:PLACEMENT_POLICY,placementBasis:initial.basis||prior?.placementBasis,sizeCm:initial.sizeCm||null,sizeConflict:!keepSize&&initial.sizeConflict||null,requested:!!(initial.requested??prior?.requested),rule:initial.rule||prior?.rule||null,asset,ratio:trimmed.box.height/trimmed.box.width};
+    const layer={id,artworkId:s.artId,jobId:s.job.id,sourceSHA256:s.file.sha256,position:s.position,face:s.info.face,x:keepPosition?prior.x:initial.x,y:keepPosition?prior.y:initial.y,width:keepSize?prior.width:initial.width,manual:prior?.manual||false,positionManual:!!keepPosition,sizeManual:!!keepSize,placementPolicy:PLACEMENT_POLICY,placementBasis:initial.basis||prior?.placementBasis,sizeCm:initial.sizeCm||null,sizeConflict:!keepSize&&initial.sizeConflict||null,requested:!!(initial.requested??prior?.requested),rule:initial.rule||prior?.rule||null,asset,sourceAsset:asset,ratio:trimmed.box.height/trimmed.box.width};
     let w=Math.max(1,Math.round(layer.width*FRAME.width)),h=Math.max(1,Math.round(w*layer.ratio));
     const limit=Math.min(1,FRAME.width/w,FRAME.height/h);w=Math.max(1,Math.round(w*limit));h=Math.max(1,Math.round(h*limit));
     const left=Math.max(0,Math.min(FRAME.width-w,Math.round(layer.x*FRAME.width-w/2))),top=Math.max(0,Math.min(FRAME.height-h,Math.round(layer.y*FRAME.height-h/2)));
     const renderedX=(left+w/2)/FRAME.width,renderedY=(top+h/2)/FRAME.height;layer.x=keepPosition&&Math.abs(renderedX-prior.x)<=.501/FRAME.width?prior.x:renderedX;layer.y=keepPosition&&Math.abs(renderedY-prior.y)<=.501/FRAME.height?prior.y:renderedY;layer.width=w/FRAME.width;
-    const pxPerCm=face.bodyWidth>0?face.bodyWidth/PROJECTED_BODY_WIDTH_CM:null,logo=await sharp(trimmed.bytes).resize(w,h).png().toBuffer(),shape=await alphaSamples(logo,w,h);
+    // SOP 5: judged against the garment under the logo. The recolored file becomes the layer asset: dragging shows it, and the artwork column lists it as this garment color's version.
+    const prompt=c.draft.artworks.find(a=>a.id===s.artId)?.prompt,garmentColor=garmentColorUnder(baseRaw,left,top,w,h),analysis=garmentColor&&await logoColorAnalysis(trimmed.bytes);
+    const decision=analysis?decideLogoColor(analysis,garmentColor,{setByDesigner:await editRecolorsArtwork(root,s.job),fixedByCustomer:promptFixesLogoColor(prompt),accents:face.accents}):null;let art=trimmed.bytes;
+    if(decision?.color){art=await recolorLogo(trimmed.bytes,decision.color);layer.asset=`mockup-assets/logo-${hash(art)}.png`;await atomicFile(assetPath(root,layer.asset),art);}
+    layer.colorResult=decision&&{color:decision.color,source:decision.source,blocked:decision.blocked,recommended:{color:decision.recommendation.color,label:decision.recommendation.label}};
+    const said=colorMessages(decision);if(said.hint)notes.push(`${s.position}：${said.hint}`);
+    const pxPerCm=face.bodyWidth>0?face.bodyWidth/PROJECTED_BODY_WIDTH_CM:null,logo=await sharp(art).resize(w,h).png().toBuffer(),shape=await alphaSamples(logo,w,h);
     // A manual resize is reported as what is now on the garment; an automatic size keeps its exact rule value.
     if(pxPerCm&&(keepSize||!layer.sizeCm))layer.sizeCm={width:w/pxPerCm,height:h/pxPerCm};
-    layer.checks=[...(keepPosition&&keepSize?[]:initial.warnings||[]),...[outsideGarment(shape,left,top,face)>.03?'Logo 有部分超出衣服轮廓，请调整位置或尺寸':null,await colorIssue(logo,w,h,baseRaw,left,top)].filter(Boolean)];
+    layer.checks=[...(keepPosition&&keepSize?[]:initial.warnings||[]),...[outsideGarment(shape,left,top,face)>.03?'Logo 有部分超出衣服轮廓，请调整位置或尺寸':null,said.warning||await colorIssue(logo,w,h,baseRaw,left,top)].filter(Boolean)];
     if(layer.rule&&!layer.positionManual)notes.push(`${s.position}：${layer.rule}${layer.sizeCm?`，约宽${+layer.sizeCm.width.toFixed(1)}×高${+layer.sizeCm.height.toFixed(1)}厘米`:''}`);
     // SOP 2.2: customer-fixed sizes are written on the mockup; irregular outlines also give the height.
     if(layer.requested&&layer.sizeCm){const withHeight=irregularShape(shape)||!!requestedDimensions(c.draft.artworks.find(a=>a.id===s.artId)?.prompt)?.height;layer.annotation={text:annotationText(layer.sizeCm,withHeight),withHeight,box:{left,top,w,h}};if(!card.annotateSize)notes.push(`${s.position}：客户指定尺寸，${layer.annotation.text}（可在效果图上显示标注）`);}else delete layer.annotation;
@@ -190,7 +202,7 @@ export async function renderMockups(root,c,jobs,catalog){
    const bytes=await sharp(base.bytes).composite(composited).png().toBuffer(),sha256=hash(bytes),asset=`mockup-results/${card.id}/${sha256}.png`;await atomicFile(assetPath(root,asset),bytes);
    if(card.render&&card.render.sha256!==sha256)state.history.push({cardId:card.id,...card.render});
    card.layers=layers;card.base={asset:baseAsset,sha256:baseHash};card.garment={id:garment.id,style:garment.styleCode,color:garment.colorName,assetVersionId:garment.assetVersionId,sha256:garment.sha256};
-   card.render={asset,sha256,bytes:bytes.length,width:FRAME.width,height:FRAME.height,inputHash:hash(JSON.stringify({placementPolicy:PLACEMENT_POLICY,garment:garment.sha256,views:garment.views,sharing,annotateSize:!!card.annotateSize,frame:FRAME.version,selections:card.selections,layers:layers.map(({id,x,y,width})=>({id,x,y,width})),files:selected.map(s=>[s.file.sha256,c.draft.artworks.find(a=>a.id===s.artId)?.prompt,s.sizeReference])})),renderedAt:stamp()};card.warnings=warnings;card.hints=notes;card.status=warnings.length?'preview':'ready';card.note='按效果图SOP放置，尺寸按投影衣身40厘米换算；人工排版保留。';changed=true;
+   card.render={asset,sha256,bytes:bytes.length,width:FRAME.width,height:FRAME.height,inputHash:renderKey(layers),renderedAt:stamp()};card.warnings=warnings;card.hints=notes;card.status=warnings.length?'preview':'ready';card.note='按效果图SOP放置，尺寸按投影衣身40厘米换算；人工排版保留。';changed=true;
   }catch(e){card.status='failed';card.error=e.message;changed=true;}
  }
  const retained=state.cards.filter(card=>groups.some(g=>g.id===card.id));if(retained.length!==state.cards.length)changed=true;state.cards=retained;
