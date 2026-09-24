@@ -57,6 +57,8 @@ export async function saveMockupSelection(root,c,body){
  const group=mockupGroups(c).find(g=>g.id===body.cardId);if(!group)throw fail('这份效果图已不在当前要求中',409);
  let card=state.cards.find(x=>x.id===body.cardId);if(!card){card={...group,layers:[],variantId:null};state.cards.push(card);}
  if(body.variantId!==undefined){if(!/^[0-9a-f-]{36}$/.test(body.variantId))throw fail('请选择有效的衣服款色');if(card.variantId!==body.variantId){card.layouts??={};if(card.variantId)card.layouts[card.variantId]={layers:card.layers,assetVersionId:card.assetVersionId};const saved=card.layouts[body.variantId];card.variantId=body.variantId;card.assetVersionId=saved?.assetVersionId||null;card.layers=saved?.layers||[];}}
+ // SOP 2.2 size notes are drawn only when the designer turns them on for this card.
+ if(body.annotateSize!==undefined){if(typeof body.annotateSize!=='boolean')throw fail('尺寸标注开关无效');card.annotateSize=body.annotateSize;}
  if(body.selections){for(const [position,id] of Object.entries(body.selections))if(!group.slots[position]?.some(a=>a.id===id))throw fail('图稿不属于当前衣服位置');card.selections={...card.selections,...body.selections};}
  if(body.layers){if(!Array.isArray(body.layers)||body.layers.length!==card.layers.length)throw fail('图层数量不一致');
   card.layers=body.layers.map(l=>{const prior=card.layers.find(p=>p.id===l.id);if(!prior||!['x','y','width'].every(k=>typeof l[k]==='number'&&Number.isFinite(l[k]))||l.width<.005||l.width>1||l.x<0||l.x>1||l.y<0||l.y>1)throw fail('位置或缩放无效');const moved=l.x!==prior.x||l.y!==prior.y,resized=l.width!==prior.width;return {...prior,x:l.x,y:l.y,width:l.width,manual:prior.manual||moved||resized,positionManual:prior.positionManual??prior.manual??moved,sizeManual:prior.sizeManual??(resized?true:undefined),...(moved?{positionManual:true}:{}),...(resized?{sizeManual:true}:{})};});}
@@ -144,7 +146,7 @@ export async function renderMockups(root,c,jobs,catalog){
     selected.push({position,info,artId,job,file,sizeReference});
    }
    for(const l of card.layers)if(l.placementBasis==='unconfirmed-preview')warnings.push(l.position+'：此款衣身尚未标定，当前为可调整的比例预览；厘米尺寸需在素材库确认左右腋点。');
-   const inputHash=hash(JSON.stringify({placementPolicy:PLACEMENT_POLICY,garment:garment.sha256,views:garment.views,sharing,frame:FRAME.version,selections:card.selections,layers:card.layers.map(({id,x,y,width})=>({id,x,y,width})),files:selected.map(s=>[s.file.sha256,c.draft.artworks.find(a=>a.id===s.artId)?.prompt,s.sizeReference])}));
+   const inputHash=hash(JSON.stringify({placementPolicy:PLACEMENT_POLICY,garment:garment.sha256,views:garment.views,sharing,annotateSize:!!card.annotateSize,frame:FRAME.version,selections:card.selections,layers:card.layers.map(({id,x,y,width})=>({id,x,y,width})),files:selected.map(s=>[s.file.sha256,c.draft.artworks.find(a=>a.id===s.artId)?.prompt,s.sizeReference])}));
    if(card.render?.inputHash===inputHash&&['ready','preview'].includes(card.status)){warnings.push(...layerWarnings(card.layers));if(JSON.stringify(card.warnings)!==JSON.stringify(warnings)){card.warnings=warnings;card.status=warnings.length?'preview':'ready';changed=true;}continue;}
    const garmentBytes=await catalog.bytes(garment);
    const shared=style?await sharedStyleStandards(garment,garmentBytes,style,async id=>{const detail=await catalog.detail(id);return {detail,bytes:await catalog.bytes(detail)};}):{};
@@ -175,16 +177,16 @@ export async function renderMockups(root,c,jobs,catalog){
     layer.checks=[...(keepPosition&&keepSize?[]:initial.warnings||[]),...[outsideGarment(shape,left,top,face)>.03?'Logo 有部分超出衣服轮廓，请调整位置或尺寸':null,await colorIssue(logo,w,h,baseRaw,left,top)].filter(Boolean)];
     if(layer.rule&&!layer.positionManual)notes.push(`${s.position}：${layer.rule}${layer.sizeCm?`，约宽${+layer.sizeCm.width.toFixed(1)}×高${+layer.sizeCm.height.toFixed(1)}厘米`:''}`);
     // SOP 2.2: customer-fixed sizes are written on the mockup; irregular outlines also give the height.
-    if(layer.requested&&layer.sizeCm){const withHeight=irregularShape(shape)||!!requestedDimensions(c.draft.artworks.find(a=>a.id===s.artId)?.prompt)?.height;layer.annotation={text:annotationText(layer.sizeCm,withHeight),withHeight,box:{left,top,w,h}};}else delete layer.annotation;
+    if(layer.requested&&layer.sizeCm){const withHeight=irregularShape(shape)||!!requestedDimensions(c.draft.artworks.find(a=>a.id===s.artId)?.prompt)?.height;layer.annotation={text:annotationText(layer.sizeCm,withHeight),withHeight,box:{left,top,w,h}};if(!card.annotateSize)notes.push(`${s.position}：客户指定尺寸，${layer.annotation.text}（可在效果图上显示标注）`);}else delete layer.annotation;
     layers.push(layer);composited.push({input:logo,left,top});
    }
    warnings.push(...layerWarnings(layers));
-   const overlay=await annotationOverlay(layers.filter(l=>l.annotation).map(l=>l.annotation),FRAME.width,FRAME.height,{left:FRAME.area.x,right:FRAME.area.x+FRAME.area.width,bottom:FRAME.area.y+FRAME.area.height});
+   const overlay=card.annotateSize&&await annotationOverlay(layers.filter(l=>l.annotation).map(l=>l.annotation),FRAME.width,FRAME.height,{left:FRAME.area.x,right:FRAME.area.x+FRAME.area.width,bottom:FRAME.area.y+FRAME.area.height});
    if(overlay)composited.push({input:overlay,left:0,top:0});
    const bytes=await sharp(base.bytes).composite(composited).png().toBuffer(),sha256=hash(bytes),asset=`mockup-results/${card.id}/${sha256}.png`;await atomicFile(assetPath(root,asset),bytes);
    if(card.render&&card.render.sha256!==sha256)state.history.push({cardId:card.id,...card.render});
    card.layers=layers;card.base={asset:baseAsset,sha256:baseHash};card.garment={id:garment.id,style:garment.styleCode,color:garment.colorName,assetVersionId:garment.assetVersionId,sha256:garment.sha256};
-   card.render={asset,sha256,bytes:bytes.length,width:FRAME.width,height:FRAME.height,inputHash:hash(JSON.stringify({placementPolicy:PLACEMENT_POLICY,garment:garment.sha256,views:garment.views,sharing,frame:FRAME.version,selections:card.selections,layers:layers.map(({id,x,y,width})=>({id,x,y,width})),files:selected.map(s=>[s.file.sha256,c.draft.artworks.find(a=>a.id===s.artId)?.prompt,s.sizeReference])})),renderedAt:stamp()};card.warnings=warnings;card.hints=notes;card.status=warnings.length?'preview':'ready';card.note='按效果图SOP放置，尺寸按投影衣身40厘米换算；人工排版保留。';changed=true;
+   card.render={asset,sha256,bytes:bytes.length,width:FRAME.width,height:FRAME.height,inputHash:hash(JSON.stringify({placementPolicy:PLACEMENT_POLICY,garment:garment.sha256,views:garment.views,sharing,annotateSize:!!card.annotateSize,frame:FRAME.version,selections:card.selections,layers:layers.map(({id,x,y,width})=>({id,x,y,width})),files:selected.map(s=>[s.file.sha256,c.draft.artworks.find(a=>a.id===s.artId)?.prompt,s.sizeReference])})),renderedAt:stamp()};card.warnings=warnings;card.hints=notes;card.status=warnings.length?'preview':'ready';card.note='按效果图SOP放置，尺寸按投影衣身40厘米换算；人工排版保留。';changed=true;
   }catch(e){card.status='failed';card.error=e.message;changed=true;}
  }
  const retained=state.cards.filter(card=>groups.some(g=>g.id===card.id));if(retained.length!==state.cards.length)changed=true;state.cards=retained;

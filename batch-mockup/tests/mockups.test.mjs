@@ -60,7 +60,13 @@ test('未匹配款色写明原因，素材库补齐后自动匹配；宽高冲�
   assert.deepEqual(card.warnings,['左胸：客户写的宽4×高1厘米与图稿比例不一致，已按宽4厘米等比放置（高约2厘米），请核对尺寸。']);
   // SOP 2.2: the customer's size is written on the mockup; both sides were given, so the height is stated too.
   assert.equal(card.layers[0].annotation.text,'Logo 最大宽度：4cm　最大高度：2cm');assert.ok(card.hints.some(h=>h.startsWith('左胸：领口下约9.5厘米')));
-  const revision=state.revision;state=await renderMockups(root,c,jobs,catalog);assert.equal(state.revision,revision);assert.deepEqual(state.cards[0].warnings,card.warnings);
+  // The note is off by default: the size is listed for the designer, the PNG stays clean until switched on.
+  assert.ok(card.hints.includes('左胸：客户指定尺寸，Logo 最大宽度：4cm　最大高度：2cm（可在效果图上显示标注）'));
+  await assert.rejects(()=>saveMockupSelection(root,c,{cardId:card.id,revision:state.revision,annotateSize:'yes'}),/尺寸标注开关无效/);
+  const plain=card.render.sha256;let on=await saveMockupSelection(root,c,{cardId:card.id,revision:state.revision,annotateSize:true});assert.equal(on.cards[0].annotateSize,true);
+  on=await renderMockups(root,c,jobs,catalog);assert.notEqual(on.cards[0].render.sha256,plain);assert.equal(on.cards[0].hints.some(h=>h.includes('客户指定尺寸')),false);
+  const off=await renderMockups(root,c,jobs,catalog);assert.equal(off.revision,on.revision);
+  assert.deepEqual(off.cards[0].warnings,card.warnings);
  }finally{await rm(root,{recursive:true,force:true});}
 });
 

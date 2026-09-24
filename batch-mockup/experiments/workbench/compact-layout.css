@@ -77,7 +77,7 @@ td{padding:0}
 .garment-card:not(.garment-expanded) .garment-stage{width:min(100%,calc((var(--compact-row) - 100px)*1.4133));margin:auto;background:none}
 .garment-card:not(.garment-expanded) .garment-tools{gap:5px;margin:3px 0 0;justify-content:center;flex-wrap:nowrap}
 .garment-card:not(.garment-expanded) .garment-tools button,.garment-card:not(.garment-expanded) .garment-tools a{font-size:9px;padding:1px 3px;white-space:nowrap}
-.garment-card:not(.garment-expanded) [data-mockup-action=render],.garment-card:not(.garment-expanded) [data-mockup-action=undo],.garment-card:not(.garment-expanded)>small,.garment-card:not(.garment-expanded)>.issue{display:none}
+.garment-card:not(.garment-expanded) [data-mockup-action=render],.garment-card:not(.garment-expanded) [data-mockup-action=annotate],.garment-card:not(.garment-expanded) [data-mockup-action=undo],.garment-card:not(.garment-expanded)>small,.garment-card:not(.garment-expanded)>.issue{display:none}
 .garment-expanded .garment-more{display:none}
 .garment-expanded .garment-selects select,.garment-expanded .garment-selects input{font-size:12px}
 .garment-options{z-index:60}

@@ -1,5 +1,5 @@
 // Editable geometry only: a completed render changes metadata/revision, not user intent.
-export const placementValue = card => ({variantId:card.variantId,selections:card.selections,layers:(card.layers||[]).map(({id,x,y,width})=>({id,x,y,width}))});
+export const placementValue = card => ({variantId:card.variantId,selections:card.selections,annotateSize:!!card.annotateSize,layers:(card.layers||[]).map(({id,x,y,width})=>({id,x,y,width}))});
 const equal=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 export function createPlacementWriter({initial,cardId,write,read,onChange=()=>{}}){
  let revision=initial.revision,base=placementValue(initial.cards.find(c=>c.id===cardId)),pending=null,flight=null,error=null;
