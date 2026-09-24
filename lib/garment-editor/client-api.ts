@@ -4,7 +4,10 @@ import { assetId } from './project-state';
 
 export async function api<T>(path:string,body?:unknown,method=body===undefined?'GET':'POST'):Promise<T>{
   const r=await fetch('/api/garment-mockup/'+path,{method,cache:'no-store',headers:body===undefined?{}:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
-  const data=await r.json();if(!r.ok)throw new Error(data.error||`请求失败 ${r.status}`);return data;
+  const data=await r.json();
+  // Keep the status and body: a save conflict carries the server's revision.
+  if(!r.ok)throw Object.assign(new Error(data.error||`请求失败 ${r.status}`),{status:r.status,data});
+  return data;
 }
 const uploads=new Map<string,Promise<string>>();
 let currentProject:string|null=null;
@@ -32,13 +35,70 @@ export async function persistentState(state:CustomizationState){
   }
   return {...state,elements};
 }
+async function blobDataUrl(blob:Blob){
+  return new Promise<string>((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result));reader.onerror=()=>reject(new Error('图片解码失败'));reader.readAsDataURL(blob);});
+}
 async function asDataUrl(url:string){
   const r=await fetch(url);if(!r.ok)throw new Error('任务图片读取失败');
-  const blob=await r.blob();return new Promise<string>((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result));reader.onerror=()=>reject(new Error('图片解码失败'));reader.readAsDataURL(blob);});
+  return blobDataUrl(await r.blob());
+}
+/** The cutout's alpha channel as a grey mask, the shape the edge-cleanup code consumes. */
+async function alphaMaskDataUrl(blob:Blob){
+  const bitmap=await createImageBitmap(blob);
+  const canvas=document.createElement('canvas');canvas.width=bitmap.width;canvas.height=bitmap.height;
+  const ctx=canvas.getContext('2d');if(!ctx)throw new Error('浏览器无法创建蒙版画布');
+  ctx.drawImage(bitmap,0,0);bitmap.close();
+  const pixels=ctx.getImageData(0,0,canvas.width,canvas.height),d=pixels.data;
+  for(let i=0;i<d.length;i+=4){const a=d[i+3];d[i]=a;d[i+1]=a;d[i+2]=a;d[i+3]=255;}
+  ctx.putImageData(pixels,0,0);return canvas.toDataURL('image/png');
+}
+export type CutoutMode='auto'|'standard'|'graphic';
+export type CutoutMeta={jobId:string;route:'cache'|'passthrough'|'local_flat'|'provider';engine:'volcengine'|'meitu'|'local'|null;model:string|null;
+  fallbackFrom:'volcengine'|'meitu'|null;cached:boolean;charged:boolean;width:number;height:number;timingMs:Record<string,number>};
+const sleep=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
+/** Background removal in one request: the image bytes go up, the transparent PNG comes back. */
+export async function cutoutImage(source:string,{mode='auto',elementId,fileName='Logo.png',signal}:{mode?:CutoutMode;elementId?:string;fileName?:string;signal?:AbortSignal}={}):Promise<{blob:Blob;meta:CutoutMeta}>{
+  const r=await fetch(source);if(!r.ok)throw new Error('原图读取失败');
+  const body=await r.blob(),id=crypto.randomUUID();
+  const headers:Record<string,string>={'Content-Type':body.type||'image/png','X-Request-Id':id,'X-Cutout-Mode':mode,'X-File-Name':encodeURIComponent(fileName)};
+  if(currentProject)headers['X-Project-Id']=currentProject;
+  if(elementId)headers['X-Element-Id']=encodeURIComponent(elementId);
+  let response:Response|null=null;
+  try{response=await fetch('/api/garment-mockup/cutouts',{method:'POST',headers,body,signal,cache:'no-store'});}
+  catch(error){
+    if(signal?.aborted)throw error;
+    // The request may have arrived. Look it up by its ID instead of paying again.
+    try{await api('cutouts/'+id);}catch{throw error;}
+  }
+  if(response&&response.status===200&&response.headers.get('content-type')?.startsWith('image/'))
+    return {blob:await response.blob(),meta:JSON.parse(decodeURIComponent(response.headers.get('x-cutout-meta')||'{}')) as CutoutMeta};
+  if(response&&response.status!==202){const data=await response.json().catch(()=>({}));throw new Error(data.error||`去背景失败（HTTP ${response.status}）`);}
+  const deadline=Date.now()+60_000;
+  while(Date.now()<deadline){
+    if(signal?.aborted)throw new DOMException('去背景继续在后台完成，可在 AI 生成记录查看','AbortError');
+    await sleep(500);
+    const job=await api<{status:string;error?:string;meta?:CutoutMeta;assets?:{state:string;result?:string}}>('cutouts/'+id);
+    if(job.status==='failed'||job.status==='unknown')throw new Error(job.error||'去背景未完成');
+    if(job.status==='succeeded'&&job.assets?.state==='done'&&job.assets.result){
+      const result=await fetch(job.assets.result);if(!result.ok)throw new Error('去背景结果读取失败');
+      return {blob:await result.blob(),meta:{...(job.meta as CutoutMeta),jobId:id}};
+    }
+  }
+  throw new Error('去背景结果待核实，不会重复扣费；稍后可在 AI 生成记录查看');
 }
 export async function garmentAiFetch(url:string,options:RequestInit):Promise<Response>{
   const action=url.endsWith('/understand')?'understand':url.endsWith('/generate-back')?'back':url.endsWith('/remove-bg')?'cutout':'generate';
   const input=JSON.parse(String(options.body));
+  if(action==='cutout'){
+    try{
+      const {blob,meta}=await cutoutImage(input.base64Image,{mode:input.mode,elementId:input.elementId,signal:options.signal??undefined});
+      // Same response shape as before: callers composite the mask onto the original.
+      return Response.json({original:await blobDataUrl(blob),mask:await alphaMaskDataUrl(blob),meta});
+    }catch(error){
+      if(error instanceof DOMException&&error.name==='AbortError')throw error;
+      return Response.json({error:error instanceof Error?error.message:'去背景失败'},{status:502});
+    }
+  }
   if(input.base64Image)input.base64Image=await ensureAsset(input.base64Image);
   delete input.imageRef;
   if(input.images)input.images=await Promise.all(input.images.map(async(i:{fileName:string;base64Image:string})=>({fileName:i.fileName,base64Image:await ensureAsset(i.base64Image,i.fileName)})));
@@ -55,10 +115,9 @@ export async function garmentAiFetch(url:string,options:RequestInit):Promise<Res
       if(action==='generate'){
         const image=result.image as Record<string,unknown>;result.image={...image,dataUrl:await asDataUrl(String(image.dataUrl))};
       }else if(action==='back')result.image=await asDataUrl(String(result.image));
-      else if(action==='cutout'){result.mask=await asDataUrl(String(result.mask));result.original=await asDataUrl(String(result.original));}
       return Response.json(result);
     }
-    await new Promise(resolve=>setTimeout(resolve,2000));
+    await new Promise(resolve=>setTimeout(resolve,1000));
   }
 }
 export async function draftStore(key:string,value?:unknown):Promise<unknown>{

@@ -5,7 +5,7 @@
 
 import React, { useCallback, useRef, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { garmentAiFetch } from '@/lib/garment-editor/client-api';
+import { garmentAiFetch, type CutoutMeta, type CutoutMode } from '@/lib/garment-editor/client-api';
 import dynamic from 'next/dynamic';
 import {
   CustomizationState,
@@ -19,10 +19,8 @@ import type {
   LogoRedrawCurrentReference,
 } from '@/components/garment-editor/LogoRedrawFlow';
 import {
-  Upload, Type, ImageIcon,
-  ChevronRight, LayoutGrid, RefreshCcw, Sparkles,
-  X, FileUp, ClipboardPaste, Download, Maximize2, ChevronLeft,
-  Crop, Palette, Plus, Copy,
+  Upload, Type, ChevronRight, Sparkles, X, Download, Maximize2,
+  Crop, Plus, Copy, Trash2,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import ReactCrop, { type Crop as CropArea, type PixelCrop } from 'react-image-crop';
@@ -74,7 +72,16 @@ interface SidebarProps {
   selectedElementType: ElementType | null;
   onSelectElement: (id: string | null, type: ElementType | null) => void;
   onResetCanvas: () => void;
+  activeTab: SidebarTab;
+  /** Left panel content (lists, uploads) is portaled here; the inspector shows the selection. */
+  panelHost: HTMLElement | null;
+  inspectorHost: HTMLElement | null;
 }
+export type SidebarTab = 'garment' | 'logo' | 'text' | 'layers';
+type CutoutStatus =
+  | { state: 'running'; startedAt: number; mode: CutoutMode }
+  | { state: 'done'; meta?: CutoutMeta; ms: number }
+  | { state: 'failed'; error: string };
 
 interface LogoRedrawSession {
   target: LogoRedrawApplyTarget;
@@ -159,12 +166,11 @@ async function mockupAiErrorMessage(response: Response, fallback: string) {
   }
 }
 
-export default function Sidebar({ state, stateGeneration, getStateGeneration, getCurrentState, getCanvasDimensions, onUpdateState, onCollapse, isLoggedIn, selectedElementId, selectedElementType, onSelectElement, onResetCanvas }: SidebarProps) {
+export default function Sidebar({ state, stateGeneration, getStateGeneration, getCurrentState, getCanvasDimensions, onUpdateState, isLoggedIn, selectedElementId, selectedElementType, onSelectElement, activeTab, panelHost, inspectorHost }: SidebarProps) {
   const productInputRef = useRef<HTMLInputElement>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
 
-  const [activeUpload, setActiveUpload] = useState<'product' | 'logo' | null>(null);
   const [aiProcessingType, setAiProcessingType] = useState<'removeBackground' | 'generateBack' | null>(null);
   const [previewingElement, setPreviewingElement] = useState<string | null>(null);
   const [logoRedrawSession, setLogoRedrawSession] = useState<LogoRedrawSession | null>(null);
@@ -173,7 +179,6 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
   const [crop, setCrop] = useState<CropArea>();
   const [completedCrop, setCompletedCrop] = useState<PixelCrop>();
   const cropImageRef = useRef<HTMLImageElement>(null);
-  const [colorPickerTarget, setColorPickerTarget] = useState<string | null>(null);
   const logoColorRequestTokensRef = useRef(new Map<string, symbol>());
   const [logoImageBeforeCutoutById, setLogoImageBeforeCutoutById] = useState<Record<string, string>>({});
   const [logoMaskByElementId, setLogoMaskByElementId] = useState<Record<string, { mask: string; original: string }>>({});
@@ -186,6 +191,11 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
   const logoErosionUpdatePendingRef = useRef(false);
   const canvasImageOperationTokensRef = useRef(new Set<symbol>());
   const mountedRef = useRef(true);
+  const [cutoutStatusById, setCutoutStatusById] = useState<Record<string, CutoutStatus>>({});
+  const [nowTick, setNowTick] = useState(0);
+  // Auto cutout runs from upload callbacks; the ref sees the busy flag without a stale closure.
+  const aiBusyRef = useRef(false);
+  const removeLogoBackgroundRef = useRef<(logoId: string, options?: { mode?: CutoutMode; auto?: boolean }) => Promise<void>>(async () => {});
 
   const rememberMaskAppliedImage = useCallback((elementId: string, image: string, sourceImage: string) => {
     latestMaskAppliedImageRef.current.set(elementId, image);
@@ -217,6 +227,8 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
   };
 
   useEffect(() => {
+    // Strict Mode mounts, unmounts and mounts again; mark the live mount every time.
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
     };
@@ -247,8 +259,17 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
     setLogoMaskByElementId({});
     setLogoImageBeforeCutoutById({});
     setLogoErosionStrengthByElementId({});
+    setCutoutStatusById({});
+    aiBusyRef.current = false;
     setAiProcessingType(null);
   }, [stateGeneration]);
+
+  const cutoutRunning = Object.values(cutoutStatusById).some(status => status.state === 'running');
+  useEffect(() => {
+    if (!cutoutRunning) return;
+    const timer = window.setInterval(() => setNowTick(Date.now()), 200);
+    return () => window.clearInterval(timer);
+  }, [cutoutRunning]);
 
   const operationIsCurrent = useCallback(
     (operationGeneration: number) =>
@@ -305,12 +326,10 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
       toast.info('请先登录后再使用 AI Logo 重绘功能');
       return;
     }
-    setActiveUpload(null);
     setPreviewingElement(null);
     setCroppingElementId(null);
     setCrop(undefined);
     setCompletedCrop(undefined);
-    setColorPickerTarget(null);
     const currentElements = getCurrentState().elements;
     const currentSelectedLogo =
       selectedElementType === 'logo' && selectedElementId
@@ -474,7 +493,6 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
     onUpdateState(previousState =>
       removeElementFromCustomizationState(previousState, id)
     );
-    setColorPickerTarget(null);
     setLogoImageBeforeCutoutById(previousImages =>
       omitElementId(previousImages, id)
     );
@@ -486,6 +504,7 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
     );
     latestMaskAppliedImageRef.current.delete(id);
     cutoutSourceByAppliedImageKeyRef.current.delete(id);
+    setCutoutStatusById(previous => omitElementId(previous, id));
     if (selectedElementId === id) onSelectElement(null, null);
   };
 
@@ -598,6 +617,12 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
           )
         );
         onSelectElement(elementId, 'logo');
+        // Uploading a logo removes its background right away; the server skips transparent images.
+        window.setTimeout(() => {
+          if (operationIsCurrent(operationGeneration)) {
+            void removeLogoBackgroundRef.current(elementId, { auto: true });
+          }
+        }, 0);
       })
       .catch(err => {
         console.error('Logo image read failed:', err);
@@ -609,27 +634,22 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
   }, [beginCanvasImageOperation, finishCanvasImageOperation, getCurrentState, getStateGeneration, onSelectElement, onUpdateState, operationIsCurrent, selectedElementId, stateGeneration, toast]);
 
   // ---- Paste handler ----
+  // Paste an image anywhere outside a text field: the garment tab adds a garment, others a logo.
   useEffect(() => {
-    const handleGlobalPaste = (e: ClipboardEvent) => {
-      if (activeUpload === 'logo') {
-        const item = e.clipboardData?.items[0];
-        if (item?.type.startsWith('image/')) {
-          const file = item.getAsFile();
-          if (file) { readLogoImageFile(file); setActiveUpload(null); }
-        }
-        return;
-      }
-      if (activeUpload === 'product') {
-        const item = e.clipboardData?.items[0];
-        if (item?.type.startsWith('image/')) {
-          const file = item.getAsFile();
-          if (file) { readProductImageFile(file); setActiveUpload(null); }
-        }
-      }
+    const handleGlobalPaste = (event: ClipboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return;
+      if (logoRedrawSession) return;
+      const item = [...(event.clipboardData?.items ?? [])].find(entry => entry.type.startsWith('image/'));
+      const file = item?.getAsFile();
+      if (!file) return;
+      event.preventDefault();
+      if (activeTab === 'garment') readProductImageFile(file);
+      else readLogoImageFile(file);
     };
     window.addEventListener('paste', handleGlobalPaste);
     return () => window.removeEventListener('paste', handleGlobalPaste);
-  }, [activeUpload, readLogoImageFile, readProductImageFile]);
+  }, [activeTab, logoRedrawSession, readLogoImageFile, readProductImageFile]);
 
   const addTextElement = () => {
     const id = newId();
@@ -718,7 +738,7 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
   // ---- AI Features ----
   const handleGenerateBack = async () => {
     if (!isLoggedIn) { toast.info('请先登录后再使用 AI 生成背面图功能'); return; }
-    if (aiProcessingType) return;
+    if (aiProcessingType || aiBusyRef.current) return;
 
     const frontProduct = selectedProductForBackGeneration;
     if (!frontProduct?.image) {
@@ -729,6 +749,7 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
     const sourceImage = frontProduct.image;
     const backElementId = newId();
 
+    aiBusyRef.current = true;
     setAiProcessingType('generateBack');
     try {
       const res = await garmentAiFetch('/api/garment-mockup/generate-back', {
@@ -773,19 +794,25 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
         );
       }
     } finally {
+      aiBusyRef.current = false;
       if (operationIsCurrent(operationGeneration)) {
         setAiProcessingType(null);
       }
     }
   };
 
-  const handleRemoveBackground = async () => {
-    if (!isLoggedIn) { toast.info('请先登录后再使用 AI 抠图功能'); return; }
-    if (aiProcessingType) return;
+  const removeLogoBackground = async (
+    logoId: string,
+    { mode = 'auto', auto = false }: { mode?: CutoutMode; auto?: boolean } = {}
+  ) => {
+    if (!isLoggedIn) { if (!auto) toast.info('请先登录后再去背景'); return; }
+    if (aiBusyRef.current) { if (!auto) toast.info('请等待当前图片处理完成'); return; }
 
-    const logo = selectedLogoForImageEdit;
+    const logo = getCurrentState().elements.find(
+      element => element.id === logoId && element.type === 'logo'
+    );
     if (!logo?.image) {
-      toast.info('请先选择一个 Logo 再抠图');
+      if (!auto) toast.info('请先选择一个 Logo 再去背景');
       return;
     }
     const operationGeneration = stateGeneration;
@@ -809,7 +836,11 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
         : logo.imageRef;
     const erosionStrength =
       logoErosionStrengthByElementId[logo.id] ?? DEFAULT_LOGO_EDGE_CLEANUP_STRENGTH;
+    aiBusyRef.current = true;
     setAiProcessingType('removeBackground');
+    const startedAt = Date.now();
+    setNowTick(startedAt);
+    setCutoutStatusById(previous => ({ ...previous, [logo.id]: { state: 'running', startedAt, mode } }));
 
     try {
       const res = await garmentAiFetch('/api/garment-mockup/remove-bg', {
@@ -818,14 +849,16 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
         body: JSON.stringify({
           base64Image: cleanSourceImage,
           imageRef: cleanSourceImageRef,
+          mode,
+          elementId: logo.id,
         }),
       });
       if (!res.ok) {
         throw new Error(
-          await mockupAiErrorMessage(res, 'AI 抠图失败，请稍后重试')
+          await mockupAiErrorMessage(res, '去背景失败，请稍后重试')
         );
       }
-      const { mask, original } = (await res.json()) as { mask: string; original: string };
+      const { mask, original, meta } = (await res.json()) as { mask: string; original: string; meta?: CutoutMeta };
       const image = await erodedLogoMaskDataUrl(
         mask,
         original,
@@ -841,8 +874,10 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
         currentElement?.type !== 'logo' ||
         currentElement.image !== displayedSourceImage
       ) {
+        setCutoutStatusById(previous => omitElementId(previous, logo.id));
         return;
       }
+      setCutoutStatusById(previous => ({ ...previous, [logo.id]: { state: 'done', meta, ms: Date.now() - startedAt } }));
       setLogoImageBeforeCutoutById(previousImages => ({
         ...previousImages,
         [logo.id]: cleanSourceImage,
@@ -871,17 +906,20 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
       );
     } catch (err) {
       console.error('Remove background failed:', err);
+      const message = err instanceof Error ? err.message : '去背景失败，请稍后重试';
       if (operationIsCurrent(operationGeneration)) {
-        toast.error(
-          err instanceof Error ? err.message : 'AI 抠图失败，请稍后重试'
-        );
+        setCutoutStatusById(previous => ({ ...previous, [logo.id]: { state: 'failed', error: message } }));
+        if (auto) toast.info(`自动去背景未完成：${message}。可在右侧重试，原图已保留。`);
+        else toast.error(message);
       }
     } finally {
+      aiBusyRef.current = false;
       if (operationIsCurrent(operationGeneration)) {
         setAiProcessingType(null);
       }
     }
   };
+  useEffect(() => { removeLogoBackgroundRef.current = removeLogoBackground; });
 
   // Re-composite when erosion strength changes
   useEffect(() => {
@@ -1002,7 +1040,7 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
   };
 
   const handleLocalRemoveBackground = async () => {
-    if (aiProcessingType) return;
+    if (aiProcessingType || aiBusyRef.current) return;
 
     const logo = selectedLogoForImageEdit;
     if (!logo?.image) {
@@ -1011,6 +1049,7 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
     }
     const operationGeneration = stateGeneration;
     const sourceImage = logo.image;
+    aiBusyRef.current = true;
     setAiProcessingType('removeBackground');
 
     const removeWhiteBg = (src: string, tolerance = 30): Promise<string> =>
@@ -1082,6 +1121,7 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
         toast.error('本地抠图失败，请重试');
       }
     } finally {
+      aiBusyRef.current = false;
       if (operationIsCurrent(operationGeneration)) {
         setAiProcessingType(null);
       }
@@ -1195,95 +1235,330 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
     }
   };
 
-  return (
-    <div className="w-full h-full bg-canvas flex flex-col overflow-y-auto custom-scrollbar relative">
-      {/* Header */}
-      <div className="min-h-16 md:min-h-20 flex items-center justify-between px-4 md:px-8 border-b border-border flex-shrink-0 bg-white safe-top">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-brand-600 rounded-xl flex items-center justify-center">
-            <LayoutGrid className="text-white" size={20} />
-          </div>
-          <div>
-            <h1 className="text-sm font-bold text-ink tracking-tight">成衣效果图</h1>
-            <p className="text-[10px] text-ink-3 font-medium uppercase tracking-[0.1em]">图稿上衣 · 精细排版</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={onResetCanvas}
-            className="p-2 text-ink-3 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
-            title="重置所有"
-          >
-            <RefreshCcw size={16} />
-          </button>
-          <button
-            onClick={onCollapse}
-            className="p-2 text-ink-3 hover:text-ink-2 hover:bg-canvas rounded-lg transition-all"
-            title="收起侧边栏"
-          >
-            <ChevronLeft size={16} />
-          </button>
-        </div>
-      </div>
+  const openFilePicker = (kind: 'product' | 'logo') =>
+    (kind === 'product' ? productInputRef : logoInputRef).current?.click();
+  const dropFile = (kind: 'product' | 'logo') => (event: React.DragEvent) => {
+    event.preventDefault();
+    const file = event.dataTransfer.files?.[0];
+    if (!file) return;
+    if (kind === 'product') readProductImageFile(file);
+    else readLogoImageFile(file);
+  };
+  const engineLabel = (meta?: CutoutMeta) =>
+    meta?.engine === 'meitu' ? '美图图形精细' : meta?.engine === 'volcengine' ? '火山标准' : '本地';
+  const cutoutStatusText = (status: CutoutStatus) => {
+    if (status.state === 'running') {
+      const seconds = Math.max(0, (nowTick - status.startedAt) / 1000).toFixed(1);
+      return `去背景中 ${seconds}s${status.mode === 'graphic' ? ' · 美图图形精细' : ''}`;
+    }
+    if (status.state === 'failed') return `去背景未完成：${status.error}`;
+    const meta = status.meta, seconds = `${(status.ms / 1000).toFixed(1)}s`;
+    if (!meta) return `已去背景 · ${seconds}`;
+    if (meta.route === 'passthrough') return '自带透明背景，已跳过';
+    if (meta.route === 'local_flat') return `已去背景 · 纯色底本地处理 · ${seconds}`;
+    if (meta.route === 'cache') return `已去背景 · 复用同图结果（${engineLabel(meta)}）· 未扣费`;
+    const fallback = meta.fallbackFrom ? `（${meta.fallbackFrom === 'volcengine' ? '火山' : '美图'}未完成，已自动换用）` : '';
+    return `已去背景 · ${engineLabel(meta)}${fallback} · ${seconds}`;
+  };
+  // One short line for the list; the inspector shows the full status.
+  const cutoutShortText = (status: CutoutStatus) => {
+    if (status.state !== 'done') return cutoutStatusText(status);
+    const meta = status.meta;
+    if (meta?.route === 'passthrough') return '✓ 自带透明';
+    if (meta?.route === 'local_flat') return '✓ 已去背景 · 本地';
+    return `✓ 已去背景 · ${engineLabel(meta)}`;
+  };
+  const productIndex = (id: string) => products.findIndex(product => product.id === id);
 
-      {/* Upload modal */}
-      <ClientPortal>
-        <AnimatePresence>
-          {activeUpload && (
-            <motion.div
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-md flex items-center justify-center p-3 md:p-6"
-              onClick={() => setActiveUpload(null)}
-            >
-              <motion.div
-                initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
-                className="bg-white w-full max-w-sm rounded-2xl md:rounded-[32px] overflow-hidden shadow-2xl p-5 md:p-8"
-                onClick={(e) => e.stopPropagation()}
-                onPaste={(e) => {
-                  const item = e.clipboardData.items[0];
-                  if (item?.type.startsWith('image/')) {
-                    const file = item.getAsFile();
-                    if (file) {
-                      if (activeUpload === 'product') readProductImageFile(file);
-                      else readLogoImageFile(file);
-                      setActiveUpload(null);
-                    }
-                  }
-                }}
-              >
-                <div className="flex items-center justify-between mb-8">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${activeUpload === 'product' ? 'bg-brand-50' : 'bg-brand-50'}`}>
-                      <Upload size={16} className={activeUpload === 'product' ? 'text-brand-600' : 'text-brand-600'} />
-                    </div>
-                    <h3 className="font-bold text-ink">上传{activeUpload === 'product' ? '产品图' : 'Logo'}</h3>
-                  </div>
-                  <button onClick={() => setActiveUpload(null)} className="p-2 hover:bg-canvas rounded-full transition-colors">
-                    <X size={16} className="text-ink-3" />
+  const garmentPanel = (
+    <section className="gme-sec">
+      <div className="gme-sec-head"><h3>画布上的衣服</h3><span>{products.length} 件</span></div>
+      {products.length > 0 ? (
+        <ul className="gme-list">
+          {products.map((product, index) => (
+            <li key={product.id}>
+              <button type="button" className={`gme-item${selectedElementId === product.id ? ' is-active' : ''}`} onClick={() => onSelectElement(product.id, 'product')}>
+                <span className="gme-thumb"><img crossOrigin="anonymous" src={product.image} alt="" /></span>
+                <span className="gme-item-text">
+                  <b>衣服 {index + 1} · {productFace(product) === 'back' ? '背面' : '正面'}</b>
+                  <small>{logos.filter(logo => logo.placedOnProductId === product.id).length + texts.filter(text => text.placedOnProductId === product.id).length} 个定制内容</small>
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="gme-muted">还没有衣服。在上方素材库点「正面」或「背面」。</p>
+      )}
+      <button type="button" className="gme-drop gme-drop-sm" onClick={() => openFilePicker('product')} onDrop={dropFile('product')} onDragOver={event => event.preventDefault()}>
+        <Upload size={15} aria-hidden="true" />
+        <span><b>上传本地衣服图</b><small>也可以拖入，或在此页粘贴</small></span>
+      </button>
+    </section>
+  );
+
+  const logoRedrawEntry = (
+    <button
+      type="button"
+      onClick={openLogoRedraw}
+      disabled={logoRedrawEntryLocked}
+      className="gme-ai-entry"
+      aria-label={logoRedrawEntryLocked ? '当前图片处理中，暂时不能开始 Logo 重绘' : selectedLogoForImageEdit ? '重绘当前选中的 Logo' : '制作一个新 Logo 并添加到画布'}
+    >
+      <span className="gme-ai-badge"><Sparkles size={16} aria-hidden="true" /></span>
+      <span className="gme-item-text">
+        <b>{selectedLogoForImageEdit ? '重绘当前 Logo' : 'AI 制作新 Logo'}<em>AI</em></b>
+        <small>
+          {!isLoggedIn
+            ? '登录后可用 · 文字必填，参考图可选'
+            : logoRedrawEntryLocked
+              ? '当前图片处理中，完成后即可开始'
+              : selectedLogoForImageEdit
+                ? '按文字要求重新绘制，只替换当前 Logo'
+                : '只写要求也能生成，完成后添加到画布'}
+        </small>
+      </span>
+      <ChevronRight size={16} aria-hidden="true" />
+    </button>
+  );
+
+  const logoPanel = (
+    <section className="gme-sec">
+      <div className="gme-sec-head"><h3>Logo</h3><span>{logos.length} 个</span></div>
+      <button type="button" className="gme-drop" onClick={() => openFilePicker('logo')} onDrop={dropFile('logo')} onDragOver={event => event.preventDefault()}>
+        <Upload size={16} aria-hidden="true" />
+        <span><b>拖入、粘贴或点击上传</b><small>上传后自动去背景，放到当前衣服的默认位置</small></span>
+      </button>
+      {logos.length > 0 && (
+        <ul className="gme-list">
+          {logos.map((logo, index) => {
+            const status = cutoutStatusById[logo.id];
+            return (
+              <li key={logo.id}>
+                <button type="button" className={`gme-item${selectedElementId === logo.id ? ' is-active' : ''}`} onClick={() => onSelectElement(logo.id, 'logo')}>
+                  <span className="gme-thumb gme-checker"><img crossOrigin="anonymous" src={logo.image} alt="" /></span>
+                  <span className="gme-item-text">
+                    <b>Logo {index + 1}</b>
+                    {status ? (
+                      <small className={`gme-st gme-st-${status.state}`}>
+                        {status.state === 'running' && <i className="gme-spin" aria-hidden="true" />}
+                        {cutoutShortText(status)}
+                      </small>
+                    ) : (
+                      <small>{logo.placedOnProductId ? productOptionLabel(logo.placedOnProductId) : '未归属'}</small>
+                    )}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {logoRedrawEntry}
+    </section>
+  );
+
+  const textPanel = (
+    <section className="gme-sec">
+      <div className="gme-sec-head"><h3>文字</h3><span>{texts.length} 段</span></div>
+      <button type="button" className="gme-drop gme-drop-sm" onClick={addTextElement}>
+        <Plus size={15} aria-hidden="true" />
+        <span><b>添加文字</b><small>加到当前衣服，右侧可改字体、颜色和弧度</small></span>
+      </button>
+      {texts.length > 0 && (
+        <ul className="gme-list">
+          {texts.map(text => (
+            <li key={text.id}>
+              <button type="button" className={`gme-item${selectedElementId === text.id ? ' is-active' : ''}`} onClick={() => onSelectElement(text.id, 'text')}>
+                <span className="gme-thumb"><Type size={15} aria-hidden="true" /></span>
+                <span className="gme-item-text">
+                  <b>{text.text || '空文字'}</b>
+                  <small>{text.placedOnProductId ? productOptionLabel(text.placedOnProductId) : '未归属'}</small>
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+
+  const panelContent = activeTab === 'garment' ? garmentPanel : activeTab === 'logo' ? logoPanel : activeTab === 'text' ? textPanel : null;
+
+  const selectedCutout = selectedLogoForImageEditId ? cutoutStatusById[selectedLogoForImageEditId] : undefined;
+  const selectedHasCutout = !!selectedLogoForImageEditId && (!!logoMaskByElementId[selectedLogoForImageEditId] || selectedCutout?.state === 'done');
+  const selectedCutoutEngine = selectedCutout?.state === 'done' ? selectedCutout.meta : undefined;
+  const cutoutSection = selectedLogoForImageEdit && (
+    <section className="gme-insp-sec">
+      <h4>去背景</h4>
+      {selectedCutout?.state === 'running' && (
+        <>
+          <div className="gme-progress" aria-hidden="true"><i /></div>
+          <p className="gme-insp-status is-running">{cutoutStatusText(selectedCutout)}</p>
+          <p className="gme-hint">通常几秒内完成，可以先调位置。关闭页面不会重复扣费。</p>
+        </>
+      )}
+      {selectedCutout?.state === 'done' && <p className="gme-insp-status is-done">✓ {cutoutStatusText(selectedCutout)}</p>}
+      {selectedCutout?.state === 'failed' && <p className="gme-insp-status is-failed">{cutoutStatusText(selectedCutout)}</p>}
+      {selectedCutout?.state !== 'running' && (
+        selectedHasCutout && selectedCutoutEngine?.route !== 'passthrough' ? (
+          <>
+            <div className="gme-seg" role="group" aria-label="换一种去背景方式">
+              {([['standard', '标准 · 火山', 'volcengine'], ['graphic', '图形精细 · 美图', 'meitu']] as const).map(([mode, label, engine]) => {
+                const current = selectedCutoutEngine?.route !== 'local_flat' && selectedCutoutEngine?.engine === engine;
+                return (
+                  <button key={mode} type="button" aria-pressed={current} disabled={current || aiProcessingType !== null}
+                    onClick={() => void removeLogoBackground(selectedLogoForImageEdit.id, { mode })}>
+                    {label}
                   </button>
-                </div>
-                <div className="space-y-4">
-                  <button
-                    onClick={() => (activeUpload === 'product' ? productInputRef : logoInputRef).current?.click()}
-                    className={`w-full flex items-center justify-center gap-3 py-4 text-white rounded-2xl font-bold transition-all shadow-lg ${activeUpload === 'product' ? 'bg-brand-600 hover:bg-brand-700' : 'bg-brand-600 hover:bg-brand-700'}`}
-                  >
-                    <FileUp size={18} />
-                    选择电脑文件
+                );
+              })}
+            </div>
+            <p className="gme-hint">
+              {selectedCutoutEngine?.route === 'local_flat'
+                ? '纯色底已在本地免费处理。边缘不理想时，可选一种方式重做（扣 1 次积分）。'
+                : '细字、多色图形边缘不干净时，换另一种方式重做一次（扣 1 次积分）。'}
+            </p>
+          </>
+        ) : !selectedHasCutout && (
+          <button type="button" className="gme-btn-primary" disabled={aiProcessingType !== null} onClick={() => void removeLogoBackground(selectedLogoForImageEdit.id)}>
+            <Sparkles size={14} aria-hidden="true" />{selectedCutout?.state === 'failed' ? '重试去背景' : '去背景'}
+          </button>
+        )
+      )}
+      {selectedLogoForImageEditId && logoMaskByElementId[selectedLogoForImageEditId] && (
+        <label className="gme-range">
+          <span>去边强度<em>{selectedLogoErosionStrength}</em></span>
+          <input
+            type="range" min="0" max="100" value={selectedLogoErosionStrength}
+            onChange={(event) => {
+              const logoId = selectedLogoForImageEditId;
+              if (!logoId) return;
+              logoErosionUpdateSequenceRef.current += 1;
+              logoErosionUpdatePendingRef.current = true;
+              setLogoErosionUpdatePending(true);
+              setLogoErosionStrengthByElementId(previousStrengths => ({
+                ...previousStrengths,
+                [logoId]: Number(event.target.value),
+              }));
+            }}
+          />
+          <small><span>保留细节</span><span>强力去边（细字慎用）</span></small>
+        </label>
+      )}
+      <div className="gme-links">
+        <button type="button" onClick={handleLocalRemoveBackground} disabled={aiProcessingType !== null}>只去掉白色（不调用 AI）</button>
+        {selectedLogoForImageEditId && logoImageBeforeCutoutById[selectedLogoForImageEditId] && (
+          <button type="button" onClick={handleUndoRemoveBackground}>恢复原图</button>
+        )}
+      </div>
+    </section>
+  );
+
+  const elementTitle = !selectedElement ? '' : selectedElement.type === 'product'
+    ? `衣服 ${productIndex(selectedElement.id) + 1} · ${productFace(selectedElement) === 'back' ? '背面' : '正面'}`
+    : selectedElement.type === 'logo' ? `Logo ${logos.findIndex(logo => logo.id === selectedElement.id) + 1}` : '文字';
+  const footer = selectedElement && (
+    <div className="gme-insp-foot">
+      <button type="button" onClick={() => copyElement(selectedElement.id)}><Copy size={14} aria-hidden="true" />复制</button>
+      <button type="button" className="is-danger" onClick={() => deleteElement(selectedElement.id)}><Trash2 size={14} aria-hidden="true" />删除</button>
+    </div>
+  );
+
+  const inspector = selectedElement && selectedElementType === selectedElement.type ? (
+    <div className="gme-insp">
+      <div className="gme-insp-head">
+        <b>{elementTitle}</b>
+        <button type="button" aria-label="关闭属性面板" onClick={() => onSelectElement(null, null)}><X size={16} /></button>
+      </div>
+      <div className="gme-insp-body">
+        {selectedElement.type === 'product' && (
+          <>
+            <section className="gme-insp-sec">
+              <div className="gme-preview"><img crossOrigin="anonymous" src={selectedElement.image} alt="衣服预览" /></div>
+              <div className="gme-tools">
+                <button type="button" onClick={() => { setCroppingElementId(selectedElement.id); setCrop(undefined); setCompletedCrop(undefined); }}><Crop size={14} aria-hidden="true" />裁剪</button>
+              </div>
+            </section>
+            <section className="gme-insp-sec">
+              <h4>这张图是</h4>
+              <div className="gme-seg" role="group" aria-label="这张产品图片表示的面">
+                {(['front', 'back'] as const).map(face => (
+                  <button key={face} type="button" aria-pressed={productFace(selectedElement) === face} onClick={() => updateProductFace(selectedElement.id, face)}>
+                    {face === 'front' ? '正面' : '背面'}
                   </button>
-                  <div className="relative">
-                    <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-border" /></div>
-                    <div className="relative flex justify-center text-xs"><span className="px-2 bg-white text-ink-3 font-medium">或</span></div>
-                  </div>
-                  <div className="p-4 md:p-6 bg-canvas rounded-2xl border-2 border-dashed border-border text-center">
-                    <ClipboardPaste size={24} className="mx-auto text-ink-3 mb-2" />
-                    <p className="text-xs text-ink-3 font-medium">按 Ctrl+V 粘贴图片</p>
-                  </div>
-                </div>
-              </motion.div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </ClientPortal>
+                ))}
+              </div>
+              <p className="gme-hint">只标记当前这张图，用于定制位置，不会替换图片。</p>
+            </section>
+            {selectedProductForBackGeneration && !selectedProductHasGeneratedBack && (
+              <section className="gme-insp-sec">
+                <h4>背面参考</h4>
+                <button type="button" className="gme-btn" onClick={handleGenerateBack} disabled={aiProcessingType !== null}>
+                  {aiProcessingType === 'generateBack'
+                    ? <><i className="gme-spin" aria-hidden="true" />正在生成背面图…</>
+                    : <><Sparkles size={14} aria-hidden="true" />AI 生成背面图</>}
+                </button>
+                <p className="gme-hint">没有背面素材时使用，生成结果仅作参考。</p>
+              </section>
+            )}
+          </>
+        )}
+        {selectedElement.type === 'logo' && (
+          <>
+            <section className="gme-insp-sec">
+              <div className="gme-preview gme-checker"><img crossOrigin="anonymous" src={selectedElement.image} alt="Logo 预览" /></div>
+              <div className="gme-tools">
+                <button type="button" onClick={() => setPreviewingElement(selectedElement.id)}><Maximize2 size={14} aria-hidden="true" />预览</button>
+                <button type="button" onClick={() => { setCroppingElementId(selectedElement.id); setCrop(undefined); setCompletedCrop(undefined); }}><Crop size={14} aria-hidden="true" />裁剪</button>
+                <button type="button" onClick={() => handleDownloadImage(selectedElement)}><Download size={14} aria-hidden="true" />下载</button>
+              </div>
+            </section>
+            {cutoutSection}
+            <section className="gme-insp-sec">
+              <h4>位置</h4>
+              {decorationPlacementControls(selectedElement)}
+            </section>
+            <section className="gme-insp-sec">
+              <h4>颜色</h4>
+              <div className="gme-swatches">
+                {LOGO_COLORS.map(({ hex, label }) => (
+                  <button key={hex} type="button" title={label} aria-label={`改成${label}`} onClick={() => applyLogoColor(selectedElement.id, hex)} style={{ background: hex }} />
+                ))}
+                <label title="自定义颜色" className="gme-swatch-custom">
+                  <input type="color" aria-label="Logo 自定义颜色" onInput={(e) => applyLogoColor(selectedElement.id, e.currentTarget.value)} />
+                </label>
+              </div>
+              <p className="gme-hint">把整个 Logo 换成一种颜色，可用顶部撤销恢复。</p>
+            </section>
+            <section className="gme-insp-sec">{logoRedrawEntry}</section>
+          </>
+        )}
+        {selectedElement.type === 'text' && (
+          <>
+            <section className="gme-insp-sec">
+              <h4>位置</h4>
+              {decorationPlacementControls(selectedElement)}
+            </section>
+            <section className="gme-insp-sec">
+              <TextInspector
+                element={selectedElement}
+                onUpdate={(updates) => updateElement(selectedElement.id, updates)}
+                onCopy={() => copyElement(selectedElement.id)}
+                onDelete={() => deleteElement(selectedElement.id)}
+              />
+            </section>
+          </>
+        )}
+      </div>
+      {selectedElement.type !== 'text' && footer}
+    </div>
+  ) : null;
+
+  return (
+    <>
+      {panelHost && panelContent && createPortal(panelContent, panelHost)}
+      {inspectorHost && inspector && createPortal(inspector, inspectorHost)}
 
       {/* Preview modal */}
       <ClientPortal>
@@ -1351,442 +1626,16 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
         />
       )}
 
-      {/* Main content */}
-      <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 md:space-y-8">
-
-        {/* Section 1: 产品图 */}
-        <section className="space-y-4">
-          <label className="flex items-center gap-2 text-xs font-bold text-ink uppercase tracking-wider">
-            <Upload size={14} className="text-brand-600" />
-            上传产品图
-          </label>
-
-          {selectedElementType === 'product' && selectedElement ? (
-            /* Product selected: show properties */
-            <div className="space-y-3">
-              <div className="relative h-28 rounded-2xl border-2 border-brand-200 bg-brand-50/10 overflow-hidden flex items-center justify-center group">
-                <img crossOrigin="anonymous" src={selectedElement.image} alt="product" className="max-h-full max-w-full object-contain" />
-                <div className="absolute top-1 right-1 flex items-center gap-1 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => { setCroppingElementId(selectedElement.id); setCrop(undefined); setCompletedCrop(undefined); }} className="p-1 bg-brand-500 text-white rounded-md shadow-md hover:bg-brand-600" title="裁剪">
-                    <Crop size={10} />
-                  </button>
-                  <button onClick={() => copyElement(selectedElement.id)} className="p-1 bg-ink-2 text-white rounded-md shadow-md hover:bg-ink" title="复制">
-                    <Copy size={10} />
-                  </button>
-                  <button onClick={() => deleteElement(selectedElement.id)} className="p-1 bg-red-500 text-white rounded-md shadow-md hover:bg-red-600" title="删除">
-                    <X size={10} />
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid gap-2 rounded-xl border border-border bg-canvas/60 p-2.5">
-                <span className="text-[10px] font-bold text-ink-3">
-                  这张图片表示
-                </span>
-                <div
-                  className="grid grid-cols-2 gap-1 rounded-lg bg-border/40 p-1"
-                  role="group"
-                  aria-label="这张产品图片表示的面"
-                >
-                  {(['front', 'back'] as const).map(face => {
-                    const active = productFace(selectedElement) === face;
-                    return (
-                      <button
-                        key={face}
-                        type="button"
-                        aria-pressed={active}
-                        onClick={() => updateProductFace(selectedElement.id, face)}
-                        className={`h-8 rounded-md text-xs font-semibold transition-colors ${
-                          active
-                            ? 'bg-white text-brand-700 shadow-sm'
-                            : 'text-ink-3 hover:text-ink'
-                        }`}
-                      >
-                        {face === 'front' ? '正面' : '背面'}
-                      </button>
-                    );
-                  })}
-                </div>
-                <p className="text-[10px] leading-relaxed text-ink-3">
-                  这里只标记当前这张产品图，不会切换或替换下方图片。
-                </p>
-              </div>
-
-              {selectedProductForBackGeneration &&
-                !selectedProductHasGeneratedBack && (
-                <button
-                  onClick={handleGenerateBack}
-                  disabled={aiProcessingType !== null}
-                  className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition-all border ${
-                    aiProcessingType === 'generateBack'
-                      ? 'bg-brand-600 border-brand-600 text-white'
-                      : aiProcessingType !== null
-                        ? 'bg-canvas border-border text-ink-3 cursor-not-allowed'
-                        : 'bg-brand-50 border-brand-200 text-brand-700 hover:bg-brand-100'
-                  }`}
-                >
-                  {aiProcessingType === 'generateBack' ? (
-                    <><div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />正在 AI 生成背面图...</>
-                  ) : (
-                    <><Sparkles size={13} />AI 生成背面图</>
-                  )}
-                </button>
-              )}
-
-            </div>
-          ) : products.length > 0 ? (
-            /* Has products but none selected: show thumbnails */
-            <div className="space-y-2">
-              {products.map((p, productIndex) => (
-                <div
-                  key={p.id}
-                  onClick={() => onSelectElement(p.id, 'product')}
-                  className="flex items-center gap-3 p-2 rounded-xl border border-border hover:border-brand-200 hover:bg-brand-50/50 cursor-pointer transition-all"
-                >
-                  <div className="w-10 h-10 rounded-lg border border-border bg-canvas overflow-hidden flex-shrink-0 flex items-center justify-center">
-                    <img crossOrigin="anonymous" src={p.image} alt="" className="max-w-full max-h-full object-contain" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <span className="text-xs font-medium text-ink-2">
-                      产品 {productIndex + 1} · {productFace(p) === 'back' ? '背面' : '正面'}
-                    </span>
-                  </div>
-                  <button onClick={(e) => { e.stopPropagation(); deleteElement(p.id); }} className="p-1 text-ink-3 hover:text-red-500 transition-colors flex-shrink-0">
-                    <X size={12} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          ) : (
-            /* No products: show upload */
-            <div
-              onClick={() => setActiveUpload('product')}
-              onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) readProductImageFile(f); }}
-              onDragOver={(e) => e.preventDefault()}
-              className="h-28 rounded-2xl border-2 border-dashed border-border hover:border-brand-400 flex items-center justify-center gap-2 text-[11px] font-semibold text-ink-3 hover:text-brand-600 transition-all cursor-pointer"
-            >
-              <Upload size={16} />
-              点击上传产品图
-            </div>
-          )}
-
-          {products.length > 0 && (
-            <button
-              onClick={() => setActiveUpload('product')}
-              className="w-full h-9 rounded-xl border-2 border-dashed border-border bg-white hover:bg-brand-50/50 hover:border-brand-200 flex items-center justify-center gap-2 text-[10px] font-semibold text-ink-2 hover:text-brand-600 transition-all"
-            >
-              <Plus size={12} className="text-brand-500" />
-              上传另一张产品图
-            </button>
-          )}
-
-          <input
-            ref={productInputRef}
-            type="file" className="hidden" accept="image/*"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) { readProductImageFile(f); setActiveUpload(null); e.target.value = ''; } }}
-          />
-        </section>
-
-        {/* Section 2: Logo */}
-        <section className="space-y-4">
-          <label className="flex items-center gap-2 text-xs font-bold text-ink uppercase tracking-wider">
-            <ImageIcon size={14} className="text-brand-600" />
-            定制 Logo
-          </label>
-
-          {selectedElementType === 'logo' && selectedElement ? (
-            /* Logo selected: show properties */
-            <div className="space-y-3">
-              <div className="relative h-24 rounded-2xl border-2 border-brand-200 bg-brand-50/10 overflow-hidden flex items-center justify-center group">
-                <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'radial-gradient(#000 1px, transparent 1px)', backgroundSize: '8px 8px' }} />
-                <img crossOrigin="anonymous" src={selectedElement.image} alt="logo" className="max-h-full max-w-full object-contain drop-shadow-sm" />
-                <div className="absolute top-1 right-1 flex items-center gap-1 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => setPreviewingElement(selectedElement.id)} className="p-1 bg-white text-ink-2 rounded-md shadow-md hover:bg-canvas border border-border" title="预览">
-                    <Maximize2 size={10} />
-                  </button>
-                  <button onClick={() => { setCroppingElementId(selectedElement.id); setCrop(undefined); setCompletedCrop(undefined); }} className="p-1 bg-brand-500 text-white rounded-md shadow-md hover:bg-brand-600" title="裁剪">
-                    <Crop size={10} />
-                  </button>
-                  <button onClick={() => setColorPickerTarget(prev => prev === selectedElement.id ? null : selectedElement.id)} className="p-1 bg-brand-500 text-white rounded-md shadow-md hover:bg-brand-600" title="色彩替换">
-                    <Palette size={10} />
-                  </button>
-                  <button onClick={() => handleDownloadImage(selectedElement)} className="p-1 bg-emerald-500 text-white rounded-md shadow-md hover:bg-emerald-600" title="下载">
-                    <Download size={10} />
-                  </button>
-                  <button onClick={() => copyElement(selectedElement.id)} className="p-1 bg-ink-2 text-white rounded-md shadow-md hover:bg-ink" title="复制">
-                    <Copy size={10} />
-                  </button>
-                  <button onClick={() => deleteElement(selectedElement.id)} className="p-1 bg-red-500 text-white rounded-md shadow-md hover:bg-red-600" title="删除">
-                    <X size={10} />
-                  </button>
-                </div>
-              </div>
-
-              {decorationPlacementControls(selectedElement)}
-
-              {colorPickerTarget === selectedElement.id && (
-                <div className="flex items-center gap-1.5 px-2 py-2 bg-brand-50 rounded-xl border border-brand-100 flex-wrap">
-                  {LOGO_COLORS.map(({ hex, label }) => (
-                    <button
-                      key={hex}
-                      onClick={() => applyLogoColor(selectedElement.id, hex)}
-                      title={label}
-                      className="w-5 h-5 rounded-full border-2 border-white shadow-sm hover:scale-110 transition-transform flex-shrink-0"
-                      style={{ background: hex, outline: hex === '#ffffff' ? '1px solid #e5e7eb' : 'none' }}
-                    />
-                  ))}
-                  <label title="自定义颜色" className="w-5 h-5 rounded-full border-2 border-white shadow-sm hover:scale-110 transition-transform overflow-hidden cursor-pointer flex-shrink-0 relative" style={{ background: 'conic-gradient(red, yellow, lime, cyan, blue, magenta, red)' }}>
-                    <input type="color" aria-label="Logo 自定义颜色" className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" onInput={(e) => applyLogoColor(selectedElement.id, e.currentTarget.value)} />
-                  </label>
-                </div>
-              )}
-            </div>
-          ) : logos.length > 0 ? (
-            /* Has logos but none selected: show thumbnails */
-            <div className="space-y-2">
-              {logos.map(l => (
-                <div
-                  key={l.id}
-                  onClick={() => onSelectElement(l.id, 'logo')}
-                  className="flex items-center gap-3 p-2 rounded-xl border border-border hover:border-brand-200 hover:bg-brand-50/50 cursor-pointer transition-all"
-                >
-                  <div className="w-10 h-10 rounded-lg border border-border bg-canvas overflow-hidden flex-shrink-0 flex items-center justify-center">
-                    <img crossOrigin="anonymous" src={l.image} alt="" className="max-w-full max-h-full object-contain" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <span className="text-xs font-medium text-ink-2">Logo</span>
-                    <span className="block truncate text-[10px] text-ink-3">
-                      {l.placedOnProductId ? productOptionLabel(l.placedOnProductId) : '未归属'}
-                    </span>
-                  </div>
-                  <button onClick={(e) => { e.stopPropagation(); deleteElement(l.id); }} className="p-1 text-ink-3 hover:text-red-500 transition-colors flex-shrink-0">
-                    <X size={12} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          ) : (
-            /* No logos: show upload */
-            <div
-              onClick={() => setActiveUpload('logo')}
-              onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) readLogoImageFile(f); }}
-              onDragOver={(e) => e.preventDefault()}
-              className="h-20 rounded-2xl border-2 border-dashed border-border hover:border-brand-400 flex items-center justify-center gap-2 text-[11px] font-semibold text-ink-3 hover:text-brand-600 transition-all cursor-pointer"
-            >
-              <Upload size={16} />
-              点击上传 Logo
-            </div>
-          )}
-
-          <button
-            type="button"
-            onClick={openLogoRedraw}
-            disabled={logoRedrawEntryLocked}
-            className="group w-full rounded-2xl border border-brand-200 bg-gradient-to-br from-white to-brand-50 p-3 text-left shadow-sm transition-all hover:border-brand-400 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-brand-200 disabled:hover:shadow-sm"
-            aria-label={
-              logoRedrawEntryLocked
-                ? '当前图片处理中，暂时不能开始 Logo 重绘'
-                : selectedLogoForImageEdit
-                  ? '重绘当前选中的 Logo'
-                  : '制作一个新 Logo 并添加到画布'
-            }
-          >
-            <span className="flex items-center gap-3">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-600 text-white shadow-sm transition-transform group-hover:scale-105">
-                <Sparkles size={16} aria-hidden="true" />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center gap-2 text-xs font-bold text-ink">
-                  {selectedLogoForImageEdit ? '重绘当前 Logo' : '制作新 Logo'}
-                  <span className="rounded-full bg-brand-100 px-1.5 py-0.5 text-[9px] font-bold text-brand-700">
-                    AI
-                  </span>
-                </span>
-                <span className="mt-0.5 block text-[10px] leading-relaxed text-ink-3">
-                  {!isLoggedIn
-                    ? '登录后可用 · 文字必填，参考图可选'
-                    : logoRedrawEntryLocked
-                      ? '当前图片处理中，完成后即可开始重绘'
-                      : selectedLogoForImageEdit
-                        ? '按文字要求重新绘制；完成后只替换当前 Logo'
-                        : logos.length > 0
-                          ? '当前未选 Logo；完成后会新增，不替换已有 Logo'
-                          : '只写要求也能生成；完成后添加到画布'}
-                </span>
-              </span>
-              <ChevronRight
-                size={16}
-                className="shrink-0 text-brand-500 transition-transform group-hover:translate-x-0.5"
-                aria-hidden="true"
-              />
-            </span>
-          </button>
-
-          {/* AI Toolbox for logos */}
-          {logos.length > 0 && (
-            <motion.div
-              initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-              className="p-4 bg-gradient-to-br from-brand-50 to-emerald-50 rounded-2xl border border-brand-100 shadow-sm"
-            >
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-bold text-brand-600 uppercase tracking-wider">AI 增强工具箱</span>
-                <Sparkles size={12} className="text-brand-600 animate-pulse" />
-              </div>
-              <p className="text-[10px] text-brand-900/60 leading-relaxed mb-3">
-                {selectedLogoForImageEdit
-                  ? '仅对当前选中的 Logo 生效。'
-                  : '请先在上方选择一个 Logo。'}
-              </p>
-              <div className="space-y-2">
-                <button
-                  onClick={handleRemoveBackground}
-                  disabled={aiProcessingType !== null || !selectedLogoForImageEdit}
-                  className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition-all border ${
-                    aiProcessingType === 'removeBackground'
-                      ? 'bg-brand-600 border-brand-600 text-white'
-                      : aiProcessingType !== null || !selectedLogoForImageEdit
-                        ? 'bg-canvas border-border text-ink-3 cursor-not-allowed'
-                        : 'bg-white border-brand-200 text-brand-700 hover:bg-brand-50'
-                  }`}
-                >
-                  {aiProcessingType === 'removeBackground' ? (
-                    <><div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />AI 抠图中...</>
-                  ) : (
-                    <><Sparkles size={13} />AI 一键抠图</>
-                  )}
-                </button>
-                {selectedLogoForImageEditId &&
-                  logoMaskByElementId[selectedLogoForImageEditId] && (
-                  <div className="px-1 py-1">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-[10px] text-brand-600 font-medium">去边色（细字慎用）</span>
-                      <span className="text-[10px] text-brand-400 font-mono">{selectedLogoErosionStrength}</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={selectedLogoErosionStrength}
-                      onChange={(event) => {
-                        const logoId = selectedLogoForImageEditId;
-                        if (!logoId) return;
-                        logoErosionUpdateSequenceRef.current += 1;
-                        logoErosionUpdatePendingRef.current = true;
-                        setLogoErosionUpdatePending(true);
-                        setLogoErosionStrengthByElementId(previousStrengths => ({
-                          ...previousStrengths,
-                          [logoId]: Number(event.target.value),
-                        }));
-                      }}
-                      className="w-full h-2 bg-brand-100 rounded-lg appearance-none cursor-pointer accent-brand-600"
-                    />
-                    <div className="flex justify-between text-[9px] text-brand-300 mt-0.5"><span>保留细节</span><span>强力去边</span></div>
-                  </div>
-                )}
-                <button onClick={handleLocalRemoveBackground} disabled={aiProcessingType !== null || !selectedLogoForImageEdit} className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition-all border bg-white border-border text-ink-2 hover:bg-canvas disabled:opacity-40 disabled:cursor-not-allowed">
-                  本地去白底（无 AI）
-                </button>
-                {selectedLogoForImageEditId &&
-                  logoImageBeforeCutoutById[selectedLogoForImageEditId] && (
-                  <button onClick={handleUndoRemoveBackground} className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition-all border bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100">
-                    撤销抠图，恢复原图
-                  </button>
-                )}
-              </div>
-            </motion.div>
-          )}
-
-          {logos.length > 0 && (
-            <button
-              onClick={() => setActiveUpload('logo')}
-              className="w-full h-9 rounded-xl border-2 border-dashed border-border bg-white hover:bg-brand-50/50 hover:border-brand-200 flex items-center justify-center gap-2 text-[10px] font-semibold text-ink-2 hover:text-brand-600 transition-all"
-            >
-              <Plus size={12} className="text-brand-500" />
-              添加新 Logo
-            </button>
-          )}
-
-          <input
-            ref={logoInputRef}
-            type="file" className="hidden" accept="image/*"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) { readLogoImageFile(f); setActiveUpload(null); e.target.value = ''; } }}
-          />
-        </section>
-
-        {/* Section 3: 文字 */}
-        <section className="space-y-4">
-          <label className="flex items-center gap-2 text-xs font-bold text-ink uppercase tracking-wider">
-            <Type size={14} className="text-brand-600" />
-            定制文字
-          </label>
-
-          {selectedElementType === 'text' && selectedElement ? (
-            /* Text selected: show properties */
-            <div className="p-3 bg-white rounded-2xl border border-border space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-bold text-ink-3">文字编辑</span>
-              </div>
-              {decorationPlacementControls(selectedElement)}
-              <TextInspector
-                element={selectedElement}
-                onUpdate={(updates) => updateElement(selectedElement.id, updates)}
-                onCopy={() => copyElement(selectedElement.id)}
-                onDelete={() => deleteElement(selectedElement.id)}
-              />
-            </div>
-          ) : texts.length > 0 ? (
-            /* Has texts but none selected: show text list */
-            <div className="space-y-2">
-              {texts.map(t => (
-                <div
-                  key={t.id}
-                  onClick={() => onSelectElement(t.id, 'text')}
-                  className="flex items-center gap-3 p-2 rounded-xl border border-border hover:border-brand-200 hover:bg-brand-50/50 cursor-pointer transition-all"
-                >
-                  <div className="w-10 h-10 rounded-lg border border-border bg-canvas overflow-hidden flex-shrink-0 flex items-center justify-center">
-                    <Type size={14} className="text-ink-3" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <span className="text-xs font-medium text-ink-2 truncate block">{t.text || '空文字'}</span>
-                    <span className="block truncate text-[10px] text-ink-3">
-                      {t.placedOnProductId ? productOptionLabel(t.placedOnProductId) : '未归属'}
-                    </span>
-                  </div>
-                  <button onClick={(e) => { e.stopPropagation(); deleteElement(t.id); }} className="p-1 text-ink-3 hover:text-red-500 transition-colors flex-shrink-0">
-                    <X size={12} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          ) : (
-            /* No texts: show add button */
-            <button
-              onClick={addTextElement}
-              className="w-full h-14 rounded-2xl border-2 border-dashed border-border hover:border-brand-400 flex items-center justify-center gap-2 text-[11px] font-semibold text-ink-3 hover:text-brand-600 transition-all"
-            >
-              <Plus size={14} />
-              添加文字
-            </button>
-          )}
-
-          <button
-            onClick={addTextElement}
-            className="w-full h-9 rounded-xl border-2 border-dashed border-border bg-white hover:bg-brand-50/50 hover:border-brand-200 flex items-center justify-center gap-2 text-[10px] font-semibold text-ink-2 hover:text-brand-600 transition-all"
-          >
-            <Plus size={12} className="text-brand-500" />
-            添加新文字
-          </button>
-        </section>
-
-      </div>
-
-      {/* Mobile bottom collapse button */}
-      <div className="sm:hidden p-4 border-t border-border bg-white flex-shrink-0 safe-bottom">
-        <button onClick={onCollapse} className="w-full flex items-center justify-center gap-2 py-3 bg-brand-600 text-white rounded-2xl text-sm font-bold shadow-lg active:bg-brand-700 transition-all">
-          <span>查看预览</span>
-          <ChevronRight size={18} />
-        </button>
-      </div>
-    </div>
+      <input
+        ref={productInputRef}
+        type="file" className="hidden" accept="image/*"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) { readProductImageFile(f); e.target.value = ''; } }}
+      />
+      <input
+        ref={logoInputRef}
+        type="file" className="hidden" accept="image/*"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) { readLogoImageFile(f); e.target.value = ''; } }}
+      />
+    </>
   );
 }

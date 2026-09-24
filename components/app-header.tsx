@@ -3,7 +3,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useProjectSession } from "./project-session";
-export function AppHeader({ beforeLogout }: { beforeLogout?: () => Promise<boolean> } = {}) {
+/** `compact` keeps editor pages to one 48px row, so the canvas gets the height. */
+export function AppHeader({ beforeLogout, compact = false }: { beforeLogout?: () => Promise<boolean>; compact?: boolean } = {}) {
   const pathname = usePathname();
   const [loggingOut, setLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState("");
@@ -45,7 +46,7 @@ export function AppHeader({ beforeLogout }: { beforeLogout?: () => Promise<boole
     };
   }, []);
   return (
-    <header className="product-header" aria-label="工作台顶部导航">
+    <header className={compact ? "product-header product-header--compact" : "product-header"} aria-label="工作台顶部导航">
       <Link className="product-header__brand" href="/products" aria-label="工作服效果图首页">
         <span className="product-header__mark">衣</span>
         <span>

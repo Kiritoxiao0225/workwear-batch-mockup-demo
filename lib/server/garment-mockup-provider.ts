@@ -51,15 +51,24 @@ export async function callGarmentModel(action: GarmentAction, input: Input, opti
     const bytes=await sharp(Buffer.from(await readMockupRemoteImage(image))).png().toBuffer();
     return {bytes,model};
   }
-  const body=JSON.stringify({req_key:'saliency_seg',binary_data_base64:[original.base64Data],only_mask:1,refine_mask:1});
+  const source=Buffer.from(original.base64Data,'base64');
+  const result=await volcengineSaliencyCutout(source,{env,fetchImplementation:paidFetch,receipt:options.receipt});
+  return {...result,model};
+}
+type SaliencyOptions = { env?: Record<string,string|undefined>; fetchImplementation:typeof fetch; receipt:(id:string)=>Promise<void>; timeoutMs?:number };
+/** One paid saliency_seg call. The caller's fetch marks the submission; nothing retries here. */
+export async function volcengineSaliencyCutout(source: Buffer, options: SaliencyOptions) {
+  const env=options.env??process.env;
+  if (!env.VOLCENGINE_ACCESS_KEY || !env.VOLCENGINE_SECRET_KEY)
+    throw new Error('成衣抠图缺少火山配置：VOLCENGINE_ACCESS_KEY / VOLCENGINE_SECRET_KEY；未提交抠图');
+  const body=JSON.stringify({req_key:'saliency_seg',binary_data_base64:[source.toString('base64')],only_mask:1,refine_mask:1});
   const host='visual.volcengineapi.com',query={Action:'CVProcess',Version:'2022-08-31'};
-  const headers=signVolcengineRequest({method:'POST',host,path:'/',query,body,region:'cn-north-1',service:'cv',accessKeyId:env.VOLCENGINE_ACCESS_KEY!,secretAccessKey:env.VOLCENGINE_SECRET_KEY!});
-  const response=await paidFetch(`https://${host}/?${new URLSearchParams(query)}`,{method:'POST',headers:{...headers,'Content-Type':'application/json'},body,signal:AbortSignal.timeout(20000)});
+  const headers=signVolcengineRequest({method:'POST',host,path:'/',query,body,region:'cn-north-1',service:'cv',accessKeyId:env.VOLCENGINE_ACCESS_KEY,secretAccessKey:env.VOLCENGINE_SECRET_KEY});
+  const response=await options.fetchImplementation(`https://${host}/?${new URLSearchParams(query)}`,{method:'POST',headers:{...headers,'Content-Type':'application/json'},body,signal:AbortSignal.timeout(options.timeoutMs??20000)});
   if(!response.ok)throw new Error(`火山抠图返回 HTTP ${response.status}，未自动重试`);
   const result=await response.json();if(result.code!==10000)throw new Error('火山抠图未返回成功结果，未自动重试');
   if(result.request_id)await options.receipt(String(result.request_id));
   const mask=Buffer.from(normalizeMockupBase64Image(result.data?.binary_data_base64?.[0]).base64Data,'base64');
-  const source=Buffer.from(original.base64Data,'base64');
   const rgba=await sharp(source).ensureAlpha().raw().toBuffer({resolveWithObject:true});
   const maskMeta=await sharp(mask).metadata();
   if(maskMeta.width!==rgba.info.width||maskMeta.height!==rgba.info.height)throw new Error('火山蒙版与原图尺寸不一致，未缩放或替换原图');
@@ -67,5 +76,5 @@ export async function callGarmentModel(action: GarmentAction, input: Input, opti
   for(let i=0;i<gray.length;i++){const a=Math.round(rgba.data[i*4+3]*gray[i]/255);rgba.data[i*4+3]=a;visible ||= a>0;transparent ||= a<255;}
   if(!visible||!transparent)throw new Error('火山抠图没有返回有效透明前景');
   const bytes=await sharp(rgba.data,{raw:{width:rgba.info.width,height:rgba.info.height,channels:4}}).png().toBuffer();
-  return {bytes,mask,original:source,model};
+  return {bytes,mask,original:source};
 }

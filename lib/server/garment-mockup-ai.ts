@@ -3,7 +3,7 @@ import sharp from 'sharp';
 import { z } from 'zod';
 import { catalogDatabase, catalogTransaction } from './catalog-database';
 import { CatalogHttpError } from './catalog-auth';
-import { readAsset, storeAsset, digest } from './garment-mockup-store';
+import { readAsset, storeAsset, digest, assertAssetOwned } from './garment-mockup-store';
 import { assetId } from '../garment-editor/project-state';
 import { currentPrices, holdCredits, settleHold, releaseHold, microToCents, type BillableAction } from './credits';
 import type { Tenant } from './tenant-scope';
@@ -26,7 +26,7 @@ export async function enqueueGarmentAi(tenant:Tenant,user:string,value:unknown) 
   if(['back','cutout'].includes(b.action)&&!b.input.base64Image)throw new CatalogHttpError(400,'缺少原图');
   for(const url of [...b.input.images.map(i=>i.base64Image),b.input.base64Image].filter(Boolean)){
     const id=assetId(url!);if(!id)throw new CatalogHttpError(400,'AI 只能读取当前成衣效果图素材');
-    await readAsset(tenant.id,id);
+    await assertAssetOwned(tenant.id,id);
   }
   const hash=digest(b),prices=await currentPrices();
   const price=prices.prices.find(p=>p.action===billable(b.action));

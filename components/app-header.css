@@ -58,3 +58,15 @@
 .product-header__logout { flex: 0 0 auto; border: 1px solid var(--line); border-radius: 7px; padding: 6px 9px; background: var(--panel); color: var(--ink); font: inherit; white-space: nowrap; cursor: pointer; }
 .product-header__logout:hover { background: var(--panel-soft); }
 .product-header__logout:disabled { opacity: .55; cursor: wait; }
+
+/* Editor pages: a single 48px row at every width, so the canvas keeps the height. */
+.product-header.product-header--compact { display: flex; min-height: 48px; padding: 6px 16px; gap: 16px; }
+.product-header--compact .product-header__mark { width: 30px; height: 30px; flex-basis: 30px; border-radius: 9px; font-size: 13px; }
+.product-header--compact .product-header__brand strong { font-size: 14px; }
+.product-header--compact .product-header__brand small { display: none; }
+.product-header--compact .product-header__controls { display: flex; flex: 1; min-width: 0; gap: 12px; }
+.product-header--compact .product-header__nav { flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.product-header--compact .product-header__nav a { padding: 5px 10px; }
+.product-header--compact .product-header__credit { min-width: 0; margin-right: 0; padding: 4px 10px; }
+.product-header--compact .product-header__credit b { font-size: 13px; }
+.product-header--compact .product-header__logout { padding: 4px 8px; }

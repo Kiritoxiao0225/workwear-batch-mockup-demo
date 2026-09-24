@@ -9,6 +9,21 @@ import { assetUrl, parseProjectState, stateAssets } from '../garment-editor/proj
 import type { CustomizationState } from '../garment-editor/mockup-types';
 
 export const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+/** Another window saved first. Carries the server's revision so the page can offer a choice. */
+export class ProjectConflictError extends CatalogHttpError {
+  constructor(public serverRevision: number, public serverUpdatedAt: string) { super(409, '作品已在另一个窗口保存'); }
+}
+export async function projectHead(tenant: string, id: string) {
+  z.uuid().parse(id);
+  const p = (await catalogDatabase().query('SELECT id,revision,updated_at FROM garment_mockup_projects WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL', [id, tenant])).rows[0];
+  if (!p) throw new CatalogHttpError(404, '工程不存在');
+  return { id: p.id as string, revision: p.revision as number, updatedAt: p.updated_at as string };
+}
+export async function assertAssetOwned(tenant: string, id: string) {
+  z.uuid().parse(id);
+  if (!(await catalogDatabase().query('SELECT 1 FROM garment_mockup_assets WHERE id=$1 AND tenant_id=$2', [id, tenant])).rowCount)
+    throw new CatalogHttpError(404, '成衣效果图文件不存在');
+}
 export async function listProjects(tenant: string) {
   return (await catalogDatabase().query(`SELECT p.id,p.name,p.revision,p.updated_at,
     (SELECT r.state_json->'elements'->0->>'image' FROM garment_mockup_revisions r WHERE r.project_id=p.id AND r.revision=p.revision) thumbnail
@@ -32,7 +47,7 @@ export async function saveProject(tenant: string,user: string,input: unknown) {
     if(p && (p.tenant_id!==tenant || p.deleted_at))throw new CatalogHttpError(404,'工程不存在');
     const previous=(await c.query('SELECT revision,request_hash FROM garment_mockup_revisions WHERE project_id=$1 AND request_id=$2',[b.id,b.requestId])).rows[0];
     if(previous){if(previous.request_hash!==hash)throw new CatalogHttpError(409,'重复保存编号对应不同内容');return {id:b.id,revision:previous.revision};}
-    if((p?.revision??0)!==b.expectedRevision)throw new CatalogHttpError(409,'工程已在另一个窗口更新，请另存副本或重新打开');
+    if((p?.revision??0)!==b.expectedRevision)throw new ProjectConflictError(p?.revision??0,p?.updated_at?new Date(p.updated_at).toISOString():new Date().toISOString());
     const ids=stateAssets(state);
     const assets=ids.length ? await c.query('SELECT id FROM garment_mockup_assets WHERE tenant_id=$1 AND id=ANY($2::uuid[])',[tenant,ids]) : {rowCount:0};
     if(assets.rowCount!==ids.length)throw new CatalogHttpError(404,'工程文件不存在或不属于当前账号');
