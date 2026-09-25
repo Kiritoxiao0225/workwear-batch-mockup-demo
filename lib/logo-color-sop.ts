@@ -124,17 +124,22 @@ const KEEPS_ORIGINAL = /沿用|保持|保留|原有|原来|原始|原图|原色|
 /**
  * Whether the artwork text fixes the logo colors. The requirement model often spells out the
  * original colors ("沿用图2原有配色，包括酒红色、绿色…"); a clause naming a color only counts as the
- * customer's when it neither keeps colors nor points at the artwork's own subject image. Any change,
- * reference or explicit requirement wording fixes the colors, and so does a missing 颜色 item.
+ * customer's when it neither keeps colors nor points at the artwork's own subject image. Any change or
+ * explicit requirement wording fixes the colors, a 参考 clause does unless it keeps the subject images'
+ * own colors, and so does a missing 颜色 item.
  */
 export function promptFixesLogoColor(prompt: string | undefined) {
   const item = prompt?.match(/^颜色：([^]*?)(?=^(?:主体|文字|字体|排版|尺寸|输出)：|(?![^]))/mu)?.[1]?.trim();
   if (!item) return true;
   const open = item.replace(/原需求未指定[^，,。；;\n]*|未指定|没有指定|未要求|不限/gu, '');
-  if (/改为|改成|换成|换为|做成|统一|指定|要求|参考/u.test(open)) return true;
+  if (/改为|改成|换成|换为|做成|统一|指定|要求/u.test(open)) return true;
   const images = (text: string) => [...text.matchAll(/图\s*(\d+)/gu)].map(m => m[1]);
   const subject = new Set(images(prompt!.match(/^主体：([^]*?)^文字：/mu)?.[1] ?? ''));
-  return open.split(/[，,。；;\n]/u).some(clause => COLOR_WORD.test(clause) && !KEEPS_ORIGINAL.test(clause) && !images(clause).some(n => subject.has(n)));
+  const clauses = open.split(/[，,。；;\n]/u);
+  // "参考图3的深蓝" or "参考图2" borrows a colour from elsewhere; "参考图1与图2的原有配色" for an artwork
+  // made from 图1 and 图2 only keeps its own colours (W70bcd6a10902 lost its white chest logo to this).
+  if (clauses.some(clause => /参考/u.test(clause) && (!KEEPS_ORIGINAL.test(clause) || images(clause).some(n => !subject.has(n))))) return true;
+  return clauses.some(clause => COLOR_WORD.test(clause) && !KEEPS_ORIGINAL.test(clause) && !images(clause).some(n => subject.has(n)));
 }
 
 export type LogoColorDecision = {

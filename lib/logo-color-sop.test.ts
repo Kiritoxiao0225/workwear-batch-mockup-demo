@@ -66,5 +66,10 @@ describe('SOP 5 logo colors', () => {
     expect(promptFixesLogoColor(prompt('沿用图2原有配色，新增文字为黑色。'))).toBe(true);
     expect(promptFixesLogoColor(prompt('红色文字，蓝色图形。'))).toBe(true);
     expect(promptFixesLogoColor(undefined)).toBe(true);
+    // W70bcd6a10902 read by gpt-6-sol: 参考 here only keeps the colors of the artwork's own images.
+    const both = (color: string) => prompt(color).replace('主体：使用图2完整Logo。', '主体：将图1衣服上的左胸图案重建为独立平面图稿；图案细节参考图2中的同款人物图形。');
+    expect(promptFixesLogoColor(both('人物图形参考图1与图2的原有配色；文字颜色沿用图1。'))).toBe(false);
+    expect(promptFixesLogoColor(both('人物图形参考图3的原有配色。'))).toBe(true);
+    expect(promptFixesLogoColor(both('文字参考图3的深蓝色。'))).toBe(true);
   });
 });
