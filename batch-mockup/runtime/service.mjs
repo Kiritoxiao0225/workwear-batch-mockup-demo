@@ -106,7 +106,9 @@ export async function service(root,path,method,body={},options={}){
   if(path==='/api/requirements/analyze'){
    const reserved=await reserveRequirementAnalysis(root,manifest,body);
    if(reserved.execute){
-    await queue({id:reserved.analysis.id,kind:'analysis',payload:{caseId:body.caseId,analysisId:reserved.analysis.id,autoProduce:true}});
+    // The studio's "AI 整理" only fills in the seven fields; the author reviews them and starts production.
+    const studio=manifest.cases.find(c=>c.caseId===body.caseId)?.entry==='studio';
+    await queue({id:reserved.analysis.id,kind:'analysis',payload:{caseId:body.caseId,analysisId:reserved.analysis.id,autoProduce:!studio}});
    }
    return {id:reserved.analysis.id,status:reserved.analysis.status};
   }

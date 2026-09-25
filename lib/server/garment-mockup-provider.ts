@@ -2,13 +2,11 @@ import sharp from 'sharp';
 import { requireArkApiKey } from '../garment-editor/ark-runtime';
 import { normalizeMockupBase64Image, readMockupRemoteImage } from '../garment-editor/mockup-image-limits';
 import { signVolcengineRequest } from '../garment-editor/mockup-volcengine-sign';
-import { parseLogoRedrawGenerateRequest, type LogoRedrawAnalysis } from '../garment-editor/mockup-logo-redraw';
-import { understandMockupLogoRedraw, generateMockupLogoRedraw } from './ark-garment-logo-redraw';
 
 // Same request models as the CatalogHub editor. Independent of the batch/studio defaults.
+// Logo generation lives in the artwork studio; the editor only removes backgrounds and
+// drafts a back view.
 export const GARMENT_MODELS = {
-  understand: { provider: 'ark', model: 'doubao-seed-2-0-lite-260215' },
-  generate: { provider: 'ark', model: 'doubao-seedream-4-0-250828' },
   back: { provider: 'ark', model: 'doubao-seedream-5-0-260128' },
   cutout: { provider: 'volcengine-cv', model: 'saliency_seg' },
 } as const;
@@ -18,8 +16,8 @@ export function assertGarmentProviderConfigured(action: GarmentAction, env: Reco
   if (!env.VOLCENGINE_ACCESS_KEY || !env.VOLCENGINE_SECRET_KEY)
     throw new Error('成衣抠图缺少火山配置：VOLCENGINE_ACCESS_KEY / VOLCENGINE_SECRET_KEY；未提交抠图');
 }
-type Input = { instruction: string; images: {fileName:string;base64Image:string}[]; base64Image?:string; analysis?:unknown; confirmed?:boolean };
-type Result = { analysis: LogoRedrawAnalysis; model: string } | { bytes: Buffer; model: string } | { bytes: Buffer; mask: Buffer; original: Buffer; model: string };
+type Input = { instruction?: string; images?: {fileName:string;base64Image:string}[]; base64Image?:string };
+type Result = { bytes: Buffer; model: string } | { bytes: Buffer; mask: Buffer; original: Buffer; model: string };
 type Options = { env?: Record<string,string|undefined>; fetchImplementation?: typeof fetch; beforeSubmit:()=>Promise<void>; receipt:(id:string)=>Promise<void> };
 export async function callGarmentModel(action: GarmentAction, input: Input, options: Options): Promise<Result> {
   const env=options.env??process.env, transport=options.fetchImplementation??fetch;
@@ -31,13 +29,6 @@ export async function callGarmentModel(action: GarmentAction, input: Input, opti
     return response;
   };
   const model=GARMENT_MODELS[action].model;
-  const copiedOptions={env:{...env,MOCKUP_LOGO_ANALYSIS_MODEL:GARMENT_MODELS.understand.model,MOCKUP_LOGO_GENERATION_MODEL:GARMENT_MODELS.generate.model},
-    fetchImplementation:((url,init)=>String(url).startsWith('https://ark.cn-beijing.volces.com/api/v3/')?paidFetch(url,init):transport(url,{...init,redirect:'error'})) as typeof fetch};
-  if(action==='understand')return understandMockupLogoRedraw(input,copiedOptions);
-  if(action==='generate'){
-    const result=await generateMockupLogoRedraw(parseLogoRedrawGenerateRequest(input),copiedOptions);
-    return {bytes:Buffer.from(result.image.dataUrl.split(',')[1],'base64'),model:result.image.model};
-  }
   const original=normalizeMockupBase64Image(input.base64Image);
   if(action==='back'){
     const response=await paidFetch('https://ark.cn-beijing.volces.com/api/v3/images/generations',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${requireArkApiKey(env)}`},signal:AbortSignal.timeout(60000),body:JSON.stringify({model,

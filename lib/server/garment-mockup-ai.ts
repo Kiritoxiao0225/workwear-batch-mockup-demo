@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import sharp from 'sharp';
 import { z } from 'zod';
 import { catalogDatabase, catalogTransaction } from './catalog-database';
 import { CatalogHttpError } from './catalog-auth';
@@ -8,22 +7,17 @@ import { assetId } from '../garment-editor/project-state';
 import { currentPrices, holdCredits, settleHold, releaseHold, microToCents, type BillableAction } from './credits';
 import type { Tenant } from './tenant-scope';
 import { GARMENT_MODELS, callGarmentModel, assertGarmentProviderConfigured } from './garment-mockup-provider';
-import { parseLogoRedrawAnalysisValue } from '../garment-editor/mockup-logo-redraw';
 
-const actionSchema=z.enum(['understand','generate','cutout','back']);
+// Logo generation moved to the artwork studio; new jobs are background removal and back views.
+// Older rows may still say understand/generate: they stay readable and settle as before.
+const actionSchema=z.enum(['cutout','back']);
 type Action=z.infer<typeof actionSchema>;
-const billable=(action:Action):BillableAction=>action==='understand'?'analyze':action==='cutout'?'cutout':'generate';
-const inputSchema=z.object({instruction:z.string().trim().max(500).default(''),images:z.array(z.object({fileName:z.string().max(200),base64Image:z.string().max(200)})).max(2).default([]),base64Image:z.string().max(200).optional(),analysis:z.unknown().optional(),confirmed:z.boolean().optional()});
+const billable=(action:string):BillableAction=>action==='understand'?'analyze':action==='cutout'?'cutout':'generate';
+const inputSchema=z.object({instruction:z.string().trim().max(500).default(''),images:z.array(z.object({fileName:z.string().max(200),base64Image:z.string().max(200)})).max(2).default([]),base64Image:z.string().max(200).optional()});
 type Input=z.infer<typeof inputSchema>;
 export async function enqueueGarmentAi(tenant:Tenant,user:string,value:unknown) {
   const b=z.object({id:z.uuid(),projectId:z.uuid().nullable().optional(),action:actionSchema,input:inputSchema}).parse(value);
-  if(['understand','generate'].includes(b.action)&&!b.input.instruction)throw new CatalogHttpError(400,'请填写制作要求');
-  if(b.action==='generate'){
-    if(b.input.confirmed!==true)throw new CatalogHttpError(400,'请先确认理解');
-    const analysis=parseLogoRedrawAnalysisValue(b.input.analysis);
-    if(analysis.status!=='ready_for_confirmation')throw new CatalogHttpError(400,'请先补充有歧义的要求');
-  }
-  if(['back','cutout'].includes(b.action)&&!b.input.base64Image)throw new CatalogHttpError(400,'缺少原图');
+  if(!b.input.base64Image)throw new CatalogHttpError(400,'缺少原图');
   for(const url of [...b.input.images.map(i=>i.base64Image),b.input.base64Image].filter(Boolean)){
     const id=assetId(url!);if(!id)throw new CatalogHttpError(400,'AI 只能读取当前成衣效果图素材');
     await assertAssetOwned(tenant.id,id);
@@ -37,7 +31,7 @@ export async function enqueueGarmentAi(tenant:Tenant,user:string,value:unknown) 
     if(previous){if(previous.tenant_id!==tenant.id||previous.request_hash!==hash)throw new CatalogHttpError(409,'任务编号与请求不一致');return {id:b.id,status:previous.status};}
     if(!(await c.query("SELECT 1 FROM garment_mockup_workers WHERE heartbeat_at>now()-interval '45 seconds' LIMIT 1")).rowCount)throw new CatalogHttpError(503,'成衣制作后台未连接，未冻结积分或提交模型，请稍后再试');
     if(b.projectId && !(await c.query('SELECT 1 FROM garment_mockup_projects WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL',[b.projectId,tenant.id])).rowCount)throw new CatalogHttpError(404,'工程不存在');
-    await holdCredits(c,{id:'garment:'+b.id,tenantId:tenant.id,kind:b.action==='understand'?'analysis':'production',jobRef:'garment:'+b.action+':'+b.id,billingMode:tenant.billingMode,amountCents:microToCents(price.userMicroCents),snapshot:prices});
+    await holdCredits(c,{id:'garment:'+b.id,tenantId:tenant.id,kind:'production',jobRef:'garment:'+b.action+':'+b.id,billingMode:tenant.billingMode,amountCents:microToCents(price.userMicroCents),snapshot:prices});
     await c.query('INSERT INTO garment_mockup_ai_jobs(id,tenant_id,user_id,project_id,action,input_json,request_hash) VALUES($1,$2,$3,$4,$5,$6,$7)',[b.id,tenant.id,user,b.projectId??null,b.action,b.input,hash]);
     return {id:b.id,status:'queued'};
   });
@@ -54,7 +48,14 @@ async function imageData(tenant:string,url:string){
   const bytes=file.bytes;
   return {bytes,dataUrl:`data:${file.file.mime_type};base64,${bytes.toString('base64')}`};
 }
-export async function executeGarmentAi(job:{id:string;tenant_id:string;action:Action;input_json:Input}, provider=realGarmentProvider){
+export async function executeGarmentAi(row:{id:string;tenant_id:string;action:string;input_json:Input}, provider=realGarmentProvider){
+  if(!(row.action in GARMENT_MODELS)){
+    // A queued logo job from before the move: never call the retired models; return the credits.
+    await releaseHold('garment:'+row.id,row.tenant_id,'Logo 生成已移到图稿生成，未提交模型').catch(()=>{});
+    await catalogDatabase().query("UPDATE garment_mockup_ai_jobs SET status='failed',error=$2,lease_until=NULL,updated_at=now() WHERE id=$1",[row.id,'Logo 生成已移到图稿生成，本任务未提交模型，冻结积分已退回']);
+    return;
+  }
+  const job={...row,action:row.action as Action};
   const attemptId=randomUUID(),action=billable(job.action),started=Date.now();
   const {model,provider:providerName}=GARMENT_MODELS[job.action];
   let submitted=false;
@@ -86,11 +87,9 @@ async function realGarmentProvider(job:{id:string;tenant_id:string;action:Action
   const b=job.input_json,images=await Promise.all(b.images.map(async i=>({...i,base64Image:(await imageData(job.tenant_id,i.base64Image)).dataUrl})));
   const base64Image=b.base64Image?(await imageData(job.tenant_id,b.base64Image)).dataUrl:undefined;
   const result=await callGarmentModel(job.action,{...b,images,base64Image},{beforeSubmit:submit,receipt});
-  if('analysis' in result)return {analysis:result.analysis,model:result.model};
-  const asset=await storeAsset(job.tenant_id,result.bytes,job.action==='back'?'AI背面参考.png':job.action==='cutout'?'透明图.png':'重绘原图.png',{jobId:job.id,model:result.model,aiReference:job.action==='back'});
+  const asset=await storeAsset(job.tenant_id,result.bytes,job.action==='back'?'AI背面参考.png':'透明图.png',{jobId:job.id,model:result.model,aiReference:job.action==='back'});
   if('mask' in result)return {transparent:asset.url,mask:(await storeAsset(job.tenant_id,result.mask,'蒙版.png',{jobId:job.id})).url,original:(await storeAsset(job.tenant_id,result.original,'抠图原图.png',{jobId:job.id})).url,model:result.model};
-  const m=await sharp(result.bytes).metadata();
-  return job.action==='back'?{image:asset.url,model:result.model}:{image:{dataUrl:asset.url,contentType:'image/png',width:m.width,height:m.height,model:result.model}};
+  return {image:asset.url,model:result.model};
 }
 export async function startGarmentWorker(){
   let closed=false,running:Promise<void>|null=null;const owner=randomUUID();

@@ -1102,3 +1102,311 @@
   text-decoration: none;
   white-space: nowrap;
 }
+/* Artwork studio: one screen. The bar, the three columns and the start button all fit;
+   each column scrolls on its own. Narrow screens fall back to a normal scrolling page. */
+.saas-app.studio-app {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.saas-app .studio-page {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  max-width: 1600px;
+  padding: 10px 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.saas-app .studio-page .studio-handoff,
+.saas-app .studio-page > .notice {
+  margin: 0;
+}
+.saas-app .studio-page > .notice {
+  padding: 8px 14px;
+}
+.saas-app .studio-page > .notice a {
+  margin-left: 6px;
+  color: inherit;
+  font-weight: 600;
+}
+.saas-app .studio-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 34px;
+}
+.saas-app .studio-bar h1 {
+  font-size: 18px;
+  white-space: nowrap;
+}
+.saas-app .studio-bar p {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.saas-app .studio-page .studio {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+  grid-template-columns: 360px minmax(0, 1fr) 272px;
+  gap: 14px;
+}
+.saas-app .studio-page .field-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 14px 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.saas-app .studio-page .col-body > .field-label:first-child {
+  margin-top: 0;
+}
+.saas-app .studio-page .field-label small {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--muted);
+}
+.saas-app .studio-page .col-left textarea[aria-label="制作要求"] {
+  min-height: 132px;
+}
+.saas-app .studio-page .col-left .seven-view textarea {
+  min-height: 0;
+}
+.saas-app .studio-page .phrases {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+.saas-app .studio-page .phrases button {
+  padding: 2px 9px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  background: var(--panel);
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.saas-app .studio-page .phrases button:hover:not(:disabled) {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+.saas-app .studio-page .phrases button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.saas-app .studio-page .organize {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px dashed #b9dcc9;
+  border-radius: 9px;
+  background: var(--brand-soft);
+}
+.saas-app .studio-page .organize .button {
+  flex: 0 0 auto;
+  border-color: #9cc8b3;
+  color: var(--brand-strong);
+  font-weight: 600;
+}
+.saas-app .studio-page .organize small {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--brand-strong);
+}
+.saas-app .studio-page .seg.full button {
+  flex: 1;
+  padding: 5px 6px;
+  font-size: 12px;
+}
+.saas-app .studio-page .col-left .sub {
+  margin: 6px 0 0;
+}
+.saas-app .studio-page .output-check {
+  gap: 8px;
+  margin-top: 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.saas-app .studio-page .output-check input {
+  margin: 0;
+  accent-color: var(--brand);
+}
+.saas-app .studio-page .start-foot {
+  padding: 10px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  background: var(--panel-muted);
+}
+.saas-app .studio-page .start-foot .cost-row {
+  min-height: 0;
+  padding: 0;
+}
+.saas-app .studio-page .start-foot .cost-row b {
+  font-size: 15px;
+}
+.saas-app .studio-page .start-foot .button.primary {
+  padding: 11px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.saas-app .studio-page .stage-switch {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+.saas-app .studio-page .stage-switch .sw {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.saas-app .studio-page .stage-switch .sw[aria-pressed="true"] {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+.saas-app .studio-page .stage-switch .sw.checker {
+  background: conic-gradient(#dfe5e1 25%, #fff 0 50%, #dfe5e1 0 75%, #fff 0) 0 0 / 8px 8px;
+}
+.saas-app .studio-page .stage-switch .sw.white {
+  background: #fff;
+}
+.saas-app .studio-page .stage-switch .sw.dark,
+.saas-app .studio-page .preview .thumb.stage-dark {
+  background: #26332d;
+}
+.saas-app .studio-page .preview .thumb.stage-white {
+  background: #fff;
+}
+.saas-app .studio-page .preview .thumb.stage-dark .empty,
+.saas-app .studio-page .preview .thumb.stage-dark .empty h3 {
+  color: #c9d6d0;
+}
+.saas-app .studio-page .result-tools {
+  align-items: center;
+}
+.saas-app .studio-page .more {
+  position: relative;
+}
+.saas-app .studio-page .more-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 5;
+  min-width: 220px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 8px 24px rgba(20, 40, 30, 0.12);
+}
+.saas-app .studio-page .more-menu button {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.saas-app .studio-page .more-menu button:hover {
+  background: var(--brand-soft);
+}
+.saas-app .studio-page .more-menu b {
+  display: block;
+  font-size: 13px;
+}
+.saas-app .studio-page .more-menu small {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+}
+.saas-app .studio-page .hist-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px;
+}
+.saas-app .studio-page .hist-list .hist {
+  flex: none;
+  width: 100%;
+  font: inherit;
+  text-align: left;
+  color: var(--ink);
+}
+.saas-app .studio-page .hist-list .hist:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+.saas-app .studio-page .hist-list .hist .s {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 7px;
+}
+.saas-app .studio-page .hist .state.ok {
+  color: var(--brand);
+}
+.saas-app .studio-page .hist .state.run {
+  color: #8a560e;
+}
+.saas-app .studio-page .spin {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #f0d7ad;
+  border-top-color: #c9821f;
+  animation: studio-spin 0.9s linear infinite;
+}
+@keyframes studio-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .saas-app .studio-page .spin {
+    animation: none;
+  }
+}
+@media (max-width: 1240px) {
+  .saas-app .studio-page .studio {
+    grid-template-columns: 320px minmax(0, 1fr) 236px;
+  }
+}
+@media (max-width: 1040px) {
+  .saas-app.studio-app {
+    height: auto;
+    overflow: visible;
+  }
+  .saas-app .studio-page .studio {
+    grid-template-columns: 1fr;
+  }
+  .saas-app .studio-page .col-mid {
+    order: -1;
+    min-height: 380px;
+  }
+  .saas-app .studio-page .col-right {
+    max-height: 520px;
+  }
+  .saas-app .studio-bar p {
+    white-space: normal;
+  }
+}

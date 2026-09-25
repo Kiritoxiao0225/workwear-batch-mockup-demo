@@ -26,8 +26,3 @@ test('cutout uses original CV saliency mask, preserves original pixels and dimen
 test('missing CV credentials fails before submitting and never switches provider',async()=>{
  let calls=0;await expect(callGarmentModel('cutout',{instruction:'',images:[]},{env:{},beforeSubmit:async()=>{calls++;},receipt:async()=>{},fetchImplementation:async()=>{throw new Error('must not fetch');}})).rejects.toThrow('VOLCENGINE_ACCESS_KEY');expect(calls).toBe(0);
 });
-test('understanding stays on original Doubao despite other page model settings',async()=>{
- let calls=0;await expect(callGarmentModel('understand',{instruction:'测试',images:[]},{env:{...env,VISION_MODEL_EP:'another-page',MOCKUP_LOGO_ANALYSIS_MODEL:'another-model'},beforeSubmit:async()=>{calls++;},receipt:async()=>{},fetchImplementation:async(url,init)=>{
-  const body=JSON.parse(String(init?.body));expect(body.model).toBe('doubao-seed-2-0-lite-260215');expect(body.temperature).toBe(.1);expect(body.max_tokens).toBe(2000);expect(body.reasoning_effort).toBeUndefined();return new Response('{}',{status:429});
- }})).rejects.toThrow();expect(calls).toBe(1);
-});

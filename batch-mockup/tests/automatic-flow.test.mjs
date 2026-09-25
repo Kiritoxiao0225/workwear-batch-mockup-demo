@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {resolve} from 'node:path';
 import sharp from 'sharp';
 import {saveJSON,atomicFile,hash,jsonFile} from '../adapters/a-files.mjs';
-import {executeTask,queueNewRequirements,continueAfterAnalysis} from '../runtime/service.mjs';
+import {executeTask,queueNewRequirements,continueAfterAnalysis,service} from '../runtime/service.mjs';
 import {readRequirementState} from '../application/requirements.mjs';
 import {readProductionJobs} from '../application/production.mjs';
 import {FRAME,readMockupState} from '../application/mockups.mjs';
@@ -87,4 +87,17 @@ test('WPS 自动队列不识别或制作手动录入的需求，独立图稿不�
  const png=await sharp({create:{width:16,height:16,channels:3,background:'red'}}).png().toBuffer();
  await executeTask(f.root,{kind:'production',payload:{caseId:'A',jobId:j.id}},f.enqueue,{productionFactory:async()=>({generate:async()=>png,cutout:()=>assert.fail('未勾选不抠图')})});
  assert.equal((await readProductionJobs(f.root))[0].status,'returned');assert.equal(f.queue.size,0);
+});
+
+test('图稿生成的「AI 整理」只填七项不自动制作；批量识别照常自动制作',async t=>{
+ const f=await fixture(t);f.manifest.cases[0].entry='studio';await saveJSON(resolve(f.root,'manifest.json'),f.manifest);
+ const env={WPS_ANALYSIS_PROVIDER:'cliproxy',WPS_ANALYSIS_MODEL:'gpt-5.6-sol',WPS_ANALYSIS_REASONING_EFFORT:'low',CLIPROXY_API_KEY:'test',CLIPROXY_API_BASE_URL:'https://proxy.invalid/v1'};
+ const saved=Object.fromEntries(Object.keys(env).map(k=>[k,process.env[k]]));Object.assign(process.env,env);
+ t.after(()=>{for(const [k,v] of Object.entries(saved))if(v===undefined)delete process.env[k];else process.env[k]=v;});
+ for(const caseId of ['A','B'])await service(f.root,'/api/requirements/analyze','POST',{caseId,revision:0,supplementRevision:0,requestId:crypto.randomUUID()},{enqueue:f.enqueue});
+ const byCase=Object.fromEntries([...f.queue.values()].map(task=>[task.payload.caseId,task]));
+ assert.equal(byCase.A.payload.autoProduce,false);assert.equal(byCase.B.payload.autoProduce,true);
+ await executeTask(f.root,byCase.A,f.enqueue,{analyzerFactory:f.analyzerFactory});
+ assert.equal((await readRequirementState(f.root,'A')).draft.artworks[0].prompt,prompt);
+ assert.equal((await readProductionJobs(f.root)).length,0);assert.equal([...f.queue.values()].filter(task=>task.kind==='production').length,0);
 });

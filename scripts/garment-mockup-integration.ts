@@ -85,6 +85,14 @@ try{
   assert.equal((await (await request(0,'jobs/'+lost.id)).json()).status,'unknown');
   assert.equal((await db().query('SELECT state FROM credit_holds WHERE id=$1',['garment:'+lost.id])).rows[0].state,'disputed');
   pass('供应商结果未知时保留争议冻结，不伪报失败退款或自动重试');
+  await request(0,'jobs',{id:randomUUID(),projectId:id,action:'generate',input:{instruction:'旧重绘',images:[]}},400);
+  const legacy={...ai,id:randomUUID()};await request(0,'jobs',legacy);
+  await db().query("UPDATE garment_mockup_ai_jobs SET action='generate' WHERE id=$1",[legacy.id]);
+  const legacyJob=(await db().query('SELECT * FROM garment_mockup_ai_jobs WHERE id=$1',[legacy.id])).rows[0];
+  let legacyCalls=0;await executeGarmentAi(legacyJob as Parameters<typeof executeGarmentAi>[0],async()=>{legacyCalls++;return {};});
+  assert.equal(legacyCalls,0);assert.equal((await (await request(0,'jobs/'+legacy.id)).json()).status,'failed');
+  assert.equal((await db().query('SELECT state FROM credit_holds WHERE id=$1',['garment:'+legacy.id])).rows[0].state,'released');
+  pass('Logo 生成移到图稿生成：新的生成请求被拒；排队中的旧任务不调模型并退回冻结');
   const {garmentCutoutEngineRegistry,UnknownOutcomeError,NotSubmittedError}=await import('../lib/server/garment-cutout');
   async function cutout(index:number,body:Buffer,headers:Record<string,string>,expected=200){
     const req=new NextRequest('http://localhost:3188/api/garment-mockup/cutouts',{method:'POST',headers:{origin:'http://localhost:3188',cookie:'catalog_session='+tokens[index],'content-type':'image/png',...headers},body:new Uint8Array(body)});

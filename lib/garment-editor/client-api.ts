@@ -87,7 +87,8 @@ export async function cutoutImage(source:string,{mode='auto',elementId,fileName=
   throw new Error('去背景结果待核实，不会重复扣费；稍后可在 AI 生成记录查看');
 }
 export async function garmentAiFetch(url:string,options:RequestInit):Promise<Response>{
-  const action=url.endsWith('/understand')?'understand':url.endsWith('/generate-back')?'back':url.endsWith('/remove-bg')?'cutout':'generate';
+  const action=url.endsWith('/generate-back')?'back':url.endsWith('/remove-bg')?'cutout':null;
+  if(!action)throw new Error('不支持的成衣 AI 操作');
   const input=JSON.parse(String(options.body));
   if(action==='cutout'){
     try{
@@ -101,7 +102,6 @@ export async function garmentAiFetch(url:string,options:RequestInit):Promise<Res
   }
   if(input.base64Image)input.base64Image=await ensureAsset(input.base64Image);
   delete input.imageRef;
-  if(input.images)input.images=await Promise.all(input.images.map(async(i:{fileName:string;base64Image:string})=>({fileName:i.fileName,base64Image:await ensureAsset(i.base64Image,i.fileName)})));
   const id=crypto.randomUUID();
   // The ID is fixed before the POST. An uncertain submit is resolved by GET, not a new call.
   try{await api('jobs',{id,action,input,projectId:currentProject});}
@@ -112,9 +112,7 @@ export async function garmentAiFetch(url:string,options:RequestInit):Promise<Res
     if(j.status==='failed'||j.status==='unknown')return Response.json({error:j.error||'结果待核查，请查看任务记录'},{status:502});
     if(j.status==='succeeded'){
       const result={...j.result_json};
-      if(action==='generate'){
-        const image=result.image as Record<string,unknown>;result.image={...image,dataUrl:await asDataUrl(String(image.dataUrl))};
-      }else if(action==='back')result.image=await asDataUrl(String(result.image));
+      result.image=await asDataUrl(String(result.image));
       return Response.json(result);
     }
     await new Promise(resolve=>setTimeout(resolve,1000));

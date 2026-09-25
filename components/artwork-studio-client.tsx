@@ -38,6 +38,49 @@ type Reference = {
   url: string;
   file?: File;
 };
+type Stage = "checker" | "white" | "dark";
+const ROUTES = [
+  ["generate", "生图", "按要求生成或修改图片。"],
+  ["enhance", "无损放大", "已有清晰原图，只提高清晰度。"],
+  ["reuse", "直接复用", "直接使用原图，可勾选透明背景去掉底色。"],
+] as const;
+const PHRASES = [
+  ["保留参考图形", "保留参考图中的主要图形"],
+  ["修改文字为…", "文字改为："],
+  ["调整配色为…", "配色改为："],
+  ["调整布局", "调整图形与文字的布局："],
+] as const;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const refsKey = (refs: Reference[]) => refs.map((r) => r.key).join("|");
+const sevenFields = (text: string) => /^主体：/m.test(text) && /^输出：/m.test(text);
+// A seven-field prompt is listed by its 主体, not by its 【图稿】 header.
+const caseTitle = (c: Case) =>
+  (sevenFields(c.sourceText)
+    ? splitPrompt(c.sourceText).parts.find((p) => p.label === "主体")?.value.trim() || c.sourceText
+    : c.sourceText
+  ).slice(0, 40);
+const when = (value?: string) =>
+  value
+    ? new Date(value).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
+    : "";
+async function refFiles(refs: Reference[]) {
+  const files: File[] = [];
+  for (const r of refs) {
+    if (r.file) files.push(r.file);
+    else {
+      const response = await fetch(r.url);
+      if (!response.ok) throw new Error("参考图读取失败");
+      files.push(new File([await response.blob()], r.name + ".png", { type: "image/png" }));
+    }
+  }
+  return files;
+}
+async function readCase(caseId: string) {
+  const live = await batchAPI<{ cases: Case[] }>("/api/requirements"),
+    c = live.cases.find((x) => x.caseId === caseId);
+  if (!c) throw new Error("图稿记录读取失败，请刷新后在「我的图稿」里查看");
+  return c;
+}
 export function ArtworkStudioClient() {
   const { data, error, reload } = useWorkbench(),
     prices = usePrices();
@@ -49,13 +92,20 @@ export function ArtworkStudioClient() {
     [selected, setSelected] = useState<string | null>(null),
     [notice, setNotice] = useState(""),
     [busy, setBusy] = useState(false),
+    [organizing, setOrganizing] = useState(false),
     [target, setTarget] = useState<{ type: "artwork"; id: string } | null>(
       null,
     ),
     [allHistory, setAllHistory] = useState(false),
+    [filter, setFilter] = useState<"all" | "transparent">("all"),
+    [stage, setStage] = useState<Stage>("checker"),
+    [moreOpen, setMoreOpen] = useState(false),
     [handoff, setHandoff] = useState<ArtworkHandoff | null>(null);
   const input = useRef<HTMLInputElement>(null),
+    textarea = useRef<HTMLTextAreaElement>(null),
     request = useRef<{ snapshot: string; id: string } | null>(null),
+    // A case that "AI 整理" created and nobody has produced from yet; 开始制作 continues it.
+    organized = useRef<{ caseId: string; refs: string } | null>(null),
     running = useRef(false);
   const cases = (data?.cases || [])
       .filter((c) => c.entry === "studio" && c.active !== false)
@@ -118,31 +168,104 @@ export function ArtworkStudioClient() {
     setNotice("");
   }
   function selectCase(c: Case) {
-    setSelected(c.caseId);
-    setText(c.draft?.artworks[0]?.prompt || c.sourceText);
-    setRoute(c.draft?.artworks[0]?.route || "generate");
-    setTransparentBackground(c.draft?.artworks[0]?.transparentBackground ?? true);
-    setRefs(
-      c.images.map((i) => ({
+    const art = c.draft?.artworks[0],
+      prompt = art?.prompt || c.sourceText,
+      next = c.images.map((i) => ({
         key: i.id,
         index: i.index,
         name: i.label,
         url: assetURL(i.asset),
-      })),
-    );
+      }));
+    setSelected(c.caseId);
+    setText(prompt);
+    setMode(sevenFields(prompt) ? "seven" : "text");
+    setRoute(art?.route || "generate");
+    setTransparentBackground(art?.transparentBackground ?? true);
+    setRefs(next);
+    request.current = null;
+    organized.current = c.productions.length ? null : { caseId: c.caseId, refs: refsKey(next) };
     setNotice("");
   }
-  async function begin() {
+  function startBlank() {
+    setSelected(null);
+    setText("");
+    setRefs([]);
+    setRoute("generate");
+    setTransparentBackground(!!handoff);
+    setMode("text");
+    request.current = null;
+    organized.current = null;
+    setNotice("已新建空白制作要求");
+  }
+  function checkInput() {
+    if (!text.trim()) throw new Error("请先写制作要求");
+    if (refs.some((r, i) => r.index !== i + 1))
+      throw new Error(
+        "素材图号存在空缺，请恢复缺失素材或新建一份需求；不会自动更改原图号",
+      );
+  }
+  // Same reading as 批量生成「识别」: the model splits the requirement into the seven
+  // fields; nothing is produced until the author reviews them and starts production.
+  async function organize() {
+    if (running.current) return;
+    running.current = true;
+    setOrganizing(true);
+    setNotice("");
+    try {
+      checkInput();
+      const images = await uploadImages(await refFiles(refs)),
+        created = await batchAPI<{ caseId: string }>("/api/cases", {
+          text,
+          images,
+          entry: "studio",
+          requestId: crypto.randomUUID(),
+        });
+      let c = await readCase(created.caseId);
+      setSelected(c.caseId);
+      const started = await batchAPI<{ id: string; status: string }>(
+        "/api/requirements/analyze",
+        {
+          caseId: c.caseId,
+          revision: c.revision,
+          supplementRevision: c.supplement.revision,
+          requestId: crypto.randomUUID(),
+        },
+      );
+      await reload();
+      // About three minutes of polling, one read every 1.5 seconds.
+      for (let tries = 0; c.analysis?.id !== started.id || c.analysis.status === "running"; tries++) {
+        if (tries >= 120)
+          throw new Error("AI 整理还没返回。结果会留在右侧「我的图稿」里，稍后点开这条即可，不会重复扣费。");
+        await sleep(1500);
+        c = await readCase(c.caseId);
+      }
+      await reload();
+      const art = c.draft?.artworks[0];
+      if (c.analysis?.status !== "returned" || !art)
+        throw new Error(c.analysis?.error || "AI 没有整理出图稿，请补充要求后重试");
+      setText(art.prompt);
+      setMode("seven");
+      setRoute(art.route);
+      organized.current = { caseId: c.caseId, refs: refsKey(refs) };
+      const issues = c.draft!.readingIssues.map((i) => i.issue),
+        extra = c.draft!.artworks.length > 1 ? `识别出 ${c.draft!.artworks.length} 份图稿，已填入第 1 份。` : "";
+      setNotice(
+        "AI 已整理成七项，可逐项修改后点「开始制作」。" + extra + (issues.length ? "需要核对：" + issues.join("；") : ""),
+      );
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : String(e));
+    } finally {
+      setOrganizing(false);
+      running.current = false;
+    }
+  }
+  async function begin(fresh = false) {
     if (running.current) return;
     running.current = true;
     setBusy(true);
     setNotice("");
     try {
-      if (!text.trim()) throw new Error("请填写制作要求");
-      if (refs.some((r, i) => r.index !== i + 1))
-        throw new Error(
-          "素材图号存在空缺，请恢复缺失素材或新建一份需求；不会自动更改原图号",
-        );
+      checkInput();
       if (route !== "generate" && refs.length !== 1)
         throw new Error("无损放大或直接复用需要一张明确的内容原图");
       const prompt = authoredPrompt(text, transparentBackground),
@@ -152,31 +275,29 @@ export function ArtworkStudioClient() {
           transparentBackground,
           refs: refs.map((r) => r.key),
         });
+      // 再来一张 is a new request on purpose; any other repeat reads the earlier one back.
+      if (fresh) {
+        request.current = null;
+        organized.current = null;
+      }
       if (request.current?.snapshot !== snapshot)
         request.current = { snapshot, id: crypto.randomUUID() };
-      const files: File[] = [];
-      for (const r of refs) {
-        if (r.file) files.push(r.file);
-        else {
-          const response = await fetch(r.url);
-          if (!response.ok) throw new Error("参考图读取失败");
-          files.push(
-            new File([await response.blob()], r.name + ".png", {
-              type: "image/png",
-            }),
-          );
-        }
+      const reuse =
+        organized.current?.refs === refsKey(refs) ? organized.current.caseId : null;
+      let caseId = reuse;
+      if (!caseId) {
+        const images = await uploadImages(await refFiles(refs));
+        caseId = (
+          await batchAPI<{ caseId: string }>("/api/cases", {
+            text,
+            images,
+            entry: "studio",
+            requestId: request.current.id,
+          })
+        ).caseId;
       }
-      const images = await uploadImages(files),
-        created = await batchAPI<{ caseId: string }>("/api/cases", {
-          text,
-          images,
-          entry: "studio",
-          requestId: request.current.id,
-        });
-      setSelected(created.caseId);
-      const live = await batchAPI<{ cases: Case[] }>("/api/requirements"),
-        c = live.cases.find((x) => x.caseId === created.caseId)!;
+      setSelected(caseId);
+      const c = await readCase(caseId);
       // An uncertain submit is read back, never turned into a second paid request.
       const prior = c.productions.at(-1);
       if (prior) {
@@ -211,6 +332,7 @@ export function ArtworkStudioClient() {
           },
         ],
       });
+      organized.current = null;
       setNotice(
         result.jobs.some((j) => j.status === "blocked")
           ? result.jobs.map((j) => j.error).join("；")
@@ -248,34 +370,68 @@ export function ArtworkStudioClient() {
       "使用图1完整图稿，只提升清晰度，保持原有图形、文字、字体、配色和布局。",
     );
     setMode("text");
-    setNotice("输入已切换为当前结果；点击右侧「开始制作」才会提交新任务。");
+    setSelected(null);
+    request.current = null;
+    organized.current = null;
+    setNotice("输入已切换为当前结果；点击左下「开始制作」才会提交新任务。");
+  }
+  async function addToBatch() {
+    if (!file) return;
+    setMoreOpen(false);
+    setBusy(true);
+    try {
+      const r = await fetch(assetURL(file.asset));
+      if (!r.ok) throw new Error("结果读取失败");
+      const images = await uploadImages([
+        new File([await r.blob()], "图稿.png", { type: "image/png" }),
+      ]);
+      await batchAPI("/api/cases", {
+        text: "使用图1完整图稿制作上衣效果图，请填写款式、颜色和印花位置。",
+        images,
+        requestId: crypto.randomUUID(),
+      });
+      setNotice("已加入批量生成草稿，补充款色与位置后再识别。");
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  function insertPhrase(phrase: string) {
+    const el = textarea.current,
+      start = el?.selectionStart ?? text.length,
+      end = el?.selectionEnd ?? start,
+      before = text.slice(0, start),
+      separator = before && !/[\s，。；：]$/u.test(before) ? "；" : "",
+      cursor = before.length + separator.length + phrase.length;
+    setText(before + separator + phrase + text.slice(end));
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(cursor, cursor);
+    });
   }
   const parsed = splitPrompt(authoredPrompt(text, transparentBackground));
+  const shown = cases.filter(
+      (c) => filter === "all" || c.productions.at(-1)?.transparentBackground === true,
+    ),
+    visible = allHistory ? shown : shown.slice(0, 30);
+  const working = busy || organizing;
+  const historyStatus = (c: Case) => {
+    const j = c.productions.at(-1);
+    if (j) return statusText(j.status);
+    if (c.analysis?.status === "running") return "AI 整理中";
+    if (c.analysis?.status === "returned") return "已整理，待制作";
+    if (c.analysis) return "整理未完成";
+    return "草稿";
+  };
   return (
-    <div className="saas-app">
+    <div className="saas-app studio-app">
       <AppHeader />
-      <main className="page">
-        <div className="page-head">
-          <div>
-            <h1>图稿生成</h1>
-            <p>
-              传参考图 +
-              写需求，生成图片或场景图；勾选「透明背景 PNG」可制作透明图稿。可无损放大、去背景、局部修补。做好后点「放到成衣效果图」看穿在衣服上的效果。
-            </p>
-          </div>
-          <button
-            className="button sm"
-            onClick={() => {
-              setSelected(null);
-              setText("");
-              setRefs([]);
-              setRoute("generate");
-              setTransparentBackground(!!handoff);
-              setMode("text");
-              request.current = null;
-              setNotice("已新建空白制作要求");
-            }}
-          >
+      <main className="page studio-page">
+        <div className="studio-bar">
+          <h1>图稿生成</h1>
+          <p>传参考图、写要求，生成 Logo 或图案。要看穿在衣服上的效果，做好后点「放到成衣效果图」。</p>
+          <button className="button sm" onClick={startBlank}>
             新建图稿
           </button>
         </div>
@@ -322,12 +478,15 @@ export function ArtworkStudioClient() {
         {(error || notice) && (
           <p className="notice warn" role="status">
             {error || notice}
+            {notice.includes("已加入批量") && (
+              <Link href="/batch"> 前往批量生成 →</Link>
+            )}
           </p>
         )}
         <div className="studio">
-          <section className="col col-left">
+          <section className="col col-left" aria-label="输入">
             <div className="col-head">
-              <h3>参考素材与需求</h3>
+              <h3>输入</h3>
               <span className="tiny muted">素材 {refs.length} / 10</span>
             </div>
             <div
@@ -338,6 +497,10 @@ export function ArtworkStudioClient() {
                 addFiles(Array.from(e.dataTransfer.files));
               }}
             >
+              <div className="field-label">
+                <span>参考图</span>
+                <small>可粘贴、拖入 · PNG/JPG/WebP ≤ 15MB</small>
+              </div>
               <div className="mat-row">
                 {refs.map((r) => (
                   <div className="ref thumb" key={r.key}>
@@ -346,6 +509,7 @@ export function ArtworkStudioClient() {
                     <button
                       className="del"
                       aria-label={`移除图${r.index}`}
+                      disabled={working}
                       onClick={() =>
                         setRefs((v) => v.filter((x) => x.key !== r.key))
                       }
@@ -357,7 +521,7 @@ export function ArtworkStudioClient() {
                 <button
                   className="add-tile"
                   onClick={() => input.current?.click()}
-                  disabled={busy || refs.length >= 10}
+                  disabled={working || refs.length >= 10}
                 >
                   <b>＋</b>
                   <span>添加</span>
@@ -374,10 +538,7 @@ export function ArtworkStudioClient() {
                   e.target.value = "";
                 }}
               />
-              <p className="sub">
-                PNG / JPG / WebP，单张 ≤ 15MB。图号固定后不可变。
-              </p>
-              <div className="req-label">
+              <div className="field-label">
                 <span>制作要求</span>
                 <div className="seg">
                   <button
@@ -398,19 +559,35 @@ export function ArtworkStudioClient() {
                 </div>
               </div>
               {mode === "text" ? (
-                <textarea
-                  aria-label="制作要求"
-                  rows={9}
-                  placeholder="写清要保留的图形、文字、字体、颜色和布局；引用图片请使用图1、图2…"
-                  value={text}
-                  onChange={(e) => setText(e.target.value)}
-                  onPaste={(e) => {
-                    if (e.clipboardData.files.length) {
-                      e.preventDefault();
-                      addFiles(Array.from(e.clipboardData.files));
-                    }
-                  }}
-                />
+                <>
+                  <textarea
+                    ref={textarea}
+                    aria-label="制作要求"
+                    rows={7}
+                    disabled={organizing}
+                    placeholder="写清要保留的图形、文字、字体、颜色和布局；引用图片请使用图1、图2…"
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
+                    onPaste={(e) => {
+                      if (e.clipboardData.files.length) {
+                        e.preventDefault();
+                        addFiles(Array.from(e.clipboardData.files));
+                      }
+                    }}
+                  />
+                  <div className="phrases" aria-label="快捷短语">
+                    {PHRASES.map(([label, phrase]) => (
+                      <button
+                        key={label}
+                        type="button"
+                        disabled={organizing || text.includes(phrase)}
+                        onClick={() => insertPhrase(phrase)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </>
               ) : (
                 <dl className="seven-view">
                   {parsed.parts.map((p) => (
@@ -420,6 +597,7 @@ export function ArtworkStudioClient() {
                         <textarea
                           aria-label={`${p.label}要求`}
                           rows={2}
+                          disabled={organizing}
                           value={p.value}
                           onChange={(e) =>
                             setText(
@@ -443,21 +621,41 @@ export function ArtworkStudioClient() {
                   ))}
                 </dl>
               )}
-              <p className="sub">
-                七项细化保留原文供你核对，不额外调用识图模型。
-              </p>
-            </div>
-            <div
-              className="col-foot studio-output-settings"
-              role="group"
-              aria-labelledby="studio-output-heading"
-            >
-              <h4 id="studio-output-heading">输出设置</h4>
-              <label className="row">
+              <div className="organize">
+                <button
+                  className="button sm"
+                  disabled={working || !text.trim() || !prices}
+                  onClick={() => void organize()}
+                >
+                  {organizing ? "AI 正在整理…" : "AI 整理成七项"}
+                </button>
+                <small>
+                  {organizing
+                    ? "一般 10 秒左右；关掉页面也会在后台整理完。"
+                    : `看图和要求，拆成七项，可逐项改。${chargeLabel(prices, "analyze")}`}
+                </small>
+              </div>
+              <div className="field-label">
+                <span>制作方式</span>
+              </div>
+              <div className="seg full" role="group" aria-label="制作方式">
+                {ROUTES.map(([key, title]) => (
+                  <button
+                    key={key}
+                    aria-pressed={route === key}
+                    disabled={working}
+                    onClick={() => setRoute(key)}
+                  >
+                    {title}
+                  </button>
+                ))}
+              </div>
+              <p className="sub">{ROUTES.find(([key]) => key === route)?.[2]}</p>
+              <label className="row output-check">
                 <input
                   type="checkbox"
                   checked={transparentBackground}
-                  disabled={busy}
+                  disabled={working}
                   aria-describedby="studio-output-hint"
                   onChange={(e) => setTransparentBackground(e.target.checked)}
                 />
@@ -465,29 +663,59 @@ export function ArtworkStudioClient() {
               </label>
               <p className="sub" id="studio-output-hint">
                 {transparentBackground
-                  ? "去除背景，仅保留主体，输出透明 PNG。"
+                  ? "去除背景，只保留图案本身；放到衣服上建议勾选。"
                   : "保留背景或使用场景，不自动抠图。"}
               </p>
             </div>
+            <div className="col-foot start-foot">
+              <div className="cost-row">
+                <span>预计冻结</span>
+                <b>{chargeLabel(prices, route)}</b>
+              </div>
+              <button
+                className="button primary full"
+                disabled={working || !text.trim() || !prices}
+                onClick={() => void begin()}
+              >
+                {busy ? "正在提交…" : "开始制作"}
+              </button>
+              <p className="tiny muted">按上限冻结，跑完按实际结算，多余退回。</p>
+            </div>
           </section>
-          <section className="col col-mid">
+          <section className="col col-mid" aria-label="结果">
             <div className="col-head">
               <div className="row">
-                <h3>制作结果</h3>
+                <h3>结果</h3>
                 <span
                   className={"tag " + (job?.status === "returned" ? "ok" : "")}
                 >
-                  {job ? statusText(job.status) : "待制作"}
+                  {job ? statusText(job.status) : active ? historyStatus(active) : "待制作"}
+                </span>
+                <span className="tiny muted">
+                  {file?.width && file?.height
+                    ? `${file.width} × ${file.height}${job?.transparentBackground ? " · 透明 PNG" : ""}`
+                    : ""}
                 </span>
               </div>
-              <span className="tiny muted">
-                {file?.width && file?.height
-                  ? `${file.width} × ${file.height}`
-                  : ""}
-              </span>
+              <div className="stage-switch" role="group" aria-label="预览背景">
+                {([
+                  ["checker", "棋盘格"],
+                  ["white", "白底"],
+                  ["dark", "深色底"],
+                ] as const).map(([key, label]) => (
+                  <button
+                    key={key}
+                    className={"sw " + key}
+                    aria-pressed={stage === key}
+                    aria-label={label}
+                    title={label}
+                    onClick={() => setStage(key)}
+                  />
+                ))}
+              </div>
             </div>
             <div className="preview">
-              <div className="thumb">
+              <div className={"thumb stage-" + stage}>
                 {file ? (
                   <img src={assetURL(file.asset)} alt="制作结果" />
                 ) : (
@@ -495,7 +723,7 @@ export function ArtworkStudioClient() {
                     <h3>{job ? statusText(job.status) : "图稿将在这里显示"}</h3>
                     <p>
                       {job?.error ||
-                        "添加参考图、填写要求，在右侧选择本次制作方式。"}
+                        "添加参考图、写好要求，点左下「开始制作」。"}
                     </p>
                   </div>
                 )}
@@ -503,6 +731,19 @@ export function ArtworkStudioClient() {
             </div>
             {job?.error && <p className="notice warn tiny">{job.error}</p>}
             <div className="col-foot result-tools">
+              {file ? (
+                <a
+                  className="button sm primary"
+                  title={handoff && !handoff.replace ? "放到 " + targetLabel(handoff) : undefined}
+                  href={"/garment-mockup?artwork=" + encodeURIComponent(assetURL(file.asset))}
+                >
+                  {handoff?.replace ? `替换成衣上的 ${handoff.replace.label}` : "放到成衣效果图"}
+                </a>
+              ) : (
+                <button className="button sm primary" disabled>
+                  放到成衣效果图
+                </button>
+              )}
               <button
                 className="button sm"
                 disabled={!file}
@@ -512,22 +753,20 @@ export function ArtworkStudioClient() {
               </button>
               <button
                 className="button sm"
-                disabled={!file || busy}
+                disabled={!file || working}
                 onClick={() => void reprocess()}
               >
-                再加工 →
+                再加工
               </button>
-              {file && (
-                <a
-                  className="button sm primary"
-                  title={handoff && !handoff.replace ? "放到 " + targetLabel(handoff) : undefined}
-                  href={"/garment-mockup?artwork=" + encodeURIComponent(assetURL(file.asset))}
-                >
-                  {handoff?.replace ? `替换成衣上的 ${handoff.replace.label}` : "放到成衣效果图"}
-                </a>
-              )}
+              <button
+                className="button sm"
+                title="同样的要求再做一张，另算一次制作"
+                disabled={!active || !job || working || !prices}
+                onClick={() => void begin(true)}
+              >
+                再来一张
+              </button>
               <span className="grow" />
-              <span className="tiny muted">以下不消耗积分</span>
               <button
                 className="button sm"
                 disabled={!file}
@@ -552,139 +791,88 @@ export function ArtworkStudioClient() {
                   下载 PNG
                 </button>
               )}
-              <button
-                className="button sm"
-                disabled={!file || busy}
-                onClick={() =>
-                  void (async () => {
-                    setBusy(true);
-                    try {
-                      const r = await fetch(assetURL(file!.asset));
-                      if (!r.ok) throw new Error("结果读取失败");
-                      const images = await uploadImages([
-                        new File([await r.blob()], "图稿.png", {
-                          type: "image/png",
-                        }),
-                      ]);
-                      await batchAPI("/api/cases", {
-                        text: "使用图1完整图稿制作上衣效果图，请填写款式、颜色和印花位置。",
-                        images,
-                        requestId: crypto.randomUUID(),
-                      });
-                      setNotice("已加入批量生成草稿，补充款色与位置后再识别。");
-                    } catch (e) {
-                      setNotice(e instanceof Error ? e.message : String(e));
-                    } finally {
-                      setBusy(false);
-                    }
-                  })()
-                }
-              >
-                加入批量生成
-              </button>
+              <div className="more">
+                <button
+                  className="button sm"
+                  aria-label="更多操作"
+                  aria-expanded={moreOpen}
+                  disabled={!file || working}
+                  onClick={() => setMoreOpen((v) => !v)}
+                >
+                  ⋯
+                </button>
+                {moreOpen && (
+                  <div className="more-menu" role="menu">
+                    <button role="menuitem" onClick={() => void addToBatch()}>
+                      <b>加入批量生成</b>
+                      <small>建一条批量草稿，补款色和位置后识别</small>
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </section>
-          <section className="col col-right">
+          <section className="col col-right" aria-label="我的图稿">
             <div className="col-head">
-              <h3>本次制作</h3>
-              <span className="tag warn">
-                {prices?.exempt ? "内部免计费" : "消耗积分"}
-              </span>
-            </div>
-            <div className="col-body">
-              <div className="source-row">
-                <span className="tiny muted">输入</span>
-                <b className="small">
-                  {refs.length
-                    ? `参考素材 ${refs.map((r) => "图" + r.index).join("、")}`
-                    : "文字要求"}
-                </b>
+              <h3>我的图稿</h3>
+              <div className="seg">
+                <button aria-pressed={filter === "all"} onClick={() => setFilter("all")}>
+                  全部
+                </button>
+                <button aria-pressed={filter === "transparent"} onClick={() => setFilter("transparent")}>
+                  透明
+                </button>
               </div>
-              <div className="routes">
-                {(
-                  [
-                    ["generate", "生图", "按需求生成或修改图片"],
-                    ["enhance", "无损放大", "已有图，只提清晰度"],
-                    ["reuse", "直接复用", "使用原图，可勾选去背景"],
-                  ] as const
-                ).map(([key, title, hint]) => (
+            </div>
+            <div className="col-body hist-list">
+              {visible.map((c) => {
+                const j = c.productions.at(-1),
+                  f = resultFile(j),
+                  pending = j ? ["queued", "running"].includes(j.status) : c.analysis?.status === "running";
+                return (
                   <button
-                    key={key}
-                    aria-pressed={route === key}
-                    onClick={() => setRoute(key)}
+                    className={
+                      "hist " + (c.caseId === active?.caseId ? "active" : "")
+                    }
+                    key={c.caseId}
+                    disabled={working}
+                    onClick={() => selectCase(c)}
                   >
-                    <b>{title}</b>
-                    <small>{hint}</small>
+                    <div className="thumb">
+                      {f ? (
+                        <img src={assetURL(f.asset)} alt="" loading="lazy" />
+                      ) : pending ? (
+                        <i className="spin" aria-hidden="true" />
+                      ) : (
+                        "—"
+                      )}
+                    </div>
+                    <div>
+                      <div className="t">{caseTitle(c)}</div>
+                      <div className="s">
+                        <span className={"state " + (j?.status === "returned" ? "ok" : pending ? "run" : "")}>
+                          {historyStatus(c)}
+                        </span>
+                        {j?.transparentBackground && <span>透明</span>}
+                        <span>{when(j?.createdAt)}</span>
+                      </div>
+                    </div>
                   </button>
-                ))}
-              </div>
-            </div>
-            <div className="col-foot">
-              <div className="cost-row">
-                <span>预计冻结</span>
-                <b>{chargeLabel(prices, route)}</b>
-              </div>
-              <p className="tiny muted cost-note">
-                按上限冻结，跑完按实际动作结算，多余退回。结果未知时保留冻结，等待核对。
-              </p>
-              <button
-                className="button primary"
-                disabled={busy || !text.trim() || !prices}
-                onClick={() => void begin()}
-              >
-                {busy ? "正在提交…" : "开始制作"}
-              </button>
+                );
+              })}
+              {shown.length > visible.length && (
+                <button className="button sm full" onClick={() => setAllHistory(true)}>
+                  显示更早的 {shown.length - visible.length} 条
+                </button>
+              )}
+              {!shown.length && (
+                <p className="small muted">
+                  {cases.length ? "还没有透明背景的图稿。" : "还没有制作记录，做好的图稿都会保存在这里。"}
+                </p>
+              )}
             </div>
           </section>
         </div>
-        <section className="col recent">
-          <div className="col-head">
-            <h3>最近制作</h3>
-            <button
-              className="button sm"
-              onClick={() => setAllHistory((v) => !v)}
-            >
-              {allHistory ? "收起历史" : "全部历史"}
-            </button>
-          </div>
-          <div className="recent-list">
-            {(allHistory ? cases : cases.slice(0, 12)).map((c) => {
-              const j = c.productions.at(-1),
-                f = resultFile(j);
-              return (
-                <button
-                  className={
-                    "hist " + (c.caseId === active?.caseId ? "active" : "")
-                  }
-                  key={c.caseId}
-                  onClick={() => selectCase(c)}
-                >
-                  <div className="thumb">
-                    {f ? (
-                      <img src={assetURL(f.asset)} alt="历史图稿" />
-                    ) : (
-                      statusText(j?.status)
-                    )}
-                  </div>
-                  <div>
-                    <div className="t">{c.sourceText.slice(0, 40)}</div>
-                    <div className="s">{statusText(j?.status)}</div>
-                  </div>
-                </button>
-              );
-            })}
-            {!cases.length && (
-              <p className="small muted">
-                还没有制作记录，完成后会保存在这里。
-              </p>
-            )}
-          </div>
-        </section>
-        {notice.includes("已加入批量") && (
-          <Link className="button" href="/batch">
-            前往批量生成
-          </Link>
-        )}
       </main>
       <SaasEditors target={target} onClose={close} onSaved={saved} />
     </div>

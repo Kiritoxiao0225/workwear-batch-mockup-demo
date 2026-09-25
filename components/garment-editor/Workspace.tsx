@@ -220,7 +220,7 @@ function Workspace({userId,canEdit,beforeLogoutRef}:{userId:string;canEdit:boole
         <div className="gme-menu-wrap">
           <button type="button" className="gme-ghost" aria-expanded={menu==='history'} onClick={()=>setMenu(menu==='history'?null:'history')}><History size={16} aria-hidden="true"/><span className="gme-hide-sm">历史</span><ChevronDown size={14} aria-hidden="true"/></button>
           {menu==='history'&&<div className="gme-menu" role="menu">
-            <button type="button" role="menuitem" onClick={()=>void open('jobs')}><b>AI 生成记录</b><small>去背景、重绘、背面图的结果</small></button>
+            <button type="button" role="menuitem" onClick={()=>void open('jobs')}><b>AI 生成记录</b><small>去背景、背面图的结果</small></button>
             <button type="button" role="menuitem" onClick={()=>void open('versions')}><b>恢复旧版本</b><small>找回以前保存的内容</small></button>
           </div>}
         </div>
