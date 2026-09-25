@@ -136,3 +136,17 @@ test('并发的两份图稿共用素材时只上传一次，只发各自关联�
   assert.equal(calls.upload, 2, '重新生成时复用已上传的素材');
   assert.ok(back.bytes.length > 0);
 });
+
+test('草稿从数据库读回后字段顺序变了，同一份图稿仍是同一个制作编号，不会重复生成', async t => {
+  const f = await fixture(t);
+  f.state.draft.artworks[0].applications = [{ style: '719SF', color: '藏青', position: '左胸', sizeReference: { imageId: 'T-1', logoToBody: 0.2, note: '实拍' } }];
+  f.state.draft.readingIssues = [{ scope: '图2', issue: '文字模糊' }];
+  await saveJSON(resolve(f.root, 'requirements-state/T.json'), f.state);
+  const [first] = await reserveProduction(f.root, f.manifest, f.requests);
+  // jsonb sorts keys by length, then bytes: the same draft comes back in a different key order.
+  f.state.draft.artworks[0].applications = [{ color: '藏青', style: '719SF', position: '左胸', sizeReference: { note: '实拍', imageId: 'T-1', logoToBody: 0.2 } }];
+  f.state.draft.readingIssues = [{ issue: '文字模糊', scope: '图2' }];
+  await saveJSON(resolve(f.root, 'requirements-state/T.json'), f.state);
+  const [again] = await reserveProduction(f.root, f.manifest, f.requests);
+  assert.equal(again.id, first.id);
+});

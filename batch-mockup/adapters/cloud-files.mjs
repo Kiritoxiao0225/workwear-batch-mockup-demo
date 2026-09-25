@@ -107,6 +107,10 @@ export async function cloudStorage(action, { workspace = workspaceId(), lease } 
                 billingMode:tenant.billing_mode,amountCents,snapshot});
             }
           }
+          // Every finished artwork asks for its requirement's mock-ups; one waiting render already reads
+          // them all when it starts, so a second waiting one is never added (one case queued 17 renders).
+          if(task.kind==='mockup'){await client.query(`INSERT INTO batch_queue(id,workspace,kind,payload) SELECT $1,$2,$3,$4
+            WHERE NOT EXISTS(SELECT 1 FROM batch_queue WHERE workspace=$2 AND kind='mockup' AND status='queued' AND payload->>'caseId'=$5) ON CONFLICT DO NOTHING`,[task.id,workspace,task.kind,task.payload,String(task.payload?.caseId??'')]);continue;}
           await client.query('INSERT INTO batch_queue(id,workspace,kind,payload) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING',[task.id,workspace,task.kind,task.payload]);
         }
       });

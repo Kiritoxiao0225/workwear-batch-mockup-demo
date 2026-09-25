@@ -247,3 +247,18 @@ test('SOP 5 自动改色：设计师在编辑器设过颜色不改；一份图�
   assert.equal(twoTone.layers[0].colorResult.recommended.label,'衣服撞色');assert.ok(twoTone.hints.some(h=>/已按 SOP 改为衣服撞色 #7a[12][0-9a-f]2b/.test(h)));
  }finally{await rm(root,{recursive:true,force:true});}
 });
+
+test('货号写法不同也能匹配：大小写、全角、分隔符、字母与数字段顺序；近似号码和多个候选不猜', async () => {
+  const { findStyles } = await import('../application/mockups.mjs');
+  const color = code => ({ id: code, colorName: '藏青' });
+  const styles = ['719SF', 'JSH-JSD33', 'CX8099NS', 'NS-2288', 'AB12', '12-AB'].map(code => ({ styleCode: code, colors: [color(code)] }));
+  assert.equal(matchGarment(styles, 'SF-719', '藏青')?.id, '719SF');
+  assert.equal(matchGarment(styles, 'ｊｓｈ ｊｓｄ33', '藏青')?.id, 'JSH-JSD33');
+  assert.equal(matchGarment(styles, 'cx-8099-ns', '藏青')?.id, 'CX8099NS');
+  assert.equal(findStyles(styles, '719SF').how, 'exact');
+  assert.equal(findStyles(styles, 'SF-719').how, 'reordered');
+  assert.equal(matchGarment(styles, '8800/NS', '藏青'), null, '不同号码不当成同一款');
+  assert.equal(matchGarment(styles, 'CX8800NS', '藏青'), null);
+  assert.equal(findStyles(styles, 'AB-12').named[0].styleCode, 'AB12', '更严格的一级先命中');
+  assert.deepEqual(findStyles([...styles, { styleCode: 'AB-12', colors: [color('AB-12')] }], 'ab12').ambiguous, ['AB12', 'AB-12']);
+});

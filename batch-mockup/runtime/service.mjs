@@ -20,7 +20,11 @@ export async function queueNewRequirements(root,manifest,enqueue,factory=configu
   if(c.sourceRecordId?.startsWith('upload:')||['studio','batch'].includes(c.entry))continue;
   if(c.active===false||c.sourceChanged||c.sourceReadError)continue;
   try{
-   if(c.draft){if(!existingJobs.some(j=>j.caseId===c.caseId))await continueAfterAnalysis(root,c.caseId,c.draftAnalysisId,enqueue);continue;}
+   // A reading queued to produce reserves its own production; a sync running alongside it would
+   // reserve the same artworks again before that task commits. Leave those to the task for a while.
+   if(c.draft){const done=(await readRequirementState(root,c.caseId)).analyses.find(a=>a.id===c.draftAnalysisId);
+    const ownsProduction=done?.autoProduce&&done.finishedAt&&Date.now()-Date.parse(done.finishedAt)<10*60e3;
+    if(!existingJobs.some(j=>j.caseId===c.caseId)&&!ownsProduction)await continueAfterAnalysis(root,c.caseId,c.draftAnalysisId,enqueue);continue;}
    if(c.analysis)continue;
    const reserved=await reserveRequirementAnalysis(root,manifest,{caseId:c.caseId,revision:c.revision,supplementRevision:c.supplement.revision,requestId:randomUUID()},factory);
    if(reserved.execute){await enqueue({id:reserved.analysis.id,kind:'analysis',payload:{caseId:c.caseId,analysisId:reserved.analysis.id,autoProduce:true}});queued.push(c.caseId);}
@@ -159,6 +163,8 @@ export async function executeTask(root,task,enqueue,dependencies={}){
   await assertCreditReservation(task.workspace||'main',analysisId);
   const request=await jsonFile(resolve(root,'analysis-evidence',caseId,analysisId+'-request.json'));
   a.attemptId ||= analysisId;
+  // Recorded so a sync running alongside knows this task will reserve its own production.
+  a.autoProduce=!!task.payload.autoProduce;
   await saveJSON(resolve(root,'requirements-state',caseId+'.json'),state);
   await checkpoint();
   let result,error;try{result=await (await (dependencies.analyzerFactory||configuredAnalyzer)())(request);}catch(e){error=e;}

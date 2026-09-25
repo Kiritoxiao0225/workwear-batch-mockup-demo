@@ -101,3 +101,12 @@ test('图稿生成的「AI 整理」只填七项不自动制作；批量识别�
  assert.equal((await readRequirementState(f.root,'A')).draft.artworks[0].prompt,prompt);
  assert.equal((await readProductionJobs(f.root)).length,0);assert.equal([...f.queue.values()].filter(task=>task.kind==='production').length,0);
 });
+
+test('刚识别完、会自行接续制作的需求，同时进行的同步不再预约第二份制作',async t=>{
+ const f=await fixture(t);await queueNewRequirements(f.root,f.manifest,f.enqueue,f.analyzerFactory);
+ // The reading returns and saves its draft, but its own production has not been committed yet.
+ for(const task of [...f.queue.values()]){await executeTask(f.root,{...task,payload:{...task.payload,autoProduce:false}},f.enqueue,{analyzerFactory:f.analyzerFactory});
+  const path=resolve(f.root,'requirements-state',task.payload.caseId+'.json'),state=await jsonFile(path);state.analyses.at(-1).autoProduce=true;await saveJSON(path,state);}
+ await queueNewRequirements(f.root,f.manifest,f.enqueue,f.analyzerFactory);
+ assert.equal((await readProductionJobs(f.root)).length,0);
+});

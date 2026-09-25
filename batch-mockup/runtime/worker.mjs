@@ -7,8 +7,9 @@ export function workerScope(value = process.env.BATCH_WORKER_SCOPE || 'main') {
  if (!['main', 'external'].includes(value)) throw new Error('BATCH_WORKER_SCOPE 必须为 main 或 external');
  return value;
 }
-// One requirement's artworks write separate job documents, so they may generate side by side;
-// every other pair on the same requirement (analysis, mock-up) still waits for the one running.
+// One requirement's artworks write separate job documents and its mock-ups a document of their own,
+// so artworks generate side by side and a mock-up renders while the rest are still generating.
+// Two mock-ups of one requirement, and anything alongside its reading, still wait for each other.
 export async function claimNextTask(owner, scope) {
  workerScope(scope);
  return catalogTransaction(async client => {
@@ -19,7 +20,8 @@ export async function claimNextTask(owner, scope) {
       AND q.kind<>'sync' AND EXISTS(SELECT 1 FROM tenants t WHERE t.workspace=q.workspace AND NOT t.disabled)
       AND (SELECT count(*) FROM batch_queue r WHERE r.workspace=q.workspace AND r.status='running')<2))
     AND NOT EXISTS(SELECT 1 FROM batch_queue r WHERE r.status='running' AND r.workspace=q.workspace
-      AND ((r.payload->>'caseId'=q.payload->>'caseId' AND NOT (q.kind='production' AND r.kind='production'))
+      AND ((r.payload->>'caseId'=q.payload->>'caseId' AND NOT (q.kind IN ('production','mockup') AND r.kind IN ('production','mockup')
+          AND NOT (q.kind='mockup' AND r.kind='mockup')))
         OR (q.kind='sync' AND r.kind='sync')))
    ORDER BY q.created_at, q.id FOR UPDATE SKIP LOCKED LIMIT 1`, [scope])).rows[0];
   if (!row) return null;

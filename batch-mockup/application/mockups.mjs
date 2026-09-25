@@ -33,10 +33,25 @@ export function mockupGroups(c){
 // Requirement text and catalog names often differ only by a 色 suffix or 橙/橘 wording; an exact name wins,
 // and anything but one unambiguous hit is left for the designer to choose.
 const colorKey=v=>String(v??'').replace(/\s/g,'').replace(/色$/,'').replace(/[橙桔]/g,'橘');
-export function matchGarment(styles,style,color){const colors=styles.filter(s=>s.styleCode===style).flatMap(s=>s.colors),exact=colors.filter(c=>c.colorName===color),hits=exact.length?exact:colors.filter(c=>colorKey(c.colorName)===colorKey(color));return hits.length===1?hits[0]:null;}
+// Style codes are typed by hand: case, full-width characters and separators vary, and the letter and
+// number parts get swapped (SF-719 for 719SF). Each looser tier is tried only when the stricter one finds
+// nothing, and only a single style code counts; nearby numbers (8800 vs 8099) are never treated as equal.
+const styleText=v=>String(v??'').normalize('NFKC').toUpperCase().replace(/[\s\-_/\\.·•]+/g,'');
+const styleParts=v=>(styleText(v).match(/[A-Z]+|\d+|[^A-Z\d]+/g)||[]).sort().join('|');
+export function findStyles(styles,style){
+ for(const [how,key] of [['exact',v=>String(v??'')],['normalized',styleText],['reordered',styleParts]]){
+  const target=key(style);if(!target)continue;
+  const named=styles.filter(s=>key(s.styleCode)===target);
+  if(named.length&&new Set(named.map(s=>s.styleCode)).size===1)return {named,how};
+  if(named.length)return {named:[],how,ambiguous:[...new Set(named.map(s=>s.styleCode))]};
+ }
+ return {named:[],how:null};
+}
+export function matchGarment(styles,style,color){const colors=findStyles(styles,style).named.flatMap(s=>s.colors),exact=colors.filter(c=>c.colorName===color),hits=exact.length?exact:colors.filter(c=>colorKey(c.colorName)===colorKey(color));return hits.length===1?hits[0]:null;}
 function garmentNote(styles,style,color){
  if(!style||!color)return '需求里没有写明款式或颜色，请选择款式和颜色';
- const named=styles.filter(s=>s.styleCode===style);
+ const found=findStyles(styles,style),named=found.named;
+ if(found.ambiguous)return `货号 ${style} 可能是 ${found.ambiguous.join('、')}，请选择款式和颜色`;
  if(!named.length)return `素材库没有款式 ${style}，请选择款式和颜色`;
  return named.flatMap(s=>s.colors).some(c=>colorKey(c.colorName)===colorKey(color))?`${style} 有多个颜色对应「${color}」，请选择颜色`:`${style} 没有「${color}」这个颜色，请选择颜色`;
 }
@@ -142,7 +157,7 @@ export async function renderMockups(root,c,jobs,catalog){
   if(JSON.stringify(card.slots)!==JSON.stringify(group.slots)){card.slots=group.slots;card.selections=Object.fromEntries(Object.entries(group.slots).map(([p,opts])=>[p,opts.some(a=>a.id===card.selections[p])?card.selections[p]:group.selections[p]]));card.status='pending';changed=true;}
   try{
    // Retry unmatched cards on every render so catalog or matching fixes reach existing requirements.
-   if(!card.variantId){const found=matchGarment(styles,group.style,group.color);if(!found){const note=garmentNote(styles,group.style,group.color);if(card.status!=='needs_garment'||card.note!==note){card.status='needs_garment';card.note=note;changed=true;}continue;}card.variantId=found.id;changed=true;}
+   if(!card.variantId){const found=matchGarment(styles,group.style,group.color);if(!found){const note=garmentNote(styles,group.style,group.color);if(card.status!=='needs_garment'||card.note!==note){card.status='needs_garment';card.note=note;changed=true;}continue;}card.variantId=found.id;const style=findStyles(styles,group.style);card.styleMatch=style.how==='exact'?null:`需求写的货号是「${group.style}」，已按素材库款式「${style.named[0].styleCode}」匹配，请核对`;changed=true;}
    const garment=await catalog.detail(card.variantId,card.assetVersionId||undefined);card.assetVersionId=garment.assetVersionId;
    const style=styles.find(s=>s.colors?.some(v=>v.id===garment.id)),sharing=style?styleConfirmationKey(style,garment.id):null;
    const selected=[];const warnings=[];if(c.sourceChanged||c.sourceReadError)warnings.push('WPS 原稿有变化或读取失败，当前仅为之前图稿的预览');
@@ -165,6 +180,7 @@ export async function renderMockups(root,c,jobs,catalog){
    const base=await garmentCanvas(garment,garmentBytes,await catalog.frame(),shared);
    const baseHash=hash(base.bytes),baseAsset=`mockup-assets/base-${baseHash}.png`;await atomicFile(assetPath(root,baseAsset),base.bytes);
    const composited=[],layers=[],notes=[],baseRaw=await sharp(base.bytes).raw().toBuffer({resolveWithObject:true});
+   if(card.styleMatch)notes.push(card.styleMatch);
    for(const face of base.faces)if(selected.some(s=>s.info.face===face.face)&&face.structureSource!=='confirmed'){
     const side=face.face==='front'?'正面':'背面';
     if(face.structureSource==='shared'){notes.push(`${side}沿用同款「${face.sharedFrom}」已确认的结构点（轮廓一致）`);continue;}

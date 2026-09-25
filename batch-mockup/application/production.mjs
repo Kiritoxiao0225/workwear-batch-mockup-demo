@@ -13,10 +13,15 @@ export async function readProductionJobs(root) {
   const jobs=[];for(const id of dirs.filter(x=>/^[a-f0-9]{64}$/u.test(x))){const job=await jsonFile(resolve(dirFor(root,id),'state.json')),repair=await readRepairState(root,id);jobs.push({...job,repair:repair.current});}
   return jobs.sort((a,b)=>a.createdAt.localeCompare(b.createdAt));
 }
+// The job id is a hash of this object, so nested keys are written in the draft schema's order: a
+// draft read back from the database (jsonb) lists them differently, and the same artwork then got a
+// second id and was generated and paid for twice.
+const application=x=>({style:x.style,color:x.color,position:x.position,
+  ...('sizeReference' in x?{sizeReference:x.sizeReference&&{imageId:x.sizeReference.imageId,logoToBody:x.sizeReference.logoToBody,note:x.sizeReference.note}}:{})});
 export function productionInput(c,a) {
   return {schema:'production-input-v1',caseId:c.caseId,artworkId:a.id,name:a.name,revision:c.revision,
     supplementRevision:c.supplement.revision,prompt:a.prompt,promptSHA256:hash(a.prompt),route:a.route,
-    applications:a.applications,imageIds:a.imageIds,images:c.images,readingIssues:c.draft.readingIssues,policy:productionPolicy,
+    applications:a.applications.map(application),imageIds:a.imageIds,images:c.images,readingIssues:c.draft.readingIssues.map(x=>({scope:x.scope,issue:x.issue})),policy:productionPolicy,
     ...(a.transparentBackground===undefined?{}:{transparentBackground:a.transparentBackground})};
 }
 export function sourceFor(input) {
