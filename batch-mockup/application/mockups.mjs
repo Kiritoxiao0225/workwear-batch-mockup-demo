@@ -157,10 +157,9 @@ export async function renderMockups(root,c,jobs,catalog){
     const sizeReference=c.draft.artworks.find(a=>a.id===artId)?.applications.find(x=>x.style===group.style&&x.color===group.color&&x.position===position)?.sizeReference||null;
     selected.push({position,info,artId,job,file,sizeReference});
    }
-   for(const l of card.layers)if(l.placementBasis==='unconfirmed-preview')warnings.push(l.position+'：此款衣身尚未标定，当前为可调整的比例预览；厘米尺寸需在素材库确认左右腋点。');
    const renderKey=layers=>hash(JSON.stringify({placementPolicy:PLACEMENT_POLICY,colorPolicy:LOGO_COLOR_POLICY,garment:garment.sha256,views:garment.views,sharing,annotateSize:!!card.annotateSize,frame:FRAME.version,selections:card.selections,layers:layers.map(({id,x,y,width})=>({id,x,y,width})),files:selected.map(s=>[s.file.sha256,c.draft.artworks.find(a=>a.id===s.artId)?.prompt,s.sizeReference])}));
    const inputHash=renderKey(card.layers);
-   if(card.render?.inputHash===inputHash&&['ready','preview'].includes(card.status)){warnings.push(...layerWarnings(card.layers));if(JSON.stringify(card.warnings)!==JSON.stringify(warnings)){card.warnings=warnings;card.status=warnings.length?'preview':'ready';changed=true;}continue;}
+   if(card.render?.inputHash===inputHash&&['ready','preview'].includes(card.status)){for(const l of card.layers)if(l.placementBasis==='unconfirmed-preview')warnings.push(l.position+'：此款衣身尚未标定，当前为可调整的比例预览；厘米尺寸需在素材库确认左右腋点。');warnings.push(...layerWarnings(card.layers));if(JSON.stringify(card.warnings)!==JSON.stringify(warnings)){card.warnings=warnings;card.status=warnings.length?'preview':'ready';changed=true;}continue;}
    const garmentBytes=await catalog.bytes(garment);
    const shared=style?await sharedStyleStandards(garment,garmentBytes,style,async id=>{const detail=await catalog.detail(id);return {detail,bytes:await catalog.bytes(detail)};}):{};
    const base=await garmentCanvas(garment,garmentBytes,await catalog.frame(),shared);
@@ -178,8 +177,10 @@ export async function renderMockups(root,c,jobs,catalog){
     const trimmed=await rgbaTrim(source),trimSHA=hash(trimmed.bytes),asset=`mockup-assets/logo-${trimSHA}.png`;await atomicFile(assetPath(root,asset),trimmed.bytes);
     const id=hash(card.id+s.position).slice(0,24),prior=card.layers.find(l=>l.id===id&&l.artworkId===s.artId),keepPosition=prior?.positionManual??prior?.manual,keepSize=hasManualSize(prior,face,s.info);
     const initial=keepPosition&&keepSize?prior:initialPlacement(face,s.info,trimmed.box.height/trimmed.box.width,c.draft.artworks.find(a=>a.id===s.artId)?.prompt,{sizeReference:s.sizeReference});
-    if(initial.basis==='unconfirmed-preview'&&!warnings.some(w=>w.startsWith(s.position+'：此款衣身')))warnings.push(s.position+'：此款衣身尚未标定，当前为可调整的比例预览；厘米尺寸需在素材库确认左右腋点。');
-    const layer={id,artworkId:s.artId,jobId:s.job.id,sourceSHA256:s.file.sha256,position:s.position,face:s.info.face,x:keepPosition?prior.x:initial.x,y:keepPosition?prior.y:initial.y,width:keepSize?prior.width:initial.width,manual:prior?.manual||false,positionManual:!!keepPosition,sizeManual:!!keepSize,placementPolicy:PLACEMENT_POLICY,placementBasis:initial.basis||prior?.placementBasis,sizeCm:initial.sizeCm||null,sizeConflict:!keepSize&&initial.sizeConflict||null,requested:!!(initial.requested??prior?.requested),rule:initial.rule||prior?.rule||null,asset,sourceAsset:asset,ratio:trimmed.box.height/trimmed.box.width};
+    // A kept manual layout takes the face's current basis: confirming the points later must clear the preview state.
+    const basis=keepPosition&&keepSize?(face.bodyWidth>0?face.bodyBasis:'unconfirmed-preview'):initial.basis;
+    if(basis==='unconfirmed-preview')warnings.push(s.position+'：此款衣身尚未标定，当前为可调整的比例预览；厘米尺寸需在素材库确认左右腋点。');
+    const layer={id,artworkId:s.artId,jobId:s.job.id,sourceSHA256:s.file.sha256,position:s.position,face:s.info.face,x:keepPosition?prior.x:initial.x,y:keepPosition?prior.y:initial.y,width:keepSize?prior.width:initial.width,manual:prior?.manual||false,positionManual:!!keepPosition,sizeManual:!!keepSize,placementPolicy:PLACEMENT_POLICY,placementBasis:basis||prior?.placementBasis,sizeCm:initial.sizeCm||null,sizeConflict:!keepSize&&initial.sizeConflict||null,requested:!!(initial.requested??prior?.requested),rule:initial.rule||prior?.rule||null,asset,sourceAsset:asset,ratio:trimmed.box.height/trimmed.box.width};
     let w=Math.max(1,Math.round(layer.width*FRAME.width)),h=Math.max(1,Math.round(w*layer.ratio));
     const limit=Math.min(1,FRAME.width/w,FRAME.height/h);w=Math.max(1,Math.round(w*limit));h=Math.max(1,Math.round(h*limit));
     const left=Math.max(0,Math.min(FRAME.width-w,Math.round(layer.x*FRAME.width-w/2))),top=Math.max(0,Math.min(FRAME.height-h,Math.round(layer.y*FRAME.height-h/2)));

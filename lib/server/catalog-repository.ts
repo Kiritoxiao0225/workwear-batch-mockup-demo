@@ -6,6 +6,7 @@ import { catalogReferenceType, hasTemplateLandmarks } from '@/lib/catalog-placem
 import { SOP_STRUCTURES } from '@/lib/sop-placement';
 import { CatalogHttpError } from './catalog-auth';
 import { catalogDatabase, catalogTransaction } from './catalog-database';
+import { queueStyleMockups } from './catalog-mockup-refresh';
 
 const idSchema = z.uuid();
 const querySchema = z.object({ q: z.string().max(100).default(''), page: z.coerce.number().int().min(1).default(1), status: z.enum(['all', 'confirmed', 'pending', 'draft', 'front_only']).default('all') });
@@ -187,6 +188,7 @@ async function saveStandards(inputs: z.infer<typeof saveStandardSchema>[], actor
       await client.query('INSERT INTO audit_events(id,actor_id,action,entity_id,details) VALUES($1,$2,$3,$4,$5)', [randomUUID(), actor.id, input.confirm ? 'standard.confirm' : 'standard.saveDraft', id, { viewId: view.id, assetVersionId, revision }]);
       standards.push({ standardId: id, revision });
     }
+    if (inputs.some(input => input.confirm)) await queueStyleMockups(client, tenantId, owner.rows[0].style_id);
     return { variantId: result.rows[0].variant_id as string, standards };
   });
 }

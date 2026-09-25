@@ -8,6 +8,7 @@ import { ALIGNMENT_VERSION, compareSilhouettes, garmentSilhouette } from './cata
 import { catalogDatabase, catalogTransaction } from './catalog-database';
 import { readCatalogFile } from './catalog-files';
 import { catalogDetail, catalogStyle } from './catalog-repository';
+import { queueStyleMockups } from './catalog-mockup-refresh';
 
 const assessmentSchema = z.object({ algorithm: z.literal(ALIGNMENT_VERSION), score: z.number().min(0).max(1).nullable(), status: z.enum(['aligned', 'review']), reason: z.string() }).strict();
 function assertEditor(actor: CatalogUser) { if (actor.role === 'viewer') throw new CatalogHttpError(403, '当前账号只有查看权限'); }
@@ -117,6 +118,7 @@ export async function applyStandardReuse(raw: unknown, actor: CatalogUser, tenan
       await client.query('INSERT INTO audit_events(id,actor_id,action,entity_id,details) VALUES($1,$2,$3,$4,$5)', [randomUUID(), actor.id, 'standard.reuse', id, { checkId: c.id, sourceStandardId: c.source_standard_id, targetAssetVersionId: c.asset_version_id, assessment: c.assessment, reviewed: true }]);
     }
     await client.query('UPDATE garment_styles SET reference_variant_id=$2 WHERE id=$1', [styleId, input.sourceVariantId]);
+    await queueStyleMockups(client, tenantId, styleId);
     return { colors: new Set(checks.rows.map(c => c.variant_id)).size, faces: checks.rows.length, reused: false };
   });
 }
@@ -194,6 +196,7 @@ export async function syncStyleStandards(raw: unknown, actor: CatalogUser, tenan
       await client.query('INSERT INTO audit_events(id,actor_id,action,entity_id,details) VALUES($1,$2,$3,$4,$5)', [randomUUID(), actor.id, 'standard.sync', id, { sourceStandardId: plan.sourceStandardId, previousStandardId: plan.latestId, state: plan.state, alignment: plan.alignment }]);
     }
     await client.query('UPDATE garment_styles SET reference_variant_id=$2 WHERE id=$1', [style.id, source.id]);
+    if (plans.length) await queueStyleMockups(client, tenantId, style.id);
   });
   return { sourceVariantId: source.id, sourceColor: source.colorName, colors };
 }
