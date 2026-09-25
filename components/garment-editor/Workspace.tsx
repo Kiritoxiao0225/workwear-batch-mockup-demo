@@ -2,11 +2,12 @@
 /* eslint-disable @next/next/no-img-element -- Editable canvas and authenticated file previews. */
 import { useCallback,useEffect,useRef,useState, type ReactNode, type RefObject } from 'react';
 import dynamic from 'next/dynamic';
+import { useRouter } from 'next/navigation';
 import { ChevronDown,ChevronLeft,Copy,Download,HelpCircle,History,ImageIcon,Layers,MoreHorizontal,PanelLeftClose,PanelLeftOpen,Redo2,Search,Shirt,Trash2,Type,Undo2 } from 'lucide-react';
 import { AppHeader } from '@/components/app-header';
 import { useProjectSession } from '@/components/project-session';
 import { ToastProvider, useToast } from './ui/toast';
-import Sidebar, { type SidebarTab } from './Sidebar';
+import Sidebar, { type ArtworkReplaceSource, type PendingArtwork, type SidebarTab } from './Sidebar';
 import Modal from './ui/modal';
 import ConfirmDialog from './ui/confirm-dialog';
 import { useUndoHistory } from './useMockupUndoHistory';
@@ -14,6 +15,7 @@ import type { CanvasElement,CustomizationState,ElementType,CapturedMockupProduct
 import { api,persistentState,draftStore,setAiProject,clearAssetCache,ensureAsset } from '@/lib/garment-editor/client-api';
 import { copyMockupElement } from '@/lib/garment-editor/mockup-element-relations';
 import { removeElementFromCustomizationState } from '@/lib/garment-editor/mockup-measurements';
+import { clearArtworkHandoff, imageKey, newArtworkHandoff, readArtworkHandoff, writeArtworkHandoff } from '@/lib/garment-editor/artwork-handoff';
 const Editor=dynamic(()=>import('./Editor'),{ssr:false});
 type Project={id:string;name:string;revision:number;state:CustomizationState;thumbnail?:string;updated_at?:string};
 type Garment={id:string;styleCode:string;colorName:string;thumbnailUrl:string;layout:string;assetVersionId:string};
@@ -48,6 +50,7 @@ function Workspace({userId,canEdit,beforeLogoutRef}:{userId:string;canEdit:boole
   const [busy,setBusy]=useState(false),[importing,setImporting]=useState<Record<string,true>>({}),[removeId,setRemoveId]=useState<string|null>(null);
   const [tab,setTab]=useState<SidebarTab>('garment'),[panelOpen,setPanelOpen]=useState(true),[menu,setMenu]=useState<Menu|null>(null);
   const [panelHost,setPanelHost]=useState<HTMLDivElement|null>(null),[inspectorHost,setInspectorHost]=useState<HTMLElement|null>(null);
+  const [pendingArtwork,setPendingArtwork]=useState<PendingArtwork|null>(null),router=useRouter();
   const generation=useRef(0),[stateGeneration,setStateGeneration]=useState(0),canvasArea=useRef<HTMLDivElement>(null),topbar=useRef<HTMLDivElement>(null);
   const exportRef=useRef<(()=>void)|null>(null),textEditRef=useRef<((id:string)=>void)|null>(null),captureRef=useRef<((ids:string[])=>Promise<CapturedMockupProduct[]>)|null>(null);
   const lastSaved=useRef(''),saving=useRef<Promise<boolean>|null>(null),pending=useRef<{body:unknown;snapshot:string}|null>(null),blocked=useRef(false),alive=useRef(true);
@@ -71,15 +74,15 @@ function Workspace({userId,canEdit,beforeLogoutRef}:{userId:string;canEdit:boole
         }
       }
       else replace({id:crypto.randomUUID(),revision:0,name:'未命名成衣效果图'},empty());
-      const input=new URL(location.href).searchParams.get('artwork');
+      // A studio result comes back here and lands where the user chose before leaving.
+      const input=new URL(location.href).searchParams.get('artwork'),handoff=readArtworkHandoff();clearArtworkHandoff();
       if(input&&/^\/api\/batch\//.test(input)){
-        const url=await ensureAsset(input,'图稿生成结果.png');
-        if(active){updateState(s=>({elements:[...s.elements,{id:crypto.randomUUID(),type:'logo',image:url,placedOnProductId:null}]}));setTab('logo');}
+        if(active){setPendingArtwork({url:input,handoff:handoff?.projectId===projectRef.current.id?handoff:null});setTab('logo');setPanelOpen(true);}
         window.history.replaceState(null,'','/garment-mockup');
       }
     }).catch(e=>{if(active){replace({id:crypto.randomUUID(),revision:0,name:'未命名成衣效果图'},empty());setNotice(e.message);}}).finally(()=>{if(active)setReady(true);});
     return()=>{active=false;alive.current=false;clearAssetCache();const p=projectRef.current,s=getState();if(p.id)void draftStore(userId,{project:p,state:s,dirty:JSON.stringify({name:p.name,state:s})!==lastSaved.current}).catch(()=>{});};
-  },[userId,replace,updateState,getState]);
+  },[userId,replace,getState]);
   const save=useCallback(async(force=false,allowBlank=false):Promise<boolean>=>{
     if(!canEdit)return true;
     if(!ready)return false;
@@ -140,6 +143,18 @@ function Workspace({userId,canEdit,beforeLogoutRef}:{userId:string;canEdit:boole
     finally{setManualSaving(false);}
   };
   const select=useCallback((id:string|null,type:ElementType|null)=>setSelected({id,type}),[]);
+  // Save first, remember where the result should land, then open the studio in this tab.
+  const openArtworkStudio=useCallback(async(replace?:ArtworkReplaceSource)=>{
+    if(!(await flushSave())){toast.error('作品还没保存成功，先不跳转。请看页面提示后重试。');return;}
+    try{
+      const refUrl=replace?await ensureAsset(replace.image,'成衣 Logo.png'):'',p=projectRef.current;
+      const handoff=newArtworkHandoff({elements:getState().elements,selectedElementId:selected.id,projectId:p.id,projectName:p.name,
+        replace:replace&&{elementId:replace.elementId,label:replace.label,imageKey:imageKey(replace.image),refUrl}});
+      if(!writeArtworkHandoff(handoff))toast.info('浏览器没能记下放回位置；做好后请在 Logo 面板的「我的图稿」里点选。');
+      router.push('/artwork-studio?from=garment');
+    }catch(e){setNotice((e as Error).message);}
+  },[flushSave,getState,router,selected.id,toast]);
+  const pendingArtworkHandled=useCallback(()=>setPendingArtwork(null),[]);
   const open=async(type:typeof panel)=>{
     setMenu(null);
     try{setBusy(true);
@@ -278,7 +293,7 @@ function Workspace({userId,canEdit,beforeLogoutRef}:{userId:string;canEdit:boole
       </div>
       <aside className="gme-inspector" ref={setInspectorHost} hidden={!hasInspector} style={!canEdit?{pointerEvents:'none',opacity:.65}:undefined}/>
     </div>
-    <Sidebar state={state} stateGeneration={stateGeneration} getStateGeneration={()=>generation.current} getCurrentState={getState} getCanvasDimensions={()=>({width:canvasArea.current?.clientWidth||800,height:canvasArea.current?.clientHeight||600})} onUpdateState={updateState} isLoggedIn={canEdit} selectedElementId={selected.id} selectedElementType={selected.type} onSelectElement={select} onResetCanvas={()=>setRemoveId('canvas')} activeTab={tab} panelHost={panelOpen?panelHost:null} inspectorHost={inspectorHost} onStartTextEditing={id=>textEditRef.current?.(id)}/>
+    <Sidebar state={state} stateGeneration={stateGeneration} getStateGeneration={()=>generation.current} getCurrentState={getState} getCanvasDimensions={()=>({width:canvasArea.current?.clientWidth||800,height:canvasArea.current?.clientHeight||600})} onUpdateState={updateState} isLoggedIn={canEdit} selectedElementId={selected.id} selectedElementType={selected.type} onSelectElement={select} onResetCanvas={()=>setRemoveId('canvas')} activeTab={tab} panelHost={panelOpen?panelHost:null} inspectorHost={inspectorHost} onStartTextEditing={id=>textEditRef.current?.(id)} onOpenArtworkStudio={replace=>void openArtworkStudio(replace)} pendingArtwork={pendingArtwork} onPendingArtworkHandled={pendingArtworkHandled}/>
     <Modal open={panel==='projects'} onClose={()=>setPanel(null)} title="我的成衣效果图" maxWidth="max-w-3xl"><div className="gme-project-grid">{projects.map(p=><article key={p.id}>{p.thumbnail&&<img src={p.thumbnail} alt="作品预览"/>}<b>{p.name}</b><small>版本 {p.revision}{p.updated_at?` · ${new Date(p.updated_at).toLocaleString('zh-CN')}`:''}</small><button type="button" onClick={()=>void loadProject(p.id)}>继续编辑</button>{canEdit&&<button type="button" onClick={()=>setRemoveId(p.id)}>删除</button>}</article>)}</div>{!projects.length&&<p>还没有保存的成衣效果图。</p>}</Modal>
     <Modal open={panel==='versions'} onClose={()=>setPanel(null)} title="恢复旧版本"><p>恢复后保存为新版本，已有历史仍保留。</p>{versions.map(v=><p key={v.revision}>版本 {v.revision} · {new Date(v.created_at).toLocaleString('zh-CN')} <button type="button" disabled={!canEdit} onClick={()=>void loadProject(project.id,v.revision)}>恢复</button></p>)}</Modal>
     <Modal open={panel==='jobs'} onClose={()=>setPanel(null)} title="AI 生成记录" maxWidth="max-w-3xl"><button type="button" onClick={()=>void open('jobs')}>刷新任务</button><p>停止等待或关闭页面不会重复提交；结果会保留在这里。</p>{jobs.map(j=>{const url=j.result_json?.transparent||(typeof j.result_json?.image==='string'?j.result_json.image:j.result_json?.image?.dataUrl);return <article className="gme-job" key={j.id}><b>{{understand:'理解要求',generate:'Logo 重绘',cutout:'去背景',back:'AI 背面参考'}[j.action]||j.action}</b><span>{{queued:'排队中',running:'处理中',succeeded:'已完成',failed:'未完成',unknown:'结果待核查'}[j.status]||j.status}</span>{j.error&&<p>{j.error}</p>}{j.result_json?.analysis&&<p>{j.result_json.analysis.summary}</p>}{url&&<><img src={url} alt="任务结果"/><button type="button" onClick={()=>download(url,'成衣制作结果.png')}>下载结果</button><button type="button" disabled={!canEdit} onClick={()=>{const id=crypto.randomUUID(),e:CanvasElement={id,type:j.action==='back'?'product':'logo',image:url,...(j.action==='back'?{face:'back' as const}:{placedOnProductId:null})};updateState(s=>({elements:[...s.elements,e]}));select(id,e.type);setPanel(null);}}>添加到画布</button></>}</article>;})}{!jobs.length&&<p>还没有 AI 制作任务。</p>}</Modal>

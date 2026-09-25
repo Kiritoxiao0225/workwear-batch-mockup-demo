@@ -253,6 +253,10 @@ export default function Editor({
   const renderedProductIdsRef = useRef(new Set<string>());
   const measurementCanvasRef = useRef<HTMLCanvasElement>(null);
   const fabricCanvas = useRef<fabric.Canvas | null>(null);
+  // Images load asynchronously; the panel's selection at load time decides who is active.
+  const externalSelectionRef = useRef(externalSelectedElementId);
+  useEffect(() => { externalSelectionRef.current = externalSelectedElementId; }, [externalSelectedElementId]);
+  const keepPanelSelectionRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const toast = useToast();
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -1471,6 +1475,7 @@ export default function Editor({
 
   const handleSelectionCleared = useCallback(() => {
     setSelectedElementId(null);
+    if (keepPanelSelectionRef.current) return;
     onSelectElement(null, null);
   }, [onSelectElement]);
 
@@ -2357,11 +2362,20 @@ export default function Editor({
     // Fabric object first emits selection:cleared and unmounts the Logo picker.
     // Read the live selection after loading so a user who switched elements
     // while the image was loading does not get pulled back to this one.
+    // A new element the panel already selected (a just-added logo) becomes active once it
+    // exists; a redrawn object only stays active if the panel has not moved on.
     const replacedObject = canvas.getObjects().find(o => (o as any)._elementId === element.id);
-    const replaceActiveObject = !!replacedObject && canvas.getActiveObject() === replacedObject;
+    const panelSelection = externalSelectionRef.current;
+    const wasActive = !!replacedObject && canvas.getActiveObject() === replacedObject;
+    const replaceActiveObject = wasActive && (!panelSelection || panelSelection === element.id);
+    const activateNewObject = !replacedObject && panelSelection === element.id && !pickerMode;
     canvas.add(img);
-    if (replaceActiveObject) canvas.setActiveObject(img);
-    if (replacedObject) canvas.remove(replacedObject);
+    if (replaceActiveObject || activateNewObject) canvas.setActiveObject(img);
+    if (replacedObject) {
+      // Removing a stale active object fires selection:cleared; that must not undo the panel's newer choice.
+      keepPanelSelectionRef.current = wasActive && !replaceActiveObject;
+      try { canvas.remove(replacedObject); } finally { keepPanelSelectionRef.current = false; }
+    }
     canvas.requestRenderAll();
   };
 

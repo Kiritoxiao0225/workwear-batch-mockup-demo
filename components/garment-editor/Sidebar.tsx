@@ -5,20 +5,16 @@
 
 import React, { useCallback, useRef, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { garmentAiFetch, type CutoutMeta, type CutoutMode } from '@/lib/garment-editor/client-api';
-import dynamic from 'next/dynamic';
+import { ensureAsset, garmentAiFetch, type CutoutMeta, type CutoutMode } from '@/lib/garment-editor/client-api';
 import {
   CustomizationState,
   CanvasElement,
   ElementType,
   FONTS,
   MOCKUP_TEXT_PLACEHOLDER,
+  type MockupPlacement,
 } from '@/lib/garment-editor/mockup-types';
 import TextInspector from '@/components/garment-editor/TextInspector';
-import type {
-  LogoRedrawCandidate,
-  LogoRedrawCurrentReference,
-} from '@/components/garment-editor/LogoRedrawFlow';
 import {
   Upload, Type, ChevronRight, Sparkles, X, Download, Maximize2,
   Crop, Plus, Copy, Trash2,
@@ -50,6 +46,7 @@ import {
   copyMockupElement,
   defaultDecorationProductId,
   defaultPlacementForDecoration,
+  placementMatchesProductFace,
   placementsForProductFace,
   productFace,
   setDecorationPlacement,
@@ -59,8 +56,20 @@ import {
   applyLogoRedrawResult,
   type LogoRedrawApplyTarget,
 } from '@/lib/garment-editor/mockup-logo-redraw';
+import { garmentLabel, imageKey, type ArtworkHandoff } from '@/lib/garment-editor/artwork-handoff';
 
-const LogoRedrawFlow = dynamic(() => import('@/components/garment-editor/LogoRedrawFlow'), { ssr: false });
+/** One studio result as the garment editor's "my artworks" strip lists it. */
+interface StudioArtwork {
+  caseId: string;
+  text: string;
+  status: string;
+  error: string | null;
+  createdAt: string;
+  transparent: boolean | null;
+  asset: string | null;
+}
+export interface PendingArtwork { url: string; handoff: ArtworkHandoff | null }
+export interface ArtworkReplaceSource { elementId: string; label: string; image: string }
 
 interface SidebarProps {
   state: CustomizationState;
@@ -80,18 +89,17 @@ interface SidebarProps {
   panelHost: HTMLElement | null;
   inspectorHost: HTMLElement | null;
   onStartTextEditing?: (elementId: string) => void;
+  /** Leave for the artwork studio; with a logo, the result replaces that logo when it comes back. */
+  onOpenArtworkStudio?: (replace?: ArtworkReplaceSource) => void;
+  /** A studio result brought back through /garment-mockup?artwork=… */
+  pendingArtwork?: PendingArtwork | null;
+  onPendingArtworkHandled?: () => void;
 }
 export type SidebarTab = 'garment' | 'logo' | 'text' | 'layers';
 type CutoutStatus =
   | { state: 'running'; startedAt: number; mode: CutoutMode }
   | { state: 'done'; meta?: CutoutMeta; ms: number }
   | { state: 'failed'; error: string };
-
-interface LogoRedrawSession {
-  target: LogoRedrawApplyTarget;
-  applicationTargetLabel: string;
-  currentLogoReference?: LogoRedrawCurrentReference;
-}
 
 const LOGO_COLORS = [
   { hex: '#ffffff', label: '白色' },
@@ -170,14 +178,17 @@ async function mockupAiErrorMessage(response: Response, fallback: string) {
   }
 }
 
-export default function Sidebar({ state, stateGeneration, getStateGeneration, getCurrentState, getCanvasDimensions, onUpdateState, isLoggedIn, selectedElementId, selectedElementType, onSelectElement, activeTab, panelHost, inspectorHost, onStartTextEditing }: SidebarProps) {
+export default function Sidebar({ state, stateGeneration, getStateGeneration, getCurrentState, getCanvasDimensions, onUpdateState, isLoggedIn, selectedElementId, selectedElementType, onSelectElement, activeTab, panelHost, inspectorHost, onStartTextEditing, onOpenArtworkStudio, pendingArtwork, onPendingArtworkHandled }: SidebarProps) {
   const productInputRef = useRef<HTMLInputElement>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
 
   const [aiProcessingType, setAiProcessingType] = useState<'removeBackground' | 'generateBack' | null>(null);
   const [previewingElement, setPreviewingElement] = useState<string | null>(null);
-  const [logoRedrawSession, setLogoRedrawSession] = useState<LogoRedrawSession | null>(null);
+  const [artworks, setArtworks] = useState<StudioArtwork[] | null>(null);
+  const [artworksReadAt, setArtworksReadAt] = useState(0);
+  const [artworksError, setArtworksError] = useState('');
+  const handledPendingArtworkRef = useRef<PendingArtwork | null>(null);
 
   const [croppingElementId, setCroppingElementId] = useState<string | null>(null);
   const [crop, setCrop] = useState<CropArea>();
@@ -328,175 +339,165 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
           product.backOfElementId === selectedProductForBackGeneration.id
       )
     : false;
-  const logoRedrawEntryLocked =
+  // Leaving mid-operation would drop a result the canvas is waiting for.
+  const artworkStudioLocked =
     aiProcessingType !== null ||
     logoErosionUpdatePending ||
     canvasImageOperationPending;
 
-  const openLogoRedraw = () => {
-    if (
-      aiProcessingType !== null ||
-      logoErosionUpdatePendingRef.current ||
-      canvasImageOperationTokensRef.current.size > 0
-    ) {
-      toast.info('请等待当前图片处理完成后再开始 Logo 重绘');
+  const openArtworkStudio = (replace?: ArtworkReplaceSource) => {
+    if (artworkStudioLocked) {
+      toast.info('请等待当前图片处理完成后再去生成图稿');
       return;
     }
     if (!isLoggedIn) {
-      toast.info('请先登录后再使用 AI Logo 重绘功能');
+      toast.info('请先登录后再使用 AI 生成');
       return;
     }
-    setPreviewingElement(null);
-    setCroppingElementId(null);
-    setCrop(undefined);
-    setCompletedCrop(undefined);
-    const currentElements = getCurrentState().elements;
-    const currentSelectedLogo =
-      selectedElementType === 'logo' && selectedElementId
-        ? currentElements.find(
-            element =>
-              element.id === selectedElementId &&
-              element.type === 'logo' &&
-              !!element.image
-          )
+    onOpenArtworkStudio?.(replace);
+  };
+
+  const logoLabel = (elements: CanvasElement[], id: string) =>
+    `Logo ${elements.filter(element => element.type === 'logo').findIndex(element => element.id === id) + 1}`;
+
+  /**
+   * Put a studio result on the canvas. "add" follows the upload rule (or the target chosen
+   * in the studio); "replace" keeps the old logo's position, size and garment.
+   */
+  const placeArtwork = useCallback(async (
+    source: string,
+    target:
+      | { mode: 'add'; ownerId?: string | null; placement?: MockupPlacement }
+      | { mode: 'replace'; elementId: string; expectedImageKey?: string }
+  ) => {
+    const operationGeneration = getStateGeneration();
+    const operationToken = beginCanvasImageOperation();
+    try {
+      const image = await ensureAsset(source, '图稿生成结果.png');
+      if (!operationIsCurrent(operationGeneration)) return;
+      const current = getCurrentState();
+      if (target.mode === 'replace') {
+        const logo = current.elements.find(element =>
+          element.id === target.elementId &&
+          element.type === 'logo' &&
+          !!element.image &&
+          (!target.expectedImageKey || imageKey(element.image) === target.expectedImageKey)
+        );
+        if (logo?.image) {
+          const owner = logo.placedOnProductId
+            ? current.elements.find(element => element.id === logo.placedOnProductId && element.type === 'product')
+            : null;
+          const [sourceDimensions, generatedDimensions, ownerDimensions] = await Promise.all([
+            imageNaturalDimensions(logo.image, '当前 Logo'),
+            imageNaturalDimensions(image, '图稿'),
+            owner?.image && (!logo.transform || !logo.relativeTransform)
+              ? imageNaturalDimensions(owner.image, '归属衣服')
+              : Promise.resolve(undefined),
+          ]);
+          if (!operationIsCurrent(operationGeneration)) return;
+          const latest = getCurrentState();
+          const replaceTarget: LogoRedrawApplyTarget = {
+            mode: 'replace',
+            elementId: logo.id,
+            expectedImage: logo.image,
+            expectedPlacementState: {
+              placedOnProductId: logo.placedOnProductId,
+              placement: logo.placement,
+              transform: logo.transform ? { ...logo.transform } : undefined,
+              relativeTransform: logo.relativeTransform ? { ...logo.relativeTransform } : undefined,
+            },
+            operationGeneration,
+          };
+          const next = applyLogoRedrawResult({
+            state: latest,
+            target: replaceTarget,
+            currentGeneration: getStateGeneration(),
+            generatedImage: image,
+            generatedSourceImage: image,
+            sourceDimensions,
+            generatedDimensions,
+            ownerDimensions,
+            canvasDimensions: getCanvasDimensions(),
+          });
+          onUpdateState({ elements: next.elements });
+          invalidateLogoCutoutCachesAfterManualImageEdit(logo.id);
+          setCutoutStatusById(previous => omitElementId(previous, logo.id));
+          onSelectElement(logo.id, 'logo');
+          toast.success(`${logoLabel(latest.elements, logo.id)} 已替换，位置和大小不变，可撤销`);
+          return;
+        }
+      }
+      const elements = current.elements;
+      const requestedOwner = target.mode === 'add' && target.ownerId
+        ? elements.find(element => element.id === target.ownerId && element.type === 'product')
         : null;
-    if (currentSelectedLogo?.image) {
-      setLogoRedrawSession({
-        target: {
-          mode: 'replace',
-          elementId: currentSelectedLogo.id,
-          expectedImage: currentSelectedLogo.image,
-          expectedPlacementState: {
-            placedOnProductId: currentSelectedLogo.placedOnProductId,
-            placement: currentSelectedLogo.placement,
-            transform: currentSelectedLogo.transform
-              ? { ...currentSelectedLogo.transform }
-              : undefined,
-            relativeTransform: currentSelectedLogo.relativeTransform
-              ? { ...currentSelectedLogo.relativeTransform }
-              : undefined,
-          },
-          operationGeneration: getStateGeneration(),
-        },
-        applicationTargetLabel: '将替换当前选中的 Logo，并保留它在画布中的位置与所属产品',
-        currentLogoReference: {
-          fileName: '当前 Logo',
-          base64Image: currentSelectedLogo.image,
-          imageRef: currentSelectedLogo.imageRef,
-          previewUrl: currentSelectedLogo.image,
-        },
-      });
-      return;
-    }
-
-    const ownerId = defaultDecorationProductId(currentElements, selectedElementId);
-    const owner = ownerId
-      ? currentElements.find(
-          element => element.id === ownerId && element.type === 'product'
+      const ownerId = requestedOwner ? requestedOwner.id : defaultDecorationProductId(elements, selectedElementId);
+      const owner = ownerId ? elements.find(element => element.id === ownerId) : null;
+      const requestedPlacement = target.mode === 'add' ? target.placement : undefined;
+      const placement = !owner
+        ? 'custom'
+        : requestedPlacement && requestedOwner && placementMatchesProductFace(requestedPlacement, productFace(owner))
+          ? requestedPlacement
+          : defaultPlacementForDecoration('logo', productFace(owner));
+      const elementId = newId();
+      onUpdateState(previousState =>
+        appendElementForCurrentGeneration(
+          previousState,
+          { id: elementId, type: 'logo', image, placedOnProductId: ownerId, placement },
+          operationGeneration,
+          getStateGeneration()
         )
-      : null;
-    const placement = owner
-      ? defaultPlacementForDecoration('logo', productFace(owner))
-      : 'custom';
-    setLogoRedrawSession({
-      target: {
-        mode: 'add',
-        elementId: newId(),
-        placedOnProductId: ownerId,
-        placement,
-        ...(owner?.image
-          ? {
-              expectedOwnerImage: owner.image,
-              expectedOwnerFace: productFace(owner),
-            }
-          : {}),
-        operationGeneration: getStateGeneration(),
-      },
-      applicationTargetLabel: owner
-        ? `将新增到${productLabelForElements(currentElements, owner.id)} · ${MOCKUP_PLACEMENT_LABELS[placement]}`
-        : '将作为未归属 Logo 添加到画布中心',
-    });
-  };
-
-  const applyLogoRedrawCandidate = async (candidate: LogoRedrawCandidate) => {
-    const session = logoRedrawSession;
-    if (!session) throw new Error('Logo 重绘会话已关闭，未应用生成结果');
-    const currentElements = getCurrentState().elements;
-    const replacementExpectedImage = session.target.mode === 'replace'
-      ? session.target.expectedImage
-      : null;
-    const replacementLogo = replacementExpectedImage
-      ? currentElements.find(
-          element =>
-            element.id === session.target.elementId &&
-            element.type === 'logo' &&
-            element.image === replacementExpectedImage
-        )
-      : null;
-    const replacementOwner = replacementLogo?.placedOnProductId
-      ? currentElements.find(
-          element =>
-            element.id === replacementLogo.placedOnProductId &&
-            element.type === 'product'
-        )
-      : null;
-    const sourceDimensions = session.target.mode === 'replace'
-      ? await imageNaturalDimensions(session.target.expectedImage, '当前 Logo')
-      : undefined;
-    const ownerImage = session.target.mode === 'add'
-      ? session.target.expectedOwnerImage
-      : replacementLogo?.placedOnProductId &&
-          (!replacementLogo.transform || !replacementLogo.relativeTransform)
-        ? replacementOwner?.image
-        : undefined;
-    const ownerDimensions = ownerImage
-      ? await imageNaturalDimensions(ownerImage, '归属产品')
-      : undefined;
-
-    onUpdateState(previousState => {
-      const nextState = applyLogoRedrawResult({
-        state: previousState,
-        target: session.target,
-        currentGeneration: getStateGeneration(),
-        generatedImage: candidate.dataUrl,
-        generatedSourceImage: candidate.rawDataUrl,
-        sourceDimensions,
-        generatedDimensions: {
-          width: candidate.width,
-          height: candidate.height,
-        },
-        ownerDimensions,
-        canvasDimensions: getCanvasDimensions(),
-      });
-      return { elements: nextState.elements };
-    });
-    const appliedElementId = session.target.elementId;
-    if (session.target.mode === 'replace') {
-      setLogoMaskByElementId(previousMasks =>
-        omitElementId(previousMasks, appliedElementId)
       );
-      setLogoErosionStrengthByElementId(previousStrengths =>
-        omitElementId(previousStrengths, appliedElementId)
+      onSelectElement(elementId, 'logo');
+      const where = owner ? `${garmentLabel(elements, owner.id)} · ${MOCKUP_PLACEMENT_LABELS[placement]}` : '画布中间，未归属衣服';
+      toast[target.mode === 'replace' ? 'info' : 'success'](
+        target.mode === 'replace'
+          ? `原 Logo 已变化，已作为新 Logo 放到${where}`
+          : `已放到${where}，可撤销`
       );
-      latestMaskAppliedImageRef.current.delete(appliedElementId);
-      cutoutSourceByAppliedImageKeyRef.current.delete(appliedElementId);
+    } catch (error) {
+      console.error('Place artwork failed:', error);
+      if (operationIsCurrent(operationGeneration)) {
+        toast.error(error instanceof Error ? error.message : '图稿放到画布失败，请重试');
+      }
+    } finally {
+      finishCanvasImageOperation(operationToken);
     }
-    setLogoImageBeforeCutoutById(previousImages => ({
-      ...previousImages,
-      [appliedElementId]: candidate.rawDataUrl,
-    }));
-    rememberMaskAppliedImage(
-      appliedElementId,
-      candidate.dataUrl,
-      candidate.rawDataUrl
-    );
-    onSelectElement(appliedElementId, 'logo');
-    toast.success(
-      session.target.mode === 'replace'
-        ? 'Logo 已替换，可使用顶部撤销恢复'
-        : 'Logo 已添加，可使用顶部撤销移除'
-    );
-  };
+  }, [beginCanvasImageOperation, finishCanvasImageOperation, getCanvasDimensions, getCurrentState, getStateGeneration, onSelectElement, onUpdateState, operationIsCurrent, selectedElementId, toast]);
+
+  // A result brought back from the studio lands where the user chose before leaving.
+  useEffect(() => {
+    if (!pendingArtwork || handledPendingArtworkRef.current === pendingArtwork) return;
+    handledPendingArtworkRef.current = pendingArtwork;
+    const { url, handoff } = pendingArtwork;
+    void placeArtwork(url, handoff?.replace
+      ? { mode: 'replace', elementId: handoff.replace.elementId, expectedImageKey: handoff.replace.imageKey }
+      : { mode: 'add', ownerId: handoff?.ownerId ?? null, placement: handoff?.placement }
+    ).finally(() => onPendingArtworkHandled?.());
+  }, [onPendingArtworkHandled, pendingArtwork, placeArtwork]);
+
+  // "My artworks": the newest studio results, refreshed while one is still being made.
+  const showArtworks = activeTab === 'logo' && !!panelHost;
+  const artworksRunning = !!artworks?.some(artwork => artwork.status === 'queued' || artwork.status === 'running');
+  useEffect(() => {
+    if (!showArtworks) return;
+    let alive = true;
+    const load = async () => {
+      try {
+        const response = await fetch('/api/batch/api/studio/results', { cache: 'no-store' });
+        const body = await response.json() as { items?: StudioArtwork[]; error?: string };
+        if (!response.ok || !Array.isArray(body.items)) throw new Error(body.error || '图稿读取失败');
+        if (alive) { setArtworks(body.items); setArtworksReadAt(Date.now()); setArtworksError(''); }
+      } catch (error) {
+        if (alive) setArtworksError(error instanceof Error ? error.message : '图稿读取失败');
+      }
+    };
+    void load();
+    const timer = artworksRunning
+      ? window.setInterval(() => { if (!document.hidden) void load(); }, 4000)
+      : 0;
+    return () => { alive = false; window.clearInterval(timer); };
+  }, [artworksRunning, showArtworks]);
 
   const updateElement = (id: string, updates: Partial<CanvasElement>) => {
     onUpdateState(previousState => {
@@ -654,7 +655,6 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
     const handleGlobalPaste = (event: ClipboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return;
-      if (logoRedrawSession) return;
       const item = [...(event.clipboardData?.items ?? [])].find(entry => entry.type.startsWith('image/'));
       const file = item?.getAsFile();
       if (!file) return;
@@ -664,7 +664,7 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
     };
     window.addEventListener('paste', handleGlobalPaste);
     return () => window.removeEventListener('paste', handleGlobalPaste);
-  }, [activeTab, logoRedrawSession, readLogoImageFile, readProductImageFile]);
+  }, [activeTab, readLogoImageFile, readProductImageFile]);
 
   const addTextElement = () => {
     const id = newId();
@@ -1295,29 +1295,77 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
     </button>
   );
 
-  const logoRedrawEntry = (
-    <button
-      type="button"
-      onClick={openLogoRedraw}
-      disabled={logoRedrawEntryLocked}
-      className="gme-ai-entry"
-      aria-label={logoRedrawEntryLocked ? '当前图片处理中，暂时不能开始 Logo 重绘' : selectedLogoForImageEdit ? '重绘当前选中的 Logo' : '制作一个新 Logo 并添加到画布'}
-    >
-      <span className="gme-ai-badge"><Sparkles size={16} aria-hidden="true" /></span>
-      <span className="gme-item-text">
-        <b>{selectedLogoForImageEdit ? '重绘当前 Logo' : 'AI 制作新 Logo'}<em>AI</em></b>
-        <small>
-          {!isLoggedIn
-            ? '登录后可用 · 文字必填，参考图可选'
-            : logoRedrawEntryLocked
-              ? '当前图片处理中，完成后即可开始'
-              : selectedLogoForImageEdit
-                ? '按文字要求重新绘制，只替换当前 Logo'
-                : '只写要求也能生成，完成后添加到画布'}
-        </small>
-      </span>
-      <ChevronRight size={16} aria-hidden="true" />
-    </button>
+  const batchAsset = (asset: string) => '/api/batch/' + asset;
+  const elapsed = (from: string) => {
+    // Measured at the last refresh, which runs every few seconds while something is being made.
+    const seconds = Math.max(0, Math.round((artworksReadAt - Date.parse(from)) / 1000));
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+  };
+  const selectedLogoLabel = selectedLogoForImageEdit ? logoLabel(state.elements, selectedLogoForImageEdit.id) : '';
+  const regenerateSelectedLogo = () => {
+    if (!selectedLogoForImageEdit?.image) return;
+    openArtworkStudio({ elementId: selectedLogoForImageEdit.id, label: selectedLogoLabel, image: selectedLogoForImageEdit.image });
+  };
+  const artworkTile = (artwork: StudioArtwork) => {
+    const tag = artwork.transparent === false ? '有底色' : artwork.transparent ? '透明' : '';
+    if (artwork.status === 'queued' || artwork.status === 'running') {
+      return (
+        <li key={artwork.caseId} className="gme-art is-running" title={artwork.text}>
+          <i className="gme-spin" aria-hidden="true" /><small>{artwork.status === 'queued' ? '排队中' : `制作中 ${elapsed(artwork.createdAt)}`}</small>
+        </li>
+      );
+    }
+    if (!artwork.asset) {
+      return (
+        <li key={artwork.caseId} className="gme-art is-failed" title={artwork.error || artwork.text}>
+          <small>未完成</small>
+        </li>
+      );
+    }
+    const url = batchAsset(artwork.asset);
+    const image = <><img src={url} alt="" loading="lazy" />{tag && <i className="gme-art-tag">{tag}</i>}</>;
+    // With a logo selected, a tile can replace it or be added beside it.
+    return selectedLogoForImageEdit ? (
+      <li key={artwork.caseId} className="gme-art gme-checker" title={artwork.text}>
+        {image}
+        <span className="gme-art-actions">
+          <button type="button" disabled={!isLoggedIn || canvasImageOperationPending} aria-label={`用这张图稿替换${selectedLogoLabel}`}
+            onClick={() => void placeArtwork(url, { mode: 'replace', elementId: selectedLogoForImageEdit.id })}>替换</button>
+          <button type="button" disabled={!isLoggedIn || canvasImageOperationPending} aria-label="把这张图稿新增到画布"
+            onClick={() => void placeArtwork(url, { mode: 'add' })}>新增</button>
+        </span>
+      </li>
+    ) : (
+      <li key={artwork.caseId}>
+        <button type="button" className="gme-art gme-checker" title={artwork.text} aria-label={`放到衣服上：${artwork.text}`}
+          disabled={!isLoggedIn || canvasImageOperationPending} onClick={() => void placeArtwork(url, { mode: 'add' })}>
+          {image}
+        </button>
+      </li>
+    );
+  };
+  const artworkSection = (
+    <section className="gme-artworks" aria-label="我的图稿">
+      <div className="gme-sec-head">
+        <h3>我的图稿</h3>
+        <button type="button" className="gme-link" disabled={artworkStudioLocked} onClick={() => openArtworkStudio()}>全部 →</button>
+      </div>
+      <ul className="gme-art-grid">
+        <li>
+          <button type="button" className="gme-art gme-art-new" disabled={artworkStudioLocked} onClick={() => openArtworkStudio()}>
+            <Sparkles size={16} aria-hidden="true" /><b>AI 生成新 Logo</b>
+          </button>
+        </li>
+        {(artworks ?? []).slice(0, 11).map(artworkTile)}
+      </ul>
+      {artworksError
+        ? <p className="gme-hint">{artworksError}，稍后重新打开 Logo 面板可再试。</p>
+        : <p className="gme-hint">{artworks === null
+          ? '正在读取图稿…'
+          : selectedLogoForImageEdit
+            ? `在图稿生成里做的图都在这里。已选中${selectedLogoLabel}，可替换或新增。`
+            : '在图稿生成里做的图都在这里，点一下放到当前衣服。'}</p>}
+    </section>
   );
 
   const logoPanel = (
@@ -1364,7 +1412,7 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
           })}
         </ul>
       )}
-      {logoRedrawEntry}
+      {artworkSection}
     </section>
   );
 
@@ -1541,7 +1589,16 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
               </div>
               <p className="gme-hint">把整个 Logo 换成一种颜色，可用顶部撤销恢复。</p>
             </section>
-            <section className="gme-insp-sec">{logoRedrawEntry}</section>
+            <section className="gme-insp-sec">
+              <button type="button" className="gme-ai-entry" onClick={regenerateSelectedLogo} disabled={artworkStudioLocked || !isLoggedIn}>
+                <span className="gme-ai-badge"><Sparkles size={16} aria-hidden="true" /></span>
+                <span className="gme-item-text">
+                  <b>用它重新生成<em>AI</em></b>
+                  <small>{artworkStudioLocked ? '当前图片处理中，完成后即可开始' : `去图稿生成，做好后替换${selectedLogoLabel}`}</small>
+                </span>
+                <ChevronRight size={16} aria-hidden="true" />
+              </button>
+            </section>
           </>
         )}
         {selectedElement.type === 'text' && (
@@ -1625,16 +1682,6 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
           })()}
         </AnimatePresence>
       </ClientPortal>
-
-      {logoRedrawSession && (
-        <LogoRedrawFlow
-          mode={logoRedrawSession.target.mode}
-          applicationTargetLabel={logoRedrawSession.applicationTargetLabel}
-          currentLogoReference={logoRedrawSession.currentLogoReference}
-          onClose={() => setLogoRedrawSession(null)}
-          onApply={applyLogoRedrawCandidate}
-        />
-      )}
 
       <input
         ref={productInputRef}

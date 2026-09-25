@@ -77,6 +77,14 @@ export async function service(root,path,method,body={},options={}){
   if(path==='/api/prices'){const prices=await currentPrices();return {analyze:microToCents(ceilingMicroCents(prices,{analyze:true})),...Object.fromEntries(['generate','enhance','reuse'].map(route=>[route,microToCents(ceilingMicroCents(prices,{route}))])),exempt:options.workspace==='main'};}
   if(path==='/api/mockups')return readMockupState(root,body.caseId);
   if(path==='/api/requirements')return workbenchData(root,{wpsOnly:options.wpsOnly,showCost:(options.workspace||'main')==='main'});
+  // The garment editor's "my artworks" strip: the newest studio results only, not the whole workbench.
+  if(path==='/api/studio/results'){
+   const manifest=await jsonFile(resolve(root,'manifest.json'),{run:{},cases:[]}),jobs=await readProductionJobs(root);
+   const studio=manifest.cases.filter(c=>c.entry==='studio'&&c.active!==false).slice(-24).reverse();
+   return {items:studio.flatMap(c=>{const job=jobs.filter(j=>j.caseId===c.caseId).at(-1);if(!job)return [];const file=job.repair?.file||job.final||job.raw;
+    return [{caseId:c.caseId,text:String(c.sourceText||'').slice(0,80),status:job.status,error:job.error||null,createdAt:job.createdAt,transparent:job.transparentBackground??null,
+     asset:file?.asset||null,width:file?.width??null,height:file?.height??null}];})};
+  }
   if(path==='/api/garments')return {styles:await (await (await import('../adapters/garments.mjs')).garmentCatalogForWorkspace(options.workspace||'main')).styles()};
   if(path==='/api/production/edit')return readProductionEdit(root,body.jobId);
   if(path==='/api/production/repair')return readRepairInput(root,body.jobId);

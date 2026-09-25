@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AppHeader } from "./app-header";
 import { SaasEditors } from "./saas-editors";
 import { authoredPrompt, splitPrompt } from "./saas-requirement-editor";
@@ -18,6 +18,18 @@ import {
   type Case,
   type Job,
 } from "@/lib/client/saas-workbench";
+import {
+  readArtworkHandoff,
+  retargetHandoff,
+  targetLabel,
+  writeArtworkHandoff,
+  type ArtworkHandoff,
+} from "@/lib/garment-editor/artwork-handoff";
+import {
+  MOCKUP_PLACEMENT_LABELS,
+  placementsForProductFace,
+} from "@/lib/garment-editor/mockup-element-relations";
+import type { MockupPlacement } from "@/lib/garment-editor/mockup-types";
 import "./saas-workbench.css";
 type Reference = {
   key: string;
@@ -40,7 +52,8 @@ export function ArtworkStudioClient() {
     [target, setTarget] = useState<{ type: "artwork"; id: string } | null>(
       null,
     ),
-    [allHistory, setAllHistory] = useState(false);
+    [allHistory, setAllHistory] = useState(false),
+    [handoff, setHandoff] = useState<ArtworkHandoff | null>(null);
   const input = useRef<HTMLInputElement>(null),
     request = useRef<{ snapshot: string; id: string } | null>(null),
     running = useRef(false);
@@ -51,6 +64,26 @@ export function ArtworkStudioClient() {
     active = cases.find((c) => c.caseId === selected),
     job = active?.productions.at(-1),
     file = resultFile(job);
+  // Arriving from the garment editor: show where the result will land, default to a
+  // transparent logo, and start from the logo being replaced.
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get("from") !== "garment") return;
+    const arrived = readArtworkHandoff();
+    if (!arrived) return;
+    /* eslint-disable react-hooks/set-state-in-effect -- sessionStorage exists only after mount. */
+    setHandoff(arrived);
+    setTransparentBackground(true);
+    if (arrived.replace)
+      setRefs([{ key: "garment-logo", index: 1, name: arrived.replace.label, url: arrived.replace.refUrl }]);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, []);
+  const retarget = (ownerId: string | null, placement?: MockupPlacement) => {
+    if (!handoff) return;
+    const next = retargetHandoff(handoff, ownerId, placement);
+    setHandoff(next);
+    writeArtworkHandoff(next);
+  };
+  const handoffOwner = handoff?.products.find((p) => p.id === handoff.ownerId);
   const close = useCallback(() => setTarget(null), []),
     saved = useCallback(() => {
       void reload();
@@ -227,8 +260,7 @@ export function ArtworkStudioClient() {
             <h1>图稿生成</h1>
             <p>
               传参考图 +
-              写需求，生成图片或场景图；勾选「透明背景 PNG」可制作透明图稿。可无损放大、去背景、局部修补。
-              <b>这一页不贴衣服</b>——要出穿着效果图请用「批量效果图」。
+              写需求，生成图片或场景图；勾选「透明背景 PNG」可制作透明图稿。可无损放大、去背景、局部修补。做好后点「放到成衣效果图」看穿在衣服上的效果。
             </p>
           </div>
           <button
@@ -238,7 +270,7 @@ export function ArtworkStudioClient() {
               setText("");
               setRefs([]);
               setRoute("generate");
-              setTransparentBackground(false);
+              setTransparentBackground(!!handoff);
               setMode("text");
               request.current = null;
               setNotice("已新建空白制作要求");
@@ -247,6 +279,46 @@ export function ArtworkStudioClient() {
             新建图稿
           </button>
         </div>
+        {handoff && (
+          <div className="studio-handoff" role="group" aria-label="来自成衣效果图">
+            <span className="dot" aria-hidden="true" />
+            <span className="grow">
+              来自成衣效果图《{handoff.projectName}》· 做好后
+              {handoff.replace ? (
+                <>替换 <b>{handoff.replace.label}</b>，位置和大小不变</>
+              ) : (
+                <>
+                  放到
+                  <select
+                    aria-label="放到哪件衣服"
+                    value={handoff.ownerId ?? ""}
+                    onChange={(e) => retarget(e.target.value || null)}
+                  >
+                    <option value="">未指定衣服</option>
+                    {handoff.products.map((p) => (
+                      <option key={p.id} value={p.id}>{p.label}</option>
+                    ))}
+                  </select>
+                  {handoffOwner && (
+                    <select
+                      aria-label="放到哪个位置"
+                      value={handoff.placement}
+                      onChange={(e) => retarget(handoffOwner.id, e.target.value as MockupPlacement)}
+                    >
+                      {placementsForProductFace(handoffOwner.face)
+                        .filter((p) => p !== "custom")
+                        .map((p) => (
+                          <option key={p} value={p}>{MOCKUP_PLACEMENT_LABELS[p]}</option>
+                        ))}
+                    </select>
+                  )}
+                  {!handoffOwner && <span className="tiny muted">（选一件衣服，否则放在画布中间）</span>}
+                </>
+              )}
+            </span>
+            <Link href="/garment-mockup">← 返回成衣效果图</Link>
+          </div>
+        )}
         {(error || notice) && (
           <p className="notice warn" role="status">
             {error || notice}
@@ -445,7 +517,15 @@ export function ArtworkStudioClient() {
               >
                 再加工 →
               </button>
-              {file && <a className="button sm" href={"/garment-mockup?artwork=" + encodeURIComponent(assetURL(file.asset))}>用于成衣效果图</a>}
+              {file && (
+                <a
+                  className="button sm primary"
+                  title={handoff && !handoff.replace ? "放到 " + targetLabel(handoff) : undefined}
+                  href={"/garment-mockup?artwork=" + encodeURIComponent(assetURL(file.asset))}
+                >
+                  {handoff?.replace ? `替换成衣上的 ${handoff.replace.label}` : "放到成衣效果图"}
+                </a>
+              )}
               <span className="grow" />
               <span className="tiny muted">以下不消耗积分</span>
               <button
@@ -500,7 +580,7 @@ export function ArtworkStudioClient() {
                   })()
                 }
               >
-                用它做效果图
+                加入批量生成
               </button>
             </div>
           </section>

@@ -132,6 +132,9 @@ export function defaultDecorationProductId(
   const products = elements.filter(element => element.type === 'product');
   const selectedProduct = products.find(product => product.id === selectedElementId);
   if (selectedProduct) return selectedProduct.id;
+  // A selected logo or text points at the garment it sits on.
+  const selectedOwnerId = elements.find(element => element.id === selectedElementId)?.placedOnProductId;
+  if (selectedOwnerId && products.some(product => product.id === selectedOwnerId)) return selectedOwnerId;
   return products.length === 1 ? products[0].id : null;
 }
 
