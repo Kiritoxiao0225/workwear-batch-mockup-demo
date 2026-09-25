@@ -32,6 +32,8 @@ export async function previewStandardReuse(raw: unknown, actor: CatalogUser, ten
   const sourceViews = source.views.filter(v => v.latest?.status === 'confirmed' && v.latest.origin === 'manual' && v.latest.id === v.confirmedId);
   if (!sourceViews.length) throw new CatalogHttpError(422, '请先在代表颜色上保存至少一面的人工确认标准；草稿或继承标准不能作为来源');
   const style = await catalogStyle(source.styleId, tenantId);
+  const reference = style.colors.find(c => c.id === style.referenceVariantId);
+  if (reference && reference.id !== source.id) throw new CatalogHttpError(409, `本款代表色是「${reference.colorName}」，请在代表色上修改并应用到同款`);
   if (style.colors.length > 100) throw new CatalogHttpError(422, `款式包含 ${style.colors.length} 个颜色，超过单次检查上限 100`);
   const bytes = await silhouetteBytes(source);
   const sourceMasks = new Map<string, Awaited<ReturnType<typeof garmentSilhouette>>>();
@@ -40,7 +42,7 @@ export async function previewStandardReuse(raw: unknown, actor: CatalogUser, ten
     const faces: ReuseFace[] = [];
     try {
       const target = await catalogDetail(item.id, undefined, tenantId);
-      const targetBytes = await silhouetteBytes(target);
+      let targetBytes: Promise<Buffer> | null = null;
       for (const view of target.views) {
         const sourceView = sourceViews.find(v => v.face === view.face);
         const blocked = (reason: string): ReuseFace => ({ checkId: null, face: view.face, crop: view.crop, status: 'blocked', reason, score: null, specification: null });
@@ -48,7 +50,16 @@ export async function previewStandardReuse(raw: unknown, actor: CatalogUser, ten
         if (view.latest && view.latest.origin !== 'inherited') { faces.push({ ...blocked(view.latest.status === 'draft' ? '本色有单独打点的草稿；保留' : '本色单独打点；保留'), specification: view.latest.specification }); continue; }
         if (view.latest?.source?.id === sourceView.latest!.id) { faces.push({ ...blocked('已跟随代表色的最新确认版'), specification: view.latest.specification }); continue; }
         if (item.layout !== source.layout) { faces.push(blocked('正反面布局不同，请单独核对')); continue; }
-        const comparison = compareSilhouettes(sourceMasks.get(view.face)!, await garmentSilhouette(targetBytes, view.crop));
+        let comparison: { alignment: CatalogAlignment; score: number | null; status: 'aligned' | 'review'; reason: string } | null = null;
+        if (view.latest) {
+          // A follower was checked against this face of the reference before: the outline is unchanged, so keep that alignment.
+          const prior = await catalogDatabase().query('SELECT p.alignment,src.view_id FROM placement_standard_versions p JOIN placement_standard_versions src ON src.id=p.source_standard_id WHERE p.id=$1', [view.latest.id]);
+          if (prior.rows[0]?.view_id === sourceView.id) comparison = { alignment: alignmentSchema.parse(prior.rows[0].alignment), score: null, status: 'aligned', reason: '跟随旧版，将更新到最新确认版（沿用上次核对的对齐）' };
+        }
+        if (!comparison) {
+          targetBytes ??= silhouetteBytes(target);
+          comparison = compareSilhouettes(sourceMasks.get(view.face)!, await garmentSilhouette(await targetBytes, view.crop));
+        }
         let specification;
         try { specification = projectStandard(sourceView.latest!.specification, comparison.alignment); assertConfirmedStandard(specification, view.face); }
         catch { faces.push(blocked('对齐后的结构点或印制区域超出图片范围，请单独校准')); continue; }

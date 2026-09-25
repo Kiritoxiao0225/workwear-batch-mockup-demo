@@ -2,7 +2,7 @@
 import { fetchApi, readApiJson } from '@/lib/client/api-response';
 
 import { useEffect, useRef, useState } from 'react';
-import { allowedPositions, POSITION_LABELS, STRUCTURE_LABELS, type Box, type CatalogStyle, type CatalogDetail, type CatalogUser, type CatalogView, type PlacementStandard, type Point, type PositionKey, type StructureType, type StyleSync, type StyleSyncFace } from '@/lib/catalog';
+import { allowedPositions, POSITION_LABELS, STRUCTURE_LABELS, type Box, type CatalogStyle, type CatalogDetail, type CatalogUser, type CatalogView, type PlacementStandard, type Point, type PositionKey, type StructureType } from '@/lib/catalog';
 import { colorSyncState } from '@/lib/catalog-calibration-status';
 import { CatalogImagePreview } from '@/components/catalog-image-preview';
 import { catalogApronRecognitionResponseSchema } from '@/lib/catalog-apron-recognition';
@@ -40,7 +40,6 @@ function withOffset(spec: PlacementStandard, key: PositionKey, offset: Point | n
     return offset && (offset.x || offset.y) ? { ...next, offsetCm: { x: offsetValue(offset.x), y: offsetValue(offset.y) } } : next;
   }) };
 }
-const SYNC_LABELS: Record<StyleSyncFace['state'], string> = { current: '已是最新', updated: '已更新', applied: '已套用', own: '单独打点 · 保留', review: '需核对', blocked: '未套用' };
 const landmarkLabel = (key: string, label: string, face: 'front' | 'back') => key === 'neckCenter' ? (face === 'front' ? '前领口中心' : '后领中心') : label;
 
 function FaceCanvas({ detail, view, spec, active, editable, layer, selectedKey, status, activate, selectPosition, change, drawingBoundary, finishBoundary }: {
@@ -157,8 +156,6 @@ function BoxFields({ value, change }: { value: Box; change: (value: Box) => void
 export function CatalogCalibration({ detail, preview, style, user, close, saved, replace, addColor, loadVersion, selectColor }: { detail: CatalogDetail; preview: CatalogPlacementPreview; style: CatalogStyle; user: CatalogUser; close: () => void; saved: (id: string) => Promise<void>; replace: () => void; addColor: () => void; loadVersion: (assetVersionId: string) => void; selectColor: (id: string) => void }) {
   const [reuse, setReuse] = useState(false);
   const [unlocked, setUnlocked] = useState(false);
-  const [sync, setSync] = useState<StyleSync | null>(null);
-  const [syncing, setSyncing] = useState(false);
   const [imagePreview, setImagePreview] = useState(false);
   const [layer, setLayer] = useState<Layer>('all');
   const [drawingBoundaryId, setDrawingBoundaryId] = useState<string | null>(null);
@@ -220,11 +217,15 @@ export function CatalogCalibration({ detail, preview, style, user, close, saved,
   const follows = !isReference && !!reference && detail.views.every(v => !v.latest || v.latest.origin === 'inherited');
   const syncState = colorSyncState(style.referenceVariantId, detail);
   const applies = isReference && style.colors.length > 1;
+  // Other colors change only after 同款核对 is confirmed; count the ones still waiting for it.
+  const waitingColors = style.colors.filter(c => c.id !== detail.id && ['stale', 'pending'].includes(colorSyncState(style.referenceVariantId, c).key)).length;
   const editable = user.role !== 'viewer' && detail.isCurrent && !historical && !busy && !recognizing && (!follows || unlocked);
   function change(next: PlacementStandard, id = activeId) { next = derived(id, next); setSpecs(current => ({ ...current, [id]: next })); dirtyRef.current.add(id); setDirtyViews(new Set(dirtyRef.current)); setReviewed(false); setSaveNotice(''); }
   function selectView(id: string) { setActiveId(id); setHistoryId(''); }
   const currentPosition = spec.positions.find(p => p.key === selectedKey) ?? spec.positions[0];
   const canReuse = !dirty && !busy && !historical && detail.isCurrent && detail.views.some(v => v.latest?.status === 'confirmed' && v.latest.origin === 'manual' && v.latest.id === v.confirmedId);
+  // Confirmed with nothing left to confirm: the main button just opens 同款核对.
+  const openCheck = applies && user.role !== 'viewer' && canReuse && !detail.views.some(v => v.latest?.status === 'draft');
   const currentSuggestion = preview.faces.find(f => f.viewId === view.id)!;
   const needsBoundary = !view.latest && !currentSuggestion.frame && !manualBoundaries.has(view.id) && !recognizedFaces[view.id]?.hasFrame;
   const facesLabel = detail.views.length > 1 ? '正反面' : detail.views[0].face === 'front' ? '正面' : '背面';
@@ -277,19 +278,10 @@ export function CatalogCalibration({ detail, preview, style, user, close, saved,
       savedResponse = true;
       dirtyRef.current.clear(); setDirtyViews(new Set()); setReviewed(false);
       await saved(detail.id);
-      if (confirm && applies) await applyToStyle();
+      if (confirm && applies) setReuse(true);
       else setSaveNotice(!confirm ? `${facesLabel}草稿已一起保存。` : isReference ? `${facesLabel}位置已确认。` : `${facesLabel}位置已确认为本色单独标准，不随代表色更新。`);
     } catch (error) { setError(`${savedResponse ? `${facesLabel}已保存，但页面未能重新读取：` : ''}${error instanceof Error ? error.message : String(error)}`); }
     finally { savingRef.current = false; setBusy(false); }
-  }
-  async function applyToStyle() {
-    setSyncing(true); setError('');
-    try {
-      const response = await fetchApi('/api/catalog/reuse/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ variantId: detail.id }) });
-      setSync(await readApiJson(response, '应用到全款失败') as StyleSync);
-      await saved(detail.id);
-    } catch (error) { setError(`应用到全款未完成：${error instanceof Error ? error.message : String(error)}。位置本身已保存，可点「应用到全款」重试。`); }
-    finally { setSyncing(false); }
   }
   function stopOwnEditing() {
     if (dirty && !window.confirm('放弃为本色单独打点的修改，继续跟随代表色？')) return;
@@ -303,7 +295,7 @@ export function CatalogCalibration({ detail, preview, style, user, close, saved,
     {error && <div className="error-banner" role="alert">{error}</div>}
     {reference && !isReference && <div className={`cal-follow-banner ${follows && !unlocked ? '' : 'own'}`} role="note"><div>
       <strong>{unlocked ? '正在为本色单独打点' : follows ? (detail.views.some(v => v.latest) ? `本色跟随代表色「${reference.colorName}」` : `本色尚未应用代表色「${reference.colorName}」`) : `本色单独打点，不随代表色「${reference.colorName}」更新`}</strong>
-      <p>{unlocked ? `确认后本色使用自己的点，代表色「${reference.colorName}」再改动也不会影响本色。` : !follows ? '如需改回跟随，可在代表色的「全款核对」里重新套用。' : syncState.key === 'stale' ? '代表色已更新，本色还在用旧版：到代表色上点「应用到全款」即可同步。' : detail.views.some(v => v.latest) ? '效果图用的是代表色的这套点。要改位置，请到代表色上修改并应用到全款。' : '到代表色上点「应用到全款」，轮廓一致时本色会自动跟随。'}</p>
+      <p>{unlocked ? `确认后本色使用自己的点，代表色「${reference.colorName}」再改动也不会影响本色。` : !follows ? '如需改回跟随，可在代表色的「同款核对」里重新套用。' : syncState.key === 'stale' ? '代表色已更新，本色还在用旧版：到代表色上点「应用到同款」，核对无误后更新。' : detail.views.some(v => v.latest) ? '效果图用的是代表色的这套点。要改位置，请到代表色上修改并应用到同款。' : '到代表色上点「应用到同款」，在同款核对里勾选本色并确认无误后生效。'}</p>
     </div><div>{follows && !unlocked && <button type="button" className="button primary" onClick={() => selectColor(reference.id)}>去代表色修改</button>}{follows && !unlocked && user.role !== 'viewer' && detail.isCurrent && <button type="button" className="button" onClick={() => setUnlocked(true)}>为本色单独打点</button>}{unlocked && <button type="button" className="button" disabled={busy} onClick={stopOwnEditing}>取消，继续跟随</button>}</div></div>}
     <div className="catalog-style-toolbar"><div className="catalog-color-options" aria-label="切换同款颜色">{style.colors.map(color => <button type="button" key={color.id} aria-pressed={color.id === detail.id} onClick={() => { if (color.id !== detail.id && (!dirty || window.confirm('切换颜色将放弃未保存修改，继续？'))) selectColor(color.id); }} title={colorSyncState(style.referenceVariantId, color).label}><span className={`catalog-status-symbol ${colorSyncState(style.referenceVariantId, color).key}`} aria-hidden="true">{colorSyncState(style.referenceVariantId, color).symbol}</span> {color.colorName}</button>)}</div></div>
     <div className="cal-legend-bar"><div className="cal-layer-switch" aria-label="标记显示图层">{([['all', '全部标记'], ['placement', '印花位置'], ['structure', '结构与避让']] as const).map(([key, label]) => <button type="button" key={key} aria-pressed={layer === key} onClick={() => setLayer(key)}>{label}</button>)}</div><span><i className="cal-legend-point" />结构点</span><span><i className="cal-legend-anchor" />印花中心</span><span><i className="cal-legend-area" />可印范围</span><span><i className="cal-legend-danger" />避让区域</span></div>
@@ -343,16 +335,7 @@ export function CatalogCalibration({ detail, preview, style, user, close, saved,
       </fieldset>
       <details><summary>原图与底图版本</summary><button type="button" className="button" onClick={() => setImagePreview(true)}>放大查看衣服</button><p className="cal-hint">原文件按名称匹配，仅作来源候选；未冒充逐面人工复核结果。</p>{detail.sources.map((source, i) => <a className="cal-source-link" key={`${source.url}-${i}`} href={source.url} target="_blank" rel="noreferrer">{source.filename} ↗</a>)}{detail.versions.map(v => <p className="cal-hint" key={v.id}><button type="button" className="button" onClick={() => { if (!dirty || window.confirm('切换底图版本将放弃未保存修改，继续？')) loadVersion(v.id); }}>底图 v{v.version}{v.id === detail.assetVersionId ? ' · 正在查看' : ''}</button> · {v.sha256.slice(0, 12)}</p>)}<p className="cal-hint">{detail.sha256}</p>{user.role !== 'viewer' && detail.isCurrent && <button type="button" className="button" onClick={() => { if (!dirty || window.confirm('将放弃尚未保存的校准修改，继续上传新版底图？')) replace(); }}>上传新版底图</button>}</details>
     </aside></div>
-    <footer className="catalog-dialog-foot cal-confirm-footer"><div className="cal-confirm-copy">{historical || !detail.isCurrent ? <span>历史版本只读</span> : <><label className="catalog-check"><input type="checkbox" checked={reviewed} disabled={!editable || !!confirmationIssue || drawingBoundaryId !== null} onChange={event => setReviewed(event.target.checked)} />已核对{facesLabel}衣服边界、位置点和避让区域</label><small>{confirmationIssue || (applies ? `确认后自动应用到同款其他颜色：跟随的颜色一起更新，轮廓一致的颜色自动套用，单独打点的颜色保留。` : follows && !unlocked ? '本色跟随代表色，无需在这里确认。' : `一次保存${facesLabel}的全部调整。`)}</small>{!confirmationIssue && unmoved.map(text => <small key={text} className="cal-unmoved" role="note">{text}</small>)}{saveNotice && <small role="status">{saveNotice}</small>}</>}</div><div><button className="button" disabled={!editable || missingBoundaries.length > 0 || drawingBoundaryId !== null} onClick={() => void save(false)} type="button">{busy ? '保存中…' : `保存${facesLabel}草稿`}</button><button className="button primary" disabled={!editable || !!confirmationIssue || drawingBoundaryId !== null || !reviewed} onClick={() => void save(true)} type="button">{syncing ? '正在应用到全款…' : applies ? '确认并应用到全款' : `确认${facesLabel}位置`}</button>{user.role !== 'viewer' && applies && <button className="button" type="button" disabled={!canReuse || syncing} title="不改位置，把代表色当前的确认版应用到同款其他颜色" onClick={() => void applyToStyle()}>应用到全款</button>}{user.role !== 'viewer' && applies && <button className="button" type="button" disabled={!canReuse || syncing} title="逐色查看同款其他颜色正在用的位置，核对轮廓不一致的颜色" onClick={() => setReuse(true)}>全款核对</button>}</div></footer>
-    {sync && <div className="cal-sync-result" role="dialog" aria-modal="true" aria-labelledby="cal-sync-title"><div className="cal-sync-card">{(() => {
-      const done = (c: StyleSync['colors'][number]) => c.faces.every(f => ['current', 'updated', 'applied'].includes(f.state));
-      const effective = sync.colors.filter(done).length, review = sync.colors.filter(c => c.faces.some(f => f.state === 'review')).length, own = sync.colors.filter(c => c.faces.some(f => f.state === 'own')).length;
-      const count = (state: StyleSyncFace['state']) => sync.colors.filter(c => c.faces.some(f => f.state === state)).length;
-      return <><h3 id="cal-sync-title">已应用到全款 · 代表色「{sync.sourceColor}」</h3>
-        <p className="cal-sync-summary">共 {sync.colors.length + 1} 色：代表色 + {effective} 色已生效{count('applied') ? `（新套用 ${count('applied')}）` : ''}{count('updated') ? `（更新 ${count('updated')}）` : ''}{review ? ` · ${review} 色需核对` : ''}{own ? ` · ${own} 色单独打点保留` : ''}</p>
-        <ul className="cal-sync-list">{sync.colors.map(c => <li key={c.variantId} className={done(c) ? 'done' : c.faces.some(f => f.state === 'review') ? 'review' : ''}><b>{c.colorName}</b><span>{c.faces.map(f => `${f.face === 'front' ? '正面' : '背面'}${SYNC_LABELS[f.state]}`).join(' · ')}</span>{c.faces.some(f => !['current', 'updated', 'applied'].includes(f.state)) && <small>{[...new Set(c.faces.filter(f => !['current', 'updated', 'applied'].includes(f.state)).map(f => f.reason))].join('；')}</small>}</li>)}</ul>
-        <div className="cal-sync-actions">{review > 0 && <button type="button" className="button primary" onClick={() => { setSync(null); setReuse(true); }}>核对 {review} 个颜色</button>}<button type="button" className="button" onClick={() => setSync(null)}>完成</button></div></>;
-    })()}</div></div>}
+    <footer className="catalog-dialog-foot cal-confirm-footer"><div className="cal-confirm-copy">{historical || !detail.isCurrent ? <span>历史版本只读</span> : openCheck ? <small>{waitingColors ? `同款还有 ${waitingColors} 色没用上这套位置，到同款核对里看过、点「确认无误」后生效。` : '同款颜色都已跟随代表色或单独打点，改位置后重新确认即可。'}</small> : <><label className="catalog-check"><input type="checkbox" checked={reviewed} disabled={!editable || !!confirmationIssue || drawingBoundaryId !== null} onChange={event => setReviewed(event.target.checked)} />已核对{facesLabel}衣服边界、位置点和避让区域</label><small>{confirmationIssue || (applies ? '确认后打开同款核对：看过其他颜色套用后的位置，点「确认无误」才生效；单独打点的颜色保留。' : follows && !unlocked ? '本色跟随代表色，无需在这里确认。' : `一次保存${facesLabel}的全部调整。`)}</small>{!confirmationIssue && unmoved.map(text => <small key={text} className="cal-unmoved" role="note">{text}</small>)}{saveNotice && <small role="status">{saveNotice}</small>}</>}</div><div><button className="button" disabled={!editable || missingBoundaries.length > 0 || drawingBoundaryId !== null} onClick={() => void save(false)} type="button">{busy ? '保存中…' : `保存${facesLabel}草稿`}</button>{openCheck ? <button className="button primary" type="button" onClick={() => setReuse(true)}>{waitingColors ? `应用到同款 · ${waitingColors} 色待套用` : '查看同款 · 全部已生效'}</button> : <button className="button primary" disabled={!editable || !!confirmationIssue || drawingBoundaryId !== null || !reviewed} onClick={() => void save(true)} type="button">{applies ? '确认并应用到同款' : `确认${facesLabel}位置`}</button>}</div></footer>
 
 
   </section>{imagePreview && <CatalogImagePreview items={[detail]} initialId={detail.id} close={() => setImagePreview(false)} />}</div>;

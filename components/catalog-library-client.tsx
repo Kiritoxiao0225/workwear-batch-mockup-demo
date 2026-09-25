@@ -37,7 +37,7 @@ function StyleCard({ style, priority, viewer, open, preview }: { style: CatalogS
         {item.calibrationFaces?.map(face => <div key={face.face} className="catalog-face-status"><b>{face.face === 'front' ? '正面' : '背面'} · {face.status === 'confirmed' ? '已确认' : face.status === 'draft' ? '草稿待确认' : '未校准'}</b><p>{face.positions.length ? `${face.status === 'confirmed' ? '已确认位置' : '草稿位置'}：${face.positions.map(key => POSITION_LABELS[key]).join('、')}` : '尚无已保存位置'}</p>{face.status === 'draft' && face.confirmedPositions.length > 0 && <p>旧版已确认：{face.confirmedPositions.map(key => POSITION_LABELS[key]).join('、')}；本次修改待确认</p>}{face.status === 'confirmed' && face.origin === 'inherited' && <p>来自同款复用</p>}</div>)}
         {item.layout === 'front_only' && <p className="catalog-no-back">仅正面素材，无背面</p>}
       </section>
-      <small className="catalog-style-sync">{reference ? `代表色「${reference.colorName}」` : '尚未确定代表色：在任一颜色上确认位置并应用到全款'} · 全款 {ready}/{style.colors.length} 色已生效{stale ? ` · ${stale} 色待同步` : ''}</small>
+      <small className="catalog-style-sync">{reference ? `代表色「${reference.colorName}」` : '尚未确定代表色：在任一颜色上确认位置并应用到同款'} · 同款 {ready}/{style.colors.length} 色已生效{stale ? ` · ${stale} 色待同步` : ''}</small>
       <button className="button" type="button" onClick={() => open(item.id)}>{viewer ? '查看印花位置' : item.hasDraft ? '继续调整位置' : '查看印花位置'}</button>
     </div></article>;
 }

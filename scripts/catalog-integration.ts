@@ -264,8 +264,21 @@ try {
     await applyStandardReuse({ sourceVariantId: rep.variantId, checkIds: opaqueFaces.map(f => f.checkId!), reviewed: true }, actor, T);
     assert.equal(states('不透明色', await syncStyleStandards({ variantId: rep.variantId }, actor, T)), 'current/current');
     assert.equal((await catalogDatabase().query("SELECT count(*)::int AS n FROM audit_events WHERE action='standard.sync'")).rows[0].n, 4);
+    // 同款核对 is where other colors change: after another revision the follower is offered with its checked alignment and moves only once confirmed.
+    await assert.rejects(() => previewStandardReuse({ variantId: follower.variantId }, actor, T), /继承标准不能|代表色是/);
+    const again = { ...moved, positions: [{ ...moved.positions[0], anchor: { x: .5, y: .4 } }] };
+    await savePlacementStandard({ viewId: repDetail.views[0].id, assetVersionId: repDetail.assetVersionId, expectedRevision: 2, confirm: true, specification: again }, actor, T);
+    const recheck = await previewStandardReuse({ variantId: rep.variantId }, actor, T);
+    const staleFace = recheck.colors.find(c => c.item.id === follower.variantId)!.faces[0];
+    assert.ok(staleFace.status === 'aligned' && staleFace.checkId && staleFace.reason.startsWith('跟随旧版'));
+    assert.deepEqual((await catalogDetail(follower.variantId, undefined, T)).views[0].latest!.specification, updated.views[0].latest!.specification);
+    await applyStandardReuse({ sourceVariantId: rep.variantId, checkIds: [staleFace.checkId!], reviewed: true }, actor, T);
+    const rechecked = await catalogDetail(follower.variantId, undefined, T);
+    assert.ok(Math.abs(rechecked.views[0].latest!.specification.positions[0].anchor.x - after.x) < 1e-9 && rechecked.views[0].latest!.specification.positions[0].anchor.y < after.y);
+    style = await tenantStyle();
+    assert.equal(colorSyncState(style.referenceVariantId, style.colors.find(c => c.id === follower.variantId)!).key, 'following');
   }
-  pass('确认并应用到全款：首次套用、单独打点保留、轮廓不一致转核对、代表色改版后跟随色按原对齐更新、模板点不能确认');
+  pass('确认并应用到全款：首次套用、单独打点保留、轮廓不一致转核对、代表色改版后跟随色按原对齐更新、同款核对沿用原对齐并确认后才更新、模板点不能确认');
   const uploadLogin = await loginCatalog(actor.email, password);
   const uploadForm = new FormData(); uploadForm.set('styleId', reference.styleId); uploadForm.set('colorName', '新增颜色'); uploadForm.set('layout', 'front_back'); uploadForm.set('layoutConfirmed', 'true'); uploadForm.set('file', new File([new Uint8Array(reusableBytes)], 'new-color.png', { type: 'image/png' }));
   const uploadResponse = await uploadCatalogImage(new NextRequest('http://localhost/api/catalog/upload', { method: 'POST', body: uploadForm, headers: { Cookie: `catalog_session=${uploadLogin.token}`, Origin: 'http://localhost' } }));
