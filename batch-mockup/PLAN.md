@@ -144,3 +144,10 @@ WPS 同步完成后，后台逐条预约尚无识别记录和草稿的有效原�
 - 改动（`a941d6d`）：肩点、腋点、下摆中心从抠图轮廓识别（肩点取肩线转入袖子的拐点，腋点取衣身侧边与袖子下缘交点，一侧缺失按左右对称补），领口中心和 Polo 第二、三粒扣由 Seed 2.0 Lite 看图识别并对齐中线；长袖贴身时腋点才用模型结果，离肩点过近的丢弃。识别不到的点仍按比例估算，弹窗逐个点名。新增 `POST /api/catalog/products/[id]/recognize-structure` 与弹窗「重新识别结构点」，替换正反面结构点后需人工确认；合成端未确认面用同一套识别点。19 款 38 面实测：肩点、领口全部识别，5 面腋点（CX8099NS 正反、9920CYJD 正、719SF 背、JSH-JSD33 背）需手动。已确认的错点（如 301SRX 中国红）不自动修改。
 - 发布：补丁叠在 Web `6ab5ff6c10778e353136a75e`（`39f5a58`，指纹 `8b0945f8…`）上，新部署 `6ab602f510778e353136a78a`（`a941d6d`，指纹 `772c2c53…`），8 个文件，main 与 external worker 同镜像，环境变量不变（三服务已有 ARK_RUNTIME_API_KEY）。发布前在干净检出上 tsc、eslint、vitest 1519、test:mockups 23、test:catalog 21 组通过；无排队付费任务、无成衣 AI 任务，无数据库迁移。容器内基线 7/8（新增接口文件不符，远程查看被权限拦截未查明，补丁整体覆盖该文件），发布后 8/8 一致，三服务 RUNNING，health ready，新版 worker 心跳，页面 200，新接口未登录 401。
 - 回退：`output/structure-release-20260925/rollback.json`（回到 `d-6ab5ff6c`，恢复 WORKWEAR_BUILD_COMMIT），无需回退数据库。
+
+### 2026-09-25 下午：图稿生成改版、退役成衣页旧重绘、校准左右联动
+
+- 改动（`3eb4144`、`4f8b5e5`，另一会话完成）：图稿生成一屏三栏，「AI 整理成七项」只整理不自动制作（studio 发起的识别 `autoProduce:false`），另有「再来一张」、预览背景与「⋯」菜单；成衣页去掉旧 Logo 重绘（删除 `LogoRedrawFlow.tsx`、`lib/server/ark-garment-logo-redraw.ts` 及测试），新任务只收去背景与背面，排队中的旧 understand/generate 不调模型、标失败并释放冻结；位置校准加左右联动与对齐参考线。其后的 `f99f88a` 不在本次范围。
+- 发布：补丁叠在 Web `6ab602f510778e353136a78a`（`a941d6d`，指纹 `772c2c53…`）上，新部署 `6ab61446e92e928954ad069f`（`4f8b5e5`，指纹 `1a7c6f26…`），16 个文件并在构建前删除 3 个文件，main 与 external worker 同镜像，环境变量不变（EvoLink 与并发 20 保持）。第一次上传（`6ab612c9`）构建失败：旧的 `lib/server/garment-mockup-provider.test.ts` 仍用 `"understand"`，而 prepare 按惯例跳过测试文件、`next build` 却类型检查全部 `.ts`；改为改动的测试与 scripts 一并打包，并同步镜像中 3 个陈旧文件（`app/api/wps-workbench/[...path]/route.test.ts`、`lib/sop-placement.test.ts`、`scripts/catalog-integration.ts`），`image-drift.mjs` 确认补丁后镜像内 583 个 TS 文件与提交一致。发布前在干净检出上 check（1512 项）、test:requirements（59）、test:workbench、test:garment（12 组）、test:batch-claim 全过；无排队付费任务、无成衣 AI 任务，无数据库迁移；发布后容器内 19/19 一致（含 3 个删除文件不存在），三服务 RUNNING，health ready，新版 worker 心跳，页面 200。
+- 回退：`output/studio-redesign-release-20260925/rollback.json`（回到 `d-6ab602f5`，恢复 WORKWEAR_BUILD_COMMIT），无需回退数据库。
+
