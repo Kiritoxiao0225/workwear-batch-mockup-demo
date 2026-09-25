@@ -119,3 +119,10 @@ WPS 同步完成后，后台逐条预约尚无识别记录和草稿的有效原�
 - 改动（`1993cb2`）：全站顶栏统一 48px 单行，退出登录收进头像菜单；成衣页「上传本地衣服图」置顶；上传 Logo 不再自动去背景，卡片一键去背景并提示是否免费；「添加文字」放到衣服前胸居中并立即进入编辑，新文字不等字体下载，空文字自动删除。详见 `docs/garment-editor-delivery.md`。
 - 发布：补丁叠在 Web `6ab5561ee92e928954ace691`（`d4d99af`，指纹 `9414cf02…`）上，新部署 `6ab5ca09e92e928954acf904`（`1993cb2`，指纹 `b75a4aae…`），8 个前端文件，main 与 external worker 同镜像。发布前无排队付费任务、无成衣 AI 任务，无数据库迁移；容器内基线 8/8、发布后 8/8 一致，三服务 RUNNING，health ready，新版 worker 心跳，页面 200。线上内部会话只读查看：成衣页顶栏 48px、退出登录仅在头像菜单、衣服面板首项为上传。
 - 回退：`output/garment-v2-p1-release-20260925/rollback.json`（回到 `d-6ab5561e`，恢复 WORKWEAR_BUILD_COMMIT），无需回退数据库。
+
+### 2026-09-25 中午：Sunburst 生图、gpt-6-sol 理解、成本显示与并发
+
+- 改动（`76d6eaa`、`6826c9a`）：理解与生图改走 EvoLink（`WPS_ANALYSIS_PROVIDER=evolink` 用 gpt-6-sol，`ARTWORK_IMAGE_PROVIDER=evolink` 用 gpt-image-2.5-sunburst 直接出透明图）；每份图稿只发关联图片，素材并行上传、48 小时内复用；透明结果内部半透明补实，另存白底原图供补空白与保留笔；没有透明背景时退回美图抠图。每次理解与每个生图步骤记成本，WPS 工作台与 `/batch` 以灰色小字显示人民币（仅内部工作区）。worker 并发改为 `BATCH_WORKER_CONCURRENCY`（线上 20），同一需求的多份图稿可同时生成，理解与上衣合成仍按需求排队。另含成衣页放入素材复用裁图与逐面进度（另一会话）。调研与对比见 `output/evolink-sunburst-test-20260925/`。
+- 发布：补丁叠在 Web `6ab5ca09e92e928954acf904`（`1993cb2`，指纹 `b75a4aae…`）上，新部署 `6ab5eea25d7569a2d1c71deb`（`6826c9a`，指纹 `6d2ed485…`），15 个文件，main 与 external worker 同镜像。先切 worker（新代码对旧配置行为不变）再切 Web；三服务写入 EvoLink 变量，worker 另设并发 20。发布前无排队付费任务、无成衣 AI 任务，无数据库迁移；容器内基线 16/16、发布后 15/15 一致，三服务 RUNNING，health ready，新版 worker 心跳，页面 200。
+- 回退：`output/evolink-release-20260925/rollback.json`（回到 `d-6ab5ca09`、恢复 WORKWEAR_BUILD_COMMIT，并把提供方变量改回 cliproxy / gpt-5.6-sol）；只停用 EvoLink 时改回变量重启即可，无需回退数据库。
+
