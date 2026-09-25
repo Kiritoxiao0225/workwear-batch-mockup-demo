@@ -132,3 +132,9 @@ WPS 同步完成后，后台逐条预约尚无识别记录和草稿的有效原�
 - 发布：补丁叠在 Web `6ab5eea25d7569a2d1c71deb`（`6826c9a`，指纹 `6d2ed485…`）上，新部署 `6ab5fa79e92e928954ad01ff`（`f2ac95f`，指纹 `d857b266…`），9 个文件，main 与 external worker 同镜像，环境变量不变（EvoLink 与并发 20 保持）。发布前在干净检出上 check（1519 项）、test:requirements（58）、test:workbench、test:garment（11 组）全过；无排队付费任务、无成衣 AI 任务，无数据库迁移；容器内基线 9/9、发布后 9/9 一致，三服务 RUNNING，health ready，新版 worker 心跳，页面 200。
 - 回退：`output/garment-artwork-release-20260925/rollback.json`（回到 `d-6ab5eea2`，恢复 WORKWEAR_BUILD_COMMIT），无需回退数据库。
 
+
+### 2026-09-25 下午：素材库「同款核对」先看后生效
+
+- 改动（`39f5a58`）：代表色点「确认并应用到同款」只保存代表色并打开同款核对，其他颜色逐色预览，点「确认无误，应用到 N 色」才写入；底部只保留一个主按钮（已确认时直接打开核对），去掉「应用到全款」「全款核对」和确认后的结果框。核对页对跟随旧版的颜色沿用上次核对的对齐，只有代表色能发起核对。`/api/catalog/reuse/sync` 保留在后台、界面不再调用。另一会话的「重新识别结构点」未提交改动曾混入初版提交，已剥离，不在本次范围。
+- 发布：补丁叠在 Web `6ab5fa79e92e928954ad01ff`（`f2ac95f`，指纹 `d857b266…`）上，新部署 `6ab5ff6c10778e353136a75e`（`39f5a58`，指纹 `8b0945f8…`），4 个文件，main 与 external worker 同镜像，环境变量不变。发布前在干净检出上 tsc、eslint 通过，test:catalog 21 组全过（新增同款核对沿用对齐、确认后才更新），本机离线库走通确认 → 核对 → 确认无误两轮；无排队付费任务、无成衣 AI 任务，无数据库迁移；容器内基线 4/4、发布后 4/4 一致，三服务 RUNNING，health ready，新版 worker 心跳，页面 200。
+- 回退：`output/catalog-check-release-20260925/rollback.json`（回到 `d-6ab5fa79`，恢复 WORKWEAR_BUILD_COMMIT），无需回退数据库。
