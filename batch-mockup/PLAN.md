@@ -151,3 +151,10 @@ WPS 同步完成后，后台逐条预约尚无识别记录和草稿的有效原�
 - 发布：补丁叠在 Web `6ab602f510778e353136a78a`（`a941d6d`，指纹 `772c2c53…`）上，新部署 `6ab61446e92e928954ad069f`（`4f8b5e5`，指纹 `1a7c6f26…`），16 个文件并在构建前删除 3 个文件，main 与 external worker 同镜像，环境变量不变（EvoLink 与并发 20 保持）。第一次上传（`6ab612c9`）构建失败：旧的 `lib/server/garment-mockup-provider.test.ts` 仍用 `"understand"`，而 prepare 按惯例跳过测试文件、`next build` 却类型检查全部 `.ts`；改为改动的测试与 scripts 一并打包，并同步镜像中 3 个陈旧文件（`app/api/wps-workbench/[...path]/route.test.ts`、`lib/sop-placement.test.ts`、`scripts/catalog-integration.ts`），`image-drift.mjs` 确认补丁后镜像内 583 个 TS 文件与提交一致。发布前在干净检出上 check（1512 项）、test:requirements（59）、test:workbench、test:garment（12 组）、test:batch-claim 全过；无排队付费任务、无成衣 AI 任务，无数据库迁移；发布后容器内 19/19 一致（含 3 个删除文件不存在），三服务 RUNNING，health ready，新版 worker 心跳，页面 200。
 - 回退：`output/studio-redesign-release-20260925/rollback.json`（回到 `d-6ab602f5`，恢复 WORKWEAR_BUILD_COMMIT），无需回退数据库。
 
+
+### 2026-09-25 下午：确认结构点后自动重新合成效果图
+
+- 问题：素材库确认结构点、沿用同款、应用到全款后，已有效果图不会重新合成，仍显示确认前的比例预览和“未标定/未识别腋下线”提示（719SF 深灰/藏青 9/24 合成、9/25 13:43 确认）；手动点“更新效果图”，第一次也还带着旧图层的“此款衣身尚未标定”提示。
+- 改动（`f99f88a`）：新增 `lib/server/catalog-mockup-refresh.ts`，三处确认写入在同一事务内把用到该款任一颜色的需求排入 `mockup` 队列（已有排队的不重复）；`mockups.mjs` 按本次结构点判断图层是否未标定，保留的手动排版也跟着更新。
+- 发布：补丁叠在 Web `6ab61446e92e928954ad069f`（`4f8b5e5`，指纹 `1a7c6f26…`）上，新部署 `6ab6280b5d7569a2d1c7219c`（`f99f88a`，指纹 `cfd8e007…`），4 个文件，Web 与两个 worker 同镜像，回读文件 4/4 一致、health 就绪、页面正常。
+- 回退：`output/mockup-refresh-release-20260925/rollback.json`（回到 `d-6ab61446`，恢复 WORKWEAR_BUILD_COMMIT），无需回退数据库。
