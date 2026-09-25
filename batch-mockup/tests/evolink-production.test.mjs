@@ -7,7 +7,7 @@ import sharp from 'sharp';
 import { hash, saveJSON, atomicFile, readBytes } from '../adapters/a-files.mjs';
 import { reserveProduction, executeProduction } from '../application/production.mjs';
 import { inspectPixels, hardenInteriorAlpha } from '../adapters/production-images.mjs';
-import { referenceImages, tokenCost, evolinkGenerate } from '../adapters/evolink.mjs';
+import { referenceImages, tokenCost, evolinkGenerate, TRANSPARENT_NOTE } from '../adapters/evolink.mjs';
 import { randomUUID } from 'node:crypto';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { workbenchData } from '../runtime/service.mjs';
@@ -58,6 +58,15 @@ test('补实图案内部的半透明，外部透明背景与软边不动', async
   assert.equal(data[(20 * 40 + 20) * 4 + 3], 255, '内部白色应为实心');
   assert.equal(data[3], 0, '四角保持透明');
   assert.ok(solid.hardenedRatio > 0);
+});
+
+test('字腔或边框里困住的淡光晕保持原样，不补成色块', async () => {
+  const badge = await sharp(await translucentBadge()).raw().toBuffer();
+  for (let y = 17; y < 23; y++) for (let x = 17; x < 23; x++) badge.set([240, 120, 40, 60], (y * 40 + x) * 4);
+  const solid = await hardenInteriorAlpha(await sharp(badge, { raw: { width: 40, height: 40, channels: 4 } }).png().toBuffer());
+  const { data } = await sharp(solid.bytes).raw().toBuffer({ resolveWithObject: true });
+  assert.equal(data[(20 * 40 + 20) * 4 + 3], 60, '圈内淡光晕不变');
+  assert.equal(data[(20 * 40 + 13) * 4 + 3], 255, '接近实心的白色内部仍补实');
 });
 
 test('直接透明的生图：内部补实、白底原图供修补、不调用美图，费用记在生图步骤', async t => {
@@ -130,7 +139,7 @@ test('并发的两份图稿共用素材时只上传一次，只发各自关联�
   const [left, back] = await Promise.all([run('a', ['U-1']), run('b', ['U-1', 'U-2'])]);
   assert.equal(calls.upload, 2, '图1 只传一次');
   assert.deepEqual(calls.create.map(c => c.image_urls.length).sort(), [1, 2]);
-  assert.ok(calls.create.every(c => c.model === 'gpt-image-2.5-sunburst' && c.background === 'transparent'));
+  assert.ok(calls.create.every(c => c.model === 'gpt-image-2.5-sunburst' && c.background === 'transparent' && c.prompt.endsWith(TRANSPARENT_NOTE)));
   assert.deepEqual([left.cost.credits, left.cost.cny, left.cost.method, left.transparentRequested], [1.5, 0.15, 'receipt', true]);
   await run('c', ['U-2']);
   assert.equal(calls.upload, 2, '重新生成时复用已上传的素材');

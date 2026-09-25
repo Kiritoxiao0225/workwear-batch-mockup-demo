@@ -61,8 +61,10 @@ export async function withoutFaintSpecks(bytes) {
 }
 // A generator that returns transparency itself decides what counts as background, and it
 // reads white fills inside a logo as partly background (a white shield came back 39% see-through).
-// Semi-transparent pixels that the exterior cannot reach are made solid; soft edges and glows
-// connected to the outside, and fully clear holes (deliberate knock-outs), stay as they are.
+// Mostly opaque pixels that the exterior cannot reach are made solid; soft edges and glows
+// connected to the outside, and fully clear holes (deliberate knock-outs), stay as they are. So do
+// faint enclosed pixels: they are glow caught inside a counter or a frame, and making them solid
+// filled 团's counter and a whole text frame with the glow's colour (We25299b0935f).
 export async function hardenInteriorAlpha(bytes) {
   const { data, info } = await sharp(bytes, { limitInputPixels: 50_000_000, failOn: 'error' }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const w = info.width, h = info.height, n = w * h, alpha = i => data[i * 4 + 3];
@@ -76,7 +78,7 @@ export async function hardenInteriorAlpha(bytes) {
   }
   let hardened = 0, visible = 0, soft = 0;
   for (let i = 0; i < n; i++) {
-    if (!outside[i] && alpha(i) >= 8 && alpha(i) < 255) { data[i * 4 + 3] = 255; hardened++; }
+    if (!outside[i] && alpha(i) >= 128 && alpha(i) < 255) { data[i * 4 + 3] = 255; hardened++; }
     if (alpha(i) >= 8) { visible++; if (alpha(i) < 248) soft++; }
   }
   return { bytes: hardened ? await sharp(data, { raw: { width: w, height: h, channels: 4 } }).png().toBuffer() : bytes, hardenedRatio: hardened / n, softRatio: visible ? soft / visible : 0 };

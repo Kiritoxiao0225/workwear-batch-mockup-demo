@@ -73,6 +73,10 @@ export function referenceImages(input) {
   return { used, note };
 }
 
+// Asked for transparency with a coloured garment as reference, Sunburst painted the garment's red
+// behind a white logo with a glow, and drew a reference's size marks into the artwork (We25299b0935f).
+export const TRANSPARENT_NOTE = '\n\n透明背景：只绘制图稿本身，背景完全透明；除正文写明的色块外，不要添加底色块、衣料颜色、外发光、光晕或投影；参考图上的尺寸标注、箭头、虚线框和圈线不属于图稿。';
+
 /**
  * GPT Image 2.5 Sunburst through EvoLink: asynchronous task, polled by id; the task's own
  * billing record is the cost. Never retried automatically: a submitted task may already be paid.
@@ -82,7 +86,7 @@ export async function evolinkGenerate(input, dir, { env = process.env, pollMs = 
   const { used, note } = referenceImages(input);
   const urls = await Promise.all(used.map(image => uploadOnce(key, image, `${input.caseId}-${image.index}`)));
   const background = input.transparentBackground === false ? 'opaque' : 'transparent';
-  const body = { model: 'gpt-image-2.5-sunburst', prompt: note + input.prompt, ...(urls.length ? { image_urls: urls } : {}),
+  const body = { model: 'gpt-image-2.5-sunburst', prompt: note + input.prompt + (background === 'transparent' ? TRANSPARENT_NOTE : ''), ...(urls.length ? { image_urls: urls } : {}),
     size: 'auto', quality: 'medium', background, output_format: 'png', n: 1 };
   await saveJSON(`${dir}/request.json`, { ...body, image_urls: used.map(i => ({ id: i.id, index: i.index, sha256: i.sha256 })) });
   const created = await fetch('https://api.evolink.ai/v1/images/generations', { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(120_000),
