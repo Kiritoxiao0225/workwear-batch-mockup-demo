@@ -113,3 +113,9 @@ WPS 同步完成后，后台逐条预约尚无识别记录和草稿的有效原�
 - 线上验收（内部会话，免计费）：未登录请求 401；合成 Logo 火山去背景服务端 1.68 秒（模型 1.39 秒）；结果写入 R2 用时 6.6 秒但不计入等待，回读 200 并带长期缓存头；同图再次请求复用、不扣费，但因从 R2 读回需 2.0 秒。回执 `output/garment-redesign-release-20260925/live-cutout.json`、`verification.json`。
 - 待办：同图复用可加进程内缓存避免 2 秒 R2 读取；美图国内分区需另配账号；R2 迁北京 OSS 未做。
 - 回退：`output/garment-redesign-release-20260925/rollback.json`（回到 `d-6ab548fc`，恢复 WORKWEAR_BUILD_COMMIT），无需回退数据库；新增的同步去背景任务行旧版本只读不写。
+
+### 2026-09-25 上午：成衣页二期第一批（统一顶栏、上传位置、手动去背景、文字直接输入）
+
+- 改动（`1993cb2`）：全站顶栏统一 48px 单行，退出登录收进头像菜单；成衣页「上传本地衣服图」置顶；上传 Logo 不再自动去背景，卡片一键去背景并提示是否免费；「添加文字」放到衣服前胸居中并立即进入编辑，新文字不等字体下载，空文字自动删除。详见 `docs/garment-editor-delivery.md`。
+- 发布：补丁叠在 Web `6ab5561ee92e928954ace691`（`d4d99af`，指纹 `9414cf02…`）上，新部署 `6ab5ca09e92e928954acf904`（`1993cb2`，指纹 `b75a4aae…`），8 个前端文件，main 与 external worker 同镜像。发布前无排队付费任务、无成衣 AI 任务，无数据库迁移；容器内基线 8/8、发布后 8/8 一致，三服务 RUNNING，health ready，新版 worker 心跳，页面 200。线上内部会话只读查看：成衣页顶栏 48px、退出登录仅在头像菜单、衣服面板首项为上传。
+- 回退：`output/garment-v2-p1-release-20260925/rollback.json`（回到 `d-6ab5561e`，恢复 WORKWEAR_BUILD_COMMIT），无需回退数据库。
