@@ -33,7 +33,7 @@ const TABS:{id:SidebarTab;label:string;icon:ReactNode}[]=[
 export default function GarmentWorkspace(){
   const {user,error}=useProjectSession();
   const beforeLogoutRef=useRef<null|(()=>Promise<boolean>)>(null);
-  return <main className="gme-page"><AppHeader compact beforeLogout={()=>beforeLogoutRef.current?.()??Promise.resolve(true)} />{user?<div className="gme-scope" key={user.id}><ToastProvider><Workspace userId={user.id} canEdit={user.role!=='viewer'} beforeLogoutRef={beforeLogoutRef} /></ToastProvider><div id="garment-editor-portals" /></div>:<p role="status">{error||'正在连接工作台…'}</p>}</main>;
+  return <main className="gme-page"><AppHeader beforeLogout={()=>beforeLogoutRef.current?.()??Promise.resolve(true)} />{user?<div className="gme-scope" key={user.id}><ToastProvider><Workspace userId={user.id} canEdit={user.role!=='viewer'} beforeLogoutRef={beforeLogoutRef} /></ToastProvider><div id="garment-editor-portals" /></div>:<p role="status">{error||'正在连接工作台…'}</p>}</main>;
 }
 function Workspace({userId,canEdit,beforeLogoutRef}:{userId:string;canEdit:boolean;beforeLogoutRef:RefObject<null|(()=>Promise<boolean>)>}){
   const toast=useToast();
@@ -49,7 +49,7 @@ function Workspace({userId,canEdit,beforeLogoutRef}:{userId:string;canEdit:boole
   const [tab,setTab]=useState<SidebarTab>('garment'),[panelOpen,setPanelOpen]=useState(true),[menu,setMenu]=useState<Menu|null>(null);
   const [panelHost,setPanelHost]=useState<HTMLDivElement|null>(null),[inspectorHost,setInspectorHost]=useState<HTMLElement|null>(null);
   const generation=useRef(0),[stateGeneration,setStateGeneration]=useState(0),canvasArea=useRef<HTMLDivElement>(null),topbar=useRef<HTMLDivElement>(null);
-  const exportRef=useRef<(()=>void)|null>(null),captureRef=useRef<((ids:string[])=>Promise<CapturedMockupProduct[]>)|null>(null);
+  const exportRef=useRef<(()=>void)|null>(null),textEditRef=useRef<((id:string)=>void)|null>(null),captureRef=useRef<((ids:string[])=>Promise<CapturedMockupProduct[]>)|null>(null);
   const lastSaved=useRef(''),saving=useRef<Promise<boolean>|null>(null),pending=useRef<{body:unknown;snapshot:string}|null>(null),blocked=useRef(false),alive=useRef(true);
   const updateProject=useCallback((p:typeof project)=>{projectRef.current=p;setProject(p);setAiProject(p.revision?p.id:null);},[]);
   const replace=useCallback((p:typeof project,s:CustomizationState)=>{generation.current++;setStateGeneration(generation.current);updateProject(p);replaceState(s);setSelected({id:null,type:null});lastSaved.current=JSON.stringify({name:p.name,state:s});pending.current=null;blocked.current=false;setConflict(null);setSavedAt(null);setStatus(p.revision?'已保存':'新工程');},[replaceState,updateProject]);
@@ -218,7 +218,7 @@ function Workspace({userId,canEdit,beforeLogoutRef}:{userId:string;canEdit:boole
           <button type="button" className="gme-icon" title="这些按钮怎么用" aria-label="使用说明" aria-expanded={menu==='help'} onClick={()=>setMenu(menu==='help'?null:'help')}><HelpCircle size={17}/></button>
           {menu==='help'&&<div className="gme-menu gme-help-pop" role="dialog" aria-label="使用说明"><dl>
             <dt>保存</dt><dd>画布有内容后自动保存到「我的作品」，左上角可回到作品列表。</dd>
-            <dt>去背景</dt><dd>上传 Logo 会自动去背景；自带透明和纯色底免费处理，其余调用火山，失败时自动改用美图。</dd>
+            <dt>去背景</dt><dd>上传 Logo 后点卡片上的「去背景」；自带透明和纯色底免费，其余调用火山，失败时自动改用美图。</dd>
             <dt>历史</dt><dd>查看 AI 生成记录，或恢复以前保存的版本。</dd>
             <dt>导出</dt><dd>「整张图片」用于发给客户；「单件图片」按衣服分别下载，选中衣服时只下载这一件。</dd>
             <dt>粘贴</dt><dd>在衣服标签粘贴图片会加为衣服，其余标签加为 Logo。</dd>
@@ -247,6 +247,7 @@ function Workspace({userId,canEdit,beforeLogoutRef}:{userId:string;canEdit:boole
         <button type="button" title={panelOpen?'收起面板':'展开面板'} onClick={()=>setPanelOpen(!panelOpen)}>{panelOpen?<PanelLeftClose size={18} aria-hidden="true"/>:<PanelLeftOpen size={18} aria-hidden="true"/>}<span>{panelOpen?'收起':'展开'}</span></button>
       </nav>
       {panelOpen&&<aside className="gme-panel" style={!canEdit?{pointerEvents:'none',opacity:.65}:undefined}>
+        <div ref={setPanelHost}/>
         {tab==='garment'&&<section className="gme-sec">
           <div className="gme-sec-head"><h3>素材库</h3><span>{total} 款色</span></div>
           <label className="gme-search"><Search size={14} aria-hidden="true"/><input aria-label="搜索款号或颜色" value={query} placeholder="搜索款号或颜色" onChange={e=>{setQuery(e.target.value);setPage(1);}}/></label>
@@ -260,21 +261,20 @@ function Workspace({userId,canEdit,beforeLogoutRef}:{userId:string;canEdit:boole
           {selectedElement&&canEdit&&<div className="gme-tools"><button type="button" onClick={()=>updateState(s=>({elements:copyMockupElement(s.elements,selectedElement.id,crypto.randomUUID())}))}><Copy size={14} aria-hidden="true"/>复制</button><button type="button" className="is-danger" onClick={()=>{updateState(s=>removeElementFromCustomizationState(s,selectedElement.id));select(null,null);}}><Trash2 size={14} aria-hidden="true"/>删除</button></div>}
           <p className="gme-hint">尺寸以素材校准或人工标尺为依据；AI 背面仅作参考。</p>
         </section>}
-        <div ref={setPanelHost}/>
       </aside>}
-      <div className="gme-canvas" ref={canvasArea} style={!canEdit?{pointerEvents:'none'}:undefined}><Editor state={state} onUpdateState={updateState} onSelectElement={select} selectedElementId={selected.id} selectedElementType={selected.type} exportRef={exportRef} captureProductsRef={captureRef}/>
+      <div className="gme-canvas" ref={canvasArea} style={!canEdit?{pointerEvents:'none'}:undefined}><Editor state={state} onUpdateState={updateState} onSelectElement={select} selectedElementId={selected.id} selectedElementType={selected.type} exportRef={exportRef} captureProductsRef={captureRef} textEditRef={textEditRef}/>
         {!state.elements.length&&<div className="gme-guide">
           <strong>把 Logo 穿到衣服上</strong>
           <ol>
             <li className="is-current"><button type="button" onClick={()=>{setTab('garment');setPanelOpen(true);}}><i>1</i><b>选衣服</b><span>左侧素材库点「正面」或「背面」</span></button></li>
-            <li><button type="button" onClick={()=>{setTab('logo');setPanelOpen(true);}}><i>2</i><b>上传 Logo</b><span>自动去背景，放到默认位置</span></button></li>
+            <li><button type="button" onClick={()=>{setTab('logo');setPanelOpen(true);}}><i>2</i><b>上传 Logo</b><span>放到默认位置，需要时一键去背景</span></button></li>
             <li><div><i>3</i><b>调整并导出</b><span>拖动微调，右上角导出</span></div></li>
           </ol>
         </div>}
       </div>
       <aside className="gme-inspector" ref={setInspectorHost} hidden={!hasInspector} style={!canEdit?{pointerEvents:'none',opacity:.65}:undefined}/>
     </div>
-    <Sidebar state={state} stateGeneration={stateGeneration} getStateGeneration={()=>generation.current} getCurrentState={getState} getCanvasDimensions={()=>({width:canvasArea.current?.clientWidth||800,height:canvasArea.current?.clientHeight||600})} onUpdateState={updateState} isLoggedIn={canEdit} selectedElementId={selected.id} selectedElementType={selected.type} onSelectElement={select} onResetCanvas={()=>setRemoveId('canvas')} activeTab={tab} panelHost={panelOpen?panelHost:null} inspectorHost={inspectorHost}/>
+    <Sidebar state={state} stateGeneration={stateGeneration} getStateGeneration={()=>generation.current} getCurrentState={getState} getCanvasDimensions={()=>({width:canvasArea.current?.clientWidth||800,height:canvasArea.current?.clientHeight||600})} onUpdateState={updateState} isLoggedIn={canEdit} selectedElementId={selected.id} selectedElementType={selected.type} onSelectElement={select} onResetCanvas={()=>setRemoveId('canvas')} activeTab={tab} panelHost={panelOpen?panelHost:null} inspectorHost={inspectorHost} onStartTextEditing={id=>textEditRef.current?.(id)}/>
     <Modal open={panel==='projects'} onClose={()=>setPanel(null)} title="我的成衣效果图" maxWidth="max-w-3xl"><div className="gme-project-grid">{projects.map(p=><article key={p.id}>{p.thumbnail&&<img src={p.thumbnail} alt="作品预览"/>}<b>{p.name}</b><small>版本 {p.revision}{p.updated_at?` · ${new Date(p.updated_at).toLocaleString('zh-CN')}`:''}</small><button type="button" onClick={()=>void loadProject(p.id)}>继续编辑</button>{canEdit&&<button type="button" onClick={()=>setRemoveId(p.id)}>删除</button>}</article>)}</div>{!projects.length&&<p>还没有保存的成衣效果图。</p>}</Modal>
     <Modal open={panel==='versions'} onClose={()=>setPanel(null)} title="恢复旧版本"><p>恢复后保存为新版本，已有历史仍保留。</p>{versions.map(v=><p key={v.revision}>版本 {v.revision} · {new Date(v.created_at).toLocaleString('zh-CN')} <button type="button" disabled={!canEdit} onClick={()=>void loadProject(project.id,v.revision)}>恢复</button></p>)}</Modal>
     <Modal open={panel==='jobs'} onClose={()=>setPanel(null)} title="AI 生成记录" maxWidth="max-w-3xl"><button type="button" onClick={()=>void open('jobs')}>刷新任务</button><p>停止等待或关闭页面不会重复提交；结果会保留在这里。</p>{jobs.map(j=>{const url=j.result_json?.transparent||(typeof j.result_json?.image==='string'?j.result_json.image:j.result_json?.image?.dataUrl);return <article className="gme-job" key={j.id}><b>{{understand:'理解要求',generate:'Logo 重绘',cutout:'去背景',back:'AI 背面参考'}[j.action]||j.action}</b><span>{{queued:'排队中',running:'处理中',succeeded:'已完成',failed:'未完成',unknown:'结果待核查'}[j.status]||j.status}</span>{j.error&&<p>{j.error}</p>}{j.result_json?.analysis&&<p>{j.result_json.analysis.summary}</p>}{url&&<><img src={url} alt="任务结果"/><button type="button" onClick={()=>download(url,'成衣制作结果.png')}>下载结果</button><button type="button" disabled={!canEdit} onClick={()=>{const id=crypto.randomUUID(),e:CanvasElement={id,type:j.action==='back'?'product':'logo',image:url,...(j.action==='back'?{face:'back' as const}:{placedOnProductId:null})};updateState(s=>({elements:[...s.elements,e]}));select(id,e.type);setPanel(null);}}>添加到画布</button></>}</article>;})}{!jobs.length&&<p>还没有 AI 制作任务。</p>}</Modal>

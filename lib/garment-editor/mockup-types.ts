@@ -151,6 +151,9 @@ export interface CapturedMockupProduct {
   logoElementIds: string[];
 }
 
+/** A new text starts with this, selected, so typing replaces it; left untouched it is removed. */
+export const MOCKUP_TEXT_PLACEHOLDER = '输入文字';
+
 export const FONTS = [
   // 文源黑体 (6个)
   { name: '文源黑体Regular', value: '文源黑体Regular' },

@@ -5,7 +5,7 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import * as fabric from 'fabric';
 import { AligningGuidelines } from 'fabric/extensions';
-import { CustomizationState, CanvasElement, ElementType } from '@/lib/garment-editor/mockup-types';
+import { CustomizationState, CanvasElement, ElementType, MOCKUP_TEXT_PLACEHOLDER } from '@/lib/garment-editor/mockup-types';
 import type {
   CapturedMockupProduct,
   DecorationRelativeTransform,
@@ -82,6 +82,7 @@ function makeFabricGradient(gradient: TextGradient): fabric.Gradient<'linear'> {
 }
 
 const TEXT_FONT_SIZE = 30;
+const DEFAULT_TEXT_FONT = '文源黑体Regular';
 const DEFAULT_ARC_BEND = 60;
 const MIN_LEGACY_ARC_RADIUS = 50;
 const MAX_LEGACY_ARC_RADIUS = 300;
@@ -207,6 +208,8 @@ interface EditorProps {
   pickerSelectedProductIds?: Set<string>;
   pickerDisabledProductIds?: Set<string>;
   onTogglePickerProduct?: (elementId: string) => void;
+  /** Puts a text element into inline editing with its content selected (waits if not drawn yet). */
+  textEditRef?: React.MutableRefObject<((elementId: string) => void) | null>;
   captureProductsRef?: React.MutableRefObject<
     ((productElementIds: string[]) => Promise<CapturedMockupProduct[]>) | null
   >;
@@ -244,6 +247,7 @@ export default function Editor({
   pickerDisabledProductIds,
   onTogglePickerProduct,
   captureProductsRef,
+  textEditRef,
 }: EditorProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const renderedProductIdsRef = useRef(new Set<string>());
@@ -271,6 +275,11 @@ export default function Editor({
   const lifecycleFrameRef = useRef<number | null>(null);
   const lifecycleResizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const garmentGeometryAttemptKeysRef = useRef(new Set<string>());
+  const pendingTextEditRef = useRef<string | null>(null);
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadFont(DEFAULT_TEXT_FONT), 2500);
+    return () => window.clearTimeout(timer);
+  }, []);
   const stateRef = useRef(state);
   stateRef.current = state;
 
@@ -2425,6 +2434,15 @@ export default function Editor({
     textObj.on('changed', () => {
       syncTextContent(canvas);
     });
+    textObj.on('editing:exited', () => {
+      const text = (textObj.text || '').trim();
+      if (text && text !== MOCKUP_TEXT_PLACEHOLDER) return;
+      // A text left empty or untouched is removed instead of staying as an empty layer.
+      const current = stateRef.current;
+      if (!current.elements.some(item => item.id === element.id)) return;
+      onUpdateState(removeElementFromCustomizationState(current, element.id));
+      onSelectElement(null, null);
+    });
     textObj.on('scaling', () => {
       const scale = textObj.scaleX || 1;
       if (Math.abs(scale - 1) < 0.08) {
@@ -2434,6 +2452,50 @@ export default function Editor({
       }
     });
     canvas.add(textObj);
+    if (pendingTextEditRef.current === element.id) {
+      requestAnimationFrame(() => {
+        if (pendingTextEditRef.current === element.id) beginTextEditing(element.id);
+      });
+    }
+  };
+
+  // New text opens in inline editing with the placeholder selected, so typing replaces it.
+  // It is drawn at once instead of waiting for images and the 4.5MB Chinese font; the font
+  // swaps in when it arrives.
+  const beginTextEditing = (elementId: string, attempt = 0) => {
+    const canvas = fabricCanvas.current;
+    let textObj = canvas?.getObjects().find(object => (object as any)._elementId === elementId);
+    if (canvas && !textObj) {
+      const element = stateRef.current.elements.find(item => item.id === elementId && item.type === 'text');
+      if (element && (!element.placedOnProductId || productObjectForElement(canvas, element.placedOnProductId))) {
+        renderTextElement(canvas, element, undefined);
+        textObj = canvas.getObjects().find(object => (object as any)._elementId === elementId);
+        const family = element.fontFamily || DEFAULT_TEXT_FONT;
+        if (!fontLoadCache.has(family)) {
+          void loadFont(family).then(() => {
+            fabric.cache.clearFontCache(family);
+            const drawn = canvas.getObjects().find(object => (object as any)._elementId === elementId);
+            if (drawn instanceof fabric.IText) { drawn.initDimensions(); drawn.setCoords(); canvas.requestRenderAll(); }
+          });
+        }
+      } else if (attempt < 10) {
+        // The new element reaches this component on its next render.
+        pendingTextEditRef.current = elementId;
+        requestAnimationFrame(() => {
+          if (pendingTextEditRef.current === elementId) beginTextEditing(elementId, attempt + 1);
+        });
+        return;
+      }
+    }
+    if (!canvas || !(textObj instanceof fabric.IText)) {
+      pendingTextEditRef.current = elementId;
+      return;
+    }
+    pendingTextEditRef.current = null;
+    canvas.setActiveObject(textObj);
+    textObj.enterEditing();
+    textObj.selectAll();
+    canvas.requestRenderAll();
   };
 
   const applyElementTransform = (obj: fabric.Object, transform?: ObjectTransform) => {
@@ -2773,6 +2835,7 @@ export default function Editor({
   };
 
   if (captureProductsRef) captureProductsRef.current = captureProducts;
+  if (textEditRef) textEditRef.current = beginTextEditing;
 
   const pickerSelectedKey = [...(pickerSelectedProductIds ?? new Set<string>())]
     .sort()

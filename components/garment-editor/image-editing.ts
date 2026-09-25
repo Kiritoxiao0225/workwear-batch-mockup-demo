@@ -161,3 +161,74 @@ export async function erodedLogoMaskDataUrl(maskSrc: string, originalSrc: string
   ctx.putImageData(imageData, 0, 0);
   return canvas.toDataURL('image/png');
 }
+
+export type LogoBackgroundKind = 'transparent' | 'flat' | 'complex';
+
+/**
+ * Border check in the browser, mirroring the server's free paths: transparent, or one flat
+ * colour with none of it enclosed inside the design (white letter counters need a model).
+ */
+export function inspectLogoBackground(source: string): Promise<LogoBackgroundKind> {
+  return new Promise(resolve => {
+    const image = new Image();
+    image.crossOrigin = 'anonymous';
+    image.onload = () => {
+      const scale = Math.min(1, 200 / Math.max(image.naturalWidth, image.naturalHeight));
+      const width = Math.max(1, Math.round(image.naturalWidth * scale));
+      const height = Math.max(1, Math.round(image.naturalHeight * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (!context) { resolve('complex'); return; }
+      context.drawImage(image, 0, 0, width, height);
+      const { data } = context.getImageData(0, 0, width, height);
+      const band = Math.max(1, Math.round(Math.min(width, height) * 0.03));
+      const bins = new Map<string, { count: number; r: number; g: number; b: number }>();
+      let border = 0, transparent = 0;
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          if (x >= band && x < width - band && y >= band && y < height - band) continue;
+          border++;
+          const offset = (y * width + x) * 4;
+          if (data[offset + 3] <= 8) { transparent++; continue; }
+          const key = `${data[offset] >> 4},${data[offset + 1] >> 4},${data[offset + 2] >> 4}`;
+          const bin = bins.get(key) ?? { count: 0, r: 0, g: 0, b: 0 };
+          bin.count++; bin.r += data[offset]; bin.g += data[offset + 1]; bin.b += data[offset + 2];
+          bins.set(key, bin);
+        }
+      }
+      if (border && transparent / border >= 0.2) { resolve('transparent'); return; }
+      const dominant = [...bins.values()].sort((a, b) => b.count - a.count)[0];
+      if (!dominant || dominant.count / (border - transparent || 1) < 0.9) { resolve('complex'); return; }
+      const bg = { r: dominant.r / dominant.count, g: dominant.g / dominant.count, b: dominant.b / dominant.count };
+      const near = (index: number, limit: number) => {
+        const offset = index * 4;
+        return data[offset + 3] > 8 && (data[offset] - bg.r) ** 2 + (data[offset + 1] - bg.g) ** 2 + (data[offset + 2] - bg.b) ** 2 <= limit * limit;
+      };
+      // Flood the background from the border; background-coloured pixels it cannot reach are enclosed.
+      const reached = new Uint8Array(width * height), queue: number[] = [];
+      for (let x = 0; x < width; x++) { queue.push(x, (height - 1) * width + x); }
+      for (let y = 0; y < height; y++) { queue.push(y * width, y * width + width - 1); }
+      while (queue.length) {
+        const index = queue.pop()!;
+        if (reached[index] || !near(index, 48)) continue;
+        reached[index] = 1;
+        const x = index % width;
+        if (x > 0) queue.push(index - 1);
+        if (x < width - 1) queue.push(index + 1);
+        if (index >= width) queue.push(index - width);
+        if (index < width * (height - 1)) queue.push(index + width);
+      }
+      let design = 0, enclosed = 0;
+      for (let index = 0; index < width * height; index++) {
+        if (reached[index] || data[index * 4 + 3] <= 8) continue;
+        design++;
+        if (near(index, 24)) enclosed++;
+      }
+      resolve(design && enclosed / design <= 0.003 ? 'flat' : 'complex');
+    };
+    image.onerror = () => resolve('complex');
+    image.src = source;
+  });
+}

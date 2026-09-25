@@ -12,6 +12,7 @@ import {
   CanvasElement,
   ElementType,
   FONTS,
+  MOCKUP_TEXT_PLACEHOLDER,
 } from '@/lib/garment-editor/mockup-types';
 import TextInspector from '@/components/garment-editor/TextInspector';
 import type {
@@ -32,6 +33,8 @@ import {
   logoSourceImageForCutout,
   readCompressedImageFile,
   rememberLogoCutoutSource,
+  inspectLogoBackground,
+  type LogoBackgroundKind,
 } from '@/components/garment-editor/image-editing';
 import { useToast } from '@/components/garment-editor/ui/toast';
 import type { MockupStateUpdate } from '@/components/garment-editor/useMockupUndoHistory';
@@ -76,6 +79,7 @@ interface SidebarProps {
   /** Left panel content (lists, uploads) is portaled here; the inspector shows the selection. */
   panelHost: HTMLElement | null;
   inspectorHost: HTMLElement | null;
+  onStartTextEditing?: (elementId: string) => void;
 }
 export type SidebarTab = 'garment' | 'logo' | 'text' | 'layers';
 type CutoutStatus =
@@ -166,7 +170,7 @@ async function mockupAiErrorMessage(response: Response, fallback: string) {
   }
 }
 
-export default function Sidebar({ state, stateGeneration, getStateGeneration, getCurrentState, getCanvasDimensions, onUpdateState, isLoggedIn, selectedElementId, selectedElementType, onSelectElement, activeTab, panelHost, inspectorHost }: SidebarProps) {
+export default function Sidebar({ state, stateGeneration, getStateGeneration, getCurrentState, getCanvasDimensions, onUpdateState, isLoggedIn, selectedElementId, selectedElementType, onSelectElement, activeTab, panelHost, inspectorHost, onStartTextEditing }: SidebarProps) {
   const productInputRef = useRef<HTMLInputElement>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
@@ -195,7 +199,7 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
   const [nowTick, setNowTick] = useState(0);
   // Auto cutout runs from upload callbacks; the ref sees the busy flag without a stale closure.
   const aiBusyRef = useRef(false);
-  const removeLogoBackgroundRef = useRef<(logoId: string, options?: { mode?: CutoutMode; auto?: boolean }) => Promise<void>>(async () => {});
+  const [backgroundKindById, setBackgroundKindById] = useState<Record<string, { key: string; kind: LogoBackgroundKind }>>({});
 
   const rememberMaskAppliedImage = useCallback((elementId: string, image: string, sourceImage: string) => {
     latestMaskAppliedImageRef.current.set(elementId, image);
@@ -263,6 +267,22 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
     aiBusyRef.current = false;
     setAiProcessingType(null);
   }, [stateGeneration]);
+
+  // Tell the user up front whether removing the background is free: border check only, no request.
+  const logoImagesKey = state.elements.filter(element => element.type === 'logo').map(element => `${element.id}:${logoImageProvenanceKey(element.image ?? '')}`).join('|');
+  useEffect(() => {
+    let active = true;
+    for (const logo of getCurrentState().elements) {
+      if (logo.type !== 'logo' || !logo.image) continue;
+      const key = logoImageProvenanceKey(logo.image);
+      if (backgroundKindById[logo.id]?.key === key) continue;
+      void inspectLogoBackground(logo.image).then(kind => {
+        if (active) setBackgroundKindById(previous => ({ ...previous, [logo.id]: { key, kind } }));
+      });
+    }
+    return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Recheck only when a logo image changes.
+  }, [logoImagesKey]);
 
   const cutoutRunning = Object.values(cutoutStatusById).some(status => status.state === 'running');
   useEffect(() => {
@@ -505,6 +525,7 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
     latestMaskAppliedImageRef.current.delete(id);
     cutoutSourceByAppliedImageKeyRef.current.delete(id);
     setCutoutStatusById(previous => omitElementId(previous, id));
+    setBackgroundKindById(previous => omitElementId(previous, id));
     if (selectedElementId === id) onSelectElement(null, null);
   };
 
@@ -617,12 +638,6 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
           )
         );
         onSelectElement(elementId, 'logo');
-        // Uploading a logo removes its background right away; the server skips transparent images.
-        window.setTimeout(() => {
-          if (operationIsCurrent(operationGeneration)) {
-            void removeLogoBackgroundRef.current(elementId, { auto: true });
-          }
-        }, 0);
       })
       .catch(err => {
         console.error('Logo image read failed:', err);
@@ -653,11 +668,13 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
 
   const addTextElement = () => {
     const id = newId();
-    const ownerId = defaultDecorationProductId(state.elements, selectedElementId);
+    const currentElements = getCurrentState().elements;
+    const ownerId = defaultDecorationProductId(currentElements, selectedElementId);
+    const owner = ownerId ? currentElements.find(element => element.id === ownerId) : null;
     const element: CanvasElement = {
       id,
       type: 'text',
-      text: '',
+      text: MOCKUP_TEXT_PLACEHOLDER,
       fontFamily: FONTS[0].value,
       fontWeight: 'normal',
       fontStyle: 'normal',
@@ -667,12 +684,14 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
       arcMode: 'none',
       arcBend: DEFAULT_ARC_BEND,
       placedOnProductId: ownerId,
-      placement: 'custom',
+      // On the garment, not the middle of the canvas: chest centre, or upper back on a back view.
+      placement: owner ? (productFace(owner) === 'back' ? 'upper_back' : 'front_center') : 'custom',
     };
     onUpdateState(previousState => ({
       elements: [...previousState.elements, element],
     }));
     onSelectElement(id, 'text');
+    onStartTextEditing?.(id);
   };
 
   const productOptionLabel = (productId: string) => {
@@ -838,6 +857,7 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
       logoErosionStrengthByElementId[logo.id] ?? DEFAULT_LOGO_EDGE_CLEANUP_STRENGTH;
     aiBusyRef.current = true;
     setAiProcessingType('removeBackground');
+    // eslint-disable-next-line react-hooks/purity -- Only called from click handlers, never while rendering.
     const startedAt = Date.now();
     setNowTick(startedAt);
     setCutoutStatusById(previous => ({ ...previous, [logo.id]: { state: 'running', startedAt, mode } }));
@@ -919,8 +939,6 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
       }
     }
   };
-  useEffect(() => { removeLogoBackgroundRef.current = removeLogoBackground; });
-
   // Re-composite when erosion strength changes
   useEffect(() => {
     if (!selectedLogoForImageEditId) return;
@@ -1271,30 +1289,10 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
   const productIndex = (id: string) => products.findIndex(product => product.id === id);
 
   const garmentPanel = (
-    <section className="gme-sec">
-      <div className="gme-sec-head"><h3>画布上的衣服</h3><span>{products.length} 件</span></div>
-      {products.length > 0 ? (
-        <ul className="gme-list">
-          {products.map((product, index) => (
-            <li key={product.id}>
-              <button type="button" className={`gme-item${selectedElementId === product.id ? ' is-active' : ''}`} onClick={() => onSelectElement(product.id, 'product')}>
-                <span className="gme-thumb"><img crossOrigin="anonymous" src={product.image} alt="" /></span>
-                <span className="gme-item-text">
-                  <b>衣服 {index + 1} · {productFace(product) === 'back' ? '背面' : '正面'}</b>
-                  <small>{logos.filter(logo => logo.placedOnProductId === product.id).length + texts.filter(text => text.placedOnProductId === product.id).length} 个定制内容</small>
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="gme-muted">还没有衣服。在上方素材库点「正面」或「背面」。</p>
-      )}
-      <button type="button" className="gme-drop gme-drop-sm" onClick={() => openFilePicker('product')} onDrop={dropFile('product')} onDragOver={event => event.preventDefault()}>
-        <Upload size={15} aria-hidden="true" />
-        <span><b>上传本地衣服图</b><small>也可以拖入，或在此页粘贴</small></span>
-      </button>
-    </section>
+    <button type="button" className="gme-drop" onClick={() => openFilePicker('product')} onDrop={dropFile('product')} onDragOver={event => event.preventDefault()}>
+      <Upload size={16} aria-hidden="true" />
+      <span><b>上传本地衣服图</b><small>点击、拖入，或在此页粘贴</small></span>
+    </button>
   );
 
   const logoRedrawEntry = (
@@ -1327,28 +1325,40 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
       <div className="gme-sec-head"><h3>Logo</h3><span>{logos.length} 个</span></div>
       <button type="button" className="gme-drop" onClick={() => openFilePicker('logo')} onDrop={dropFile('logo')} onDragOver={event => event.preventDefault()}>
         <Upload size={16} aria-hidden="true" />
-        <span><b>拖入、粘贴或点击上传</b><small>上传后自动去背景，放到当前衣服的默认位置</small></span>
+        <span><b>拖入、粘贴或点击上传</b><small>放到当前衣服的默认位置，需要时再去背景</small></span>
       </button>
       {logos.length > 0 && (
         <ul className="gme-list">
           {logos.map((logo, index) => {
             const status = cutoutStatusById[logo.id];
+            const kind = backgroundKindById[logo.id]?.kind;
+            const needsButton = status?.state !== 'running' && status?.state !== 'done' && kind !== 'transparent';
             return (
-              <li key={logo.id}>
-                <button type="button" className={`gme-item${selectedElementId === logo.id ? ' is-active' : ''}`} onClick={() => onSelectElement(logo.id, 'logo')}>
+              <li key={logo.id} className={`gme-row${selectedElementId === logo.id ? ' is-active' : ''}`}>
+                <button type="button" className="gme-item" onClick={() => onSelectElement(logo.id, 'logo')}>
                   <span className="gme-thumb gme-checker"><img crossOrigin="anonymous" src={logo.image} alt="" /></span>
                   <span className="gme-item-text">
                     <b>Logo {index + 1}</b>
                     {status ? (
                       <small className={`gme-st gme-st-${status.state}`}>
                         {status.state === 'running' && <i className="gme-spin" aria-hidden="true" />}
-                        {cutoutShortText(status)}
+                        {status.state === 'failed' ? '去背景未完成，可重试' : cutoutShortText(status)}
                       </small>
+                    ) : kind === 'transparent' ? (
+                      <small className="gme-st gme-st-done">✓ 自带透明</small>
+                    ) : kind === 'flat' ? (
+                      <small className="gme-st gme-st-hint">纯色底 · 去背景免费</small>
                     ) : (
                       <small>{logo.placedOnProductId ? productOptionLabel(logo.placedOnProductId) : '未归属'}</small>
                     )}
                   </span>
                 </button>
+                {needsButton && (
+                  <button type="button" className="gme-row-action" disabled={aiProcessingType !== null}
+                    onClick={() => { onSelectElement(logo.id, 'logo'); void removeLogoBackground(logo.id); }}>
+                    {status?.state === 'failed' ? '重试' : '去背景'}
+                  </button>
+                )}
               </li>
             );
           })}

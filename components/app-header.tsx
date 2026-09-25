@@ -1,11 +1,22 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useProjectSession } from "./project-session";
-/** `compact` keeps editor pages to one 48px row, so the canvas gets the height. */
-export function AppHeader({ beforeLogout, compact = false }: { beforeLogout?: () => Promise<boolean>; compact?: boolean } = {}) {
+/** One 48px row on every page; logout lives in the account menu. */
+export function AppHeader({ beforeLogout }: { beforeLogout?: () => Promise<boolean> } = {}) {
   const pathname = usePathname();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const accountRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = (event: MouseEvent | KeyboardEvent) => {
+      if (event instanceof KeyboardEvent ? event.key === "Escape" : !accountRef.current?.contains(event.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", close);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", close); };
+  }, [menuOpen]);
   const [loggingOut, setLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState("");
   const logout = async () => {
@@ -24,7 +35,7 @@ export function AppHeader({ beforeLogout, compact = false }: { beforeLogout?: ()
   };
   const session = useProjectSession();
   const [account, setAccount] = useState<{
-    user: { displayName: string };
+    user: { displayName: string; email?: string };
     balance: { balanceCents: number; heldCents: number };
     tenant: { internal: boolean };
   } | null>(null);
@@ -46,13 +57,10 @@ export function AppHeader({ beforeLogout, compact = false }: { beforeLogout?: ()
     };
   }, []);
   return (
-    <header className={compact ? "product-header product-header--compact" : "product-header"} aria-label="工作台顶部导航">
+    <header className="product-header" aria-label="工作台顶部导航">
       <Link className="product-header__brand" href="/products" aria-label="工作服效果图首页">
         <span className="product-header__mark">衣</span>
-        <span>
-          <strong>工作服效果图</strong>
-          <small>批量制作台</small>
-        </span>
+        <strong>工作服效果图</strong>
       </Link>
       <div className="product-header__controls">
         <nav className="product-header__nav" aria-label="主导航">
@@ -90,12 +98,21 @@ export function AppHeader({ beforeLogout, compact = false }: { beforeLogout?: ()
             <span className="product-header__held">冻结 {account.balance.heldCents}</span>
           )}
         </div>
-        <div className="product-header__account">
-          <span className="product-header__avatar">
-            {(account?.user.displayName || session.user?.displayName)?.slice(0, 2) || "…"}
-          </span>
-          <span className="product-header__name">{account?.user.displayName || session.user?.displayName || "正在连接"}</span>
-          {session.user && <button type="button" className="product-header__logout" disabled={loggingOut} onClick={() => void logout()}>{loggingOut ? "正在退出…" : "退出登录"}</button>}
+        <div className="product-header__account" ref={accountRef}>
+          <button type="button" className="product-header__account-button" aria-haspopup="menu" aria-expanded={menuOpen} disabled={!session.user} onClick={() => setMenuOpen(open => !open)}>
+            <span className="product-header__avatar">
+              {(account?.user.displayName || session.user?.displayName)?.slice(0, 2) || "…"}
+            </span>
+            <span className="product-header__name">{account?.user.displayName || session.user?.displayName || "正在连接"}</span>
+            <svg className="product-header__caret" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+          </button>
+          {menuOpen && session.user && (
+            <div className="product-header__menu" role="menu">
+              {account?.user.email && <span className="product-header__menu-email">{account.user.email}</span>}
+              <Link role="menuitem" href="/account" onClick={() => setMenuOpen(false)}>我的账户</Link>
+              <button type="button" role="menuitem" className="product-header__logout" disabled={loggingOut} onClick={() => void logout()}>{loggingOut ? "正在退出…" : "退出登录"}</button>
+            </div>
+          )}
         </div>
       </div>
       {logoutError && <div className="product-header__error" role="alert">{logoutError}</div>}
