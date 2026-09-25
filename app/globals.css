@@ -70,6 +70,13 @@
 .cal-canvas .cal-exclusion { fill: var(--cal-danger-fill, #ce483733); }
 .cal-selected-position .cal-print-area { stroke-width: 2.5; stroke: #b87708; fill: #e8b74522; }
 .cal-selected-position .cal-anchor { stroke-width: 3; }
+.cal-guides line { vector-effect: non-scaling-stroke; pointer-events: none; }
+.cal-guide-center { stroke: #1a75b8; stroke-width: 1; stroke-dasharray: 6 5; opacity: .55; }
+.cal-guide { stroke: #1a75b8; stroke-width: 1; opacity: .45; }
+.cal-guide-pair { stroke-dasharray: 3 4; }
+.cal-guide.on, .cal-guide-center.on { stroke: #d81b7a; stroke-width: 1.5; opacity: 1; stroke-dasharray: none; }
+.cal-canvas .cal-guide-label { fill: #b0105f; font-size: 22px; font-weight: 650; stroke-width: 4; }
+.cal-layer-switch .cal-link-toggle { margin-left: 10px; }
 .cal-faces { align-content: stretch; grid-template-rows: minmax(0, 1fr); }
 .cal-face { display: flex; flex-direction: column; min-height: 0; }
 .cal-face-title { flex-shrink: 0; }

@@ -41,15 +41,47 @@ function withOffset(spec: PlacementStandard, key: PositionKey, offset: Point | n
   }) };
 }
 const landmarkLabel = (key: string, label: string, face: 'front' | 'back') => key === 'neckCenter' ? (face === 'front' ? '前领口中心' : '后领中心') : label;
+// Left and right items pair by name: leftShoulder/rightShoulder, leftChest/rightChest, pocket-left/pocket-right.
+const MIRRORED: Record<string, string> = { left: 'right', right: 'left', Left: 'Right', Right: 'Left' };
+const pairName = (name: string) => { const next = name.replace(/left|right|Left|Right/, m => MIRRORED[m]); return next === name ? null : next; };
+function pairIndex(spec: PlacementStandard, target: Drag) {
+  const name = target.kind === 'landmark' ? spec.landmarks[target.index]?.key : target.kind === 'anchor' || target.kind === 'area' ? spec.positions[target.index]?.key : target.kind === 'exclusion' ? spec.exclusions[target.index]?.id : undefined;
+  const pair = name ? pairName(name) : null;
+  if (!pair) return -1;
+  return target.kind === 'landmark' ? spec.landmarks.findIndex(l => l.key === pair) : target.kind === 'exclusion' ? spec.exclusions.findIndex(e => e.id === pair) : spec.positions.findIndex(p => p.key === pair);
+}
+// The garment's center line runs through the neck center; before it is marked, through the frame middle.
+const centerX = (spec: PlacementStandard) => spec.landmarks.find(l => l.key === 'neckCenter')?.point.x ?? .5;
+function targetPoint(spec: PlacementStandard, target: Drag): Point | null {
+  if (target.kind === 'landmark') return spec.landmarks[target.index]?.point ?? null;
+  if (target.kind === 'anchor' || target.kind === 'area') return spec.positions[target.index]?.anchor ?? null;
+  if (target.kind === 'exclusion') { const a = spec.exclusions[target.index]?.area; return a ? { x: a.x + a.width / 2, y: a.y + a.height / 2 } : null; }
+  return null;
+}
+/** Smart guides: level with and mirrored to the paired item, or on the center line for an unpaired one. */
+function snapPoint(p: Point, spec: PlacementStandard, target: Drag, linked: boolean, tolerance: Point): Point {
+  const pair = pairIndex(spec, target), c = centerX(spec);
+  let { x, y } = p;
+  if (pair >= 0) {
+    if (linked) return p;
+    const q = targetPoint(spec, { ...target, index: pair });
+    if (!q) return p;
+    if (Math.abs(y - q.y) < tolerance.y) y = q.y;
+    if (Math.abs(x - (2 * c - q.x)) < tolerance.x) x = 2 * c - q.x;
+  } else if (!(target.kind === 'landmark' && spec.landmarks[target.index]?.key === 'neckCenter') && Math.abs(x - c) < tolerance.x) x = c;
+  return { x, y };
+}
+const near = (a: number, b: number) => Math.abs(a - b) < 1e-4;
 
-function FaceCanvas({ detail, view, spec, active, editable, layer, selectedKey, status, activate, selectPosition, change, drawingBoundary, finishBoundary }: {
-  detail: CatalogDetail; view: CatalogView; spec: PlacementStandard; active: boolean; editable: boolean; layer: Layer;
+function FaceCanvas({ detail, view, spec, active, editable, layer, linked, selectedKey, status, activate, selectPosition, change, drawingBoundary, finishBoundary }: {
+  detail: CatalogDetail; view: CatalogView; spec: PlacementStandard; active: boolean; editable: boolean; layer: Layer; linked: boolean;
   selectedKey: PositionKey | null; status: string; activate: () => void; selectPosition: (key: PositionKey) => void; change: (next: PlacementStandard) => void; drawingBoundary: boolean; finishBoundary: (box: Box) => void;
 }) {
   const svg = useRef<SVGSVGElement>(null);
   const drag = useRef<{ target: Drag; from: Point; original: PlacementStandard } | null>(null);
   const boundaryStart = useRef<Point | null>(null);
   const [boundaryBox, setBoundaryBox] = useState<Box | null>(null);
+  const [dragging, setDragging] = useState<Drag | null>(null);
   const frame = spec.garmentFrame;
   function boundaryAt(event: React.PointerEvent): Box | null {
     const start = boundaryStart.current;
@@ -69,7 +101,7 @@ function FaceCanvas({ detail, view, spec, active, editable, layer, selectedKey, 
       boundaryStart.current = null; setBoundaryBox(null);
       if (box && box.width >= .02 && box.height >= .02) finishBoundary(box);
     }
-    drag.current = null;
+    drag.current = null; setDragging(null);
   }
   const faceLabel = view.face === 'front' ? '正面' : '背面';
   const aspect = detail.width * view.crop.width / (detail.height * view.crop.height);
@@ -84,6 +116,7 @@ function FaceCanvas({ detail, view, spec, active, editable, layer, selectedKey, 
     if (target.kind === 'anchor' || target.kind === 'area') selectPosition(spec.positions[target.index].key);
     if (!editable || (target.kind === 'frame' && layer !== 'structure') || (sopDerived(spec) && target.kind === 'area' && target.resize)) return;
     drag.current = { target, from: atPointer(event), original: structuredClone(spec) };
+    setDragging(target);
     svg.current!.setPointerCapture(event.pointerId);
   }
   function move(event: React.PointerEvent) {
@@ -94,29 +127,73 @@ function FaceCanvas({ detail, view, spec, active, editable, layer, selectedKey, 
     const canvas = atPointer(event);
     const dx = (canvas.x - from.x) / (target.kind === 'frame' ? 1 : original.garmentFrame.width);
     const dy = (canvas.y - from.y) / (target.kind === 'frame' ? 1 : original.garmentFrame.height);
+    // With 左右联动 on, the paired item on the other side moves as the mirror image.
+    const pair = linked ? pairIndex(original, target) : -1;
+    const tolerance = { x: .008 / original.garmentFrame.width, y: .008 * aspect / original.garmentFrame.height };
     // On SOP garments the center is fine-tuned: the drag becomes a cm offset and the SOP rule still sets the size.
     if (sopDerived(original) && (target.kind === 'anchor' || target.kind === 'area')) {
       const cm = frameCm(original, view, detail), position = original.positions[target.index];
       if (!cm) return;
       const prior = position.offsetCm ?? { x: 0, y: 0 };
-      change(withOffset(original, position.key, { x: prior.x + dx * cm.x, y: prior.y + dy * cm.y }));
+      let next = withOffset(original, position.key, { x: prior.x + dx * cm.x, y: prior.y + dy * cm.y });
+      if (pair >= 0) { const other = original.positions[pair], was = other.offsetCm ?? { x: 0, y: 0 }; next = withOffset(next, other.key, { x: was.x - dx * cm.x, y: was.y + dy * cm.y }); }
+      change(next);
       return;
     }
     const next = structuredClone(original);
-    const box = target.kind === 'frame' ? next.garmentFrame : target.kind === 'area' ? next.positions[target.index].printableArea : target.kind === 'exclusion' ? next.exclusions[target.index].area : null;
+    const boxOf = (spec: PlacementStandard, index: number) => target.kind === 'frame' ? spec.garmentFrame : target.kind === 'area' ? spec.positions[index].printableArea : target.kind === 'exclusion' ? spec.exclusions[index].area : null;
+    const box = boxOf(next, target.index);
     if (box) {
+      const before = boxOf(original, target.index)!;
       if (target.resize) { box.width = Math.max(.005, Math.min(1 - box.x, box.width + dx)); box.height = Math.max(.005, Math.min(1 - box.y, box.height + dy)); }
       else {
-        const x = clamp(box.x + dx, 1 - box.width); const y = clamp(box.y + dy, 1 - box.height);
+        let x = clamp(box.x + dx, 1 - box.width), y = clamp(box.y + dy, 1 - box.height);
+        if (target.kind !== 'frame') {
+          const center = snapPoint({ x: x + box.width / 2, y: y + box.height / 2 }, original, target, linked, tolerance);
+          x = clamp(center.x - box.width / 2, 1 - box.width); y = clamp(center.y - box.height / 2, 1 - box.height);
+        }
         if (target.kind === 'area') { const anchor = next.positions[target.index].anchor; anchor.x += x - box.x; anchor.y += y - box.y; }
         box.x = x; box.y = y;
       }
+      const mirror = pair >= 0 ? boxOf(next, pair) : null;
+      if (mirror) {
+        const from = boxOf(original, pair)!, grow = { x: box.width - before.width, y: box.height - before.height };
+        // Growing to the right mirrors to growing to the left, so the pair stays symmetric.
+        const width = Math.max(.005, Math.min(from.x + from.width, from.width + grow.x)), height = Math.max(.005, Math.min(1 - from.y, from.height + grow.y));
+        const x = target.resize ? from.x + from.width - width : clamp(from.x - (box.x - before.x), 1 - from.width);
+        const y = target.resize ? from.y : clamp(from.y + (box.y - before.y), 1 - from.height);
+        if (target.kind === 'area' && !target.resize) { const anchor = next.positions[pair].anchor; anchor.x += x - from.x; anchor.y += y - from.y; }
+        Object.assign(mirror, { x, y, width, height });
+      }
     } else {
       const point = target.kind === 'landmark' ? next.landmarks[target.index].point : next.positions[target.index].anchor;
-      point.x = clamp(point.x + dx); point.y = clamp(point.y + dy);
+      const was = { ...point }, snapped = snapPoint({ x: clamp(point.x + dx), y: clamp(point.y + dy) }, original, target, linked, tolerance);
+      point.x = snapped.x; point.y = snapped.y;
+      if (pair >= 0) {
+        const other = target.kind === 'landmark' ? next.landmarks[pair].point : next.positions[pair].anchor;
+        other.x = clamp(other.x - (point.x - was.x)); other.y = clamp(other.y + (point.y - was.y));
+      }
     }
     change(next);
   }
+  // Guides are drawn from the current spec, so they follow snapping and the mirrored partner.
+  const c = centerX(spec), dragged = dragging && dragging.kind !== 'frame' ? targetPoint(spec, dragging) : null;
+  const partnerIndex = dragging && dragged ? pairIndex(spec, dragging) : -1;
+  const partner = dragging && partnerIndex >= 0 ? targetPoint(spec, { ...dragging, index: partnerIndex }) : null;
+  const level = !!(dragged && partner && near(dragged.y, partner.y)), mirrored = !!(dragged && partner && near(dragged.x, 2 * c - partner.x));
+  const centered = !!(dragged && !partner && near(dragged.x, c));
+  const guideNote = !dragged ? '' : linked && partner ? '左右联动' + (level && mirrored ? ' · 对称' : '') : [level && '左右等高', mirrored && '左右对称', centered && '居中'].filter(Boolean).join(' · ');
+  const top = frame.y * 1000, bottom = (frame.y + frame.height) * 1000, left = frame.x * 1000, right = (frame.x + frame.width) * 1000;
+  const centerLine = localPoint({ x: c, y: 0 }, frame).x * 1000, p = dragged && localPoint(dragged, frame), q = partner && localPoint(partner, frame);
+  const mirrorX = partner ? localPoint({ x: 2 * c - partner.x, y: partner.y }, frame).x * 1000 : null;
+  const guides = <g className="cal-guides" aria-hidden="true">
+    <line x1={centerLine} y1={top} x2={centerLine} y2={bottom} className={`cal-guide-center${centered ? ' on' : ''}`} />
+    {p && <line x1={left} y1={p.y * 1000} x2={right} y2={p.y * 1000} className={`cal-guide${level ? ' on' : ''}`} />}
+    {p && <line x1={p.x * 1000} y1={top} x2={p.x * 1000} y2={bottom} className={`cal-guide${mirrored || centered ? ' on' : ''}`} />}
+    {q && !level && <line x1={left} y1={q.y * 1000} x2={right} y2={q.y * 1000} className="cal-guide cal-guide-pair" />}
+    {mirrorX !== null && !mirrored && <line x1={mirrorX} y1={top} x2={mirrorX} y2={bottom} className="cal-guide cal-guide-pair" />}
+    {p && guideNote && <text className="cal-guide-label" x={Math.min(p.x * 1000 + 16, 820)} y={Math.max(p.y * 1000 - 18, 30)}>{guideNote}</text>}
+  </g>;
   function rectangle(b: Box, target: Drag, className: string, label: string) {
     const draggable = editable && (target.kind !== 'frame' || layer === 'structure') && !(sopDerived(spec) && target.kind === 'area');
     // eslint-disable-next-line react-hooks/refs -- Refs are read only in the deferred pointer event, never during rendering.
@@ -142,6 +219,7 @@ function FaceCanvas({ detail, view, spec, active, editable, layer, selectedKey, 
         </g>;
       })}
       {layer !== 'placement' && spec.landmarks.map((p, index) => { const point = localPoint(p.point, frame); return <g key={p.key}><circle cx={point.x * 1000} cy={point.y * 1000} r="10" className="cal-point" aria-label={landmarkLabel(p.key, p.label, view.face)} onPointerDown={event => start(event, { kind: 'landmark', index })} /><text x={point.x * 1000 + 14} y={point.y * 1000 > 950 ? point.y * 1000 - 14 : point.y * 1000 + 30}>{landmarkLabel(p.key, p.label, view.face)}</text></g>; })}
+      {guides}
       {drawingBoundary && boundaryBox && <rect className="cal-boundary-selection" x={boundaryBox.x * 1000} y={boundaryBox.y * 1000} width={boundaryBox.width * 1000} height={boundaryBox.height * 1000} />}
       </g>
     </svg></div>
@@ -158,6 +236,7 @@ export function CatalogCalibration({ detail, preview, style, user, close, saved,
   const [unlocked, setUnlocked] = useState(false);
   const [imagePreview, setImagePreview] = useState(false);
   const [layer, setLayer] = useState<Layer>('all');
+  const [linked, setLinked] = useState(false);
   const [drawingBoundaryId, setDrawingBoundaryId] = useState<string | null>(null);
   const [drawingPositionKey, setDrawingPositionKey] = useState<PositionKey | null>(null);
   const [manualBoundaries, setManualBoundaries] = useState<Set<string>>(new Set());
@@ -324,8 +403,8 @@ export function CatalogCalibration({ detail, preview, style, user, close, saved,
       <p>{unlocked ? `确认后本色使用自己的点，代表色「${reference.colorName}」再改动也不会影响本色。` : !follows ? '如需改回跟随，可在代表色的「同款核对」里重新套用。' : syncState.key === 'stale' ? '代表色已更新，本色还在用旧版：到代表色上点「应用到同款」，核对无误后更新。' : detail.views.some(v => v.latest) ? '效果图用的是代表色的这套点。要改位置，请到代表色上修改并应用到同款。' : '到代表色上点「应用到同款」，在同款核对里勾选本色并确认无误后生效。'}</p>
     </div><div>{follows && !unlocked && <button type="button" className="button primary" onClick={() => selectColor(reference.id)}>去代表色修改</button>}{follows && !unlocked && user.role !== 'viewer' && detail.isCurrent && <button type="button" className="button" onClick={() => setUnlocked(true)}>为本色单独打点</button>}{unlocked && <button type="button" className="button" disabled={busy} onClick={stopOwnEditing}>取消，继续跟随</button>}</div></div>}
     <div className="catalog-style-toolbar"><div className="catalog-color-options" aria-label="切换同款颜色">{style.colors.map(color => <button type="button" key={color.id} aria-pressed={color.id === detail.id} onClick={() => { if (color.id !== detail.id && (!dirty || window.confirm('切换颜色将放弃未保存修改，继续？'))) selectColor(color.id); }} title={colorSyncState(style.referenceVariantId, color).label}><span className={`catalog-status-symbol ${colorSyncState(style.referenceVariantId, color).key}`} aria-hidden="true">{colorSyncState(style.referenceVariantId, color).symbol}</span> {color.colorName}</button>)}</div></div>
-    <div className="cal-legend-bar"><div className="cal-layer-switch" aria-label="标记显示图层">{([['all', '全部标记'], ['placement', '印花位置'], ['structure', '结构与避让']] as const).map(([key, label]) => <button type="button" key={key} aria-pressed={layer === key} onClick={() => setLayer(key)}>{label}</button>)}</div><span><i className="cal-legend-point" />结构点</span><span><i className="cal-legend-anchor" />印花中心</span><span><i className="cal-legend-area" />可印范围</span><span><i className="cal-legend-danger" />避让区域</span></div>
-    <div className="catalog-calibration-body"><div className={`cal-faces ${detail.views.length === 1 ? 'cal-faces-single' : ''}` }>{detail.views.map(v => <FaceCanvas key={v.id} detail={detail} view={v} spec={v.id === activeId ? spec : specs[v.id]} active={v.id === activeId} editable={editable} layer={layer} selectedKey={currentPosition?.key ?? null} status={recognizing && v.face === 'front' ? '正在识别位置…' : dirtyViews.has(v.id) ? '有未保存调整' : v.latest?.status === 'confirmed' ? '已确认' : v.latest ? '草稿 · 待确认' : preview.faces.find(f => f.viewId === v.id)?.frame ? '参考标记 · 未保存' : '待手动框选衣服'} activate={() => selectView(v.id)} selectPosition={setSelectedKey} change={next => change(next, v.id)} drawingBoundary={drawingBoundaryId === v.id} finishBoundary={box => finishBoundary(v.id, box)} />)}</div>
+    <div className="cal-legend-bar"><div className="cal-layer-switch" aria-label="标记显示图层">{([['all', '全部标记'], ['placement', '印花位置'], ['structure', '结构与避让']] as const).map(([key, label]) => <button type="button" key={key} aria-pressed={layer === key} onClick={() => setLayer(key)}>{label}</button>)}<button type="button" className="cal-link-toggle" aria-pressed={linked} title="开启后拖动一侧的结构点、印花位置或避让区，另一侧镜像跟着移动；再点一下关闭" onClick={() => setLinked(v => !v)}>{linked ? '左右联动：开' : '左右联动'}</button></div><span><i className="cal-legend-point" />结构点</span><span><i className="cal-legend-anchor" />印花中心</span><span><i className="cal-legend-area" />可印范围</span><span><i className="cal-legend-danger" />避让区域</span></div>
+    <div className="catalog-calibration-body"><div className={`cal-faces ${detail.views.length === 1 ? 'cal-faces-single' : ''}` }>{detail.views.map(v => <FaceCanvas key={v.id} detail={detail} view={v} spec={v.id === activeId ? spec : specs[v.id]} active={v.id === activeId} editable={editable} layer={layer} linked={linked} selectedKey={currentPosition?.key ?? null} status={recognizing && v.face === 'front' ? '正在识别位置…' : dirtyViews.has(v.id) ? '有未保存调整' : v.latest?.status === 'confirmed' ? '已确认' : v.latest ? '草稿 · 待确认' : preview.faces.find(f => f.viewId === v.id)?.frame ? '参考标记 · 未保存' : '待手动框选衣服'} activate={() => selectView(v.id)} selectPosition={setSelectedKey} change={next => change(next, v.id)} drawingBoundary={drawingBoundaryId === v.id} finishBoundary={box => finishBoundary(v.id, box)} />)}</div>
     <aside className="cal-inspector"><strong>{view.face === 'front' ? '正面' : '背面'}印花位置</strong><p className="cal-hint">{sopDerived(spec) ? `拖动结构点（领口中心、肩点、腋点${spec.structureType === 'polo' && view.face === 'front' ? '、扣位' : ''}），印花位置按效果图 SOP 自动计算；拖动印花中心可再微调位置，尺寸仍按 SOP 或客户要求，效果图使用同一结果。红色斜线区域需避让。` : '点选位置，拖动圆点调整印花中心；拖动绿色框调整范围，红色斜线区域需避让。'}</p>
       {!view.latest && <div className="cal-suggestion-note"><strong>{recognizing ? '正在自动识别围裙位置' : needsBoundary ? '需要手动定位衣服' : '参考标记 · 等待你核对'}</strong><p>{recognizing ? '正在观察实际照片并放大复核口袋边缘、分隔线与印花布面，请稍候。' : recognizedFaces[view.id] ? recognizedFaces[view.id].basis : manualBoundaries.has(view.id) ? '已使用你框选的衣服区域；生成参考标记后仍需核对具体印花位置与缝线等避让区。' : currentSuggestion.basis}</p><p>{recognizing ? '识别完成后会自动显示建议框；确认前不会用于生产。' : needsBoundary ? '先框选围裙或衣服本体，不包含头部、腿部和背景；框好后生成参考位置，再逐项调整。' : '这些是可调整的参考位置，确认前不会用于生产。'}</p></div>}
       {editable && <div className="cal-boundary-controls"><button type="button" className="button primary" onClick={() => { setDrawingPositionKey(null); setDrawingBoundaryId(drawingBoundaryId === view.id ? null : view.id); }}>{drawingBoundaryId === view.id ? '取消框选' : '框选衣服区域'}</button>{drawingBoundaryId === view.id && <p role="status">{drawingPositionKey ? `在图片上框选${POSITION_LABELS[drawingPositionKey]}的可印范围，避开缝线。` : '在图片上按住并拖出矩形，框住衣服布面。'}</p>}{!needsBoundary && !spec.positions.length && <p>区域已就绪，请点击下方“生成参考标记”。</p>}</div>}
