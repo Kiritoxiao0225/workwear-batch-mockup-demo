@@ -45,7 +45,7 @@ function Workspace({userId,canEdit,beforeLogoutRef}:{userId:string;canEdit:boole
   const [conflict,setConflict]=useState<Conflict|null>(null);
   const [panel,setPanel]=useState<'projects'|'jobs'|'versions'|null>(null),[query,setQuery]=useState(''),[page,setPage]=useState(1),[total,setTotal]=useState(0),[pageSize,setPageSize]=useState(30);
   const [garments,setGarments]=useState<Garment[]>([]),[projects,setProjects]=useState<Project[]>([]),[jobs,setJobs]=useState<Job[]>([]),[versions,setVersions]=useState<{revision:number;created_at:string}[]>([]);
-  const [busy,setBusy]=useState(false),[removeId,setRemoveId]=useState<string|null>(null);
+  const [busy,setBusy]=useState(false),[importing,setImporting]=useState<Record<string,true>>({}),[removeId,setRemoveId]=useState<string|null>(null);
   const [tab,setTab]=useState<SidebarTab>('garment'),[panelOpen,setPanelOpen]=useState(true),[menu,setMenu]=useState<Menu|null>(null);
   const [panelHost,setPanelHost]=useState<HTMLDivElement|null>(null),[inspectorHost,setInspectorHost]=useState<HTMLElement|null>(null);
   const generation=useRef(0),[stateGeneration,setStateGeneration]=useState(0),canvasArea=useRef<HTMLDivElement>(null),topbar=useRef<HTMLDivElement>(null);
@@ -150,9 +150,13 @@ function Workspace({userId,canEdit,beforeLogoutRef}:{userId:string;canEdit:boole
     }catch(e){setNotice((e as Error).message);}finally{setBusy(false);}
   };
   const addProduct=async(g:Garment,face:'front'|'back')=>{
-    try{setBusy(true);const file=await api<{url:string}>('import',{variantId:g.id,assetVersionId:g.assetVersionId,face});
+    const key=g.id+':'+face;if(importing[key])return;
+    setImporting(v=>({...v,[key]:true}));
+    try{const file=await api<{url:string}>('import',{variantId:g.id,assetVersionId:g.assetVersionId,face});
       const id=crypto.randomUUID();updateState(s=>({elements:[...s.elements,{id,type:'product',image:file.url,face}]}));select(id,'product');
-    }catch(e){setNotice((e as Error).message);}finally{setBusy(false);}
+      // The other face is usually the next click: crop it now and warm the browser cache.
+      if(g.layout==='front_back')void api<{url:string}>('import',{variantId:g.id,assetVersionId:g.assetVersionId,face:face==='front'?'back':'front'}).then(f=>{new Image().src=f.url;}).catch(()=>{});
+    }catch(e){setNotice((e as Error).message);}finally{setImporting(v=>{const next={...v};delete next[key];return next;});}
   };
   const newProject=async()=>{setMenu(null);if(await flushSave())replace({id:crypto.randomUUID(),revision:0,name:'未命名成衣效果图'},empty());};
   const saveCopy=async()=>{setMenu(null);await saving.current;const p={id:crypto.randomUUID(),revision:0,name:projectRef.current.name+' 副本'};updateProject(p);pending.current=null;blocked.current=false;setConflict(null);lastSaved.current='';if(await save(true))toast.success('已另存为新作品，原作品保持不变。');};
@@ -251,7 +255,7 @@ function Workspace({userId,canEdit,beforeLogoutRef}:{userId:string;canEdit:boole
         {tab==='garment'&&<section className="gme-sec">
           <div className="gme-sec-head"><h3>素材库</h3><span>{total} 款色</span></div>
           <label className="gme-search"><Search size={14} aria-hidden="true"/><input aria-label="搜索款号或颜色" value={query} placeholder="搜索款号或颜色" onChange={e=>{setQuery(e.target.value);setPage(1);}}/></label>
-          <div className="gme-catalog">{garments.map(g=><article key={g.id}><img src={g.thumbnailUrl} alt={`${g.styleCode} ${g.colorName}`}/><b>{g.styleCode}</b><small>{g.colorName}</small><div><button type="button" disabled={busy} onClick={()=>void addProduct(g,'front')}>正面</button>{g.layout==='front_back'&&<button type="button" disabled={busy} onClick={()=>void addProduct(g,'back')}>背面</button>}</div></article>)}</div>
+          <div className="gme-catalog">{garments.map(g=><article key={g.id}><img src={g.thumbnailUrl} alt={`${g.styleCode} ${g.colorName}`}/><b>{g.styleCode}</b><small>{g.colorName}</small><div>{(g.layout==='front_back'?['front','back'] as const:['front'] as const).map(face=>{const loading=!!importing[g.id+':'+face];return <button key={face} type="button" disabled={loading} aria-busy={loading} onClick={()=>void addProduct(g,face)}>{loading?<><i className="gme-spin" aria-hidden="true"/>放入中</>:face==='front'?'正面':'背面'}</button>;})}</div></article>)}</div>
           {!garments.length&&<p className="gme-muted">没有匹配的素材，请先在商品素材库上传。</p>}
           {total>pageSize&&<div className="gme-pager"><button type="button" disabled={page===1} onClick={()=>setPage(page-1)}>上一页</button><span>{page} / {Math.ceil(total/pageSize)}</span><button type="button" disabled={page*pageSize>=total} onClick={()=>setPage(page+1)}>下一页</button></div>}
         </section>}

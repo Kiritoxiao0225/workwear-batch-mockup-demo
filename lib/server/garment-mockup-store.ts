@@ -92,11 +92,22 @@ export async function importAsset(tenant: string,input: unknown) {
       JOIN garment_asset_versions a ON a.id=COALESCE($4::uuid,v.current_asset_version_id) AND a.variant_id=v.id JOIN garment_views w ON w.asset_version_id=a.id
       WHERE v.id=$1 AND s.tenant_id=$2 AND w.face=$3`,[b.variantId,tenant,b.face??'front',b.assetVersionId??null])).rows[0];
     if(!r)throw new CatalogHttpError(404,'未找到该款色的指定面');
+    // The crop is a pure function of the version's file and the view's crop box, so a
+    // repeat click reuses it instead of fetching the full original and storing it again.
+    const reused=(await catalogDatabase().query(`SELECT m.id FROM garment_mockup_assets m JOIN files f ON f.id=m.file_id AND f.status='ready' AND f.gc_state='active'
+      WHERE m.tenant_id=$1 AND m.source->>'kind'='catalog' AND m.source->>'assetVersionId'=$2 AND m.source->>'viewId'=$3 AND m.source->'crop'=$4::jsonb
+      ORDER BY m.created_at LIMIT 1`,[tenant,r.version_id,r.view_id,r.crop])).rows[0];
+    if(reused)return {id:reused.id as string,url:assetUrl(reused.id)};
     const file=await readCatalogFile(r.file_id),m=await sharp(file.bytes).metadata();
     const crop=r.crop as {x:number;y:number;width:number;height:number};
     const left=Math.round(crop.x*m.width!),top=Math.round(crop.y*m.height!);
     const bytes=await sharp(file.bytes).extract({left,top,width:Math.min(m.width!-left,Math.round(crop.width*m.width!)),height:Math.min(m.height!-top,Math.round(crop.height*m.height!))}).png().toBuffer();
-    return storeAsset(tenant,bytes,`${r.style_code}-${r.color_name}-${r.face}.png`,{kind:'catalog',variantId:b.variantId,assetVersionId:r.version_id,viewId:r.view_id,face:r.face});
+    const source={kind:'catalog',variantId:b.variantId,assetVersionId:r.version_id,viewId:r.view_id,face:r.face,crop:r.crop};
+    const asset=await storeAsset(tenant,bytes,`${r.style_code}-${r.color_name}-${r.face}.png`,source);
+    // Identical bytes map to an earlier asset row; give a catalog row without the crop key its
+    // key once, so the lookup above finds it next time.
+    await catalogDatabase().query(`UPDATE garment_mockup_assets SET source=source||$3::jsonb WHERE id=$1 AND tenant_id=$2 AND source->>'kind'='catalog' AND NOT source ? 'crop'`,[asset.id,tenant,source]);
+    return asset;
   }
   if(!b.fileId)throw new CatalogHttpError(400,'缺少文件编号');
   await assertFileAccess(b.fileId,tenant);
