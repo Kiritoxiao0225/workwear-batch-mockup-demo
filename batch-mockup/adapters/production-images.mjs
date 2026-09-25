@@ -4,9 +4,16 @@ import { parseEnv } from 'node:util';
 import { spawn } from 'node:child_process';
 import sharp from 'sharp';
 import { saveJSON, atomicFile, checkpoint } from './a-files.mjs';
+import { evolinkGenerate, evolinkKey, costRates } from './evolink.mjs';
 
 const repo = process.cwd();
-export const productionPolicy = { version: 1, generation: { provider: 'cliproxy', model: 'gpt-image-2', size: 'auto', quality: 'medium', background: 'auto', output_format: 'png', response_format: 'b64_json', n: 1 }, enhancement: { provider: 'mediakit', tool_version: 'standard', multiple: 2 }, cutout: { provider: 'meitu', command: 'image-cutout', model_type: 2 } };
+const GENERATION = {
+  cliproxy: { provider: 'cliproxy', model: 'gpt-image-2', size: 'auto', quality: 'medium', background: 'auto', output_format: 'png', response_format: 'b64_json', n: 1 },
+  // Sunburst returns the transparent artwork directly and only receives the images the artwork uses.
+  evolink: { provider: 'evolink', model: 'gpt-image-2.5-sunburst', size: 'auto', quality: 'medium', background: 'transparent', output_format: 'png', n: 1, references: 'artwork' },
+};
+export const productionPolicyFor = (env = process.env) => ({ version: 1, generation: GENERATION[env.ARTWORK_IMAGE_PROVIDER === 'evolink' ? 'evolink' : 'cliproxy'], enhancement: { provider: 'mediakit', tool_version: 'standard', multiple: 2 }, cutout: { provider: 'meitu', command: 'image-cutout', model_type: 2 } });
+export const productionPolicy = productionPolicyFor();
 export async function inspectPixels(bytes) {
   const { data, info } = await sharp(bytes, { limitInputPixels: 50_000_000, failOn: 'error' }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   let transparent = 0, visible = 0, edge = 0, clearEdge = 0;
@@ -52,12 +59,39 @@ export async function withoutFaintSpecks(bytes) {
   const { data, info } = await image.raw().toBuffer({ resolveWithObject: true });
   return clearFaintSpecks(data, info.width, info.height, info.channels) ? sharp(data, { raw: { width: info.width, height: info.height, channels: info.channels } }).png().toBuffer() : bytes;
 }
+// A generator that returns transparency itself decides what counts as background, and it
+// reads white fills inside a logo as partly background (a white shield came back 39% see-through).
+// Semi-transparent pixels that the exterior cannot reach are made solid; soft edges and glows
+// connected to the outside, and fully clear holes (deliberate knock-outs), stay as they are.
+export async function hardenInteriorAlpha(bytes) {
+  const { data, info } = await sharp(bytes, { limitInputPixels: 50_000_000, failOn: 'error' }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const w = info.width, h = info.height, n = w * h, alpha = i => data[i * 4 + 3];
+  const outside = new Uint8Array(n), queue = new Uint32Array(n); let end = 0;
+  const reach = i => { if (!outside[i] && alpha(i) < 128) { outside[i] = 1; queue[end++] = i; } };
+  for (let x = 0; x < w; x++) { reach(x); reach((h - 1) * w + x); }
+  for (let y = 0; y < h; y++) { reach(y * w); reach(y * w + w - 1); }
+  for (let head = 0; head < end; head++) {
+    const i = queue[head], x = i % w;
+    if (x > 0) reach(i - 1); if (x < w - 1) reach(i + 1); if (i >= w) reach(i - w); if (i < n - w) reach(i + w);
+  }
+  let hardened = 0, visible = 0, soft = 0;
+  for (let i = 0; i < n; i++) {
+    if (!outside[i] && alpha(i) >= 8 && alpha(i) < 255) { data[i * 4 + 3] = 255; hardened++; }
+    if (alpha(i) >= 8) { visible++; if (alpha(i) < 248) soft++; }
+  }
+  return { bytes: hardened ? await sharp(data, { raw: { width: w, height: h, channels: 4 } }).png().toBuffer() : bytes, hardenedRatio: hardened / n, softRatio: visible ? soft / visible : 0 };
+}
+/** Opaque copy on white: the "before cut-out" source that fill and keep strokes restore from. */
+export const flattenOnWhite = bytes => sharp(bytes, { limitInputPixels: 50_000_000, failOn: 'error' }).flatten({ background: '#ffffff' }).png().toBuffer();
 export async function configuredProduction() {
   const e = process.env.A_ANALYSIS_ENV_FILE ? { ...parseEnv(await readFile(process.env.A_ANALYSIS_ENV_FILE, 'utf8')), ...process.env } : process.env;
-  if (e.ARTWORK_IMAGE_PROVIDER !== 'cliproxy' || !e.CLIPROXY_API_KEY) throw new Error('当前生图配置不是已选CLIProxy，未调用其他供应商');
-  const base = new URL(e.CLIPROXY_API_BASE_URL);
-  if (base.protocol !== 'https:' || base.username || base.password || base.search || base.hash || base.pathname.replace(/\/$/u, '') !== '/v1') throw new Error('生图接口配置无效');
-  const secrets = ['CLIPROXY_API_KEY','MEDIAKIT_API_KEY','MEITU_OPENAPI_ACCESS_KEY','MEITU_OPENAPI_SECRET_KEY'].map(k => e[k]).filter(Boolean);
+  const provider = e.ARTWORK_IMAGE_PROVIDER;
+  if (provider === 'evolink') evolinkKey(e);
+  else if (provider !== 'cliproxy' || !e.CLIPROXY_API_KEY) throw new Error('当前生图配置不是已选CLIProxy或EvoLink，未调用其他供应商');
+  const base = provider === 'cliproxy' ? new URL(e.CLIPROXY_API_BASE_URL) : null;
+  if (base && (base.protocol !== 'https:' || base.username || base.password || base.search || base.hash || base.pathname.replace(/\/$/u, '') !== '/v1')) throw new Error('生图接口配置无效');
+  const rates = costRates(e);
+  const secrets = ['CLIPROXY_API_KEY','EVOLINK_API_KEY','MEDIAKIT_API_KEY','MEITU_OPENAPI_ACCESS_KEY','MEITU_OPENAPI_SECRET_KEY'].map(k => e[k]).filter(Boolean);
   const scrub = s => secrets.reduce((s, key) => s.split(key).join('[REDACTED]'), String(s));
   const record = async (dir, name, value) => { await atomicFile(resolve(dir, name), scrub(value)); await checkpoint(); };
   async function download(url) {
@@ -67,7 +101,8 @@ export async function configuredProduction() {
     return Buffer.from(await r.arrayBuffer());
   }
   async function generate(input, dir) {
-    const options = { ...productionPolicy.generation }; delete options.provider;
+    if (provider === 'evolink') return evolinkGenerate(input, dir, { env: e });
+    const options = { ...GENERATION.cliproxy }; delete options.provider;
     if(input.transparentBackground===true)options.background='transparent';
     const images = input.images; if (images.length > 16) throw new Error('素材超过接口支持的16张，未丢图或改编号');
     let body; const headers = { Authorization: `Bearer ${e.CLIPROXY_API_KEY}` };
@@ -84,7 +119,7 @@ export async function configuredProduction() {
     await saveJSON(resolve(dir,'http.json'),{status:r.status,requestId:r.headers.get('x-request-id')});
     if (!r.ok) throw Object.assign(new Error(`生图接口HTTP ${r.status}；没有自动重试`), { definiteFailure:r.status>=400&&r.status<500 });
     const result=JSON.parse(raw); if(result.data?.length!==1||typeof result.data[0].b64_json!=='string') throw new Error('生图返回不完整；回执已保存，没有自动重试');
-    return Buffer.from(result.data[0].b64_json,'base64');
+    return { bytes: Buffer.from(result.data[0].b64_json,'base64'), cost: { provider: 'codex', cny: 0, method: 'subscription' } };
   }
   async function enhance(input, dir) {
     if(!e.MEDIAKIT_API_KEY) throw new Error('火山高清凭据未配置');
@@ -99,7 +134,7 @@ export async function configuredProduction() {
     if(!up.ok)throw new Error('高清素材上传失败，HTTP '+up.status);
     const body={image_url:ticket.file_id,tool_version:'standard',multiple:2};await saveJSON(resolve(dir,'request.json'),body);
     const result=await post('enhance-image',body,'enhance');await saveJSON(resolve(dir,'receipt.json'),result);
-    return download(result.image_url);
+    return { bytes: await download(result.image_url), cost: { provider: 'mediakit', cny: rates.mediakitEnhance, method: 'unit_price' } };
   }
   async function cutout(path,dir) {
     if(!e.MEITU_OPENAPI_ACCESS_KEY||!e.MEITU_OPENAPI_SECRET_KEY)throw new Error('美图凭据未配置');
@@ -116,7 +151,7 @@ export async function configuredProduction() {
     let j;try{j=JSON.parse(result.stdout);}catch{throw new Error('美图返回不完整：'+scrub(result.stderr).slice(0,250));}
     await saveJSON(resolve(dir,'receipt.json'),j);
     if(!j.ok||!j.media_urls?.[0])throw Object.assign(new Error('美图未成功：'+scrub(j.message||j.hint||j.code)),{definiteFailure:j.ok===false});
-    return download(j.media_urls[0]);
+    return { bytes: await download(j.media_urls[0]), cost: { provider: 'meitu', cny: rates.meituCutout, method: 'unit_price' } };
   }
   return { generate,enhance,cutout };
 }

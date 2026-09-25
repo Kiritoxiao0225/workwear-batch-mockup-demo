@@ -40,7 +40,7 @@ export async function startRequirements(root, port = 3214, options = {}) {
         const saved=await enqueue(()=>saveProductionRepair(root,body));const j=(await readProductionJobs(root)).find(j=>j.id===body.jobId);pendingTasks.push({kind:'mockup',payload:{caseId:j.caseId}});void pumpTasks();json(res,200,saved);return true;
       }
       if (url.pathname === '/api/requirements' && req.method === 'GET') {
-        const data = await workbenchData(root);json(res,200,{...data,generationEnabled:productionEnabled}); return true;
+        const data = await workbenchData(root,{showCost:true});json(res,200,{...data,generationEnabled:productionEnabled}); return true;
       }
       if (url.pathname === '/api/production' && req.method === 'POST') {
         if (!productionEnabled || req.headers.origin !== `http://${req.headers.host}` || !req.headers['content-type']?.startsWith('application/json')) { json(res, 403, { error: '本地制作未启用或请求来源不匹配' }); return true; }

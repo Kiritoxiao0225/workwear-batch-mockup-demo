@@ -60,6 +60,7 @@ export type Case = {
     proposedDraft?: Draft;
   } | null;
   productions: Job[];
+  cost?: CaseCost | null;
   mockups: {
     revision: number;
     cards: {
@@ -73,7 +74,52 @@ export type Case = {
     }[];
   };
 };
-export type Workbench = { cases: Case[]; workerOnline: boolean };
+export type CostStep = { name: string; cny: number; credits?: number; provider: string; method: string };
+export type CostAnalysis = { cny: number; credits?: number; provider: string; model?: string; promptTokens?: number; completionTokens?: number };
+/** Supplier cost; the server includes it for internal workspaces only. */
+export type CaseCost = {
+  analysisCNY: number;
+  analyses: CostAnalysis[];
+  artworks: Record<string, { name: string; cny: number; runs: number; steps: CostStep[] }>;
+  productionCNY: number;
+  totalCNY: number;
+  pending: boolean;
+};
+export type Workbench = { cases: Case[]; workerOnline: boolean; costSummary?: { day: string; todayCNY: number; todayCases: number } };
+
+// Same wording as the WPS workbench: muted text, breakdown in the tooltip.
+export const yuan = (v: number) => "¥" + (v < 0.1 ? v.toFixed(3) : v.toFixed(2));
+const stepName: Record<string, string> = { generate: "生图", cutout: "抠图", enhance: "放大" };
+const costLine = (x: { provider: string; method?: string; cny: number; credits?: number }) =>
+  x.provider === "codex" ? "Codex 不计费" : x.method === "receipt_pending" ? "计费中" :
+    yuan(x.cny) + (x.credits != null ? `（${x.credits} cr）` : x.method === "unit_price" ? "（按单价）" : "");
+export type CostLabel = { text: string; title: string } | null;
+export function analysisCost(c: Case): CostLabel {
+  const list = c.cost?.analyses || [];
+  if (!list.length) return null;
+  const sum = list.reduce((t, x) => t + x.cny, 0);
+  return {
+    text: list.every((x) => x.provider === "codex") ? "Codex 不计费" : `理解 ${yuan(sum)}` + (list.length > 1 ? `（识别 ${list.length} 次）` : ""),
+    title: list.map((x, i) => `第 ${i + 1} 次理解 · ${x.model || ""} · ${costLine(x)}` + (x.promptTokens ? ` · ${x.promptTokens}/${x.completionTokens} token` : "")).join("\n"),
+  };
+}
+export function artworkCost(c: Case, artworkId: string, job?: Job): CostLabel {
+  const art = c.cost?.artworks[artworkId];
+  if (!art) return c.cost !== undefined && job?.status === "failed" ? { text: "失败未扣费", title: "供应商明确拒绝，不收费" } : null;
+  const pending = art.steps.some((x) => x.method === "receipt_pending");
+  return {
+    text: pending ? "计费中…" : art.steps.every((x) => x.provider === "codex") ? "Codex 不计费" : yuan(art.cny) + (art.runs > 1 ? `（制作 ${art.runs} 次）` : ""),
+    title: art.steps.map((x) => `${stepName[x.name] || x.name} · ${costLine(x)}`).join("\n"),
+  };
+}
+export function totalCost(c: Case): CostLabel {
+  const k = c.cost;
+  if (!k) return null;
+  return {
+    text: "本条 " + (k.pending ? "计费中…" : yuan(k.totalCNY)),
+    title: [`理解 ${yuan(k.analysisCNY)}`, ...Object.values(k.artworks).map((a) => `${a.name} ${yuan(a.cny)}`), `合计 ${yuan(k.totalCNY)}`].join("\n"),
+  };
+}
 export type Prices = {
   analyze: number;
   generate: number;

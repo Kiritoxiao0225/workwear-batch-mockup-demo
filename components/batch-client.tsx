@@ -4,6 +4,8 @@ import { AppHeader } from "./app-header";
 import { SaasEditors } from "./saas-editors";
 import { RequirementEditor } from "./saas-requirement-editor";
 import {
+  analysisCost,
+  artworkCost,
   assetURL,
   batchAPI,
   chargeLabel,
@@ -13,11 +15,18 @@ import {
   uploadImages,
   usePrices,
   useWorkbench,
+  totalCost,
+  yuan,
   type Case,
+  type CostLabel,
   type Prices,
 } from "@/lib/client/saas-workbench";
 import "./saas-workbench.css";
 type Target = { type: "artwork" | "mockup"; id: string };
+// Supplier cost for internal testing: muted, breakdown on hover.
+function Cost({ label }: { label: CostLabel }) {
+  return label ? <span className="tiny muted cost" title={label.title}>{label.text}</span> : null;
+}
 function currentJobs(item: Case) {
   return (item.draft?.artworks || []).flatMap((art) => {
     const job = item.productions.filter((j) => j.artworkId === art.id).at(-1);
@@ -179,6 +188,7 @@ function CaseRow({
           >
             {state}
           </span>
+          <Cost label={totalCost(item)} />
         </div>
         <textarea
           className="src-text"
@@ -272,6 +282,7 @@ function CaseRow({
           >
             删除
           </button>
+          <Cost label={analysisCost(item)} />
         </div>
       </div>
       {!item.draft ? (
@@ -333,7 +344,10 @@ function CaseRow({
                     </div>
                     <div>
                       <b className="small">{art.name}</b>
-                      <p className="tiny muted">{statusText(job?.status)}</p>
+                      <p className="tiny muted">
+                        {statusText(job?.status)}{" "}
+                        <Cost label={artworkCost(item, art.id, job)} />
+                      </p>
                       <div className="row">
                         {file && (
                           <>
@@ -696,6 +710,11 @@ export function BatchClient() {
             <option value="issue">有提醒</option>
           </select>
           <span className="grow" />
+          {data?.costSummary && (
+            <span className="small muted">
+              今日费用 {yuan(data.costSummary.todayCNY)}（{data.costSummary.todayCases} 条）
+            </span>
+          )}
           <span className="small muted">共 {cases.length} 条</span>
           <span className={"tag " + (data?.workerOnline ? "ok" : "warn")}>
             {data

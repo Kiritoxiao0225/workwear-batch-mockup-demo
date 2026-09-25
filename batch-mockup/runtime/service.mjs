@@ -38,22 +38,45 @@ export async function continueAfterAnalysis(root,caseId,analysisId,enqueue){
  const jobs=await reserveProduction(root,manifest,[{caseId,revision:c.revision,supplementRevision:c.supplement.revision}]);
  for(const job of jobs)if(job.status==='queued')await enqueue({id:job.id,kind:'production',payload:{jobId:job.id,caseId,automatic:true}});
 }
-export async function workbenchData(root,{wpsOnly=false}={}){
+// Supplier cost per requirement, from the receipts kept on each analysis and production step.
+// Internal workspaces only: a tenant is shown what it is charged, never what the call cost us.
+const cny=list=>Number(list.reduce((t,x)=>t+(x?.cny||0),0).toFixed(4));
+const shanghaiDay=value=>value?new Date(Date.parse(value)+8*3600e3).toISOString().slice(0,10):'';
+function caseCost(state,jobs){
+ const analyses=state.analyses.filter(a=>a.cost).map(a=>({cny:a.cost.cny,credits:a.cost.credits,provider:a.cost.provider,model:a.cost.model||a.model,promptTokens:a.cost.promptTokens,completionTokens:a.cost.completionTokens,at:a.finishedAt}));
+ const artworks={};let pending=false;
+ for(const j of jobs){const steps=(j.steps||[]).filter(x=>x.cost).map(x=>({name:x.name,cny:x.cost.cny||0,credits:x.cost.credits,provider:x.cost.provider,method:x.cost.method,at:x.startedAt}));
+  if((j.steps||[]).some(x=>x.cost?.method==='receipt_pending'))pending=true;
+  if(!steps.length)continue;
+  const art=artworks[j.artworkId]||={name:j.name,cny:0,runs:0,steps:[]};art.steps.push(...steps);art.runs++;art.cny=cny(art.steps);}
+ const analysisCNY=cny(analyses),productionCNY=cny(Object.values(artworks));
+ return analyses.length||Object.keys(artworks).length?{analysisCNY,analyses,artworks,productionCNY,totalCNY:Number((analysisCNY+productionCNY).toFixed(4)),pending}:null;
+}
+function costSummary(cases,day=shanghaiDay(new Date().toISOString())){
+ let total=0;const touched=new Set();
+ for(const c of cases){if(!c.cost)continue;
+  for(const a of c.cost.analyses)if(shanghaiDay(a.at)===day){total+=a.cny;touched.add(c.caseId);}
+  for(const art of Object.values(c.cost.artworks))for(const x of art.steps)if(shanghaiDay(x.at)===day){total+=x.cny;touched.add(c.caseId);}}
+ return {day,todayCNY:Number(total.toFixed(4)),todayCases:touched.size};
+}
+const withoutCost=job=>({...job,steps:(job.steps||[]).map(step=>{const copy={...step};delete copy.cost;return copy;})});
+export async function workbenchData(root,{wpsOnly=false,showCost=false}={}){
  const manifest=await jsonFile(resolve(root,'manifest.json'),{run:{},cases:[]});
  const index=wpsOnly?await jsonFile(resolve(root,'wps-case-index.json'),null):null;
  if(wpsOnly&&(!index?.source||!Array.isArray(index.caseIds)))throw fail('WPS 来源索引尚未同步，请稍后重试',503);
  const wpsCases=wpsOnly?manifest.cases.filter(c=>index.caseIds.includes(c.caseId)&&c.sourceRecordId?.startsWith(index.source+':')):null;
  const selected=wpsOnly?{...manifest,run:{...manifest.run,caseCount:wpsCases.length,imageCount:wpsCases.reduce((n,c)=>n+c.images.length,0)},cases:wpsCases}:manifest;
  const data=await requirementWorkbench(root,selected),jobs=await readProductionJobs(root);
- for(const c of data.cases){c.productions=jobs.filter(j=>j.caseId===c.caseId);c.mockups=await readMockupState(root,c.caseId);}
- return {...data,generationEnabled:true,automaticFlow:true,autoFlow:await jsonFile(resolve(root,'auto-flow.json'),null)};
+ for(const c of data.cases){c.productions=jobs.filter(j=>j.caseId===c.caseId);c.mockups=await readMockupState(root,c.caseId);
+  if(showCost)c.cost=caseCost(await readRequirementState(root,c.caseId),c.productions);else c.productions=c.productions.map(withoutCost);}
+ return {...data,generationEnabled:true,automaticFlow:true,autoFlow:await jsonFile(resolve(root,'auto-flow.json'),null),...(showCost?{costSummary:costSummary(data.cases)}:{})};
 }
 export async function service(root,path,method,body={},options={}){
  const queue=options.enqueue||(()=>{throw fail('后台任务未连接',503);});
  if(method==='GET'){
   if(path==='/api/prices'){const prices=await currentPrices();return {analyze:microToCents(ceilingMicroCents(prices,{analyze:true})),...Object.fromEntries(['generate','enhance','reuse'].map(route=>[route,microToCents(ceilingMicroCents(prices,{route}))])),exempt:options.workspace==='main'};}
   if(path==='/api/mockups')return readMockupState(root,body.caseId);
-  if(path==='/api/requirements')return workbenchData(root,{wpsOnly:options.wpsOnly});
+  if(path==='/api/requirements')return workbenchData(root,{wpsOnly:options.wpsOnly,showCost:(options.workspace||'main')==='main'});
   if(path==='/api/garments')return {styles:await (await (await import('../adapters/garments.mjs')).garmentCatalogForWorkspace(options.workspace||'main')).styles()};
   if(path==='/api/production/edit')return readProductionEdit(root,body.jobId);
   if(path==='/api/production/repair')return readRepairInput(root,body.jobId);

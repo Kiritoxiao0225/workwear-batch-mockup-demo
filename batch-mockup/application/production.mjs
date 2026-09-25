@@ -3,7 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { resolve, extname } from 'node:path';
 import { hash, jsonFile, saveJSON, atomicFile, assetPath, fail, readBytes, materialize, listDirectories, checkpoint } from '../adapters/a-files.mjs';
 import { requirementWorkbench, validateRequirementDraft } from './requirements.mjs';
-import { productionPolicy, inspectPixels, withoutFaintSpecks } from '../adapters/production-images.mjs';
+import { productionPolicy, inspectPixels, withoutFaintSpecks, hardenInteriorAlpha, flattenOnWhite } from '../adapters/production-images.mjs';
 import { readRepairState } from './production-repair.mjs';
 
 const stamp=()=>new Date().toISOString();
@@ -63,7 +63,7 @@ export async function executeProduction(root,id,providers,onProgress=()=>{}) {
   const dir=dirFor(root,id),job=await jsonFile(resolve(dir,'state.json'));if(job.status!=='queued')return job;
   const input=await jsonFile(resolve(dir,'input.json'));
   const save=async()=>{await saveJSON(resolve(dir,'state.json'),job);await checkpoint();onProgress(job);};
-  async function step(name,action){job.phase=name;const s={name,attemptId:randomUUID(),status:'running',startedAt:stamp()};job.steps.push(s);await save();try{const value=await action(resolve(dir,name));s.status='returned';s.elapsedMs=Date.now()-Date.parse(s.startedAt);await save();return value;}catch(e){s.status=e.definiteFailure?'failed':'unknown';s.error=e.message;s.elapsedMs=Date.now()-Date.parse(s.startedAt);throw e;}}
+  async function step(name,action){job.phase=name;const s={name,attemptId:randomUUID(),status:'running',startedAt:stamp()};job.steps.push(s);await save();try{const value=await action(resolve(dir,name));const result=value&&!Buffer.isBuffer(value)&&value.bytes?value:null;if(result?.cost)s.cost=result.cost;if(result?.transparentRequested)s.transparentRequested=true;s.status='returned';s.elapsedMs=Date.now()-Date.parse(s.startedAt);await save();return result?result.bytes:value;}catch(e){s.status=e.definiteFailure?'failed':'unknown';s.error=e.message;s.elapsedMs=Date.now()-Date.parse(s.startedAt);throw e;}}
   async function publish(bytes,label){const pixels=await inspectPixels(bytes);if(!pixels.visiblePixels)throw new Error('图片完全透明，没有可见图稿');
     const sha256=hash(bytes),m=await import('sharp').then(x=>x.default(bytes).metadata());
     const asset=`production-results/${id}/${label}.${m.format==='jpeg'?'jpg':m.format}`;
@@ -76,6 +76,17 @@ export async function executeProduction(root,id,providers,onProgress=()=>{}) {
     if(job.resumeCutout){if(!job.raw||job.steps.filter(s=>s.name==='cutout').at(-1)?.status!=='failed')throw new Error('未确认抠图失败，不能重试未知请求');raw=await readBytes(assetPath(root,job.raw.asset));if(hash(raw)!==job.raw.sha256)throw new Error('已生成原图校验失败');}
     else if(input.route==='generate')raw=await step('generate',dir=>providers.generate({...input,images},dir));
     else {const image=images.find(i=>i.id===sourceFor(input).id);raw=input.route==='enhance'?await step('enhance',dir=>providers.enhance(image,dir)):await import('node:fs/promises').then(fs=>fs.readFile(image.path));}
+    // A generator that already returned transparency: keep its output for audit, make the logo's
+    // interior solid, and store an opaque copy on white as the source repair strokes restore from.
+    const direct=input.route==='generate'&&!job.resumeCutout&&job.steps.findLast(x=>x.name==='generate')?.transparentRequested?await inspectPixels(raw):null;
+    if(direct?.transparentExterior){
+      const solid=await hardenInteriorAlpha(raw);
+      job.generated=await publish(raw,'generated');job.raw=await publish(await flattenOnWhite(raw),'raw');await save();
+      job.final=await publish(solid.bytes,'transparent');
+      job.backgroundDecision=solid.hardenedRatio?`模型直接输出透明背景，已把图案内部 ${(solid.hardenedRatio*100).toFixed(1)}% 的半透明像素补成实心`:'模型直接输出透明背景，跳过抠图';
+      if(solid.softRatio>0.15)job.warning=`透明图仍有 ${(solid.softRatio*100).toFixed(0)}% 的可见像素是半透明（光效或柔边），请切到深色底核对`;
+    }
+    else{
     job.raw=await publish(raw,'raw');await save();
     if(input.transparentBackground===false){
       const png=await import('sharp').then(x=>x.default(raw).png().toBuffer());
@@ -89,6 +100,7 @@ export async function executeProduction(root,id,providers,onProgress=()=>{}) {
         job.warning='抠图结果的外围透明检查未通过，请放大核对；未自动重跑';
         if(input.transparentBackground===true)throw new Error('透明背景检查未通过，已保留候选图片；没有自动重复抠图');
       }
+    }
     }
     job.status='returned';job.phase='done';job.error=null;
   }catch(e){job.status=job.raw?'partial':e.definiteFailure?'failed':'unknown';job.error=String(e.message);}

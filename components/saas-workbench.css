@@ -74,6 +74,10 @@
   .tiny {
     font-size: 11px;
   }
+  .cost {
+    white-space: nowrap;
+    cursor: help;
+  }
   .num {
     font-variant-numeric: tabular-nums;
   }

@@ -99,7 +99,7 @@ export async function reserveRequirementAnalysis(root, manifest, body, factory =
     content.push({ type: 'text', text: `${img.label} · id=${img.id} · ${img.width}×${img.height}` },
       { type: 'image_url', image_url: { url: `data:${mime};base64,${(await readBytes(assetPath(root, img.asset))).toString('base64')}`, detail: 'high' } });
   }
-  const request = { model: 'gpt-5.6-sol', reasoning_effort: 'low', max_completion_tokens: 16000,
+  const request = { model: analyze.model || 'gpt-5.6-sol', reasoning_effort: analyze.effort || 'low', max_completion_tokens: 16000,
     response_format: { type: 'json_object' }, stream: false,
     messages: [{ role: 'system', content: prompt }, { role: 'user', content }] };
   const analysis = { id: body.requestId, status: 'running', startedAt: stamp(), revision: state.revision,
