@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { allowedPositions, boxSchema, emptyStandard, requiredLandmarks, standardSchema, type Box, type PlacementStandard, type PositionKey, type StructureType } from '@/lib/catalog';
+import { allowedPositions, boxSchema, emptyStandard, requiredLandmarks, standardSchema, type Box, type PlacementStandard, type Point, type PositionKey, type StructureType } from '@/lib/catalog';
 import { PROJECTED_BODY_WIDTH_CM, SOP_STRUCTURES, UNMEASURED_TORSO_SHARE, estimatedLandmarks, plausibleTorso, sopEstimatedExclusions, sopStandardPositions, sopStructureFromStandard } from '@/lib/sop-placement';
 
 // Reference types were checked against the 21 styles in normalized-garments-v1.
@@ -20,9 +20,16 @@ export function catalogReferenceType(namespace: string, styleCode: string) {
 export const placementPreviewSchema = z.object({
   assetVersionId: z.uuid(),
   // bodyWidthRatio: projected torso width as a share of the face crop width, the same measure the composite uses.
-  faces: z.array(z.object({ viewId: z.uuid(), frame: boxSchema.nullable(), specification: standardSchema, basis: z.string(), bodyWidthRatio: z.number().positive().max(1).nullable().optional() }).strict()),
+  faces: z.array(z.object({ viewId: z.uuid(), frame: boxSchema.nullable(), specification: standardSchema, basis: z.string(), bodyWidthRatio: z.number().positive().max(1).nullable().optional(),
+    // recognized: landmark keys found on the image; the rest of an unsaved suggestion are estimates.
+    recognized: z.array(z.string()).optional() }).strict()),
 }).strict();
 export type CatalogPlacementPreview = z.infer<typeof placementPreviewSchema>;
+export const structureRecognitionSchema = z.object({
+  assetVersionId: z.uuid(),
+  // points: crop fractions of each face; recognized lists their keys; error explains a failed model call.
+  faces: z.array(z.object({ viewId: z.uuid(), points: z.record(z.string(), z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })), error: z.string().nullable() }).strict()),
+}).strict();
 
 function position(key: PositionKey, x: number, y: number, width: number, height: number): PlacementStandard['positions'][number] {
   return { key, anchor: { x: x + width / 2, y: y + height / 2 }, printableArea: { x, y, width, height }, defaultSize: { width: width * .6, height: height * .5 } };
@@ -82,18 +89,18 @@ export function sopPositionKeys(structure: StructureType, face: 'front' | 'back'
 }
 const clampBox = (b: Box): Box => { const x = Math.max(0, Math.min(.999, b.x)), y = Math.max(0, Math.min(.999, b.y)); return { x, y, width: Math.max(.001, Math.min(1 - x, b.x + b.width - x)), height: Math.max(.001, Math.min(1 - y, b.y + b.height - y)) }; };
 /**
- * The unconfirmed standard of one face: structure points estimated from its silhouette,
+ * The unconfirmed standard of one face: structure points recognized on the image (measure.points), the rest estimated from its silhouette,
  * template exclusions plus the placket/zipper/hood located from those points, and positions
  * from the SOP rules. The catalog shows it as the suggestion and the composite uses it as is.
  * frame: silhouette bounds in crop fractions; pixel: that frame in pixels; measure: crop fractions.
  */
-export function estimatedSopStandard(structure: StructureType, face: 'front' | 'back', frame: Box, measure: { top: number; bottom: number; armpit: number; center: number; bodyWidth: number }, pixel: { width: number; height: number }, bodyWidthPx: number | null, longSleeve = false): PlacementStandard | null {
+export function estimatedSopStandard(structure: StructureType, face: 'front' | 'back', frame: Box, measure: { top: number; bottom: number; armpit: number; center: number; bodyWidth: number; points?: Partial<Record<string, Point>> }, pixel: { width: number; height: number }, bodyWidthPx: number | null, longSleeve = false): PlacementStandard | null {
   if (structure !== 'unknown' && !SOP_STRUCTURES.includes(structure)) return null;
   const base = structure === 'unknown' ? { ...emptyStandard(), garmentFrame: frame } : suggestedPlacement(structure, face, frame, longSleeve);
   const local = (p: { x: number; y: number }) => ({ x: Math.max(0, Math.min(1, (p.x - frame.x) / frame.width)), y: Math.max(0, Math.min(1, (p.y - frame.y) / frame.height)) });
   // Armpits sit at the width the composite uses, so the untouched catalog view matches the mockup.
   const torso = bodyWidthPx ? bodyWidthPx / pixel.width * frame.width : plausibleTorso(structure, measure.bodyWidth, frame.width) ?? frame.width * UNMEASURED_TORSO_SHARE;
-  const spec: PlacementStandard = { ...base, structureType: structure, landmarks: estimatedLandmarks(structure, face, { ...measure, bodyWidth: torso }).map(l => ({ ...l, point: local(l.point) })), positions: [] };
+  const spec: PlacementStandard = { ...base, structureType: structure, landmarks: estimatedLandmarks(structure, face, { ...measure, bodyWidth: torso }, measure.points).map(l => ({ ...l, point: local(l.point) })), positions: [] };
   const s = sopStructureFromStandard(spec, pixel, bodyWidthPx);
   if (!s) return null;
   const replaced = new Set(['placket', 'zipper', 'hood', 'hood-neck']);

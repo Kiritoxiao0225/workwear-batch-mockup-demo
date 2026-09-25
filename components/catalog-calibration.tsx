@@ -7,7 +7,7 @@ import { colorSyncState } from '@/lib/catalog-calibration-status';
 import { CatalogImagePreview } from '@/components/catalog-image-preview';
 import { catalogApronRecognitionResponseSchema } from '@/lib/catalog-apron-recognition';
 import { CatalogReuse } from '@/components/catalog-reuse';
-import { catalogReferenceType, hasTemplateLandmarks, positionFromImageBox, sopPositionKeys, suggestedPlacement, type CatalogPlacementPreview } from '@/lib/catalog-placement-suggestions';
+import { catalogReferenceType, hasTemplateLandmarks, positionFromImageBox, sopPositionKeys, structureRecognitionSchema, suggestedPlacement, type CatalogPlacementPreview } from '@/lib/catalog-placement-suggestions';
 import { PROJECTED_BODY_WIDTH_CM, SOP_STRUCTURES, describeSopOffset, sopStandardPositions } from '@/lib/sop-placement';
 
 type Layer = 'all' | 'placement' | 'structure';
@@ -175,6 +175,8 @@ export function CatalogCalibration({ detail, preview, style, user, close, saved,
   const [recognizing, setRecognizing] = useState(false);
   const [recognitionAttempt, setRecognitionAttempt] = useState(0);
   const [recognizedFaces, setRecognizedFaces] = useState<Record<string, { basis: string; hasFrame: boolean }>>({});
+  const [recognizingStructure, setRecognizingStructure] = useState(false);
+  const [structureNotice, setStructureNotice] = useState('');
   const recognitionFront = detail.views.find(v => v.face === 'front');
   const shouldRecognize = user.role !== 'viewer' && detail.isCurrent && !!recognitionFront && (recognitionAttempt > 0 || (!recognitionFront.latest && catalogReferenceType(detail.namespace, detail.styleCode).structure === 'apron'));
   const recognitionViewId = recognitionFront?.id;
@@ -236,8 +238,8 @@ export function CatalogCalibration({ detail, preview, style, user, close, saved,
     const current = specs[v.id], suggestion = preview.faces.find(f => f.viewId === v.id);
     if (!current || !sopDerived(current) || suggestion?.basis.startsWith('沿用同款')) return [];
     const reference = v.latest ? suggestedPlacement(current.structureType, v.face, current.garmentFrame, catalogReferenceType(detail.namespace, detail.styleCode).longSleeve).landmarks : suggestion?.specification.landmarks ?? [];
-    // Only points the SOP rules use; the hem does not move any logo.
-    const same = current.landmarks.filter(l => l.key !== 'hemCenter' && reference.some(r => r.key === l.key && Math.abs(r.point.x - l.point.x) < .002 && Math.abs(r.point.y - l.point.y) < .002));
+    // Only points the SOP rules use; the hem does not move any logo. Points recognized on the photo are not guesses.
+    const same = current.landmarks.filter(l => l.key !== 'hemCenter' && !(!v.latest && suggestion?.recognized?.includes(l.key)) && reference.some(r => r.key === l.key && Math.abs(r.point.x - l.point.x) < .002 && Math.abs(r.point.y - l.point.y) < .002));
     if (!same.length) return [];
     const side = v.face === 'front' ? '正面' : '背面', names = same.map(l => landmarkLabel(l.key, l.label, v.face)).join('、');
     return [`${side}${v.latest ? same.length >= 5 ? '结构点仍是系统模板原值' : `「${names}」仍是系统模板位置` : `「${names}」仍是估算位置`}，请拖到衣服实际位置后再确认`];
@@ -266,6 +268,30 @@ export function CatalogCalibration({ detail, preview, style, user, close, saved,
     const keep = SOP_STRUCTURES.includes(structure) && ['neckCenter', 'leftShoulder', 'rightShoulder', 'leftArmpit', 'rightArmpit'].every(key => spec.landmarks.some(l => l.key === key));
     change(keep ? { ...template, landmarks: spec.landmarks.filter(l => structure === 'polo' || !l.key.startsWith('button')) } : template);
     setLayer(SOP_STRUCTURES.includes(structure) ? 'all' : 'placement');
+  }
+  // Replaces both faces' structure points with the ones recognized on the photo; unrecognized points stay put.
+  async function recognizeStructure() {
+    if (dirty && !window.confirm('重新识别会替换正反面的结构点，覆盖尚未保存的结构点调整，继续？')) return;
+    setRecognizingStructure(true); setError(''); setStructureNotice('');
+    try {
+      const response = await fetchApi(`/api/catalog/products/${detail.id}/recognize-structure`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ assetVersionId: detail.assetVersionId }) });
+      const result = structureRecognitionSchema.parse(await readApiJson(response, '识别结构点失败'));
+      if (result.assetVersionId !== detail.assetVersionId) throw new Error('识别结果与当前底图不一致，请重新打开');
+      const notes: string[] = [];
+      for (const face of result.faces) {
+        const v = detail.views.find(item => item.id === face.viewId), current = specs[face.viewId];
+        if (!v || !current || !sopDerived(current)) continue;
+        const frame = current.garmentFrame, local = (p: Point) => ({ x: clamp((p.x - frame.x) / frame.width), y: clamp((p.y - frame.y) / frame.height) });
+        const buttons = current.structureType === 'polo' && v.face === 'front' && face.points.button2 && face.points.button3
+          ? [{ key: 'button2', label: '第二粒扣', point: local(face.points.button2) }, { key: 'button3', label: '第三粒扣', point: local(face.points.button3) }] : null;
+        const landmarks = [...current.landmarks.filter(l => !(buttons && l.key.startsWith('button'))).map(l => face.points[l.key] ? { ...l, point: local(face.points[l.key]) } : l), ...(buttons ?? [])];
+        change({ ...current, landmarks }, face.viewId);
+        const missed = current.landmarks.filter(l => ['neckCenter', 'leftShoulder', 'rightShoulder', 'leftArmpit', 'rightArmpit'].includes(l.key) && !face.points[l.key]).map(l => landmarkLabel(l.key, l.label, v.face));
+        notes.push(`${v.face === 'front' ? '正面' : '背面'}${missed.length ? `未识别「${missed.join('、')}」，保留原位置${face.error ? `（${face.error}）` : ''}` : '结构点已全部识别'}`);
+      }
+      setStructureNotice(`${notes.join('；')}。请核对后保存。`); setLayer('all');
+    } catch (error) { setError(`重新识别未完成：${error instanceof Error ? error.message : String(error)}`); }
+    finally { setRecognizingStructure(false); }
   }
   async function save(confirm: boolean) {
     if (savingRef.current) return;
@@ -303,6 +329,7 @@ export function CatalogCalibration({ detail, preview, style, user, close, saved,
     <aside className="cal-inspector"><strong>{view.face === 'front' ? '正面' : '背面'}印花位置</strong><p className="cal-hint">{sopDerived(spec) ? `拖动结构点（领口中心、肩点、腋点${spec.structureType === 'polo' && view.face === 'front' ? '、扣位' : ''}），印花位置按效果图 SOP 自动计算；拖动印花中心可再微调位置，尺寸仍按 SOP 或客户要求，效果图使用同一结果。红色斜线区域需避让。` : '点选位置，拖动圆点调整印花中心；拖动绿色框调整范围，红色斜线区域需避让。'}</p>
       {!view.latest && <div className="cal-suggestion-note"><strong>{recognizing ? '正在自动识别围裙位置' : needsBoundary ? '需要手动定位衣服' : '参考标记 · 等待你核对'}</strong><p>{recognizing ? '正在观察实际照片并放大复核口袋边缘、分隔线与印花布面，请稍候。' : recognizedFaces[view.id] ? recognizedFaces[view.id].basis : manualBoundaries.has(view.id) ? '已使用你框选的衣服区域；生成参考标记后仍需核对具体印花位置与缝线等避让区。' : currentSuggestion.basis}</p><p>{recognizing ? '识别完成后会自动显示建议框；确认前不会用于生产。' : needsBoundary ? '先框选围裙或衣服本体，不包含头部、腿部和背景；框好后生成参考位置，再逐项调整。' : '这些是可调整的参考位置，确认前不会用于生产。'}</p></div>}
       {editable && <div className="cal-boundary-controls"><button type="button" className="button primary" onClick={() => { setDrawingPositionKey(null); setDrawingBoundaryId(drawingBoundaryId === view.id ? null : view.id); }}>{drawingBoundaryId === view.id ? '取消框选' : '框选衣服区域'}</button>{drawingBoundaryId === view.id && <p role="status">{drawingPositionKey ? `在图片上框选${POSITION_LABELS[drawingPositionKey]}的可印范围，避开缝线。` : '在图片上按住并拖出矩形，框住衣服布面。'}</p>}{!needsBoundary && !spec.positions.length && <p>区域已就绪，请点击下方“生成参考标记”。</p>}</div>}
+      {editable && sopDerived(spec) && !needsBoundary && <div className="cal-suggestion-note"><strong>结构点识别</strong><p>{structureNotice || '肩点、腋点按衣服轮廓识别，领口中心和扣位由看图模型识别。点击后替换正反面结构点，保存确认后才生效。'}</p><button type="button" className="button" disabled={recognizingStructure || drawingBoundaryId !== null} onClick={() => void recognizeStructure()}>{recognizingStructure ? '识别中…' : '重新识别结构点'}</button></div>}
       {spec.structureType === 'apron' && view.face === 'front' && <div className="cal-suggestion-note"><strong>围裙按三个位置分别校准</strong>{recognizing && <p role="status">正在识别围裙布面、上部、口袋和正前面…</p>}{view.latest && recognizedFaces[view.id] && <p>{recognizedFaces[view.id].basis}</p>}{user.role !== 'viewer' && detail.isCurrent && !historical && <button type="button" className="button" disabled={busy || recognizing || drawingBoundaryId !== null} onClick={() => { if (dirty && !window.confirm('重新读取模型建议会替换当前未保存的调整，继续？')) return; setRecognitionAttempt(current => current + 1); }}> {recognizing ? '识别中…' : '识别围裙位置'}</button>}<p>上部、口袋、正前面可以分别印花。系统根据实际照片建议位置，仍需核对口袋边缘和缝线；口袋本身不是禁区。</p><div className="cal-position-list">{(['apronUpper', 'apronPocket', 'frontCenter'] as const).map(key => <button type="button" key={key} disabled={!editable || needsBoundary || drawingBoundaryId !== null} onClick={() => { setError(''); setDrawingPositionKey(key); setDrawingBoundaryId(view.id); setLayer('placement'); }}><span>框选{POSITION_LABELS[key]}</span><small>{spec.positions.some(p => p.key === key) ? '已有标记 · 可重新框选' : '尚未标记'}</small></button>)}</div>{spec.exclusions.some(e => /口袋/.test(e.label)) && <p>已保存版本中仍有口袋禁区。若该处需要印花，请在“调整避让区域”核对并移除对应禁区；缝线可单独保留。</p>}</div>}
       {spec.structureType === 'polo' && view.face === 'front' && <div className="cal-suggestion-note"><strong>Polo 扣位</strong><p>{spec.landmarks.some(l => l.key === 'button2') ? '胸标按 SOP 放在第二、三粒扣之间；高度超过 6 厘米时放在第三粒扣。' : '未标扣位时，胸标按领口下约 9.5 厘米估算。标出第二、三粒扣后按 SOP 精确放置。'}</p>{editable && <button type="button" className="button" disabled={needsBoundary} onClick={() => {
         if (spec.landmarks.some(l => l.key === 'button2')) { change({ ...spec, landmarks: spec.landmarks.filter(l => !l.key.startsWith('button')) }); return; }

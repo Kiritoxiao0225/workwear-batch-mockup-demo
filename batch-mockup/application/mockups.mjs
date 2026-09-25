@@ -1,7 +1,9 @@
 import { resolve } from 'node:path';
 import sharp from 'sharp';
 import {torsoWidthRatio} from '../../lib/server/catalog-body-geometry.ts';
+import { createHash } from 'node:crypto';
 import {measureSilhouette} from '../../lib/server/catalog-structure-estimate.ts';
+import {faceStructurePoints} from '../../lib/server/catalog-structure-recognition.ts';
 import {sharedStyleStandards,styleConfirmationKey} from '../../lib/server/catalog-shared-standard.ts';
 import {catalogReferenceType,estimatedSopStandard,hasTemplateLandmarks} from '../../lib/catalog-placement-suggestions.ts';
 import {PROJECTED_BODY_WIDTH_CM,SOP_STRUCTURES,UNMEASURED_TORSO_SHARE,plausibleTorso,sopStructureFromStandard} from '../../lib/sop-placement.ts';
@@ -86,7 +88,7 @@ export async function garmentCanvas(garment,bytes,frame,shared={}){
   const trimmed=await rgbaTrim(await sharp(bytes).extract(crop).png().toBuffer());images.push({view,crop,...trimmed});}
  const slotWidth=(FRAME.area.width-FRAME.gap*(views.length-1))/views.length;
  const scale=Math.min(...images.flatMap(i=>[slotWidth/i.box.width,FRAME.area.height/i.box.height]));
- const layers=[],faces=[];
+ const layers=[],faces=[];let imageKey=null;
  for(const [n,img] of images.entries()){
   const w=Math.round(img.box.width*scale),h=Math.round(img.box.height*scale),x=Math.round(FRAME.area.x+n*(slotWidth+FRAME.gap)+(slotWidth-w)/2),y=Math.round(FRAME.area.y+(FRAME.area.height-h)/2);
   const garmentLayer=await sharp(img.bytes).resize(w,h).png().toBuffer();layers.push({input:garmentLayer,left:x,top:y});
@@ -111,8 +113,9 @@ export async function garmentCanvas(garment,bytes,frame,shared={}){
    if(s){const move=p=>p&&{x:p.x+origin.x,y:p.y+origin.y};structure={...s,neck:move(s.neck),leftShoulder:move(s.leftShoulder),rightShoulder:move(s.rightShoulder),leftArmpit:move(s.leftArmpit),rightArmpit:move(s.rightArmpit),button2:move(s.button2),button3:move(s.button3),center:s.center+origin.x,bounds,exclusions:s.exclusions.map(e=>({...e,x:e.x+origin.x,y:e.y+origin.y}))};source=own?'confirmed':'shared';bodyWidth=s.bodyWidth;basis='confirmed-armpits';}
   }
   if(!structure){
-   // Unconfirmed faces use the same estimated standard the catalog shows as its suggestion.
-   const spec=m&&estimatedSopStandard(type,img.view.face,frameBox,m,{width:w,height:h},bodyWidth,reference.longSleeve),s=spec&&sopStructureFromStandard(spec,{width:w,height:h},bodyWidth);
+   // Unconfirmed faces use the same estimated standard the catalog shows as its suggestion, with the points recognized on the image.
+   const found=m&&await faceStructurePoints({key:imageKey??=createHash('sha256').update(bytes).digest('hex'),load:async()=>bytes},img.view.crop,img.view.face,type,m.points,m.center);
+   const spec=m&&estimatedSopStandard(type,img.view.face,frameBox,{...m,points:found.points},{width:w,height:h},bodyWidth,reference.longSleeve),s=spec&&sopStructureFromStandard(spec,{width:w,height:h},bodyWidth);
    if(s){const move=p=>p&&{x:p.x+x,y:p.y+y};structure={...s,neck:move(s.neck),leftShoulder:move(s.leftShoulder),rightShoulder:move(s.rightShoulder),leftArmpit:move(s.leftArmpit),rightArmpit:move(s.rightArmpit),center:s.center+x,bounds,exclusions:s.exclusions.map(e=>({...e,x:e.x+x,y:e.y+y}))};source=m.armpitDetected?'estimated':'estimated-rough';}
   }
   faces.push({face:img.view.face,x,y,width:w,height:h,crop:img.crop,trim:img.box,scale,standard:standard||null,bodyWidth,bodyCenter:structure?.center??x+w/2,bodyBasis:basis,structure,structureSource:source,sharedFrom:source==='shared'?borrowed.colorName:null,templateOnly,garmentAlpha:await alphaSamples(garmentLayer,w,h),accents:garmentAccents(analyzeLogoColors(tone.data,tone.info.width,tone.info.height))});

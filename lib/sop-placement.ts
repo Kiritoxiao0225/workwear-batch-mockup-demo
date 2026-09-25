@@ -142,22 +142,27 @@ export function sopEstimatedExclusions(structure: StructureType, face: 'front' |
   return out;
 }
 
-// Estimated structure points as fractions of the top→armpit span, measured on the
-// catalog's own photos (front neck, shoulder point). Used only until a person confirms.
+// Fallback structure points as fractions of the top→armpit span, measured on the catalog's own
+// photos; used only for a point the image recognition did not find, until a person drags it.
 const ESTIMATE: Record<string, { neck: number; backNeck: number; shoulder: number }> = {
   polo: { neck: .345, backNeck: .08, shoulder: .28 }, crewneck: { neck: .2, backNeck: .05, shoulder: .32 }, hoodie: { neck: .2, backNeck: .05, shoulder: .32 },
   jacket: { neck: .28, backNeck: .1, shoulder: .35 }, shell: { neck: .28, backNeck: .1, shoulder: .35 }, vest: { neck: .28, backNeck: .1, shoulder: .35 }, unknown: { neck: .25, backNeck: .07, shoulder: .3 },
 };
-/** Landmarks from a silhouette measurement (all values are fractions of the face crop). */
-export function estimatedLandmarks(structure: StructureType, face: 'front' | 'back', m: { top: number; bottom: number; armpit: number; center: number; bodyWidth: number }) {
+/**
+ * Landmarks of one face (all values are fractions of the face crop): points recognized on the image
+ * (`found`, by key) as they are, the rest from the silhouette measurement.
+ */
+export function estimatedLandmarks(structure: StructureType, face: 'front' | 'back', m: { top: number; bottom: number; armpit: number; center: number; bodyWidth: number }, found: Partial<Record<string, Point>> = {}) {
   const r = ESTIMATE[structure] ?? ESTIMATE.unknown, span = m.armpit - m.top, half = m.bodyWidth / 2;
   const point = (x: number, y: number) => ({ x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)) });
-  return [
+  const marks = [
     { key: 'neckCenter', label: '领口中心', point: point(m.center, m.top + span * (face === 'front' ? r.neck : r.backNeck)) },
     { key: 'leftShoulder', label: '画面左肩点', point: point(m.center - half * 1.1, m.top + span * r.shoulder) },
     { key: 'rightShoulder', label: '画面右肩点', point: point(m.center + half * 1.1, m.top + span * r.shoulder) },
     { key: 'leftArmpit', label: '画面左腋点', point: point(m.center - half, m.armpit) },
     { key: 'rightArmpit', label: '画面右腋点', point: point(m.center + half, m.armpit) },
     { key: 'hemCenter', label: '下摆中心', point: point(m.center, m.bottom) },
+    ...(structure === 'polo' && face === 'front' && found.button2 && found.button3 ? [{ key: 'button2', label: '第二粒扣', point: found.button2 }, { key: 'button3', label: '第三粒扣', point: found.button3 }] : []),
   ];
+  return marks.map(mark => { const at = found[mark.key]; return at ? { ...mark, point: point(at.x, at.y) } : mark; });
 }
