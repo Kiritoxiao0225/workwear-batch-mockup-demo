@@ -8,7 +8,7 @@ import { readRepairInput,saveProductionRepair } from '../application/production-
 import { saveSupplement } from '../application/supplements.mjs';
 import { createCase, updateCase, removeCase, stageCaseImage, prepareStudio } from '../application/intake.mjs';
 import { releaseCredits, settleCredits, attempt, assertCreditReservation } from '../../lib/server/billing-bridge.ts';
-import { readMockupState,saveMockupSelection,renderMockups } from '../application/mockups.mjs';
+import { readMockupState,saveMockupSelection,renderMockups,markMockupsPending } from '../application/mockups.mjs';
 import { currentPrices, ceilingMicroCents, microToCents } from '../../lib/server/credits.ts';
 import { configuredAnalyzer } from '../adapters/a-analysis.mjs';
 import { configuredProduction } from '../adapters/production-images.mjs';
@@ -132,7 +132,7 @@ export async function service(root,path,method,body={},options={}){
   }
   if(['/api/mockups','/api/mockups/prepare'].includes(path)){
    const source=manifest.cases.find(c=>c.caseId===body.caseId);if(!source)throw fail('未找到需求',404);const c={...source,...await readRequirementState(root,body.caseId),caseId:body.caseId};
-   const saved=path==='/api/mockups'?await saveMockupSelection(root,c,body):await readMockupState(root,c.caseId);
+   const saved=path==='/api/mockups'?await saveMockupSelection(root,c,body):await markMockupsPending(root,c.caseId);
    await queue({id:randomUUID(),kind:'mockup',payload:{caseId:c.caseId}});return saved;
   }
  }

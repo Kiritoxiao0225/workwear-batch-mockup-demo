@@ -18,6 +18,14 @@ const stamp=()=>new Date().toISOString();
 export const FRAME={width:3252,height:2301,area:{x:144,y:282,width:2964,height:1578},gap:108,version:'ant-shirt-confirmation-frame-v2'};
 const statePath=(root,id)=>{if(!/^[a-zA-Z0-9_-]{1,100}$/.test(id))throw fail('需求编号无效');return resolve(root,'mockups',id+'.json');};
 export const readMockupState=(root,id)=>jsonFile(statePath(root,id),{revision:0,cards:[],history:[]});
+// 更新效果图 queues a render; marking the cards pending shows "正在更新整张图片…" at once (a first render
+// after a worker restart took four minutes and looked like nothing happened) and makes the render
+// recompose instead of reusing the cached picture. Every render outcome replaces the pending status.
+export async function markMockupsPending(root,id){
+ const state=await readMockupState(root,id),cards=state.cards.filter(card=>['ready','preview','failed'].includes(card.status));
+ if(!cards.length)return state;
+ for(const card of cards)card.status='pending';state.revision++;state.updatedAt=stamp();await saveJSON(statePath(root,id),state);return state;
+}
 export function mockupGroups(c){
  const groups=new Map();
  for(const a of c.draft?.artworks||[])for(const app of a.applications){

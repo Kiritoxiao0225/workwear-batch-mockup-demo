@@ -5,7 +5,7 @@ import sharp from 'sharp';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {mockupGroups,matchGarment,garmentCanvas,renderMockups,saveMockupSelection,readMockupState,initialPlacement,hasManualSize,positionInfo,FRAME} from '../application/mockups.mjs';
+import {mockupGroups,matchGarment,garmentCanvas,renderMockups,saveMockupSelection,readMockupState,markMockupsPending,initialPlacement,hasManualSize,positionInfo,FRAME} from '../application/mockups.mjs';
 import {annotationOverlay,annotationText,colorIssue} from '../application/mockup-checks.mjs';
 import {missingGlyphs} from '../adapters/font-coverage.ts';
 import {readFile} from 'node:fs/promises';
@@ -215,6 +215,16 @@ const colorFixture=async root=>{
  const pixel=async(asset,x,y)=>{const {data,info}=await sharp(await readFile(assetPath(root,asset))).raw().toBuffer({resolveWithObject:true});const i=(Math.round(y)*info.width+Math.round(x))*info.channels;return [data[i],data[i+1],data[i+2]];};
  return {logo,render,pixel};
 };
+test('更新效果图先把卡片标成正在更新，合成结束后恢复并重新合成',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'mockups-pending-'));
+ try{
+  const {logo,render}=await colorFixture(root),job={id:'b'.repeat(64),artworkId:'logo',revision:1,final:await logo('#031827')};
+  const first=(await render('P1',['理想绿'],'沿用图1原有配色。',job)).cards[0];assert.ok(['ready','preview'].includes(first.status));
+  const marked=await markMockupsPending(root,'P1');assert.equal(marked.cards[0].status,'pending');assert.equal((await readMockupState(root,'P1')).cards[0].status,'pending');
+  const again=(await render('P1',['理想绿'],'沿用图1原有配色。',job)).cards[0];assert.equal(again.status,first.status);assert.notEqual(again.render.renderedAt,undefined);
+  assert.equal((await markMockupsPending(root,'none')).cards.length,0);
+ }finally{await rm(root,{recursive:true,force:true});}
+});
 test('SOP 5 自动改色：深衣服上看不清的 Logo 改成白色，改色文件就是这个衣色的配色版本；客户指定颜色时不改',async()=>{
  const root=await mkdtemp(join(tmpdir(),'mockups-color-'));
  try{
