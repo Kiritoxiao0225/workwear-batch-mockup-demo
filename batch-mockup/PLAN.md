@@ -167,3 +167,11 @@ WPS 同步完成后，后台逐条预约尚无识别记录和草稿的有效原�
 - 发布：补丁叠在 `6ab6280b5d7569a2d1c7219c`（`f99f88a`，指纹 `cfd8e007…`）上，新部署 `6ab722d110778e353136b7b8`（`1aa6ef1`，指纹 `103d307c…`），13 个文件（含测试与脚本），先两个 worker 后 Web。发布前 check（1512 项）、test:requirements（62）、test:mockups（24）、test:workbench、test:batch-cloud、test:batch-claim（7 组）全过；无排队付费任务、无成衣 AI 任务，无数据库迁移；发布后三个容器 13/13 一致，三服务 RUNNING，health ready，新版 worker 心跳，页面 200。
 - 回退：`output/dedupe-release-20260925/rollback.json`（回到 `d-6ab6280b`，恢复 WORKWEAR_BUILD_COMMIT），无需回退数据库。
 - 已有图稿不会自动变好：We25299b0935f 8 份、U308d386b1545 a2 需重新生成，W70bcd6a10902 需更新效果图。
+
+
+### 2026-09-26 上午：后背大图不顶领子、放置说明折叠
+
+- 问题：JSH-JSD33 后背图稿高 22 厘米，按“居中于肩点至袖窿底之间”放置后上沿顶到领子；合图放大后下方灰色说明太多，把效果图挤小。
+- 改动（`a70c050`）：后背居中的图稿上沿至少在后领下 8 厘米（与正前面一致），放置规则升为 `sop-v3`，未手动调整的图层下次合成时重算；放大视图的灰色放置说明折叠为“放置说明（N 条）”，黄色提醒照常显示。
+- 发布：补丁叠在 `6ab722d110778e353136b7b8`（`1aa6ef1`，指纹 `103d307c…`）上，新部署 `6ab72f2be92e928954ad37b8`（`a70c050`，指纹 `cf4b1df0…`），4 个文件，先两个 worker 后 Web。发布前 check（1513 项）、test:mockups（24）、test:workbench、test:requirements（62）、test:garment（12 组）全过；无排队付费任务，无数据库迁移；发布后三个容器 4/4 一致，三服务 RUNNING，health ready，新版 worker 心跳。
+- 回退：`output/back-top-release-20260926/rollback.json`（回到 `d-6ab722d1`，恢复 WORKWEAR_BUILD_COMMIT），无需回退数据库。
