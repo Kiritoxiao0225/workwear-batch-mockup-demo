@@ -228,3 +228,4 @@ WPS 同步完成后，后台逐条预约尚无识别记录和草稿的有效原�
 - 验证：check（1523）、test:mockups（26）、test:requirements（67）、test:workbench、test:batch-claim、test:garment 全过。用线上 9 款真实标定（Polo 5、T 恤 1、夹克 4，只读）分别按 v4/v5 渲染示例 Logo 核对位置（`output/sop-v5-20260927/compare.mts`）；线上现有 7 处偏移（6 处正前面、1 处右袖）所在部位规则未变，换算后原样保留（`offsets-check.mts`）。
 - 回退注意：旧版 schema 不认识 `offsetPolicy`，回退前需去掉已保存标准中的该字段（与 `offsetCm` 上线时相同）。
 
+- 发布（2026-09-27 04:41）：补丁叠在 `6ab7fd7ba26d1d2fd2851f37`（`4d733f8`，指纹 `b3df8cba…`）上，新部署 `6ab82c364236e69929d74ad9`（`e214f3f`，指纹 `165ea94e…`），7 个文件，先两个 worker 后 Web。干净检出 lint、tsc、vitest（1523）、test:mockups（26）、test:requirements（67）、test:workbench、test:garment（12 组）、test:catalog（21 组）、test:batch-cloud 全过；无排队付费任务，无数据库迁移；发布后三个容器 7/7 一致，三服务 RUNNING，health ready，新版 worker 心跳，页面 200。回退见 `output/sopv5-release-20260927/rollback.json`（先去掉 `offsetPolicy`）。已有效果图需点“更新效果图”才按 v5 重排。
