@@ -211,3 +211,11 @@ WPS 同步完成后，后台逐条预约尚无识别记录和草稿的有效原�
 - OCR 服务：Zeabur 项目 mockfits-ocr，部署在腾讯云新加坡 2C8G，`https://mockfits-ocr.zeabur.app`（令牌鉴权，每张约 1.8 秒）；线上 Web 与两个 worker 配 OCR_URL/OCR_TOKEN。
 - 发布：补丁叠在 `6ab741364fe789a2e8feea70`（`4e81975`，指纹 `48fe4dab…`）上，新部署 `6ab7bacb4fe789a2e8fef842`（`1c88079`，指纹 `285f4c09…`），13 个文件，先两个 worker 后 Web。干净检出 lint、tsc、vitest（1518）、test:requirements（65）、test:mockups（26）、test:workbench、test:batch-cloud、test:garment（12 组）全过；无排队付费任务，无数据库迁移；发布后三个容器 13/13 一致，三服务 RUNNING，health ready，新版 worker 心跳，页面 200，三个服务均有 OCR 变量。
 - 回退：`output/cap-mockup-release-20260926/rollback.json`（回到 `d-6ab74136`，恢复 WORKWEAR_BUILD_COMMIT；提示词回退方法见同文件），无需回退数据库。
+
+
+### 2026-09-27 凌晨：提醒按需求汇总分级、去误报、重新识别按钮
+
+- 问题：提醒分散在四列、以黄色长框逐条堆叠；同一问题在生图列和每个衣色效果图卡片各报一遍；放置说明和警告不分；改动任一份图稿后其余图稿都报“用了旧版要求”；已识别且无提醒的需求找不到重新识别入口；页面提示仍写“红色粗体为人工改动”。
+- 改动（`4d733f8`）：每条需求在原始资料格显示“需处理 / 需核对 / 已自动处理”徽标，下方一行列出提醒（一事一行、同一问题多衣色合并、带操作按钮，已自动处理默认收起）；所有需核对项可勾“已核对”，保存在需求状态 `reminderAcks`；“用了旧版要求”改为比对该图稿自身正文指纹；表格中效果图卡片不再重复显示警告（放大视图仍显示）；需求理解标题旁新增“重新识别”（点击先确认约 ¥0.1）；提示改为“蓝色粗体为人工改动”。线上数据：Wf018 15 条 → 需核对 1、自动 2；W175 8 → 1；Wbfbcc 7 → 0。
+- 发布：补丁叠在 `6ab7bacb4fe789a2e8fef842`（`1c88079`，指纹 `285f4c09…`）上，新部署 `6ab7fd7ba26d1d2fd2851f37`（`4d733f8`，指纹 `b3df8cba…`），7 个文件，先两个 worker 后 Web。check（1518）、test:requirements（67）、test:mockups（26）、test:workbench、test:batch-cloud 全过；无排队付费任务，无数据库迁移；发布后三个容器 7/7 一致，三服务 RUNNING，health ready，新版 worker 心跳，页面 200。发布前本机 Zeabur 登录过期（401），用户重新登录后继续。
+- 回退：`output/reminder-release-20260927/rollback.json`（回到 `d-6ab7bacb`，恢复 WORKWEAR_BUILD_COMMIT），无需回退数据库。
