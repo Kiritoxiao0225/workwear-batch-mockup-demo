@@ -193,3 +193,12 @@ WPS 同步完成后，后台逐条预约尚无识别记录和草稿的有效原�
 - 发布：补丁叠在 `6ab73a264fe789a2e8fee9c2`（`90a0b1a`，指纹 `9321a59f…`）上，新部署 `6ab741364fe789a2e8feea70`（`4e81975`，指纹 `48fe4dab…`），31 个文件，先两个 worker 后 Web。干净检出 lint、tsc、vitest（1518）、test:mockups（24）、test:requirements（63）、test:workbench、test:batch-cloud、test:batch-claim（7 组）、test:garment（12 组）、test:catalog（21 组）全过；无排队付费任务，无数据库迁移；发布后三个容器 31/31 一致，三服务 RUNNING，health ready，新版 worker 心跳，页面 200。
 - 待核对：帽子/围裙画框出图只有单测覆盖，需用一张已在素材库画框确认的真实帽子需求核对位置与大小；线上识别提示词副本由识图会话在用户确认后写入。
 - 回退：`output/color-source-release-20260926/rollback.json`（回到 `d-6ab73a26`，恢复 WORKWEAR_BUILD_COMMIT），无需回退数据库。
+
+
+### 2026-09-26 下午：线上识别提示词副本更新（实拍图还原 + 难辨认书法中文用 high）
+
+- 问题：W79262e127d4f 客户给的是白布上双线框校名的实拍，识别写“保持外框形状、保留内部底色”，图稿照抄了布面弧度、框内填成白块，medium 生图把书法“继续”“教”画错。
+- 改动：只写库，不发代码。`main` 工作区 `prompt.txt` 与 `manifest.run.promptSHA256` 由 `fb26593b…` 改为 `f6a8e74d…`，内容为原线上版本加 `a6a7f8f`/`e13adb0`/`dfcb70a` 的规则：实拍图校正透视与布面弯曲、露出的布面留空透明、字按正确字形写清楚不照描；仅“沿用的书法/手写中文在实拍、刺绣或布面照片里看不清”时输出 `quality: "high"`（代码 `4e81975` 已随上一次发布上线）。仓库文件中 `8467254` 的 sizeReference 规则**未写入**：重放 15 条有 2 条因它输出格式无效，需先修后再升级副本。
+- 验证：新副本重放 23 条近期需求 43 张图稿，全部通过草稿校验，只标 2 张 high（W79262e127d4f、U5cda1cc2023c，均为实际用 medium 出错的）；high 生图 4 张全部字形正确、外框规整、框内透明。并发 23 个识别请求会被 EvoLink 返回 402（余额约 293 积分，预扣超额），每批 4 个正常。
+- 复盘：一两周后运行 `output/patch-photo-20260926/high-quality-review.mts <起始日期> --images <目录>`，“手动重做”即识别漏判。
+- 回退：`output/patch-photo-20260926/upgrade-prompt.mts f6a8e74dc441e585591b48bd67b20ed272e80eddeffe7801d9d44a3b0ae41052 output/patch-photo-20260926/rollback-prompt.txt --apply`。
