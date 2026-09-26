@@ -16,7 +16,7 @@ import {
   PLACEMENT_LABELS,
   taskStatus,
 } from '@/lib/mockup';
-import { simpleTaskProduct, simplePositionIssue, simpleBackPositions, simplePositionSource, simpleCatalogBindingSchema } from '@/lib/simple-batch';
+import { simpleTaskProduct, simplePositionIssue, simpleBackPositions, simplePositionSource, simpleCatalogBindingSchema, simpleSlots, simplePlacementLabel, simpleRelativeSize } from '@/lib/simple-batch';
 import { POSITION_LABELS } from '@/lib/catalog';
 import {
   PLACEMENT_KEYS,
@@ -78,7 +78,7 @@ export function WorkbenchClient({ requestedTaskId }: WorkbenchClientProps) {
   const [preferredActiveTaskId, setPreferredActiveTaskId] = useState<string | null>(requestedTaskId);
   const [storedSelectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState<'all' | TaskStatus>('all');
-  const [activePosition, setActivePosition] = useState<PlacementKey>('leftChest');
+  const [chosenPosition, setActivePosition] = useState<PlacementKey>('leftChest');
   const [pendingUploadPosition, setPendingUploadPosition] = useState<PlacementKey>('leftChest');
   const [message, setMessage] = useState('画布调整会自动保存，可以直接导出。');
   const [actionError, setActionError] = useState<string | null>(null);
@@ -110,6 +110,10 @@ export function WorkbenchClient({ requestedTaskId }: WorkbenchClientProps) {
 
   const activeTask = state?.tasks.find((task) => task.id === activeTaskId) ?? null;
   const activeProduct = activeTask ? simpleTaskProduct(activeTask) : null;
+  // A cap or apron offers fewer slots; a clothing slot it lacks falls back to its first one.
+  const activeSlots = activeTask ? simpleSlots(activeTask) : [];
+  const activePosition = activeSlots.length && !activeSlots.some(slot => slot.key === chosenPosition) ? activeSlots[0].key : chosenPosition;
+  const activeRelative = activeTask ? simpleRelativeSize(activeTask, activePosition) : null;
   const activePlacement = activeTask?.placements[activePosition];
   const filteredTasks = useMemo(() => (state?.tasks ?? []).filter((task) =>
     statusFilter === 'all' || taskStatus(task) === statusFilter,
@@ -168,7 +172,7 @@ export function WorkbenchClient({ requestedTaskId }: WorkbenchClientProps) {
           },
         },
       }), true);
-      setMessage(`${PLACEMENT_LABELS[pendingUploadPosition]}已绑定 ${uploaded.originalName}，设置已保存。`);
+      setMessage(`${simplePlacementLabel(activeTask, pendingUploadPosition)}已绑定 ${uploaded.originalName}，设置已保存。`);
     } catch (uploadError) {
       setActionError(uploadError instanceof Error ? uploadError.message : String(uploadError));
     } finally {
@@ -218,7 +222,7 @@ export function WorkbenchClient({ requestedTaskId }: WorkbenchClientProps) {
           },
         },
       }), true);
-      setMessage(`${PLACEMENT_LABELS[activePosition]} Logo 已去除白底并清理边缘白色。`);
+      setMessage(`${activeTask ? simplePlacementLabel(activeTask, activePosition) : PLACEMENT_LABELS[activePosition]} Logo 已去除白底并清理边缘白色。`);
     } catch (cutoutError) {
       setActionError(cutoutError instanceof Error ? cutoutError.message : String(cutoutError));
     } finally {
@@ -400,12 +404,12 @@ export function WorkbenchClient({ requestedTaskId }: WorkbenchClientProps) {
                   <h2>1. Logo 与制作位置</h2><p>{activeTask.garment ? '优先使用素材库已校准位置，其余使用默认位置，可直接上传并调整。' : '这是保留的旧版任务。更换为素材库衣服后，自动带入默认位置。'}</p>
                   <div>{activeTask.garment && <button className="button secondary full" disabled={busy} type="button" onClick={() => void refreshStandards()}>更新位置标准</button>}</div>
                   <div className="placement-list">
-                    {PLACEMENT_KEYS.map((key) => {
-                      const placement = activeTask.placements[key];
+                    {activeSlots.map(({ key, label }) => {
+                      const placement = activeTask.placements[key], relative = simpleRelativeSize(activeTask, key);
                       const positionIssue = simplePositionIssue(activeTask, key, placement);
                       return (
                         <div className={`placement-row ${activePosition === key ? 'active' : ''}`} key={key}>
-                          <button className="placement-main" type="button" onClick={() => setActivePosition(key)}><strong>{PLACEMENT_LABELS[key]}</strong><span>{positionIssue ? '缺少底图' : placement ? `${placement.logoName} · ${placement.widthCm}cm` : activeTask.garment ? `${simplePositionSource(activeTask, key, placement)} · 未上传 Logo` : '未设置 Logo'}</span></button>
+                          <button className="placement-main" type="button" onClick={() => setActivePosition(key)}><strong>{label}</strong><span>{positionIssue ? (activeTask.garment?.views.some(view => view.face === (key === 'back' ? 'back' : 'front')) ? '未画位置' : '缺少底图') : placement ? `${placement.logoName} · ${relative ? `${Math.round(placement.widthCm / relative * 100)}%` : `${placement.widthCm}cm`}` : activeTask.garment ? `${simplePositionSource(activeTask, key, placement)} · 未上传 Logo` : '未设置 Logo'}</span></button>
                           <button disabled={Boolean(positionIssue) || busy} title={positionIssue ?? undefined} type="button" onClick={() => requestLogoUpload(key)}>{placement ? '更换' : '上传'}</button>
                           <button disabled={!placement} type="button" onClick={() => void clearPlacement(key)}>清除</button>
                         </div>
@@ -415,11 +419,11 @@ export function WorkbenchClient({ requestedTaskId }: WorkbenchClientProps) {
                   <input ref={logoInputRef} hidden accept="image/png,image/jpeg,image/webp" type="file" onChange={(event) => void logoSelected(event.target.files?.[0] ?? null)} />
                 </section>
                 <section className="setting-section adjust-section">
-                  <h2>2. 调整当前位置：{PLACEMENT_LABELS[activePosition]}</h2>
-                  {activeTask.garment && <><p>尺寸沿用生产台的 55cm 衣身效果图比例。</p>{simplePositionIssue(activeTask, activePosition, activePlacement) && <p role="alert">{simplePositionIssue(activeTask, activePosition, activePlacement)} <Link href="/products">查看素材库</Link></p>}</>}
+                  <h2>2. 调整当前位置：{simplePlacementLabel(activeTask, activePosition)}</h2>
+                  {activeTask.garment && <><p>{activeRelative ? '帽子、围裙按素材库示例 Logo 大小，100% 为默认大小。' : '尺寸沿用生产台的 55cm 衣身效果图比例。'}</p>{simplePositionIssue(activeTask, activePosition, activePlacement) && <p role="alert">{simplePositionIssue(activeTask, activePosition, activePlacement)} <Link href="/products">查看素材库</Link></p>}</>}
                   {activeTask.garment && activePosition === 'back' && simpleBackPositions(activeTask).length > 0 && <label className="range-control">后背位置<select aria-label="后背位置" disabled={!activePlacement} value={activePlacement?.catalogPosition ?? (simpleBackPositions(activeTask).includes('backCenter') ? 'backCenter' : 'upperBack')} onChange={event => updatePlacement(activeTask.id, 'back', placement => ({ ...placement, catalogPosition: event.target.value as 'upperBack' | 'backCenter', offsetX: 0, offsetY: 0 }))}>{simpleBackPositions(activeTask).map(key => <option key={key} value={key}>{POSITION_LABELS[key]}</option>)}</select></label>}
                   {activePlacement && <button className="button secondary full" type="button" onClick={() => updatePlacement(activeTask.id, activePosition, placement => ({ ...placement, offsetX: 0, offsetY: 0, rotation: 0 }))}>恢复默认位置</button>}
-                  <LogoWidthControl key={`${activeTask.id}:${activePosition}`} disabled={!activePlacement} value={activePlacement?.widthCm ?? PLACEMENT_DEFAULTS[activePosition].widthCm} onChange={widthCm => updatePlacement(activeTask.id, activePosition, placement => ({ ...placement, widthCm }))} />
+                  <LogoWidthControl key={`${activeTask.id}:${activePosition}`} percentOf={activeRelative} disabled={!activePlacement} value={activePlacement?.widthCm ?? PLACEMENT_DEFAULTS[activePosition].widthCm} onChange={widthCm => updatePlacement(activeTask.id, activePosition, placement => ({ ...placement, widthCm }))} />
                   <RangeControl disabled={!activePlacement} label="左右位置" max={35} min={-35} step={0.5} value={activePlacement?.offsetX ?? 0} onChange={(value) => updatePlacement(activeTask.id, activePosition, (placement) => ({ ...placement, offsetX: value }))} />
                   <RangeControl disabled={!activePlacement} label="上下位置" max={35} min={-35} step={0.5} value={activePlacement?.offsetY ?? 0} onChange={(value) => updatePlacement(activeTask.id, activePosition, (placement) => ({ ...placement, offsetY: value }))} />
                   <RangeControl disabled={!activePlacement} label="旋转角度" max={180} min={-180} step={1} suffix="°" value={activePlacement?.rotation ?? 0} onChange={(value) => updatePlacement(activeTask.id, activePosition, (placement) => ({ ...placement, rotation: value }))} />
@@ -466,8 +470,16 @@ function RangeControl({ label, value, min, max, step, suffix = '', disabled, onC
   );
 }
 
-function LogoWidthControl({ value, disabled, onChange }: { value: number; disabled: boolean; onChange: (width: number) => void }) {
+function LogoWidthControl({ value, disabled, onChange, percentOf }: { value: number; disabled: boolean; onChange: (width: number) => void; percentOf?: number | null }) {
   const [draft, setDraft] = useState<string | null>(null);
+  // Caps and aprons: the same stored width, shown and edited as a percentage of the slot's default.
+  if (percentOf) return <div className="simple-logo-size-control">
+    <label>Logo 大小<span><input aria-label="Logo 大小（相对示例 Logo，%）" type="number" min={10} max={300} step={1} disabled={disabled} value={draft ?? Math.round(value / percentOf * 100)}
+      onChange={event => { const raw = event.target.value; setDraft(raw); const percent = Number(raw); if (raw && Number.isFinite(percent) && percent >= 10 && percent <= 300) onChange(Math.min(100, percentOf * percent / 100)); }}
+      onBlur={() => setDraft(null)} /> %</span></label>
+    <input aria-label="Logo 大小滑块" type="range" min={10} max={300} step={1} disabled={disabled} value={Math.round(value / percentOf * 100)} onChange={event => { setDraft(null); onChange(Math.min(100, percentOf * Number(event.target.value) / 100)); }} />
+    <small>100% 为素材库示例 Logo 大小，也可拖动 Logo 四角等比缩放。</small>
+  </div>;
   return <div className="simple-logo-size-control">
     <label>Logo 宽度<span><input aria-label="Logo 宽度数值（cm）" type="number" min={0.5} max={100} step={0.1} disabled={disabled} value={draft ?? Number(value.toFixed(2))}
       onChange={event => { const raw = event.target.value; setDraft(raw); const width = Number(raw); if (raw && Number.isFinite(width) && width >= .5 && width <= 100) onChange(width); }}

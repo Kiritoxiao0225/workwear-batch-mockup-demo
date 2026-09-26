@@ -3,12 +3,28 @@ import { createTask } from '@/lib/mockup';
 import { assertDemoState } from '@/lib/state-validation';
 import { garmentFixture, catalogFixture } from '@/lib/testing/production-garment-fixture';
 import { bindingFromCatalog } from '@/lib/production-garment';
-import { simpleTaskProduct, simplePositionAnchor, simplePositionIssue, simplePlacementGeometry, simpleOffsetScale, simpleCanvasImageUrl } from '@/lib/simple-batch';
+import { simpleTaskProduct, simplePositionAnchor, simplePositionIssue, simplePlacementGeometry, simpleOffsetScale, simpleCanvasImageUrl, simpleSlots, simpleBackPositions } from '@/lib/simple-batch';
+import { positionFromImageBox, suggestedPlacement } from '@/lib/catalog-placement-suggestions';
 import type { LogoPlacement } from '@/lib/types';
 
 const logo: LogoPlacement = { logoUrl: '/uploads/logos/test.png', logoName: 'test.png', widthCm: 7, offsetX: 0, offsetY: 0, rotation: 0 };
 function task() { return { ...createTask('B01SD'), garment: garmentFixture() }; }
 describe('simple batch catalog connection', () => {
+  it('offers a cap only its drawn positions and sizes logos relative to the sample logo', () => {
+    const current = task();
+    const [front, back] = current.garment.views, frame = { x: 0, y: 0, width: 1, height: 1 };
+    front.standard!.specification = suggestedPlacement('cap', 'front', frame);
+    front.standard!.specification.positions.push(positionFromImageBox('capLeftSide', { x: .8, y: .3, width: .15, height: .2 }, frame));
+    back.standard!.specification = suggestedPlacement('cap', 'back', frame);
+    expect(simpleSlots(current).map(slot => slot.label)).toEqual(['帽子正面', '帽子后面', '帽子左侧', '帽子右侧']);
+    expect(simpleBackPositions(current)).toEqual([]);
+    expect(simplePositionIssue(current, 'rightSleeve')).toContain('没有确认过「帽子右侧」');
+    const capFront = front.standard!.specification.positions.find(p => p.key === 'capFront')!;
+    // 28 is the front slot's default width, i.e. 100% of the sample logo; 14 is half of it.
+    const full = simplePlacementGeometry(current, 'frontCenter', { ...logo, widthCm: 28 }, 2);
+    expect(full.width).toBeCloseTo(Math.min(capFront.defaultSize.width * 500, capFront.defaultSize.height * 500 * 2));
+    expect(simplePlacementGeometry(current, 'frontCenter', { ...logo, widthCm: 14 }, 2).width).toBeCloseTo(full.width / 2);
+  });
   it('uses the authenticated byte endpoint for canvas, not the OSS display redirect', () => {
     const url = garmentFixture().imageUrl;
     expect(simpleCanvasImageUrl(url)).toBe(url.replace('/catalog/files/', '/production-files/'));

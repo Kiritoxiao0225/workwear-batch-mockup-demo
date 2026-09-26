@@ -6,7 +6,7 @@ import type { ProductionPlacement } from './wps-production';
 
 export const artworkPrintPlacementSchema = z.object({
   key: z.enum(['leftChest', 'rightChest', 'frontCenter', 'back', 'leftSleeve', 'rightSleeve']),
-  catalogPosition: z.enum(['frontCenter', 'upperBack', 'backCenter', 'apronUpper', 'apronPocket']).optional(),
+  catalogPosition: z.enum(['frontCenter', 'upperBack', 'backCenter', 'apronUpper', 'apronPocket', 'capFront', 'capLeftSide', 'capRightSide', 'capBack']).optional(),
   sizeMode: z.enum(['standard', 'widthCm', 'heightCm']).optional(),
   widthCm: z.number().positive().max(55),
   heightCm: z.number().positive().max(100).nullable().optional(),

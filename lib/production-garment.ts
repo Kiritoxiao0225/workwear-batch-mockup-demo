@@ -2,7 +2,7 @@ import { bodyScaleSchema, MOCKUP_BODY_WIDTH_CM, MOCKUP_SIZE_POLICY, printSizeCm,
 import { bindPrintSizeRequest } from './print-size-request';
 import type { PlacementKey } from '@/lib/types';
 import { z } from 'zod';
-import { boxSchema, POSITION_LABELS, standardSchema, type CatalogDetail, type CatalogStyle, type PositionKey } from '@/lib/catalog';
+import { boxSchema, MANUAL_STRUCTURES, POSITION_LABELS, slotPositionKey, standardSchema, type CatalogDetail, type CatalogStyle, type PositionKey, type StructureType } from '@/lib/catalog';
 import type { GenerationUnit, SourceTaskRecord } from '@/lib/batch-task-review';
 import type { ProductionPlacement } from '@/lib/wps-production';
 
@@ -95,19 +95,37 @@ export function bindingFromCatalog(detail: CatalogDetail, match: Pick<GarmentMat
   });
 }
 
-export function catalogPositionKey(placement: ProductionPlacement): PositionKey {
-  if (placement.key === 'back') return placement.catalogPosition === 'upperBack' ? 'upperBack' : 'backCenter';
-  if (placement.key === 'frontCenter' && (placement.catalogPosition === 'apronUpper' || placement.catalogPosition === 'apronPocket')) return placement.catalogPosition;
-  return placement.key;
+/** The confirmed standard of the face a placement prints on. */
+export function placementFace(garment: GarmentBinding, placement: Pick<ProductionPlacement, 'key'>) {
+  return garment.views.find(view => view.face === (placement.key === 'back' ? 'back' : 'front'));
 }
-export function productionPositionLabel(placement: ProductionPlacement) {
-  return POSITION_LABELS[catalogPositionKey(placement)];
+function faceStructure(garment: GarmentBinding | null | undefined, placement: Pick<ProductionPlacement, 'key'>): StructureType | undefined {
+  return garment ? placementFace(garment, placement)?.standard?.specification.structureType : undefined;
+}
+/** Caps and aprons: the logo goes where the catalog drew it, at its sample logo's size; no body-width centimetres. */
+export function drawnPlacement(garment: GarmentBinding | null | undefined, placement: Pick<ProductionPlacement, 'key'>) {
+  const structure = faceStructure(garment, placement);
+  return !!structure && MANUAL_STRUCTURES.includes(structure);
+}
+/** Sizes on a drawn position are relative to its sample logo, so centimetre requests and the body policy are dropped. */
+export function withDrawnSizing(placement: ProductionPlacement): ProductionPlacement {
+  const next: ProductionPlacement = { ...placement, sizeMode: 'standard' };
+  delete next.sizePolicy; delete next.heightCm; delete next.requestedSize; delete next.requestedSizeIssue; delete next.sizeOverride;
+  return next;
+}
+export function catalogPositionKey(placement: Pick<ProductionPlacement, 'key' | 'catalogPosition'>, structure?: StructureType): PositionKey {
+  return slotPositionKey(placement.key, placement.catalogPosition, structure);
+}
+export function productionPositionLabel(placement: ProductionPlacement, garment?: GarmentBinding | null) {
+  return POSITION_LABELS[catalogPositionKey(placement, faceStructure(garment, placement))];
 }
 export const taskPlacementSchema = z.object({ centerX: z.number().min(0).max(1), centerY: z.number().min(0).max(1), width: z.number().positive().max(1) }).strict();
 
 export function garmentPlacementIssue(garment: GarmentBinding | null | undefined, placement: ProductionPlacement | null, options: { temporaryPosition?: boolean } = {}) {
   if (!garment) return '请选择素材库中的款式和颜色';
   if (!placement) return '请选择制作位置';
+  const drawn = drawnPlacement(garment, placement);
+  if (drawn) placement = withDrawnSizing(placement);
   if (placement.requestedSizeIssue && !placement.sizeOverride) return placement.requestedSizeIssue;
   if (placement.templateVersion !== 'catalog-v1') return '请保存真实衣服的位置方案';
   const face = placement.key === 'back' ? 'back' : 'front';
@@ -124,7 +142,8 @@ export function garmentPlacementIssue(garment: GarmentBinding | null | undefined
   // require a manual placement or an actual confirmed position standard.
   if (options.temporaryPosition && view.bodyScale) return null;
   if (!view.standard) return `该颜色${face === 'front' ? '正面' : '背面'}位置尚未校准，请到商品素材库确认后更新位置标准`;
-  if (!view.standard.specification.positions.some(position => position.key === catalogPositionKey(placement))) return '该位置没有已确认标准，请调整位置或在商品素材库校准';
+  const key = catalogPositionKey(placement, view.standard.specification.structureType);
+  if (!view.standard.specification.positions.some(position => position.key === key)) return drawn ? `该款没有确认过「${POSITION_LABELS[key]}」，请到商品素材库画框并确认` : '该位置没有已确认标准，请调整位置或在商品素材库校准';
   if (placement.sizePolicy !== MOCKUP_SIZE_POLICY && placement.sizeMode !== 'standard' && !view.standard.specification.measuredWidthCm) return '此衣服尚未填写实测衣宽，不能把厘米尺寸换算为底图位置';
   return null;
 }
@@ -134,6 +153,7 @@ export function productionPlacementGeometry(garment: GarmentBinding, placement: 
   const issue = garmentPlacementIssue(garment, placement);
   if (issue) throw issue === MISSING_BODY_SCALE_MESSAGE ? new GarmentBodyScaleError() : new Error(issue);
   if (!Number.isFinite(aspectRatio) || aspectRatio <= 0) throw new Error(`图案宽高比无效：${aspectRatio}`);
+  if (drawnPlacement(garment, placement)) placement = withDrawnSizing(placement);
   const view = garment.views.find(view => view.face === (placement.key === 'back' ? 'back' : 'front'))!;
   if (placement.manual) {
     const faceWidth = garment.width * view.crop.width, faceHeight = garment.height * view.crop.height;
@@ -150,7 +170,7 @@ export function productionPlacementGeometry(garment: GarmentBinding, placement: 
     if (!(width > 0) || bounds.x < 0 || bounds.y < 0 || bounds.x + bounds.width > 1 || bounds.y + bounds.height > 1) throw new Error('图案超出当前衣服视图，请缩小或移回图片内');
     if (spec) {
       const frame = spec.garmentFrame;
-      const position = spec.positions.find(position => position.key === catalogPositionKey(placement));
+      const position = spec.positions.find(position => position.key === catalogPositionKey(placement, spec.structureType));
       if (position) {
         const area = position.printableArea;
         const allowed = { x: frame.x + area.x * frame.width, y: frame.y + area.y * frame.height, width: area.width * frame.width, height: area.height * frame.height };
@@ -164,7 +184,7 @@ export function productionPlacementGeometry(garment: GarmentBinding, placement: 
     return { width, height, centerX: (view.crop.x + placement.manual.centerX * view.crop.width) * garment.width, centerY: (view.crop.y + placement.manual.centerY * view.crop.height) * garment.height };
   }
   const spec = view.standard!.specification;
-  const position = spec.positions.find(position => position.key === catalogPositionKey(placement))!;
+  const position = spec.positions.find(position => position.key === catalogPositionKey(placement, spec.structureType))!;
   const frame = spec.garmentFrame;
   const frameWidth = garment.width * view.crop.width * frame.width;
   const frameHeight = garment.height * view.crop.height * frame.height;

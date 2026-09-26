@@ -1,10 +1,11 @@
 import { productionGarmentPreviewCrop } from '@/lib/production-garment';
 import { positionFromImageBox, suggestedPlacement } from '@/lib/catalog-placement-suggestions';
 import { describe, expect, it } from 'vitest';
-import { matchProductionGarment, productionPlacementGeometry, garmentPlacementIssue, requestedCatalogPlacement } from '@/lib/production-garment';
+import { matchProductionGarment, productionPlacementGeometry, garmentPlacementIssue, productionPositionLabel, requestedCatalogPlacement, type GarmentBinding } from '@/lib/production-garment';
+import { initialTaskPlacement } from '@/lib/production-preview';
 import { garmentFixture, styleFixture } from '@/lib/testing/production-garment-fixture';
 import { taskReviewFixture } from '@/lib/testing/task-review-fixture';
-import { emptyWpsProductionState, importTaskReviews, selectProductionGarment, upsertTaskReviews, type ProductionPlacement } from '@/lib/wps-production';
+import { emptyWpsProductionState, importTaskReviews, selectProductionGarment, upsertTaskReviews, type ProductionPlacement, type ProductionUnit } from '@/lib/wps-production';
 import { liveWpsProductionState } from '@/lib/wps-source';
 
 const styles = [styleFixture('301SRX', ['极致黑', '安可拉红', '酒红']), styleFixture('B01SD', ['活力黑', '月牙白', '冰霜蓝'], 1), styleFixture('719SF', ['黑色'], 2), styleFixture('9600SRX', ['大红'], 3)];
@@ -114,7 +115,7 @@ it('projects apron upper, pocket and center using separate confirmed coordinates
   const spec = suggestedPlacement('apron', 'front', { x: 0, y: 0, width: 1, height: 1 });
   garment.views[0].standard!.specification = spec;
   const placement: ProductionPlacement = { key: 'frontCenter', catalogPosition: 'apronPocket', sizeMode: 'standard', widthCm: 10, offsetX: 0, offsetY: 0, rotation: 0, templateVersion: 'catalog-v1' };
-  expect(garmentPlacementIssue(garment, placement)).toContain('没有已确认标准');
+  expect(garmentPlacementIssue(garment, placement)).toContain('没有确认过「围裙口袋」');
   spec.positions.push(positionFromImageBox('apronPocket', { x: .35, y: .55, width: .3, height: .15 }, spec.garmentFrame));
   expect(garmentPlacementIssue(garment, placement)).toBeNull();
   const pocket = productionPlacementGeometry(garment, placement);
@@ -125,6 +126,27 @@ it('projects apron upper, pocket and center using separate confirmed coordinates
   expect(center.centerY).toBeCloseTo(320);
 });
 
+
+it('places cap logos on the drawn positions at the sample logo size, ignoring body width and centimetre requests', () => {
+  const garment: GarmentBinding = garmentFixture();
+  const front = suggestedPlacement('cap', 'front', { x: 0, y: 0, width: 1, height: 1 }), back = suggestedPlacement('cap', 'back', { x: 0, y: 0, width: 1, height: 1 });
+  front.positions.push(positionFromImageBox('capLeftSide', { x: .8, y: .3, width: .15, height: .2 }, front.garmentFrame));
+  garment.views[0].standard!.specification = front; garment.views[1].standard!.specification = back;
+  garment.views.forEach(view => { delete view.bodyScale; });
+  // A customer's "左胸 8cm" on a cap: the cap front, sized like its sample logo.
+  const chest: ProductionPlacement = { key: 'leftChest', sizeMode: 'widthCm', widthCm: 8, sizePolicy: 'body-55-v1', requestedSize: { axis: 'widthCm', valueCm: 8, evidence: '左胸 8cm', inferredUnit: false }, offsetX: 0, offsetY: 0, rotation: 0, templateVersion: 'catalog-v1' };
+  expect(garmentPlacementIssue(garment, chest)).toBeNull();
+  expect(productionPositionLabel(chest, garment)).toBe('帽子正面');
+  const capFront = front.positions.find(p => p.key === 'capFront')!;
+  const placed = initialTaskPlacement({ garment, placement: chest } as ProductionUnit, { width: 200, height: 100 });
+  expect(placed.sizePolicy).toBeUndefined();
+  expect(placed.manual!.centerX).toBeCloseTo(capFront.anchor.x);
+  expect(placed.manual!.width).toBeCloseTo(Math.min(capFront.defaultSize.width, capFront.defaultSize.height * 2));
+  expect(productionPositionLabel({ ...chest, key: 'leftSleeve' }, garment)).toBe('帽子左侧');
+  expect(garmentPlacementIssue(garment, { ...chest, key: 'rightSleeve' })).toContain('没有确认过「帽子右侧」');
+  expect(productionPositionLabel({ ...chest, key: 'back' }, garment)).toBe('帽子后面');
+  expect(garmentPlacementIssue(garment, { ...chest, key: 'back' })).toBeNull();
+});
 
 it('previews only the requested face, independent of calibration, and never substitutes a missing back', () => {
   const garment = garmentFixture();

@@ -137,7 +137,7 @@ function planPatch(value: unknown): ProductionPlanPatch {
         sizeMode: z.enum(['standard', 'widthCm', 'heightCm']).parse(placement.sizeMode),
         heightCm: placement.heightCm === undefined ? undefined : numberValue(placement.heightCm, 'patch.placement.heightCm'),
         sizeOverride: placement.sizeOverride === undefined ? undefined : z.boolean().parse(placement.sizeOverride),
-        catalogPosition: placement.catalogPosition === undefined ? undefined : z.enum(['upperBack', 'backCenter', 'frontCenter', 'apronUpper', 'apronPocket']).parse(placement.catalogPosition),
+        catalogPosition: placement.catalogPosition === undefined ? undefined : z.enum(['upperBack', 'backCenter', 'frontCenter', 'apronUpper', 'apronPocket', 'capFront', 'capLeftSide', 'capRightSide', 'capBack']).parse(placement.catalogPosition),
       };
     }
   }

@@ -77,7 +77,7 @@ export type ProductionPlacement = {
   requestedSize?: PrintSizeRequest;
   requestedSizeIssue?: string;
   sizeOverride?: boolean;
-  catalogPosition?: 'upperBack' | 'backCenter' | 'frontCenter' | 'apronUpper' | 'apronPocket';
+  catalogPosition?: 'upperBack' | 'backCenter' | 'frontCenter' | 'apronUpper' | 'apronPocket' | 'capFront' | 'capLeftSide' | 'capRightSide' | 'capBack';
 };
 
 export type ArtworkValidation = {
@@ -666,8 +666,9 @@ function checkedPlacement(value: ProductionPlacement | null) {
   if (value.widthCm < 1 || value.widthCm > 50) throw new Error(`placement.widthCm 超出 1-50cm：${value.widthCm}`);
   if (Math.abs(value.offsetX) > 50 || Math.abs(value.offsetY) > 50) throw new Error('placement 偏移必须在 -50 到 50 之间');
   if (Math.abs(value.rotation) > 180) throw new Error(`placement.rotation 超出 -180 到 180：${value.rotation}`);
-  if (value.catalogPosition !== undefined && !['upperBack', 'backCenter', 'frontCenter', 'apronUpper', 'apronPocket'].includes(value.catalogPosition)) throw new Error(`placement.catalogPosition 无效：${value.catalogPosition}`);
-  if ((value.catalogPosition === 'apronUpper' || value.catalogPosition === 'apronPocket') && value.key !== 'frontCenter') throw new Error(`围裙位置 ${value.catalogPosition} 必须属于正面，实际：${value.key}`);
+  if (value.catalogPosition !== undefined && !['upperBack', 'backCenter', 'frontCenter', 'apronUpper', 'apronPocket', 'capFront', 'capLeftSide', 'capRightSide', 'capBack'].includes(value.catalogPosition)) throw new Error(`placement.catalogPosition 无效：${value.catalogPosition}`);
+  if (['apronUpper', 'apronPocket', 'capFront', 'capLeftSide', 'capRightSide'].includes(value.catalogPosition ?? '') && value.key !== 'frontCenter') throw new Error(`正面位置 ${value.catalogPosition} 必须属于正面，实际：${value.key}`);
+  if (value.catalogPosition === 'capBack' && value.key !== 'back') throw new Error(`帽子后面必须属于背面，实际：${value.key}`);
   if (value.templateVersion === 'catalog-v1') {
     if (!['standard', 'widthCm', 'heightCm'].includes(value.sizeMode ?? '')) throw new Error(`placement.sizeMode 无效：${value.sizeMode}`);
     if (value.sizeMode === 'heightCm' && (!Number.isFinite(value.heightCm) || value.heightCm! <= 0 || value.heightCm! > 100)) throw new Error(`placement.heightCm 无效：${value.heightCm}`);

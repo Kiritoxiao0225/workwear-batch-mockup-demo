@@ -1,6 +1,6 @@
 import type { ArtworkValidation, ProductionMockupVersion, ProductionPlacement, ProductionUnit, WpsProductionState } from '@/lib/wps-production';
 import { MOCKUP_SIZE_POLICY, MOCKUP_BODY_WIDTH_CM, printSizeCm, GarmentBodyScaleError } from './production-sizing';
-import { catalogPositionKey, garmentPlacementIssue, productionPlacementGeometry, type GarmentBinding } from '@/lib/production-garment';
+import { catalogPositionKey, drawnPlacement, garmentPlacementIssue, productionPlacementGeometry, withDrawnSizing, type GarmentBinding } from '@/lib/production-garment';
 import { artworkBlockingAmbiguities, artworkProcessingRoute } from '@/lib/task-review-analysis';
 import { WPS_COMPOSITOR_VERSION } from './confirmation-frame';
 
@@ -52,6 +52,13 @@ export function initialTaskPlacement(unit: ProductionUnit, validation: ArtworkDi
   if (!unit.garment || !unit.placement) throw new Error('请先选择衣服款式、颜色和印花位置');
   const view = unit.garment.views.find(view => view.face === (unit.placement!.key === 'back' ? 'back' : 'front'));
   if (!view) throw new Error('缺少当前印花面的衣服图片');
+  if (drawnPlacement(unit.garment, unit.placement)) {
+    // Caps and aprons start from the catalog's sample logo: its center and size, fitted to this artwork's proportions.
+    const standard = withDrawnSizing({ ...unit.placement, manual: undefined, offsetX: 0, offsetY: 0 });
+    const geometry = productionPlacementGeometry(unit.garment, standard, artworkAspectRatio(validation));
+    const faceWidth = unit.garment.width * view.crop.width;
+    return { ...standard, manual: { ...taskPlacementAnchor({ ...unit, placement: standard }), width: geometry.width / faceWidth } };
+  }
   const placement = { ...unit.placement, sizePolicy: MOCKUP_SIZE_POLICY };
   if (!view.bodyScale) throw new GarmentBodyScaleError();
   const width = printSizeCm(placement, artworkAspectRatio(validation)).width / MOCKUP_BODY_WIDTH_CM * view.bodyScale.widthRatio;
@@ -66,7 +73,7 @@ export function taskPlacementAnchor(unit: ProductionUnit) {
   if (!view) throw new Error('缺少当前印花面的衣服图片');
   if (placement.manual) return { centerX: placement.manual.centerX, centerY: placement.manual.centerY };
   const spec = view.standard?.specification;
-  const position = spec?.positions.find(position => position.key === catalogPositionKey(placement));
+  const position = spec?.positions.find(position => position.key === catalogPositionKey(placement, spec.structureType));
   if (spec && position) return {
     centerX: spec.garmentFrame.x + (position.anchor.x + placement.offsetX / 100) * spec.garmentFrame.width,
     centerY: spec.garmentFrame.y + (position.anchor.y + placement.offsetY / 100) * spec.garmentFrame.height,

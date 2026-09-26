@@ -6,8 +6,7 @@ import type { PointerEvent as ReactPointerEvent } from 'react';
 import { useEffect, useState } from 'react';
 import Image from 'next/image';
 
-import { PLACEMENT_LABELS } from '@/lib/mockup';
-import { simplePlacementGeometry, simpleGeometryIssue, simpleOffsetScale, simplePositionAnchor, simplePositionSource } from '@/lib/simple-batch';
+import { simplePlacementGeometry, simpleGeometryIssue, simpleOffsetScale, simplePositionAnchor, simplePositionSource, simplePlacementLabel } from '@/lib/simple-batch';
 import type { MockupTask, PlacementKey, Product } from '@/lib/types';
 
 type DragState = {
@@ -57,7 +56,7 @@ export function MockupCanvas({
   const anchor = !task.placements[activePosition] ? simplePositionAnchor(task, activePosition) : null;
   const issues = Object.entries(task.placements).flatMap(([key, placement]) => {
     if (!placement) return [];
-    if (failedImages[placement.logoUrl]) return [`${PLACEMENT_LABELS[key as PlacementKey]} Logo 读取失败，请重新上传`];
+    if (failedImages[placement.logoUrl]) return [`${simplePlacementLabel(task, key as PlacementKey)} Logo 读取失败，请重新上传`];
     const ratio = ratios[placement.logoUrl];
     const issue = ratio ? simpleGeometryIssue(task, key as PlacementKey, placement, ratio) : null;
     return issue ? [issue] : [];
@@ -104,7 +103,7 @@ export function MockupCanvas({
       />
       {failedImages[product.originalUrl] && <div className="simple-canvas-errors" role="alert">衣服底图读取失败，请确认登录状态后重新打开页面。</div>}
       {issues.length > 0 && <div className="simple-canvas-errors" role="alert">{issues.map(issue => <p key={issue}>{issue}。可在右侧调整。</p>)}</div>}
-      {anchor && <span className="simple-standard-anchor" style={{ left: `${anchor.x * 100}%`, top: `${anchor.y * 100}%` }}>{PLACEMENT_LABELS[activePosition]} · {simplePositionSource(task, activePosition)}</span>}
+      {anchor && <span className="simple-standard-anchor" style={{ left: `${anchor.x * 100}%`, top: `${anchor.y * 100}%` }}>{simplePlacementLabel(task, activePosition)} · {simplePositionSource(task, activePosition)}</span>}
       {Object.entries(task.placements).map(([rawKey, placement]) => {
         if (!placement) return null;
         const key = rawKey as PlacementKey;
@@ -124,15 +123,15 @@ export function MockupCanvas({
               transform: `translate(-50%, -50%) rotate(${placement.rotation}deg)`,
             }}
           >
-            <button type="button" className="simple-logo-drag" aria-label={`移动${PLACEMENT_LABELS[key]} Logo`}
+            <button type="button" className="simple-logo-drag" aria-label={`移动${simplePlacementLabel(task, key)} Logo`}
               onClick={() => onSelectPosition(key)} onPointerCancel={() => setDrag(null)}
               onPointerDown={event => pointerDown(event, key)} onPointerMove={pointerMove} onPointerUp={() => setDrag(null)}>
               <img alt="" draggable={false} src={placement.logoUrl} onError={onError} />
-              <span>{PLACEMENT_LABELS[key]}</span>
+              <span>{simplePlacementLabel(task, key)}</span>
             </button>
             {activePosition === key && (['nw', 'ne', 'sw', 'se'] as const).map(corner => <button
               key={corner} className={`simple-logo-resize ${corner}`} type="button"
-              aria-label={`缩放${PLACEMENT_LABELS[key]} Logo ${corner}`} title="拖动等比缩放"
+              aria-label={`缩放${simplePlacementLabel(task, key)} Logo ${corner}`} title="拖动等比缩放"
               onPointerDown={event => {
                 event.preventDefault(); event.stopPropagation(); setDrag(null);
                 const board = event.currentTarget.closest('.mockup-stage')!.getBoundingClientRect();
