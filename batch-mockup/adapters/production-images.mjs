@@ -22,9 +22,12 @@ export async function inspectPixels(bytes) {
     if (a < 8) transparent++; else visible++;
     if (!x || !y || x === info.width - 1 || y === info.height - 1) { edge++; if (a < 8) clearEdge++; }
   }
+  // A cut-out logo that touches the canvas edge (Wf018fbb9465a's badge ring left 9% of the border
+  // opaque) is still transparent: sending it to cutout again turned every solid pixel half transparent.
+  const ratio = transparent / (info.width * info.height), clear = clearEdge / edge;
   return { width: info.width, height: info.height, transparentPixels: transparent, visiblePixels: visible,
-    transparentRatio: transparent / (info.width * info.height), clearEdgeRatio: clearEdge / edge,
-    transparentExterior: visible > 0 && transparent / (info.width * info.height) > 0.01 && clearEdge / edge >= 0.95 };
+    transparentRatio: ratio, clearEdgeRatio: clear,
+    transparentExterior: visible > 0 && (ratio > 0.01 && clear >= 0.95 || ratio >= 0.2 && clear >= 0.5) };
 }
 // Cutout and editing can leave isolated, nearly invisible pixels (one sat in the corner of a
 // 1254 px artwork at alpha 20); trimming counts them and pushes the logo off center on the

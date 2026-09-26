@@ -36,6 +36,9 @@ test('不透明结果调用美图一次；抠图失败保留生成原图且不�
 test('PNG有alpha不等于透明；空白透明图不可交付，透明图内部白色保留',async t=>{
  const f=await fixture(t),a=await inspectPixels(await sharp(f.opaque).ensureAlpha().png().toBuffer());assert.equal(a.transparentExterior,false);
  const b=await inspectPixels(f.transparent);assert.equal(b.transparentExterior,true);assert.equal(b.visiblePixels,256);
+ // A cut-out ring touching all four edges: most of the picture is clear, so it is not cut out again.
+ const ring=Buffer.alloc(40*40*4);for(let y=0;y<40;y++)for(let x=0;x<40;x++){const d=Math.hypot(x-19.5,y-19.5);if(d>16&&d<=21)ring.set([255,255,255,255],(y*40+x)*4);}
+ const c=await inspectPixels(await sharp(ring,{raw:{width:40,height:40,channels:4}}).png().toBuffer());assert.ok(c.clearEdgeRatio<.95);assert.equal(c.transparentExterior,true);
  const [j]=await reserveProduction(f.root,f.manifest,f.requests);const empty=await sharp({create:{width:16,height:16,channels:4,background:'#0000'}}).png().toBuffer();
  const r=await executeProduction(f.root,j.id,{generate:async()=>empty});assert.equal(r.status,'unknown');assert.match(r.error,/完全透明/);
 });
