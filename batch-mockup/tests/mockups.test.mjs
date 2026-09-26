@@ -125,7 +125,7 @@ test('位置写法：左前胸仍是胸标，袖子可合图，未写左右时�
  assert.equal(positionInfo('胸前居中').key,'frontCenter');assert.equal(positionInfo('正胸前').key,'frontCenter');
  assert.deepEqual([positionInfo('胸前').key,!!positionInfo('胸前').note],['leftChest',true]);
  assert.equal(positionInfo('左袖口').key,'leftSleeve');assert.equal(positionInfo('右袖').key,'rightSleeve');assert.deepEqual([positionInfo('袖子').key,!!positionInfo('袖子').note],['leftSleeve',true]);
- assert.equal(positionInfo('后领下方').key,'upperBack');assert.equal(positionInfo('后背').key,'backCenter');assert.equal(positionInfo('帽子'),null);
+ assert.equal(positionInfo('后领下方').key,'upperBack');assert.equal(positionInfo('后背').key,'backCenter');assert.deepEqual([positionInfo('帽子').drawn,positionInfo('帽子后面').drawn,positionInfo('帽子左侧').drawn,positionInfo('围裙口袋').drawn],['capFront','capBack','capLeftSide','apronPocket']);assert.equal(positionInfo('鞋子'),null);
  for(const unsaid of ['','  ','未指定','原需求未指定位置'])assert.deepEqual([positionInfo(unsaid).key,positionInfo(unsaid).defaulted],['leftChest',true]);
 });
 test('尺寸标注文字可由效果图字体完整渲染',async()=>{
@@ -215,6 +215,17 @@ const colorFixture=async root=>{
  const pixel=async(asset,x,y)=>{const {data,info}=await sharp(await readFile(assetPath(root,asset))).raw().toBuffer({resolveWithObject:true});const i=(Math.round(y)*info.width+Math.round(x))*info.channels;return [data[i],data[i+1],data[i+2]];};
  return {logo,render,pixel};
 };
+test('帽子按素材库画的框和示例 Logo 大小放置，不找腋点；没画或没确认的位置直接说明',()=>{
+ const standard={structureType:'cap',garmentFrame:{x:.1,y:.1,width:.8,height:.8},positions:[{key:'capFront',anchor:{x:.5,y:.4},printableArea:{x:.3,y:.3,width:.4,height:.2},defaultSize:{width:.25,height:.1}}]};
+ const cap={face:'front',x:100,y:200,width:800,height:800,crop:{width:1000,height:1000},trim:{left:0,top:0},scale:1,standard,bodyWidth:null,structureType:'cap'};
+ // Box 200×80 px; a 2:1 logo fits its height: 160×80, centred on the anchor (100+(0.1+0.5×0.8)×1000, 200+(0.1+0.4×0.8)×1000).
+ const p=initialPlacement(cap,positionInfo('帽子正面'),.5);
+ assert.ok(Math.abs(p.width*FRAME.width-160)<1e-6);assert.ok(Math.abs(p.x*FRAME.width-600)<1e-6);assert.ok(Math.abs(p.y*FRAME.height-620)<1e-6);
+ assert.equal(p.basis,'catalog-drawn');assert.equal(p.sizeCm,null);assert.match(p.rule,/帽子正面/);
+ assert.equal(initialPlacement(cap,positionInfo('左胸'),.5).x,p.x,'写左胸的帽子单放在帽子正面');
+ assert.throws(()=>initialPlacement({...cap,face:'back'},positionInfo('帽子后面'),.5),/该款没有确认过「帽子后面」，请到商品素材库画框并确认/);
+ assert.throws(()=>initialPlacement({...cap,standard:null},positionInfo('帽子正面'),.5),/请到商品素材库画框并确认/);
+});
 test('更新效果图先把卡片标成正在更新，合成结束后恢复并重新合成',async()=>{
  const root=await mkdtemp(join(tmpdir(),'mockups-pending-'));
  try{

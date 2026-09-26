@@ -6,6 +6,7 @@ import {measureSilhouette} from '../../lib/server/catalog-structure-estimate.ts'
 import {faceStructurePoints} from '../../lib/server/catalog-structure-recognition.ts';
 import {sharedStyleStandards,styleConfirmationKey} from '../../lib/server/catalog-shared-standard.ts';
 import {catalogReferenceType,estimatedSopStandard,hasTemplateLandmarks} from '../../lib/catalog-placement-suggestions.ts';
+import {MANUAL_STRUCTURES,POSITION_LABELS,allowedPositions} from '../../lib/catalog.ts';
 import {PROJECTED_BODY_WIDTH_CM,SOP_STRUCTURES,UNMEASURED_TORSO_SHARE,plausibleTorso,sopStructureFromStandard} from '../../lib/sop-placement.ts';
 import {placementGeometry,requestedDimensions,PLACEMENT_POLICY} from './mockup-placement.mjs';
 import {clearFaintSpecks} from '../adapters/production-images.mjs';
@@ -72,6 +73,10 @@ export function positionInfo(position){
  const p=String(position??'');
  // No position in the requirement means the usual chest logo: a left-chest print.
  if(!p.trim()||/^(原需求)?(未指定|未写明|未说明|没有指定)(位置)?$/u.test(p.trim()))return {face:'front',key:'leftChest',width:.2,defaulted:true};
+ // Cap and apron words name a drawn catalog area; key stays the clothing equivalent for other garments.
+ if(/帽/.test(p)){if(/后|背/.test(p))return {face:'back',key:'backCenter',width:.45,drawn:'capBack'};if(/左/.test(p))return {face:'front',key:'leftSleeve',width:.1,drawn:'capLeftSide'};if(/右/.test(p))return {face:'front',key:'rightSleeve',width:.1,drawn:'capRightSide'};return {face:'front',key:'frontCenter',width:.46,drawn:'capFront'};}
+ if(/围裙/.test(p)&&/口袋/.test(p))return {face:'front',key:'frontCenter',width:.46,drawn:'apronPocket'};
+ if(/围裙/.test(p)&&/上部|胸/.test(p))return {face:'front',key:'leftChest',width:.2,drawn:'apronUpper'};
  if(/后领|领后|后脖/.test(p))return {face:'back',key:'upperBack',width:.45};
  if(/后背|背面|背部|后面|背后/.test(p))return {face:'back',key:'backCenter',width:.45};
  if(/左袖|左臂/.test(p))return {face:'front',key:'leftSleeve',width:.1};
@@ -143,12 +148,27 @@ export async function garmentCanvas(garment,bytes,frame,shared={}){
    const spec=m&&estimatedSopStandard(type,img.view.face,frameBox,{...m,points:found.points},{width:w,height:h},bodyWidth,reference.longSleeve),s=spec&&sopStructureFromStandard(spec,{width:w,height:h},bodyWidth);
    if(s){const move=p=>p&&{x:p.x+x,y:p.y+y};structure={...s,neck:move(s.neck),leftShoulder:move(s.leftShoulder),rightShoulder:move(s.rightShoulder),leftArmpit:move(s.leftArmpit),rightArmpit:move(s.rightArmpit),center:s.center+x,bounds,exclusions:s.exclusions.map(e=>({...e,x:e.x+x,y:e.y+y}))};source=m.armpitDetected?'estimated':'estimated-rough';}
   }
-  faces.push({face:img.view.face,x,y,width:w,height:h,crop:img.crop,trim:img.box,scale,standard:standard||null,bodyWidth,bodyCenter:structure?.center??x+w/2,bodyBasis:basis,structure,structureSource:source,sharedFrom:source==='shared'?borrowed.colorName:null,templateOnly,garmentAlpha:await alphaSamples(garmentLayer,w,h),accents:garmentAccents(analyzeLogoColors(tone.data,tone.info.width,tone.info.height))});
+  faces.push({face:img.view.face,structureType:type,x,y,width:w,height:h,crop:img.crop,trim:img.box,scale,standard:standard||null,bodyWidth,bodyCenter:structure?.center??x+w/2,bodyBasis:basis,structure,structureSource:source,sharedFrom:source==='shared'?borrowed.colorName:null,templateOnly,garmentAlpha:await alphaSamples(garmentLayer,w,h),accents:garmentAccents(analyzeLogoColors(tone.data,tone.info.width,tone.info.height))});
  }
  const meta=await sharp(frame).metadata();if(meta.width!==FRAME.width||meta.height!==FRAME.height)throw fail('效果图边框尺寸不匹配');
  return {bytes:await sharp(frame).composite(layers).png().toBuffer(),faces};
 }
+// Caps and aprons have no structure points: the catalog draws each print area with a sample logo, and the
+// logo takes that sample's center and fits its size (as in the WPS and simple batch pipelines). Customer
+// centimetres and body width do not apply; an area never drawn or confirmed is reported, never guessed.
+const DRAWN_KEYS={cap:{leftChest:'capFront',rightChest:'capFront',frontCenter:'capFront',leftSleeve:'capLeftSide',rightSleeve:'capRightSide',backCenter:'capBack',upperBack:'capBack'},apron:{leftChest:'apronUpper',rightChest:'apronUpper',frontCenter:'frontCenter'}};
+export const drawnFace=face=>MANUAL_STRUCTURES.includes(face?.standard?.structureType??face?.structureType);
+function drawnPlacement(face,info,ratio){
+ const spec=face.standard,type=spec?.structureType??face.structureType,keys=allowedPositions(type,face.face);
+ const key=info.drawn&&keys.includes(info.drawn)?info.drawn:DRAWN_KEYS[type][info.key],p=key&&spec?.positions.find(x=>x.key===key);
+ if(!p)throw fail(`该款没有确认过「${POSITION_LABELS[key]??POSITION_LABELS[info.drawn]??'该位置'}」，请到商品素材库画框并确认`);
+ const f=spec.garmentFrame,sx=face.crop.width*face.scale,sy=face.crop.height*face.scale;
+ const boxW=p.defaultSize.width*f.width*sx,boxH=p.defaultSize.height*f.height*sy,width=Math.min(boxW,boxH/ratio);
+ const x=face.x+((f.x+p.anchor.x*f.width)*face.crop.width-face.trim.left)*face.scale,y=face.y+((f.y+p.anchor.y*f.height)*face.crop.height-face.trim.top)*face.scale;
+ return {x,y,width,height:width*ratio,requested:false,sizeConflict:null,policy:PLACEMENT_POLICY,sizeCm:null,basis:'catalog-drawn',standard:true,rule:`按素材库画的「${POSITION_LABELS[key]}」位置和示例 Logo 大小放置`,warnings:[]};
+}
 export function initialPlacement(face,info,ratio=1,prompt='',options={}){
+ if(drawnFace(face)){const p=drawnPlacement(face,info,ratio);return {...p,x:p.x/FRAME.width,y:p.y/FRAME.height,width:p.width/FRAME.width};}
  const provisional=!(face.bodyWidth>0);const p=placementGeometry(provisional?{...face,bodyWidth:face.width*UNMEASURED_TORSO_SHARE}:face,info,ratio,prompt,options);if(provisional){if(p.requested)throw fail('此款尚未标定衣身，无法按客户厘米数精确放置，请在素材库确认左右腋点');p.sizeCm=null;p.basis='unconfirmed-preview';}return {...p,x:p.x/FRAME.width,y:p.y/FRAME.height,width:p.width/FRAME.width};
 }
 // Older UI marked every submitted layer manual, even when only its position changed.
@@ -204,7 +224,7 @@ export async function renderMockups(root,c,jobs,catalog){
     const id=hash(card.id+s.position).slice(0,24),prior=card.layers.find(l=>l.id===id&&l.artworkId===s.artId),keepPosition=prior?.positionManual??prior?.manual,keepSize=hasManualSize(prior,face,s.info);
     const initial=keepPosition&&keepSize?prior:initialPlacement(face,s.info,trimmed.box.height/trimmed.box.width,c.draft.artworks.find(a=>a.id===s.artId)?.prompt,{sizeReference:s.sizeReference});
     // A kept manual layout takes the face's current basis: confirming the points later must clear the preview state.
-    const basis=keepPosition&&keepSize?(face.bodyWidth>0?face.bodyBasis:'unconfirmed-preview'):initial.basis;
+    const basis=keepPosition&&keepSize?(drawnFace(face)?'catalog-drawn':face.bodyWidth>0?face.bodyBasis:'unconfirmed-preview'):initial.basis;
     if(basis==='unconfirmed-preview')warnings.push(s.position+'：此款衣身尚未标定，当前为可调整的比例预览；厘米尺寸需在素材库确认左右腋点。');
     const layer={id,artworkId:s.artId,jobId:s.job.id,sourceSHA256:s.file.sha256,position:s.position,face:s.info.face,x:keepPosition?prior.x:initial.x,y:keepPosition?prior.y:initial.y,width:keepSize?prior.width:initial.width,manual:prior?.manual||false,positionManual:!!keepPosition,sizeManual:!!keepSize,placementPolicy:PLACEMENT_POLICY,placementBasis:basis||prior?.placementBasis,sizeCm:initial.sizeCm||null,sizeConflict:!keepSize&&initial.sizeConflict||null,requested:!!(initial.requested??prior?.requested),rule:initial.rule||prior?.rule||null,asset,sourceAsset:asset,ratio:trimmed.box.height/trimmed.box.width};
     let w=Math.max(1,Math.round(layer.width*FRAME.width)),h=Math.max(1,Math.round(w*layer.ratio));
