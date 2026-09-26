@@ -46,4 +46,5 @@ def read(path):
     return [{"text": t, "score": s} for t, s in lines.items() if not any(t != x and t in x for x in lines)]
 
 
-print(json.dumps([read(p) for p in sys.argv[1:]], ensure_ascii=False))
+if __name__ == "__main__":
+    print(json.dumps([read(p) for p in sys.argv[1:]], ensure_ascii=False))

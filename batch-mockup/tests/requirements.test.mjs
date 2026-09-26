@@ -26,6 +26,17 @@ async function setup(t, handler) {
   const confirm=async(extra={})=>{const c=await get();return post('/api/requirements/confirm',{caseId:'T',requestId:randomUUID(),revision:c.revision,supplementRevision:c.supplement.revision,confirmedBy:'测试核对人',...extra})};
   return {root,server,base,bytes,post,get,analyze,save,confirm,calls:()=>calls};
 }
+test('OCR 服务：带令牌按顺序发图，返回每张图的文字；服务出错时抛错由识别流程跳过',async t=>{
+  const {createServer}=await import('node:http'),{configuredTextReader}=await import('../adapters/ocr.mjs');let seen;
+  const server=createServer((req,res)=>{let body='';req.on('data',c=>body+=c);req.on('end',()=>{seen={auth:req.headers.authorization,path:req.url,body:JSON.parse(body)};
+    if(seen.body.images.length===3){res.writeHead(500);return res.end('{}');}res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({lines:seen.body.images.map((_,n)=>[{text:'字'+n,score:.99}])}));});});
+  await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>new Promise(r=>server.close(r)));
+  const read=configuredTextReader({OCR_URL:`http://127.0.0.1:${server.address().port}`,OCR_TOKEN:'secret'});
+  assert.deepEqual(await read([{bytes:Buffer.from('a'),ext:'.png'},{bytes:Buffer.from('b'),ext:'.jpg'}]),[[{text:'字0',score:.99}],[{text:'字1',score:.99}]]);
+  assert.deepEqual([seen.auth,seen.path,seen.body.images.map(i=>[Buffer.from(i.data,'base64').toString(),i.ext])],['Bearer secret','/read',[['a','.png'],['b','.jpg']]]);
+  await assert.rejects(read([1,2,3].map(()=>({bytes:Buffer.from('x'),ext:'.png'}))),/HTTP 500/);
+  assert.equal(configuredTextReader({}),null);assert.throws(()=>configuredTextReader({OCR_URL:'http://x'}),/配置无效/);
+});
 test('识别前先读素材文字：结果附在请求末尾，按图片内容缓存，随草稿下发；读字失败照常识别',async t=>{
   const f=await setup(t),manifest=JSON.parse(await readFile(resolve(f.root,'manifest.json'),'utf8'));
   let reads=0;const readText=async images=>{reads++;return images.map(()=>[{text:'教  练',score:.99}])};
