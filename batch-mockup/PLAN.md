@@ -202,3 +202,12 @@ WPS 同步完成后，后台逐条预约尚无识别记录和草稿的有效原�
 - 验证：新副本重放 23 条近期需求 43 张图稿，全部通过草稿校验，只标 2 张 high（W79262e127d4f、U5cda1cc2023c，均为实际用 medium 出错的）；high 生图 4 张全部字形正确、外框规整、框内透明。并发 23 个识别请求会被 EvoLink 返回 402（余额约 293 积分，预扣超额），每批 4 个正常。
 - 复盘：一两周后运行 `output/patch-photo-20260926/high-quality-review.mts <起始日期> --images <目录>`，“手动重做”即识别漏判。
 - 回退：`output/patch-photo-20260926/upgrade-prompt.mts f6a8e74dc441e585591b48bd67b20ed272e80eddeffe7801d9d44a3b0ae41052 output/patch-photo-20260926/rollback-prompt.txt --apply`。
+
+
+### 2026-09-26 晚：帽子围裙画框合图、识图逐字转写与 OCR 红字
+
+- 问题：WPS 批量页的帽子合图不读素材库画框，还按上衣找腋点（W1a3a44c7f33a）；“更新效果图”点下去没有任何状态变化；Wf018fbb9465a 已透明的校徽因贴边被重复抠图糊坏；识图提示词要求“不要逐字转录原图文字”，生图模型自己猜字，出现抄错文字块、错字和编字（W03704、W78eca、U5cda、W45e6、W26c306 等）。
+- 改动：`464092a`（排队合成时先把卡片标成正在更新）、`6b70160`（帽子/围裙位置对应素材库画框，按示例 Logo 大小放置）、`db0ea64`（透明 ≥20% 且边缘一半以上透明即视为已透明，不再抠图）、`d487cc6`/`bf915d1`/`1c88079`（识别前用 RapidOCR 读素材文字，按内容缓存，作为参考交给模型并存入 analysis.imageText；需求理解中 OCR 文字标红，文字项里 OCR 与客户原文都没有的引号内容标橙底，人工修改改为蓝色；OCR 以 HTTP 服务运行，失败或未配置时照常识别）。识图提示词另行升级为逐字转写版（f6a8e74d → f9630cf6），在线上模型 gpt-6-sol/low 加 OCR 上 20 条回归无编造字（¥2.15）。
+- OCR 服务：Zeabur 项目 mockfits-ocr，部署在腾讯云新加坡 2C8G，`https://mockfits-ocr.zeabur.app`（令牌鉴权，每张约 1.8 秒）；线上 Web 与两个 worker 配 OCR_URL/OCR_TOKEN。
+- 发布：补丁叠在 `6ab741364fe789a2e8feea70`（`4e81975`，指纹 `48fe4dab…`）上，新部署 `6ab7bacb4fe789a2e8fef842`（`1c88079`，指纹 `285f4c09…`），13 个文件，先两个 worker 后 Web。干净检出 lint、tsc、vitest（1518）、test:requirements（65）、test:mockups（26）、test:workbench、test:batch-cloud、test:garment（12 组）全过；无排队付费任务，无数据库迁移；发布后三个容器 13/13 一致，三服务 RUNNING，health ready，新版 worker 心跳，页面 200，三个服务均有 OCR 变量。
+- 回退：`output/cap-mockup-release-20260926/rollback.json`（回到 `d-6ab74136`，恢复 WORKWEAR_BUILD_COMMIT；提示词回退方法见同文件），无需回退数据库。
