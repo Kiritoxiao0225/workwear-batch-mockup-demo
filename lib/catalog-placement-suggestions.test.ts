@@ -14,6 +14,13 @@ describe('editable placement suggestions', () => {
       }
     }
   });
+  it('confirms hand-drawn cap sides and back without structure points', () => {
+    const front = { ...suggestedPlacement('cap', 'front', frame), landmarks: [] };
+    front.positions.push(positionFromImageBox('capLeftSide', { x: .75, y: .2, width: .15, height: .2 }, frame));
+    expect(() => assertConfirmedStandard(front, 'front')).not.toThrow();
+    expect(() => assertConfirmedStandard({ ...suggestedPlacement('cap', 'back', frame), landmarks: [] }, 'back')).not.toThrow();
+    expect(() => assertConfirmedStandard({ ...front, positions: [positionFromImageBox('capBack', { x: .3, y: .2, width: .3, height: .2 }, frame)] }, 'front')).toThrow('不支持');
+  });
   it('places wearer left on image right and differentiates short sleeves, long sleeves, and vests', () => {
     const short = suggestedPlacement('polo', 'front', frame);
     const long = suggestedPlacement('polo', 'front', frame, true);

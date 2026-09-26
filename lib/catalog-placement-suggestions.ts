@@ -46,6 +46,8 @@ export function suggestedPlacement(structure: StructureType, face: 'front' | 'ba
   spec.landmarks = requiredLandmarks(structure).map((mark, i) => ({ ...mark, point: { x: landmarkPoints[i][0], y: landmarkPoints[i][1] } }));
   if (structure === 'cap') {
     if (face === 'front') { spec.positions = [position('capFront', .3, .24, .4, .28)]; spec.exclusions = [exclusion('brim', '帽檐避让', .06, .66, .88, .25)]; }
+    // Side positions are drawn by hand when a customer asks for them; the back sits above the strap opening.
+    else { spec.positions = [position('capBack', .3, .18, .4, .26)]; spec.exclusions = [exclusion('strap', '后开口 / 调节扣避让', .3, .56, .4, .44)]; }
     return standardSchema.parse(spec);
   }
   if (structure === 'apron') {

@@ -2,7 +2,7 @@
 import { fetchApi, readApiJson } from '@/lib/client/api-response';
 
 import { useEffect, useState } from 'react';
-import { POSITION_LABELS, type CatalogItem, type CatalogView, type PlacementStandard, type ReusePreview } from '@/lib/catalog';
+import { MANUAL_STRUCTURES, POSITION_LABELS, type CatalogItem, type CatalogView, type PlacementStandard, type ReusePreview } from '@/lib/catalog';
 
 export function StandardPreview({ item, crop, specification }: { item: CatalogItem; crop: CatalogView['crop']; specification: PlacementStandard | null }) {
   const frame = specification?.garmentFrame;
@@ -51,7 +51,7 @@ export function CatalogReuse({ variantId, close, saved }: { variantId: string; c
     {error && <div className="error-banner" role="alert">{error}</div>}
     {result ? <div className="catalog-reuse-success" role="status"><h3>{result}</h3><p>这些颜色现在跟随代表色，效果图已改用这套位置。以后代表色改了位置，会再到这里核对后生效；某个颜色换图后需要重新核对。</p><button className="button primary" type="button" onClick={close}>完成</button></div> : !preview ? <p className="catalog-reuse-loading">{error ? '检查未完成，可以返回后重试。' : '正在读取真实图片，比较轮廓并计算位置…'}</p> : <>
       <div className="catalog-reuse-scroll">
-        <div className="catalog-reuse-reference"><div><strong>代表颜色的已确认位置</strong><p>绿色框是可印范围，黄色框是默认图案大小。请对照领口、门襟、口袋核对下面各色；轮廓检查不代表这些结构已自动识别。</p><p>下面是各色套用后的位置，勾选的颜色在点右下角「确认无误」后才生效。已跟随最新版、单独打点的颜色不会改动；「需要核对」的颜色轮廓与代表色有差异，看过后再勾选。</p></div><div className="catalog-reuse-faces">{preview.source.views.filter(v => v.latest?.status === 'confirmed' && v.latest.origin === 'manual').map(v => <div key={v.id}><small>{v.face === 'front' ? '正面' : '背面'}</small><StandardPreview item={preview.source} crop={v.crop} specification={v.latest!.specification} /></div>)}</div></div>
+        <div className="catalog-reuse-reference"><div><strong>代表颜色的已确认位置</strong><p>绿色框是可印范围，黄色框是默认图案大小。{preview.source.views.some(v => v.latest && MANUAL_STRUCTURES.includes(v.latest.specification.structureType)) ? '请对照帽檐、缝线、口袋边缘核对下面各色；' : '请对照领口、门襟、口袋核对下面各色；'}轮廓检查不代表这些结构已自动识别。</p><p>下面是各色套用后的位置，勾选的颜色在点右下角「确认无误」后才生效。已跟随最新版、单独打点的颜色不会改动；「需要核对」的颜色轮廓与代表色有差异，看过后再勾选。</p></div><div className="catalog-reuse-faces">{preview.source.views.filter(v => v.latest?.status === 'confirmed' && v.latest.origin === 'manual').map(v => <div key={v.id}><small>{v.face === 'front' ? '正面' : '背面'}</small><StandardPreview item={preview.source} crop={v.crop} specification={v.latest!.specification} /></div>)}</div></div>
         <div className="catalog-reuse-grid">{preview.colors.map(color => {
           const candidates = color.faces.filter(f => f.checkId);
           const checked = candidates.length > 0 && candidates.every(f => selected.has(f.checkId!));

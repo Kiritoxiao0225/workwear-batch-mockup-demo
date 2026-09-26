@@ -8,7 +8,7 @@ export const STRUCTURE_LABELS = {
 export type StructureType = keyof typeof STRUCTURE_LABELS;
 export const POSITION_LABELS = {
   leftChest: '左胸', rightChest: '右胸', frontCenter: '正前面',
-  leftSleeve: '左袖', rightSleeve: '右袖', upperBack: '后背上方', backCenter: '后背居中', capFront: '帽子正面', apronUpper: '围裙上部', apronPocket: '围裙口袋',
+  leftSleeve: '左袖', rightSleeve: '右袖', upperBack: '后背上方', backCenter: '后背居中', capFront: '帽子正面', capLeftSide: '帽子左侧', capRightSide: '帽子右侧', capBack: '帽子后面', apronUpper: '围裙上部', apronPocket: '围裙口袋',
 } as const;
 export type PositionKey = keyof typeof POSITION_LABELS;
 export const pointSchema = z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).strict();
@@ -23,7 +23,7 @@ export const standardSchema = z.object({
   measuredWidthCm: z.number().positive().max(300).nullable(),
   landmarks: z.array(z.object({ key: z.string().min(1).max(60), label: z.string().min(1).max(60), point: pointSchema }).strict()).max(40),
   positions: z.array(z.object({
-    key: z.enum(['leftChest', 'rightChest', 'frontCenter', 'leftSleeve', 'rightSleeve', 'upperBack', 'backCenter', 'capFront', 'apronUpper', 'apronPocket']),
+    key: z.enum(['leftChest', 'rightChest', 'frontCenter', 'leftSleeve', 'rightSleeve', 'upperBack', 'backCenter', 'capFront', 'capLeftSide', 'capRightSide', 'capBack', 'apronUpper', 'apronPocket']),
     anchor: pointSchema, printableArea: boxSchema,
     defaultSize: z.object({ width: z.number().positive().max(1), height: z.number().positive().max(1) }).strict(),
     // SOP garments only: the person's fine-tuning of the print center, in cm from the SOP position.
@@ -66,13 +66,44 @@ export function projectStandard(source: PlacementStandard, alignment: CatalogAli
 export function emptyStandard(): PlacementStandard {
   return { schemaVersion: 1, structureType: 'unknown', garmentFrame: { x: 0, y: 0, width: 1, height: 1 }, measuredWidthCm: null, landmarks: [], positions: [], exclusions: [], note: '' };
 }
+/** Structures marked by drawing print areas and exclusions straight on the photo, without structure points. */
+export const MANUAL_STRUCTURES: StructureType[] = ['cap', 'apron'];
 export function allowedPositions(structure: StructureType, face: 'front' | 'back'): PositionKey[] {
   if (structure === 'unknown') return [];
-  if (structure === 'cap') return face === 'front' ? ['capFront'] : [];
+  // Cap sides are the wearer's left and right, seen at the edges of the front photo.
+  if (structure === 'cap') return face === 'front' ? ['capFront', 'capLeftSide', 'capRightSide'] : ['capBack'];
   if (structure === 'apron') return face === 'front' ? ['apronUpper', 'apronPocket', 'frontCenter'] : [];
   if (face === 'back') return ['upperBack', 'backCenter'];
   const keys: PositionKey[] = ['leftChest', 'rightChest', 'frontCenter'];
   return structure === 'vest' ? keys : [...keys, 'leftSleeve', 'rightSleeve'];
+}
+type ProductionSlot = 'frontCenter' | 'leftChest' | 'rightChest' | 'back' | 'leftSleeve' | 'rightSleeve';
+/** On caps and aprons a clothing position (as customers and production slots name it) lands on a drawn position. */
+const DRAWN_SLOTS: Record<'cap' | 'apron', Partial<Record<ProductionSlot, PositionKey>>> = {
+  cap: { frontCenter: 'capFront', leftChest: 'capFront', rightChest: 'capFront', leftSleeve: 'capLeftSide', rightSleeve: 'capRightSide', back: 'capBack' },
+  apron: { frontCenter: 'frontCenter', leftChest: 'apronUpper', rightChest: 'apronUpper' },
+};
+/**
+ * The calibrated position a production slot uses. An explicitly chosen position wins when the structure offers it;
+ * without a known structure an explicit cap or apron position is still honoured.
+ */
+export function slotPositionKey(slot: ProductionSlot, requested?: PositionKey, structure?: StructureType): PositionKey {
+  const face = slot === 'back' ? 'back' : 'front';
+  if (requested && structure && structure !== 'unknown' && allowedPositions(structure, face).includes(requested)) return requested;
+  if (structure === 'cap' || structure === 'apron') return DRAWN_SLOTS[structure][slot] ?? (slot === 'back' ? 'backCenter' : slot);
+  if (slot === 'back') return requested === 'upperBack' || requested === 'capBack' ? requested : 'backCenter';
+  return requested && DRAWN_POSITION_KEYS.has(requested) ? requested : slot;
+}
+const DRAWN_POSITION_KEYS = new Set<PositionKey>(['capFront', 'capLeftSide', 'capRightSide', 'capBack', 'apronUpper', 'apronPocket']);
+/** Production slots that stand for a distinct drawn position on this structure, in slot order. */
+export function drawnSlots(structure: StructureType): Array<{ slot: ProductionSlot; key: PositionKey }> {
+  if (structure !== 'cap' && structure !== 'apron') return [];
+  const seen = new Set<PositionKey>();
+  return (['frontCenter', 'leftChest', 'rightChest', 'back', 'leftSleeve', 'rightSleeve'] as const).flatMap(slot => {
+    const key = DRAWN_SLOTS[structure][slot];
+    if (!key || seen.has(key)) return [];
+    seen.add(key); return [{ slot, key }];
+  });
 }
 export function requiredLandmarks(structure: StructureType) {
   if (structure === 'apron') return [{ key: 'bibTop', label: '围裙上缘中心' }, { key: 'bibLeft', label: '画面左上缘' }, { key: 'bibRight', label: '画面右上缘' }, { key: 'waistLeft', label: '画面左腰点' }, { key: 'waistRight', label: '画面右腰点' }, { key: 'hemCenter', label: '下摆中心' }];
@@ -83,7 +114,8 @@ export function requiredLandmarks(structure: StructureType) {
 export function assertConfirmedStandard(spec: PlacementStandard, face: 'front' | 'back') {
   if (spec.structureType === 'unknown') throw new Error('请先确认服装结构类型');
   const keys = new Set(spec.landmarks.map(p => p.key));
-  for (const required of requiredLandmarks(spec.structureType)) if (!keys.has(required.key)) throw new Error(`缺少结构点：${required.label}`);
+  // Caps and aprons are marked by drawing the print areas directly; their structure points place nothing.
+  if (!MANUAL_STRUCTURES.includes(spec.structureType)) for (const required of requiredLandmarks(spec.structureType)) if (!keys.has(required.key)) throw new Error(`缺少结构点：${required.label}`);
   if (keys.size !== spec.landmarks.length) throw new Error('结构点 key 重复');
   if (!spec.positions.length) throw new Error('至少需要一个已校准的印制位置');
   if (new Set(spec.positions.map(p => p.key)).size !== spec.positions.length) throw new Error('印制位置重复');
