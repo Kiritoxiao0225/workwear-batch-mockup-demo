@@ -9,11 +9,17 @@ const polo: SopStructure = {
 };
 
 describe('SOP placement rules', () => {
-  it('uses the SOP default widths: chest 8 cm (height ≤ 9), back 26 cm (height ≤ 22)', () => {
-    expect(sopPrintSize('leftChest', .3)).toEqual({ width: 8, height: 2.4 });
-    expect(sopPrintSize('leftChest', 1.5)).toEqual({ width: 6, height: 9 });
+  it('uses the default sizes: chest 8 cm wide and at most 6 cm tall, back 26 cm (height ≤ 22)', () => {
+    expect(sopPrintSize('leftChest', .5)).toEqual({ width: 8, height: 4 });
+    expect(sopPrintSize('leftChest', 1)).toEqual({ width: 6, height: 6 });
+    expect(sopPrintSize('leftChest', 1.5)).toEqual({ width: 4, height: 6 });
     expect(sopPrintSize('backCenter', .3).width).toBe(26);
     expect(sopPrintSize('backCenter', 1).height).toBe(22);
+  });
+  it('widens flat chest logos evenly from 8 cm at 3:1 to 10 cm at 5:1', () => {
+    expect(sopPrintSize('leftChest', 1 / 3).width).toBeCloseTo(8);
+    expect(sopPrintSize('rightChest', .25).width).toBeCloseTo(9);
+    expect(sopPrintSize('leftChest', 1 / 7).width).toBeCloseTo(10);
   });
   it('centers chest logos between the 2nd and 3rd button and moves logos taller than 6 cm to the 3rd button', () => {
     const buttons = { ...polo, button2: { x: 500, y: 290 }, button3: { x: 500, y: 360 } };

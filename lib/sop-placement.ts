@@ -4,7 +4,8 @@ import type { Box, PlacementStandard, Point, PositionKey, StructureType } from '
 // preview and the composite, so what the catalog shows is what a mockup uses.
 // v2: confirmed armpits set the body width, and sleeve-merged torso measurements are rejected.
 // v3: a tall back print keeps its top edge 8 cm below the neck.
-export const SOP_PLACEMENT_POLICY = 'sop-v3';
+// v4: chest logos default to at most 6 cm tall, flat ones up to 10 cm wide.
+export const SOP_PLACEMENT_POLICY = 'sop-v4';
 // Catalog photos are ghost-mannequin renders: the visible torso is the body's projected
 // width, not a flat half-chest. The SOP examples (chest 9 cm ≈ 22%, back 28 cm ≈ 70% of
 // that width) and the photos' own shoulder/placket proportions both agree on about 40 cm.
@@ -42,10 +43,19 @@ export type SopStructure = {
   bodyWidth: number; center: number; bounds: Box; exclusions: Box[];
 };
 
-/** Default printed size (cm) when the customer gives none: SOP 2.1 包印最大尺寸范围. */
+/**
+ * Width limit of a chest logo: 8 cm up to 3:1, widening evenly to 10 cm at 5:1 and flatter, so a long
+ * line of text is not left 1 cm tall and two almost equally flat logos never differ by a jump.
+ */
+export const chestWidthLimit = (ratio: number) => 8 + Math.min(2, Math.max(0, 1 / ratio - 3));
+
+/**
+ * Default printed size (cm) when the customer gives none. SOP 2.1 lets a chest print reach 8×9 cm,
+ * but as a default that made square badges 8×8.7 cm; chest logos stay within 6 cm of height.
+ */
 export function sopPrintSize(key: SopKey, ratio: number) {
   if (!Number.isFinite(ratio) || ratio <= 0) throw new Error(`图案宽高比无效：${ratio}`);
-  const [width, maxHeight] = key === 'leftChest' || key === 'rightChest' ? [8, 9]
+  const [width, maxHeight] = key === 'leftChest' || key === 'rightChest' ? [chestWidthLimit(ratio), 6]
     : key === 'backCenter' ? [26, 22] : key === 'upperBack' ? [8, 4] : key === 'frontCenter' ? [24, 28] : [6, 6];
   const w = Math.min(width, maxHeight / ratio);
   return { width: w, height: w * ratio };

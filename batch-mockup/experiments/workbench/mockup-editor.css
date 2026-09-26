@@ -4,3 +4,7 @@ table{min-width:1950px}.garment-card{border:1px solid #d8e3dc;border-radius:8px;
 
 /* Placement notes explain the SOP rule used; shown while adjusting, not in the compact table. */
 /* Placement notes explain, they ask nothing: folded so the enlarged mock-up keeps its room. */.garment-hints .hint{font-size:11px;line-height:1.6;color:#5f7769;margin:4px 0 0}.garment-hints summary{font-size:11px;color:#5f7769;cursor:pointer}.garment-card:not(.garment-expanded)>.garment-hints{display:none}.garment-expanded>.garment-hints{flex-shrink:0;margin:0}
+/* Wide screens: the enlarged mock-up fills the window on the left and every control stacks in a
+   300px column on the right, so the picture is no longer squeezed by rows of controls. The preview
+   spans all rows; its size containment keeps it from stretching the column's rows. */
+@media (min-width:1100px){.garment-expanded{display:grid;grid-template-columns:minmax(0,1fr) 300px;grid-template-rows:repeat(19,min-content) 1fr;column-gap:20px;row-gap:0;align-content:stretch;inset:12px}.garment-expanded>*{grid-column:2;margin:0 0 10px}.garment-expanded>.garment-preview{grid-column:1;grid-row:1/-1;margin:0}.garment-expanded .garment-selects{grid-template-columns:minmax(0,1fr);max-width:none}.garment-expanded .garment-tools{flex-wrap:wrap}.garment-expanded>.issue{max-height:160px}}

@@ -74,8 +74,8 @@ test('未匹配款色写明原因，素材库补齐后自动匹配；宽高冲�
 
 const face={x:0,y:0,width:900,height:1000,bodyWidth:550,bodyCenter:450,bodyBasis:'alpha-torso-v1',crop:{width:900,height:1000},trim:{left:0,top:0},scale:1};
 test('SOP默认尺寸：胸标宽8厘米（高不超9厘米），后背宽26厘米（高不超22厘米），衣袖不作为衣身宽度',()=>{
- for(const ratio of [.25,1,2]){const p=placementGeometry(face,{key:'leftChest',face:'front'},ratio);assert.ok(p.sizeCm.width<=8.001&&p.sizeCm.height<=9.001);assert.ok(Math.abs(p.height/p.width-ratio)<1e-9);assert.ok(p.x-p.width/2>face.bodyCenter);}
- assert.deepEqual(placementGeometry(face,{key:'leftChest',face:'front'},.25).sizeCm,{width:8,height:2});
+ for(const ratio of [.25,1,2]){const p=placementGeometry(face,{key:'leftChest',face:'front'},ratio);assert.ok(p.sizeCm.width<=9.001&&p.sizeCm.height<=6.001);assert.ok(Math.abs(p.height/p.width-ratio)<1e-9);assert.ok(p.x-p.width/2>face.bodyCenter);}
+ assert.deepEqual(placementGeometry(face,{key:'leftChest',face:'front'},.25).sizeCm,{width:9,height:2.25});
  const back=placementGeometry(face,{key:'backCenter',face:'back'},2);assert.equal(back.sizeCm.height,22);assert.equal(back.sizeCm.width,11);
  assert.equal(placementGeometry(face,{key:'backCenter',face:'back'},.3).sizeCm.width,26);
  assert.throws(()=>placementGeometry({...face,bodyWidth:null},{key:'leftChest',face:'front'},1),/衣身宽度/);
@@ -168,7 +168,7 @@ test('SOP 2.1：客户没写尺寸时按参考图比例定宽（不标注），�
  const p=placementGeometry(face,{key:'leftChest',face:'front'},.3,'尺寸：原需求未指定图稿尺寸。',{sizeReference:{imageId:'i',logoToBody:.22,note:'图2实拍左胸Logo约占衣身宽22%'}});
  assert.ok(Math.abs(p.sizeCm.width-8.8)<1e-9);assert.equal(p.referenced,true);assert.equal(p.requested,false);assert.match(p.rule,/^尺寸按参考图比例（图2实拍/);
  const big=placementGeometry(face,{key:'leftChest',face:'front'},.3,'',{sizeReference:{imageId:'i',logoToBody:.6,note:''}});
- assert.equal(big.sizeCm.width,8);assert.equal(big.referenced,false);assert.match(big.warnings[0],/超出该位置可印范围/);
+ assert.ok(Math.abs(big.sizeCm.width-(8+1/3))<1e-9,'退回默认尺寸（3.3:1 的图稿宽约 8.3 厘米）');assert.equal(big.referenced,false);assert.match(big.warnings[0],/超出该位置可印范围/);
  // A customer size always wins over the reference ratio.
  assert.equal(placementGeometry(face,{key:'leftChest',face:'front'},.3,'尺寸：宽7厘米',{sizeReference:{imageId:'i',logoToBody:.22,note:''}}).sizeCm.width,7);
 });
