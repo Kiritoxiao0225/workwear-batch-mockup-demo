@@ -7,7 +7,7 @@ import {faceStructurePoints} from '../../lib/server/catalog-structure-recognitio
 import {sharedStyleStandards,styleConfirmationKey} from '../../lib/server/catalog-shared-standard.ts';
 import {catalogReferenceType,estimatedSopStandard,hasTemplateLandmarks} from '../../lib/catalog-placement-suggestions.ts';
 import {MANUAL_STRUCTURES,POSITION_LABELS,allowedPositions} from '../../lib/catalog.ts';
-import {PROJECTED_BODY_WIDTH_CM,SOP_STRUCTURES,UNMEASURED_TORSO_SHARE,plausibleTorso,sopStructureFromStandard} from '../../lib/sop-placement.ts';
+import {PROJECTED_BODY_WIDTH_CM,SOP_STRUCTURES,UNMEASURED_TORSO_SHARE,moveSopStructure,plausibleTorso,sopStructureFromStandard} from '../../lib/sop-placement.ts';
 import {placementGeometry,requestedDimensions,PLACEMENT_POLICY} from './mockup-placement.mjs';
 import {clearFaintSpecks} from '../adapters/production-images.mjs';
 import {alphaSamples,annotationOverlay,annotationText,colorIssue,irregularShape,outsideGarment} from './mockup-checks.mjs';
@@ -140,13 +140,14 @@ export async function garmentCanvas(garment,bytes,frame,shared={}){
   let bodyWidth=alphaRatio?alphaRatio*img.crop.width*scale:null,basis=alphaRatio?'alpha-torso-v1':'unconfirmed-preview',structure=null,source='fallback';
   if(standard&&SOP_STRUCTURES.includes(standard.structureType)){
    const f=standard.garmentFrame,origin=toFrame({x:f.x,y:f.y}),s=sopStructureFromStandard(standard,{width:f.width*img.crop.width*scale,height:f.height*img.crop.height*scale},null);
-   if(s){const move=p=>p&&{x:p.x+origin.x,y:p.y+origin.y};structure={...s,neck:move(s.neck),leftShoulder:move(s.leftShoulder),rightShoulder:move(s.rightShoulder),leftArmpit:move(s.leftArmpit),rightArmpit:move(s.rightArmpit),button2:move(s.button2),button3:move(s.button3),center:s.center+origin.x,bounds,exclusions:s.exclusions.map(e=>({...e,x:e.x+origin.x,y:e.y+origin.y}))};source=own?'confirmed':'shared';bodyWidth=s.bodyWidth;basis='confirmed-armpits';}
+   if(s){structure=moveSopStructure(s,origin.x,origin.y,bounds);source=own?'confirmed':'shared';bodyWidth=s.bodyWidth;basis='confirmed-armpits';}
   }
   if(!structure){
    // Unconfirmed faces use the same estimated standard the catalog shows as its suggestion, with the points recognized on the image.
    const found=m&&await faceStructurePoints({key:imageKey??=createHash('sha256').update(bytes).digest('hex'),load:async()=>bytes},img.view.crop,img.view.face,type,m.points,m.center);
    const spec=m&&estimatedSopStandard(type,img.view.face,frameBox,{...m,points:found.points},{width:w,height:h},bodyWidth,reference.longSleeve),s=spec&&sopStructureFromStandard(spec,{width:w,height:h},bodyWidth);
-   if(s){const move=p=>p&&{x:p.x+x,y:p.y+y};structure={...s,neck:move(s.neck),leftShoulder:move(s.leftShoulder),rightShoulder:move(s.rightShoulder),leftArmpit:move(s.leftArmpit),rightArmpit:move(s.rightArmpit),center:s.center+x,bounds,exclusions:s.exclusions.map(e=>({...e,x:e.x+x,y:e.y+y}))};source=m.armpitDetected?'estimated':'estimated-rough';}
+   // Every point moves with the face, recognized buttons included (they were left in face pixels before sop-v5).
+   if(s){structure=moveSopStructure(s,x,y,bounds);source=m.armpitDetected?'estimated':'estimated-rough';}
   }
   faces.push({face:img.view.face,structureType:type,x,y,width:w,height:h,crop:img.crop,trim:img.box,scale,standard:standard||null,bodyWidth,bodyCenter:structure?.center??x+w/2,bodyBasis:basis,structure,structureSource:source,sharedFrom:source==='shared'?borrowed.colorName:null,templateOnly,garmentAlpha:await alphaSamples(garmentLayer,w,h),accents:garmentAccents(analyzeLogoColors(tone.data,tone.info.width,tone.info.height))});
  }

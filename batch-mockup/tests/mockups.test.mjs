@@ -73,11 +73,11 @@ test('未匹配款色写明原因，素材库补齐后自动匹配；宽高冲�
 });
 
 const face={x:0,y:0,width:900,height:1000,bodyWidth:550,bodyCenter:450,bodyBasis:'alpha-torso-v1',crop:{width:900,height:1000},trim:{left:0,top:0},scale:1};
-test('SOP默认尺寸：胸标宽8厘米（高不超9厘米），后背宽26厘米（高不超22厘米），衣袖不作为衣身宽度',()=>{
+test('SOP默认尺寸：胸标宽8厘米（高不超6厘米），后背宽28厘米（高不超22厘米，竖版可到28厘米），衣袖不作为衣身宽度',()=>{
  for(const ratio of [.25,1,2]){const p=placementGeometry(face,{key:'leftChest',face:'front'},ratio);assert.ok(p.sizeCm.width<=9.001&&p.sizeCm.height<=6.001);assert.ok(Math.abs(p.height/p.width-ratio)<1e-9);assert.ok(p.x-p.width/2>face.bodyCenter);}
  assert.deepEqual(placementGeometry(face,{key:'leftChest',face:'front'},.25).sizeCm,{width:9,height:2.25});
- const back=placementGeometry(face,{key:'backCenter',face:'back'},2);assert.equal(back.sizeCm.height,22);assert.equal(back.sizeCm.width,11);
- assert.equal(placementGeometry(face,{key:'backCenter',face:'back'},.3).sizeCm.width,26);
+ const back=placementGeometry(face,{key:'backCenter',face:'back'},2);assert.equal(back.sizeCm.height,28);assert.equal(back.sizeCm.width,14);
+ assert.equal(placementGeometry(face,{key:'backCenter',face:'back'},.3).sizeCm.width,28);
  assert.throws(()=>placementGeometry({...face,bodyWidth:null},{key:'leftChest',face:'front'},1),/衣身宽度/);
 });
 test('明确尺寸换算单位；宽高与图稿比例冲突时按宽等比放置，不悄悄缩小客户尺寸',()=>{
@@ -88,15 +88,16 @@ test('明确尺寸换算单位；宽高与图稿比例冲突时按宽等比放�
  assert.equal(placementGeometry(face,{key:'leftChest',face:'front'},.45,'尺寸：宽2.3厘米、高1厘米').sizeConflict,null);
  assert.throws(()=>placementGeometry(face,{key:'leftChest',face:'front'},1,'尺寸：宽40cm'),/超出可印区域/);assert.throws(()=>placementGeometry(face,{key:'leftChest',face:'front'},.3,'尺寸：宽21cm'),/超出可印区域/);
 });
-test('结构点决定位置，避让区（拉链）生效且只做最小移动',()=>{
+test('结构点（肩线到下摆）决定位置，避让区（拉链）生效且只做最小移动',()=>{
  const px=face.bodyWidth/40,pt=(x,y)=>({x,y});
  const structure={structureType:'jacket',neck:pt(450,120),leftShoulder:pt(170,200),rightShoulder:pt(730,200),leftArmpit:pt(175,430),rightArmpit:pt(725,430),bodyWidth:550,center:450,bounds:{x:0,y:0,width:900,height:1000},exclusions:[{x:450-2.5*px,y:120,width:5*px,height:880}]};
  const p=placementGeometry({...face,structure,structureSource:'confirmed'},{key:'leftChest',face:'front'},.3);
- assert.equal(p.standard,true);assert.ok(Math.abs(p.y-(120+9.5*px))<1e-6);assert.ok(p.x-p.width/2>=450+2.5*px);
+ // sop-v5: a zipped jacket's chest logo sits 22% of the way from the shoulder line (200) to the hem (1000), no longer 9.5 cm below its standing collar.
+ assert.equal(p.standard,true);assert.ok(Math.abs(p.y-376)<1e-6);assert.equal(p.rule,'肩线至下摆22%处');assert.ok(p.x-p.width/2>=450+2.5*px);
  // A 17 cm wide customer logo would touch the zipper; it moves outward instead of shrinking.
  const wide=placementGeometry({...face,structure,structureSource:'confirmed'},{key:'leftChest',face:'front'},.25,'尺寸：宽17厘米');
  assert.ok(Math.abs(wide.x-wide.width/2-(450+2.5*px))<.25*px+1e-6);assert.equal(wide.sizeCm.width,17);assert.deepEqual(wide.warnings,[]);
- const back=placementGeometry({...face,face:'back',structure,structureSource:'confirmed'},{key:'backCenter',face:'back'},.3);assert.ok(Math.abs(back.y-315)<1e-6);assert.equal(back.x,450);
+ const back=placementGeometry({...face,face:'back',structure,structureSource:'confirmed'},{key:'backCenter',face:'back'},.3);assert.ok(Math.abs(back.y-400)<1e-6);assert.equal(back.x,450);
 });
 test('未标定衣身保留可调预览但不冒充厘米准确；明确厘米需求必须校准',()=>{
  const p=initialPlacement({...face,bodyWidth:null},{key:'leftChest',face:'front'},2);assert.equal(p.sizeCm,null);assert.equal(p.basis,'unconfirmed-preview');assert.throws(()=>initialPlacement({...face,bodyWidth:null},{key:'leftChest',face:'front'},2,'尺寸：高7cm'),/标定衣身/);

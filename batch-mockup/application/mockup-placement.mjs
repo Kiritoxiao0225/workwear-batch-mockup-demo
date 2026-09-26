@@ -17,7 +17,7 @@ const REQUESTED_MAX_WIDTH={leftChest:20,rightChest:20,leftSleeve:12,rightSleeve:
 // Last resort when neither a confirmed standard nor a silhouette measurement exists.
 export function fallbackStructure(face){
  const c=face.bodyCenter??face.x+face.width/2,b=face.bodyWidth,span=face.height*.43,top=face.y;
- return {structureType:'unknown',neck:{x:c,y:top+span*(face.face==='back'?.07:.25)},leftShoulder:{x:c-b*.55,y:top+span*.3},rightShoulder:{x:c+b*.55,y:top+span*.3},leftArmpit:{x:c-b/2,y:top+span},rightArmpit:{x:c+b/2,y:top+span},bodyWidth:b,center:c,bounds:{x:face.x,y:face.y,width:face.width,height:face.height},exclusions:[]};
+ return {structureType:'unknown',neck:{x:c,y:top+span*(face.face==='back'?.07:.25)},leftShoulder:{x:c-b*.55,y:top+span*.3},rightShoulder:{x:c+b*.55,y:top+span*.3},leftArmpit:{x:c-b/2,y:top+span},rightArmpit:{x:c+b/2,y:top+span},bodyWidth:b,center:c,hem:face.y+face.height,bounds:{x:face.x,y:face.y,width:face.width,height:face.height},exclusions:[]};
 }
 // Width (px) from a sleeve logo's inner edge to the sleeve outline on that row, from the placed garment alpha.
 function sleeveRoom(face,y,inner,side){
@@ -35,7 +35,7 @@ export function placementGeometry(face,info,ratio,prompt='',{sizeReference=null}
   width=requested.width??requested.height/ratio;height=requested.height??width*ratio;
   // Customer sizes are often rounded; keep the width and scale proportionally instead of stretching the logo.
   if(requested.width&&requested.height&&Math.abs(height/width-ratio)/ratio>.05){sizeConflict={width:requested.width,height:requested.height};height=width*ratio;}
- }else({width,height}=sopPrintSize(info.key,ratio));
+ }else({width,height}=sopPrintSize(info.key,ratio,structure.structureType));
  // SOP 2.1: without a customer size, a reference photo's logo-to-body ratio sets the width (a soft basis, never annotated).
  let referenceRule='',referenceWarning=null;
  if(!requested&&sizeReference){const w=sizeReference.logoToBody*PROJECTED_BODY_WIDTH_CM;

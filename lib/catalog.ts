@@ -28,6 +28,8 @@ export const standardSchema = z.object({
     defaultSize: z.object({ width: z.number().positive().max(1), height: z.number().positive().max(1) }).strict(),
     // SOP garments only: the person's fine-tuning of the print center, in cm from the SOP position.
     offsetCm: z.object({ x: z.number().min(-40).max(40), y: z.number().min(-40).max(40) }).strict().optional(),
+    // The placement rule version that offset was set against; absent means sop-v4, the version offsets were introduced in.
+    offsetPolicy: z.string().regex(/^sop-v\d+$/).optional(),
   }).strict()).max(12),
   exclusions: z.array(z.object({ id: z.string().min(1).max(60), label: z.string().min(1).max(80), area: boxSchema }).strict()).max(40),
   note: z.string().max(2000),

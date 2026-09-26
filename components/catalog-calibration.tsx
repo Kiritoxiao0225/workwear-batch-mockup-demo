@@ -8,7 +8,7 @@ import { CatalogImagePreview } from '@/components/catalog-image-preview';
 import { catalogApronRecognitionResponseSchema } from '@/lib/catalog-apron-recognition';
 import { CatalogReuse } from '@/components/catalog-reuse';
 import { catalogReferenceType, hasTemplateLandmarks, positionFromImageBox, sopPositionKeys, structureRecognitionSchema, suggestedPlacement, type CatalogPlacementPreview } from '@/lib/catalog-placement-suggestions';
-import { PROJECTED_BODY_WIDTH_CM, SOP_STRUCTURES, describeSopOffset, sopStandardPositions } from '@/lib/sop-placement';
+import { PROJECTED_BODY_WIDTH_CM, SOP_PLACEMENT_POLICY, SOP_STRUCTURES, describeSopOffset, sopStandardPositions } from '@/lib/sop-placement';
 
 type Layer = 'all' | 'placement' | 'structure';
 type Handle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
@@ -78,8 +78,8 @@ const offsetValue = (v: number) => Math.round(Math.max(-40, Math.min(40, v)) * 1
 function withOffset(spec: PlacementStandard, key: PositionKey, offset: Point | null): PlacementStandard {
   return { ...spec, positions: spec.positions.map(p => {
     if (p.key !== key) return p;
-    const next = { ...p }; delete next.offsetCm;
-    return offset && (offset.x || offset.y) ? { ...next, offsetCm: { x: offsetValue(offset.x), y: offsetValue(offset.y) } } : next;
+    const next = { ...p }; delete next.offsetCm; delete next.offsetPolicy;
+    return offset && (offset.x || offset.y) ? { ...next, offsetCm: { x: offsetValue(offset.x), y: offsetValue(offset.y) }, offsetPolicy: SOP_PLACEMENT_POLICY } : next;
   }) };
 }
 const landmarkLabel = (key: string, label: string, face: 'front' | 'back') => key === 'neckCenter' ? (face === 'front' ? '前领口中心' : '后领中心') : label;
@@ -610,7 +610,7 @@ export function CatalogCalibration({ detail, preview, style, user, close, saved,
       {editable && sopDerived(spec) && !needsBoundary && <div className="cal-suggestion-note"><strong>结构点识别</strong><p>{structureNotice || '肩点、腋点按衣服轮廓识别，领口中心和扣位由看图模型识别。点击后替换正反面结构点，保存确认后才生效。'}</p><button type="button" className="button" disabled={recognizingStructure || drawingBoundaryId !== null} onClick={() => void recognizeStructure()}>{recognizingStructure ? '识别中…' : '重新识别结构点'}</button></div>}
       {spec.structureType === 'apron' && view.face === 'front' && user.role !== 'viewer' && detail.isCurrent && !historical && <div className="cal-manual-ai"><button type="button" className="button" disabled={busy || recognizing || drawingBoundaryId !== null} onClick={() => { if (dirty && !window.confirm('AI 给的框会替换当前未保存的调整，继续？')) return; setRecognitionAttempt(current => current + 1); }}>{recognizing ? '识别中…' : '让 AI 试着框一下'}</button><small>较慢，也常不准；给出的框仍需核对。</small></div>}
       {manual && <ManualMarks spec={spec} face={view.face} editable={editable} drawingKey={drawingBoundaryId === view.id ? drawingPositionKey : null} drawingExclusion={drawingBoundaryId === view.id && drawingExclusion} selectedKey={selectedKey} selectedExclusion={selectedExclusion} draw={startDrawing} select={setSelectedKey} selectExclusion={setSelectedExclusion} change={next => change(next)} />}
-      {spec.structureType === 'polo' && view.face === 'front' && <div className="cal-suggestion-note"><strong>Polo 扣位</strong><p>{spec.landmarks.some(l => l.key === 'button2') ? '胸标按 SOP 放在第二、三粒扣之间；高度超过 6 厘米时放在第三粒扣。' : '未标扣位时，胸标按领口下约 9.5 厘米估算。标出第二、三粒扣后按 SOP 精确放置。'}</p>{editable && <button type="button" className="button" disabled={needsBoundary} onClick={() => {
+      {spec.structureType === 'polo' && view.face === 'front' && <div className="cal-suggestion-note"><strong>Polo 扣位</strong><p>{spec.landmarks.some(l => l.key === 'button2') ? '胸标居中于第三粒扣（门襟最下一粒）。' : '未标扣位时，胸标按衣长约 29% 估算（约为第三粒扣位置）。标出第二、三粒扣后按第三粒扣精确放置。'}</p>{editable && <button type="button" className="button" disabled={needsBoundary} onClick={() => {
         if (spec.landmarks.some(l => l.key === 'button2')) { change({ ...spec, landmarks: spec.landmarks.filter(l => !l.key.startsWith('button')) }); return; }
         const neck = spec.landmarks.find(l => l.key === 'neckCenter'), left = spec.landmarks.find(l => l.key === 'leftArmpit'), right = spec.landmarks.find(l => l.key === 'rightArmpit');
         if (!neck || !left || !right) { setError('请先标出领口中心和左右腋点'); return; }
@@ -629,11 +629,11 @@ export function CatalogCalibration({ detail, preview, style, user, close, saved,
       <button className="button" type="button" disabled={spec.structureType === 'unknown'} onClick={() => changeStructure(spec.structureType)}>{manual ? '恢复参考框' : spec.positions.length ? '重新生成参考标记' : '生成参考标记'}</button>
       {!manual && <details onToggle={event => { if (event.currentTarget.open) setLayer('structure'); }}><summary>调整衣服边界</summary><BoxFields value={spec.garmentFrame} change={b => change({ ...spec, garmentFrame: b })} /></details>}
       {sopDerived(spec) ? <details><summary>印花位置规则 · {spec.positions.length}</summary><ul className="cal-hint">
-        <li>左/右胸：第二、三粒扣之间（无扣款为领口下约 9.5 厘米）；高度超过 6 厘米下移到第三粒扣；默认宽 8 厘米，高不超过 9 厘米。</li>
-        <li>后背：肩点至袖窿底之间居中；默认宽 26 厘米，高不超过 22 厘米。后领下方：后领下约 3 厘米。</li>
+        <li>左/右胸：居中于第三粒扣（门襟最下一粒）；未标扣位时按肩线至下摆的比例：Polo 17%，马甲 20%，夹克 22%；T 恤、卫衣、冲锋衣为领口下约 9.5 厘米。默认宽 8 厘米，高不超过 6 厘米。</li>
+        <li>后背：按肩线至下摆的比例居中（Polo 21%，马甲 20%，夹克 25%；T 恤按后领至下摆 28%），较高的图稿上沿不再往上；卫衣、冲锋衣为肩点至袖窿底之间居中。默认宽 28 厘米（马甲 21 厘米），单行扁长字 30 厘米，高不超过 22 厘米，竖版照片可到 28 厘米。后领下方：后领下约 3 厘米。</li>
         <li>袖子：距袖子缝合线约 0.75 厘米。正前面：上沿在领口下约 8 厘米。</li>
         <li>客户指定尺寸优先；尺寸按投影衣身宽 40 厘米换算。框内显示的是常见横版 Logo 的默认大小。</li>
-        <li>微调：在 SOP 位置上叠加你设定的偏移（厘米），结构点改动后跟着移动，同款沿用标准时一起沿用；微调后的位置不会被自动推离避让区，重叠时会提示。</li>
+        <li>微调：在 SOP 位置上叠加你设定的偏移（厘米），结构点改动后跟着移动，同款沿用标准时一起沿用；微调后的位置不会被自动推离避让区，重叠时会提示。规则更新时，旧规则下设的微调会自动换算，保持原来的位置；换算后不足 0.5 厘米的会清除，改为跟随新规则。</li>
       </ul></details> : !manual && <details><summary>精细调整印花位置 · {spec.positions.length}</summary>{spec.positions.map((position, i) => <div className="cal-position" key={position.key}><strong>{POSITION_LABELS[position.key]}</strong><button type="button" className="cal-remove" onClick={() => change({ ...spec, positions: spec.positions.filter((_, index) => i !== index) })}>移除</button><span className="cal-field-title">最大可印范围</span><BoxFields value={position.printableArea} change={box => change({ ...spec, positions: spec.positions.map((p, index) => i === index ? { ...p, printableArea: box } : p) })} /><div className="cal-four"><Percent label="锚点 X" value={position.anchor.x} change={x => change({ ...spec, positions: spec.positions.map((p, index) => i === index ? { ...p, anchor: { ...p.anchor, x } } : p) })} /><Percent label="锚点 Y" value={position.anchor.y} change={y => change({ ...spec, positions: spec.positions.map((p, index) => i === index ? { ...p, anchor: { ...p.anchor, y } } : p) })} /><Percent label="默认宽" value={position.defaultSize.width} change={width => change({ ...spec, positions: spec.positions.map((p, index) => i === index ? { ...p, defaultSize: { ...p.defaultSize, width } } : p) })} /><Percent label="默认高" value={position.defaultSize.height} change={height => change({ ...spec, positions: spec.positions.map((p, index) => i === index ? { ...p, defaultSize: { ...p.defaultSize, height } } : p) })} /></div></div>)}
       <select aria-label="添加印制位置" value="" onChange={e => { const key = e.target.value as keyof typeof POSITION_LABELS; if (key === 'apronPocket') { setDrawingPositionKey(key); setDrawingBoundaryId(view.id); setLayer('placement'); return; } if (key) change({ ...spec, positions: [...spec.positions, { key, anchor: { x: .5, y: .5 }, printableArea: { x: .4, y: .4, width: .2, height: .2 }, defaultSize: { width: .1, height: .1 } }] }); }}><option value="">＋ 添加并手动校准位置</option>{allowedPositions(spec.structureType, view.face).filter(key => !spec.positions.some(p => p.key === key)).map(key => <option key={key} value={key}>{POSITION_LABELS[key]}</option>)}</select></details>}
       {!manual && <details><summary>调整避让区域 · {spec.exclusions.length}</summary>{spec.exclusions.map((exclusion, i) => <div className="cal-position" key={exclusion.id}><input aria-label="禁区名称" value={exclusion.label} onChange={e => change({ ...spec, exclusions: spec.exclusions.map((x, index) => i === index ? { ...x, label: e.target.value } : x) })} /><BoxFields value={exclusion.area} change={box => change({ ...spec, exclusions: spec.exclusions.map((x, index) => i === index ? { ...x, area: box } : x) })} /><button type="button" className="cal-remove" onClick={() => change({ ...spec, exclusions: spec.exclusions.filter((_, index) => index !== i) })}>移除禁区</button></div>)}<button type="button" className="button" onClick={() => change({ ...spec, exclusions: [...spec.exclusions, { id: crypto.randomUUID(), label: '待标记禁区', area: { x: .45, y: .1, width: .1, height: .2 } }] })}>添加缝线等不可印区域</button></details>}
