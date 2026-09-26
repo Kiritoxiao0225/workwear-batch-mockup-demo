@@ -162,6 +162,14 @@ export async function saveRequirementDraft(root, manifest, body) {
   state.draftOrigin = 'designer'; state.updatedAt = stamp(); state.revision += 1;
   await writeState(root, c.caseId, state); return state;
 }
+// A reminder a person has checked stays with the requirement, so the page stops counting it.
+export async function acknowledgeReminder(root, manifest, body) {
+  findCase(manifest, body?.caseId);
+  if (typeof body.key !== 'string' || !body.key || body.key.length > 300) throw fail('提醒编号无效');
+  const state = await readRequirementState(root, body.caseId), acks = new Set(state.reminderAcks || []);
+  if (body.acked === false) acks.delete(body.key); else acks.add(body.key);
+  state.reminderAcks = [...acks].slice(-200); await writeState(root, body.caseId, state); return { reminderAcks: state.reminderAcks };
+}
 export async function confirmRequirementDraft(root, manifest, body) {
   requestId(body?.requestId); findCase(manifest, body.caseId);
   const previous = (await readRequirementState(root, body.caseId)).confirmations.find(x => x.id === body.requestId);
@@ -205,6 +213,7 @@ export async function requirementWorkbench(root, manifest) {
       draft: state.draft, draftAnalysisId: state.draftAnalysisId || null,
       modelDraft: state.analyses.find(x => x.id === state.draftAnalysisId)?.parsed || null,
       imageText: state.analyses.find(x => x.id === state.draftAnalysisId)?.imageText || null,
+      reminderAcks: state.reminderAcks || [],
       needsReanalysis: !!c.needsReanalysis || (!!state.draft && state.draftSupplementRevision !== supplement.revision),
       analysis: last ? { id: last.id, status: last.status, error: last.error, elapsedMs: last.elapsedMs,
         proposedDraft: last.status === 'returned' && last.id !== state.draftAnalysisId && last.revision === state.revision && last.supplementRevision === supplement.revision ? last.parsed : null } : null,

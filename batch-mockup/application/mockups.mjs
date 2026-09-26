@@ -197,7 +197,7 @@ export async function renderMockups(root,c,jobs,catalog){
     if(!info){warnings.push(position+'没有对应的正背面位置标准，暂未放置');continue;}
     const job=jobs.filter(j=>j.artworkId===artId).at(-1),file=job?.repair?.file||job?.final;
     if(!file){warnings.push(position+'图稿尚未完成');continue;}
-    if(job.revision!==c.revision)warnings.push(position+'使用之前要求制作的图稿，请核对');
+    const art=c.draft.artworks.find(a=>a.id===artId);if(art&&job.promptSHA256&&job.promptSHA256!==hash(art.prompt))warnings.push(position+'使用之前要求制作的图稿，请核对');
     if(file.transparentExterior===false)warnings.push(position+'图稿外围仍有背景，请先检查抠图或修补');if(info.note)warnings.push(position+'：'+info.note);
     const sizeReference=c.draft.artworks.find(a=>a.id===artId)?.applications.find(x=>x.style===group.style&&x.color===group.color&&x.position===slot)?.sizeReference||null;
     selected.push({position,info,artId,job,file,sizeReference});

@@ -1,8 +1,8 @@
 import {readProductionEdit,saveProductionEdit,saveEditChunk} from '../application/production-edit.mjs';
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { jsonFile,readBytes,saveJSON,fail,checkpoint } from '../adapters/a-files.mjs';
-import { requirementWorkbench,readRequirementState,saveRequirementDraft,reserveRequirementAnalysis,finishRequirementAnalysis } from '../application/requirements.mjs';
+import { jsonFile,readBytes,saveJSON,fail,checkpoint,hash } from '../adapters/a-files.mjs';
+import { requirementWorkbench,readRequirementState,saveRequirementDraft,reserveRequirementAnalysis,finishRequirementAnalysis,acknowledgeReminder } from '../application/requirements.mjs';
 import { readProductionJobs,reserveProduction,executeProduction } from '../application/production.mjs';
 import { readRepairInput,saveProductionRepair } from '../application/production-repair.mjs';
 import { saveSupplement } from '../application/supplements.mjs';
@@ -72,6 +72,8 @@ export async function workbenchData(root,{wpsOnly=false,showCost=false}={}){
  const selected=wpsOnly?{...manifest,run:{...manifest.run,caseCount:wpsCases.length,imageCount:wpsCases.reduce((n,c)=>n+c.images.length,0)},cases:wpsCases}:manifest;
  const data=await requirementWorkbench(root,selected),jobs=await readProductionJobs(root);
  for(const c of data.cases){c.productions=jobs.filter(j=>j.caseId===c.caseId);c.mockups=await readMockupState(root,c.caseId);
+  // Stale means this artwork's own text changed since it was made, not that another artwork was edited.
+  for(const j of c.productions){const art=c.draft?.artworks.find(a=>a.id===j.artworkId);j.stale=!!art&&!!j.promptSHA256&&j.promptSHA256!==hash(art.prompt);}
   if(showCost)c.cost=caseCost(await readRequirementState(root,c.caseId),c.productions);else c.productions=c.productions.map(withoutCost);}
  return {...data,generationEnabled:true,automaticFlow:true,autoFlow:await jsonFile(resolve(root,'auto-flow.json'),null),...(showCost?{costSummary:costSummary(data.cases)}:{})};
 }
@@ -103,6 +105,7 @@ export async function service(root,path,method,body={},options={}){
   if(path==='/api/wps/adopt'){const c=manifest.cases.find(c=>c.caseId===body.caseId);if(!c?.pendingSource)throw fail('没有待载入的原稿',409);const state=await readRequirementState(root,c.caseId);if(state.revision!==body.revision)throw fail('要求已更新，请刷新后再操作',409);await saveJSON(resolve(root,'requirements-history',c.caseId,`before-wps-${state.revision}.json`),{source:c,state});Object.assign(c,c.pendingSource);delete c.pendingSource;delete c.sourceChanged;state.draft=null;state.revision++;delete state.draftAnalysisId;state.draftOrigin=null;await saveJSON(resolve(root,'requirements-state',c.caseId+'.json'),state);await saveJSON(resolve(root,'manifest.json'),manifest);return {revision:state.revision};}
   if(path==='/api/cases/update')return updateCase(root,body);
   if(path==='/api/cases/remove')return removeCase(root,body);
+  if(path==='/api/reminders/ack')return acknowledgeReminder(root,manifest,body);
   if(path==='/api/requirements/save'){const state=await saveRequirementDraft(root,manifest,body);return {revision:state.revision};}
   if(path==='/api/supplements/chunk'){if(!/^[a-f0-9-]{36}$/.test(body.id)||!Number.isInteger(body.index)||body.index<0||body.index>20||typeof body.base64!=='string'||body.base64.length>1500000)throw fail('上传分片无效');await saveJSON(resolve(root,'upload-chunks',body.id,body.index+'.json'),{base64:body.base64});return {saved:true};}
   if(path==='/api/supplements'&&body.uploadId){if(body.uploadId!==body.id||!Number.isInteger(body.chunkCount)||body.chunkCount<1||body.chunkCount>21)throw fail('上传编号无效');const chunks=[];for(let n=0;n<body.chunkCount;n++)chunks.push((await jsonFile(resolve(root,'upload-chunks',body.id,n+'.json'))).base64);body.base64=chunks.join('');}

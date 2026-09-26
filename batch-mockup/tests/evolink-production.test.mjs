@@ -101,6 +101,15 @@ test('模型没有给出透明背景时退回美图抠图，抠图按单价记�
   assert.equal((await inspectPixels(await readBytes(resolve(f.root, 'public', result.final.asset)))).transparentExterior, true);
 });
 
+test('“用了旧版要求”只看这份图稿自己的正文：改别的图稿或只升版本号不算', async t => {
+  const f = await fixture(t), [job] = await reserveProduction(f.root, f.manifest, f.requests);
+  assert.equal((await workbenchData(f.root)).cases[0].productions.find(j => j.id === job.id).stale, false);
+  f.state.revision += 1; await saveJSON(resolve(f.root, 'requirements-state/T.json'), f.state);
+  assert.equal((await workbenchData(f.root)).cases[0].productions.find(j => j.id === job.id).stale, false, '版本号变了但正文没变');
+  f.state.draft.artworks[0].prompt = f.state.draft.artworks[0].prompt.replace('使用图2完整Logo', '使用图2完整Logo并加粗'); await saveJSON(resolve(f.root, 'requirements-state/T.json'), f.state);
+  assert.equal((await workbenchData(f.root)).cases[0].productions.find(j => j.id === job.id).stale, true, '这份图稿的正文改了');
+});
+
 test('费用只返回给内部工作区：理解、图稿、整条与今日合计', async t => {
   const f = await fixture(t), [job] = await reserveProduction(f.root, f.manifest, f.requests);
   await executeProduction(f.root, job.id, { generate: async () => ({ bytes: await translucentBadge(), cost: { provider: 'evolink', credits: 1.75, cny: 0.19, method: 'receipt' }, transparentRequested: true }) });

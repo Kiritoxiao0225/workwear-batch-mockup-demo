@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import { hash, atomicFile, saveJSON } from '../adapters/a-files.mjs';
 import { startRequirements } from '../experiments/workbench/requirements-server.mjs';
-import { readRequirementState, validateRequirementDraft, reserveRequirementAnalysis, finishRequirementAnalysis, requirementWorkbench } from '../application/requirements.mjs';
+import { readRequirementState, validateRequirementDraft, reserveRequirementAnalysis, finishRequirementAnalysis, requirementWorkbench, acknowledgeReminder } from '../application/requirements.mjs';
 
 const text='【左胸图稿】\n\n主体：使用图1，保留白色。\n\n文字：教  练 A+B！\n第二行\n\n字体：沿用图1。\n\n颜色：白色。\n\n排版：保持原排版。\n\n尺寸：未指定。\n\n输出：独立图稿。  \n';
 const draft=()=>({artworks:[{id:'a1',name:'左胸图稿',route:'reuse',applications:[{style:'X-1',color:'黑色',position:'左胸'}],imageIds:['T-1'],prompt:text}],readingIssues:[]});
@@ -26,6 +26,14 @@ async function setup(t, handler) {
   const confirm=async(extra={})=>{const c=await get();return post('/api/requirements/confirm',{caseId:'T',requestId:randomUUID(),revision:c.revision,supplementRevision:c.supplement.revision,confirmedBy:'测试核对人',...extra})};
   return {root,server,base,bytes,post,get,analyze,save,confirm,calls:()=>calls};
 }
+test('提醒勾“已核对”后随需求保存并下发，取消勾选即恢复',async t=>{
+  const f=await setup(t),manifest=JSON.parse(await readFile(resolve(f.root,'manifest.json'),'utf8'));
+  await acknowledgeReminder(f.root,manifest,{caseId:'T',key:'check|左胸|看不清'});
+  assert.deepEqual((await requirementWorkbench(f.root,manifest)).cases[0].reminderAcks,['check|左胸|看不清']);
+  await acknowledgeReminder(f.root,manifest,{caseId:'T',key:'check|左胸|看不清',acked:false});
+  assert.deepEqual((await requirementWorkbench(f.root,manifest)).cases[0].reminderAcks,[]);
+  await assert.rejects(acknowledgeReminder(f.root,manifest,{caseId:'T',key:''}),/提醒编号无效/);
+});
 test('OCR 服务：带令牌按顺序发图，返回每张图的文字；服务出错时抛错由识别流程跳过',async t=>{
   const {createServer}=await import('node:http'),{configuredTextReader}=await import('../adapters/ocr.mjs');let seen;
   const server=createServer((req,res)=>{let body='';req.on('data',c=>body+=c);req.on('end',()=>{seen={auth:req.headers.authorization,path:req.url,body:JSON.parse(body)};
