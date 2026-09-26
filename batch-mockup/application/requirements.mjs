@@ -2,6 +2,7 @@ import { resolve, extname } from 'node:path';
 import { z } from 'zod';
 import { hash, jsonFile, saveJSON, atomicFile, assetPath, fail, readBytes } from '../adapters/a-files.mjs';
 import { configuredAnalyzer } from '../adapters/a-analysis.mjs';
+import { configuredTextReader, textReference } from '../adapters/ocr.mjs';
 
 const line = z.string().max(500);
 const artworkSchema = z.object({
@@ -83,7 +84,22 @@ async function freezeImages(root, images) {
   }
   return fixed;
 }
-export async function reserveRequirementAnalysis(root, manifest, body, factory = configuredAnalyzer) {
+// Text OCR read from each frozen image, cached by content. A failed read only leaves the reference out:
+// the requirement model still sees the images, as it did before OCR existed.
+async function imageText(root, images, readText) {
+  if (!readText || !images.length) return null;
+  const path = image => resolve(root, 'image-text', `${image.sha256}.json`);
+  const cached = await Promise.all(images.map(image => jsonFile(path(image), null)));
+  const missing = images.filter((_, n) => !cached[n]);
+  if (missing.length) {
+    let read;
+    try { read = await readText(await Promise.all(missing.map(async image => ({ bytes: await readBytes(assetPath(root, image.asset)), ext: extname(image.asset).toLowerCase() })))); }
+    catch { return null; }
+    for (const [n, image] of missing.entries()) { const lines = read[n].map(x => ({ text: String(x.text), score: Number(x.score) })); await saveJSON(path(image), { lines }); cached[images.indexOf(image)] = { lines }; }
+  }
+  return Object.fromEntries(images.map((image, n) => [image.label, cached[n].lines]));
+}
+export async function reserveRequirementAnalysis(root, manifest, body, factory = configuredAnalyzer, readText = configuredTextReader()) {
   requestId(body?.requestId); findCase(manifest, body.caseId);
   const previous = (await readRequirementState(root, body.caseId)).analyses.find(a => a.id === body.requestId);
   if (previous) return { analysis: previous };
@@ -101,12 +117,14 @@ export async function reserveRequirementAnalysis(root, manifest, body, factory =
     content.push({ type: 'text', text: `${img.label} · id=${img.id} · ${img.width}×${img.height}` },
       { type: 'image_url', image_url: { url: `data:${mime};base64,${(await readBytes(assetPath(root, img.asset))).toString('base64')}`, detail: 'high' } });
   }
+  const text = await imageText(root, fixed, readText);
+  if (text) content.push({ type: 'text', text: textReference(text) });
   const request = { model: analyze.model || 'gpt-5.6-sol', reasoning_effort: analyze.effort || 'low', max_completion_tokens: 16000,
     response_format: { type: 'json_object' }, stream: false,
     messages: [{ role: 'system', content: prompt }, { role: 'user', content }] };
   const analysis = { id: body.requestId, status: 'running', startedAt: stamp(), revision: state.revision,
     supplementRevision: supplement.revision, promptSHA256: hash(prompt), requestSHA256: hash(JSON.stringify(request)),
-    sourceTextSHA256: hash(c.sourceText), images: fixed, model: request.model, effort: request.reasoning_effort };
+    sourceTextSHA256: hash(c.sourceText), images: fixed, model: request.model, effort: request.reasoning_effort, ...(text ? { imageText: text } : {}) };
   await saveJSON(resolve(root, 'analysis-evidence', c.caseId, `${analysis.id}-request.json`), request);
   state.analyses.push(analysis); await writeState(root, c.caseId, state);
   return { analysis, execute: () => analyze(request) };
@@ -186,6 +204,7 @@ export async function requirementWorkbench(root, manifest) {
     cases.push({ ...c, images: await requirementImages(root, c, supplement), supplement, revision: state.revision,
       draft: state.draft, draftAnalysisId: state.draftAnalysisId || null,
       modelDraft: state.analyses.find(x => x.id === state.draftAnalysisId)?.parsed || null,
+      imageText: state.analyses.find(x => x.id === state.draftAnalysisId)?.imageText || null,
       needsReanalysis: !!c.needsReanalysis || (!!state.draft && state.draftSupplementRevision !== supplement.revision),
       analysis: last ? { id: last.id, status: last.status, error: last.error, elapsedMs: last.elapsedMs,
         proposedDraft: last.status === 'returned' && last.id !== state.draftAnalysisId && last.revision === state.revision && last.supplementRevision === supplement.revision ? last.parsed : null } : null,

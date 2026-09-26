@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import { hash, atomicFile, saveJSON } from '../adapters/a-files.mjs';
 import { startRequirements } from '../experiments/workbench/requirements-server.mjs';
-import { readRequirementState, validateRequirementDraft } from '../application/requirements.mjs';
+import { readRequirementState, validateRequirementDraft, reserveRequirementAnalysis, finishRequirementAnalysis, requirementWorkbench } from '../application/requirements.mjs';
 
 const text='【左胸图稿】\n\n主体：使用图1，保留白色。\n\n文字：教  练 A+B！\n第二行\n\n字体：沿用图1。\n\n颜色：白色。\n\n排版：保持原排版。\n\n尺寸：未指定。\n\n输出：独立图稿。  \n';
 const draft=()=>({artworks:[{id:'a1',name:'左胸图稿',route:'reuse',applications:[{style:'X-1',color:'黑色',position:'左胸'}],imageIds:['T-1'],prompt:text}],readingIssues:[]});
@@ -26,6 +26,21 @@ async function setup(t, handler) {
   const confirm=async(extra={})=>{const c=await get();return post('/api/requirements/confirm',{caseId:'T',requestId:randomUUID(),revision:c.revision,supplementRevision:c.supplement.revision,confirmedBy:'测试核对人',...extra})};
   return {root,server,base,bytes,post,get,analyze,save,confirm,calls:()=>calls};
 }
+test('识别前先读素材文字：结果附在请求末尾，按图片内容缓存，随草稿下发；读字失败照常识别',async t=>{
+  const f=await setup(t),manifest=JSON.parse(await readFile(resolve(f.root,'manifest.json'),'utf8'));
+  let reads=0;const readText=async images=>{reads++;return images.map(()=>[{text:'教  练',score:.99}])};
+  const factory=async()=>Object.assign(async()=>({rawContent:JSON.stringify(draft()),httpStatus:200}),{model:'gpt-5.6-sol',effort:'low'});
+  const run=async reader=>{const st=await readRequirementState(f.root,'T'),r=await reserveRequirementAnalysis(f.root,manifest,{caseId:'T',requestId:randomUUID(),revision:st.revision,supplementRevision:0},factory,reader);
+   await finishRequirementAnalysis(f.root,manifest,'T',r.analysis.id,await r.execute());return r.analysis;};
+  const first=await run(readText),request=JSON.parse(await readFile(resolve(f.root,'analysis-evidence','T',first.id+'-request.json'),'utf8'));
+  assert.equal(request.messages[1].content.at(-1).text,'素材文字识别参考（OCR，机器识别，只列高置信度结果，可能漏字或错字）：\n图1：「教  练」');
+  assert.deepEqual(first.imageText,{图1:[{text:'教  练',score:.99}]});
+  assert.deepEqual((await requirementWorkbench(f.root,manifest)).cases[0].imageText,{图1:[{text:'教  练',score:.99}]});
+  await run(readText);assert.equal(reads,1,'同一张图不重复读字');
+  await rm(resolve(f.root,'image-text'),{recursive:true,force:true});
+  const failed=await run(async()=>{throw new Error('ocr down')});assert.equal(failed.imageText,undefined);
+  const plain=JSON.parse(await readFile(resolve(f.root,'analysis-evidence','T',failed.id+'-request.json'),'utf8'));assert.equal(plain.messages[1].content.at(-1).type,'image_url');
+});
 test('模型一次返回分图稿正文；原文与原图字节进真实格式请求，前端无生图评分入口',async t=>{
   let request;const f=await setup(t,async req=>{request=req;return {rawContent:JSON.stringify(draft()),httpStatus:200}});
   assert.equal((await f.analyze()).status,202);const c=await f.get();assert.equal(c.draft.artworks[0].prompt,text);assert.equal(c.confirmation,null);
