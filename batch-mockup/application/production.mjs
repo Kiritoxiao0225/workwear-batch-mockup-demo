@@ -18,11 +18,12 @@ export async function readProductionJobs(root) {
 // second id and was generated and paid for twice.
 const application=x=>({style:x.style,color:x.color,position:x.position,
   ...('sizeReference' in x?{sizeReference:x.sizeReference&&{imageId:x.sizeReference.imageId,logoToBody:x.sizeReference.logoToBody,note:x.sizeReference.note}}:{})});
-export function productionInput(c,a) {
+// quality is added only when high, so every existing medium job keeps its id.
+export function productionInput(c,a,quality=a.quality) {
   return {schema:'production-input-v1',caseId:c.caseId,artworkId:a.id,name:a.name,revision:c.revision,
     supplementRevision:c.supplement.revision,prompt:a.prompt,promptSHA256:hash(a.prompt),route:a.route,
     applications:a.applications.map(application),imageIds:a.imageIds,images:c.images,readingIssues:c.draft.readingIssues.map(x=>({scope:x.scope,issue:x.issue})),policy:productionPolicy,
-    ...(a.transparentBackground===undefined?{}:{transparentBackground:a.transparentBackground})};
+    ...(a.transparentBackground===undefined?{}:{transparentBackground:a.transparentBackground}),...(quality==='high'?{quality}:{})};
 }
 export function sourceFor(input) {
   const selected=input.images.filter(i=>input.imageIds.includes(i.id));
@@ -42,8 +43,9 @@ export async function reserveProduction(root,manifest,requests) {
     if(!c||c.active===false||c.revision!==request.revision||c.supplement.revision!==request.supplementRevision)throw fail('要求或图片已变化，请使用最新保存内容生成',409);
     if(!c.draft)continue;
     validateRequirementDraft(c.draft,c.images);
+    if(request.quality!==undefined&&request.quality!=='high')throw fail('生成质量无效');
     for(const a of c.draft.artworks.filter(a=>!request.artworkId||request.artworkId===a.id)) {
-      const input=productionInput(c,a),id=hash(JSON.stringify(input)),dir=dirFor(root,id);
+      const input=productionInput(c,a,request.quality||a.quality),id=hash(JSON.stringify(input)),dir=dirFor(root,id);
       const existing=await jsonFile(resolve(dir,'state.json'),null);if(existing){jobs.push(existing);continue;}
       let blocked=c.sourceChanged?'WPS原稿已变化，请先载入最新原稿再识别':c.sourceReadError?'原始素材读取不完整，未启动制作':null;
       if(c.needsReanalysis||c.analysis?.status==='running')blocked='素材已变化或需求仍在识别，未启动制作';
@@ -59,7 +61,7 @@ export async function reserveProduction(root,manifest,requests) {
       input.images=fixed;await saveJSON(resolve(dir,'input.json'),input);
       const job={id,caseId:c.caseId,artworkId:a.id,name:a.name,revision:c.revision,supplementRevision:c.supplement.revision,promptSHA256:input.promptSHA256,route:a.route,
         createdAt:stamp(),status:blocked?'blocked':'queued',error:blocked,steps:[],qualityStatus:'not_reviewed',policy:productionPolicy,
-        ...(input.transparentBackground===undefined?{}:{transparentBackground:input.transparentBackground})};
+        ...(input.transparentBackground===undefined?{}:{transparentBackground:input.transparentBackground}),...(input.quality?{quality:input.quality}:{})};
       await saveJSON(resolve(dir,'state.json'),job);jobs.push(job);
     }
   }return jobs;

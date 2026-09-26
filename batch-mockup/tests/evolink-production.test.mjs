@@ -135,7 +135,7 @@ test('并发的两份图稿共用素材时只上传一次，只发各自关联�
   const path = resolve(root, 'src.png'); await writeFile(path, out);
   const images = [1, 2].map(index => ({ id: 'U-' + index, index, path, sha256: randomUUID() }));
   const env = { EVOLINK_API_KEY: 'test-key', EVOLINK_CNY_PER_CREDIT: '0.1' };
-  const run = async (name, imageIds) => { await mkdir(resolve(root, name), { recursive: true }); return evolinkGenerate({ caseId: 'U', prompt, images, imageIds }, resolve(root, name), { env, pollMs: 1 }); };
+  const run = async (name, imageIds, extra = {}) => { await mkdir(resolve(root, name), { recursive: true }); return evolinkGenerate({ caseId: 'U', prompt, images, imageIds, ...extra }, resolve(root, name), { env, pollMs: 1 }); };
   const [left, back] = await Promise.all([run('a', ['U-1']), run('b', ['U-1', 'U-2'])]);
   assert.equal(calls.upload, 2, '图1 只传一次');
   assert.deepEqual(calls.create.map(c => c.image_urls.length).sort(), [1, 2]);
@@ -143,6 +143,9 @@ test('并发的两份图稿共用素材时只上传一次，只发各自关联�
   assert.deepEqual([left.cost.credits, left.cost.cny, left.cost.method, left.transparentRequested], [1.5, 0.15, 'receipt', true]);
   await run('c', ['U-2']);
   assert.equal(calls.upload, 2, '重新生成时复用已上传的素材');
+  assert.ok(calls.create.every(c => c.quality === 'medium'), '默认 medium');
+  await run('d', ['U-1'], { quality: 'high' });
+  assert.equal(calls.create.at(-1).quality, 'high');
   assert.ok(back.bytes.length > 0);
 });
 
@@ -158,4 +161,18 @@ test('草稿从数据库读回后字段顺序变了，同一份图稿仍是同�
   await saveJSON(resolve(f.root, 'requirements-state/T.json'), f.state);
   const [again] = await reserveProduction(f.root, f.manifest, f.requests);
   assert.equal(again.id, first.id);
+});
+
+test('高质量只在草稿标记或设计师要求时使用；普通图稿的制作编号不变', async t => {
+  const f = await fixture(t);
+  const [medium] = await reserveProduction(f.root, f.manifest, f.requests);
+  assert.equal(medium.quality, undefined);
+  const [high] = await reserveProduction(f.root, f.manifest, [{ ...f.requests[0], artworkId: 'a1', quality: 'high' }]);
+  assert.notEqual(high.id, medium.id, '高质量重做是新的一次制作');
+  assert.equal(high.quality, 'high');
+  f.state.draft.artworks[0].quality = 'high';
+  await saveJSON(resolve(f.root, 'requirements-state/T.json'), f.state);
+  const [marked] = await reserveProduction(f.root, f.manifest, f.requests);
+  assert.equal(marked.id, high.id, '识别标记的高质量与手动重做是同一份制作');
+  await assert.rejects(reserveProduction(f.root, f.manifest, [{ ...f.requests[0], quality: 'low' }]), /生成质量无效/);
 });

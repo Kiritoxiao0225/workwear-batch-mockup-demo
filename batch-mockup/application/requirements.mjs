@@ -8,6 +8,8 @@ const artworkSchema = z.object({
   id: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/), name: z.string().min(1).max(200),
   route: z.enum(['generate', 'enhance', 'reuse']),
   transparentBackground: z.boolean().optional(),
+  // Only redrawing unclear or calligraphic Chinese needs the dearer quality; medium garbled such strokes.
+  quality: z.literal('high').optional(),
   // sizeReference: SOP 2.1 — only a reference photo/mockup shows the size; a ratio, never a customer size in cm.
   applications: z.array(z.object({ style: line, color: line, position: line,
     sizeReference: z.object({ imageId: z.string().min(1).max(100), logoToBody: z.number().min(.03).max(.95), note: z.string().max(300) }).strict().nullish() }).strict()).max(100),
