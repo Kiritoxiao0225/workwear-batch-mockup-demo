@@ -62,6 +62,8 @@ const layerWarnings=layers=>[...sizeWarnings(layers),...layers.flatMap(l=>(l.che
 // width is the pre-SOP default share of the face, kept only to recognize old untouched layers.
 export function positionInfo(position){
  const p=String(position??'');
+ // No position in the requirement means the usual chest logo: a left-chest print.
+ if(!p.trim()||/^(原需求)?(未指定|未写明|未说明|没有指定)(位置)?$/u.test(p.trim()))return {face:'front',key:'leftChest',width:.2,defaulted:true};
  if(/后领|领后|后脖/.test(p))return {face:'back',key:'upperBack',width:.45};
  if(/后背|背面|背部|后面|背后/.test(p))return {face:'back',key:'backCenter',width:.45};
  if(/左袖|左臂/.test(p))return {face:'front',key:'leftSleeve',width:.1};
@@ -161,15 +163,15 @@ export async function renderMockups(root,c,jobs,catalog){
    const garment=await catalog.detail(card.variantId,card.assetVersionId||undefined);card.assetVersionId=garment.assetVersionId;
    const style=styles.find(s=>s.colors?.some(v=>v.id===garment.id)),sharing=style?styleConfirmationKey(style,garment.id):null;
    const selected=[];const warnings=[];if(c.sourceChanged||c.sourceReadError)warnings.push('WPS 原稿有变化或读取失败，当前仅为之前图稿的预览');
-   for(const [position,options] of Object.entries(group.slots)){
-    const artId=card.selections[position],info=positionInfo(position);
+   for(const [slot,options] of Object.entries(group.slots)){
+    const info=positionInfo(slot),position=info?.defaulted?'左前胸':slot,artId=card.selections[slot];
     if(!artId||!options.some(a=>a.id===artId)){warnings.push(position+'的多个方案配对尚未明确，请在需求理解中拆分或明确对应关系');continue;}
     if(!info){warnings.push(position+'没有对应的正背面位置标准，暂未放置');continue;}
     const job=jobs.filter(j=>j.artworkId===artId).at(-1),file=job?.repair?.file||job?.final;
     if(!file){warnings.push(position+'图稿尚未完成');continue;}
     if(job.revision!==c.revision)warnings.push(position+'使用之前要求制作的图稿，请核对');
     if(file.transparentExterior===false)warnings.push(position+'图稿外围仍有背景，请先检查抠图或修补');if(info.note)warnings.push(position+'：'+info.note);
-    const sizeReference=c.draft.artworks.find(a=>a.id===artId)?.applications.find(x=>x.style===group.style&&x.color===group.color&&x.position===position)?.sizeReference||null;
+    const sizeReference=c.draft.artworks.find(a=>a.id===artId)?.applications.find(x=>x.style===group.style&&x.color===group.color&&x.position===slot)?.sizeReference||null;
     selected.push({position,info,artId,job,file,sizeReference});
    }
    const renderKey=layers=>hash(JSON.stringify({placementPolicy:PLACEMENT_POLICY,colorPolicy:LOGO_COLOR_POLICY,garment:garment.sha256,views:garment.views,sharing,annotateSize:!!card.annotateSize,frame:FRAME.version,selections:card.selections,layers:layers.map(({id,x,y,width})=>({id,x,y,width})),files:selected.map(s=>[s.file.sha256,c.draft.artworks.find(a=>a.id===s.artId)?.prompt,s.sizeReference])}));
@@ -211,6 +213,7 @@ export async function renderMockups(root,c,jobs,catalog){
     // A manual resize is reported as what is now on the garment; an automatic size keeps its exact rule value.
     if(pxPerCm&&(keepSize||!layer.sizeCm))layer.sizeCm={width:w/pxPerCm,height:h/pxPerCm};
     layer.checks=[...(keepPosition&&keepSize?[]:initial.warnings||[]),...[outsideGarment(shape,left,top,face)>.03?'Logo 有部分超出衣服轮廓，请调整位置或尺寸':null,said.warning||await colorIssue(logo,w,h,baseRaw,left,top)].filter(Boolean)];
+    if(s.info.defaulted)notes.push(`${s.position}：需求未写明位置，按左前胸放置`);
     if(layer.rule&&!layer.positionManual)notes.push(`${s.position}：${layer.rule}${layer.sizeCm?`，约宽${+layer.sizeCm.width.toFixed(1)}×高${+layer.sizeCm.height.toFixed(1)}厘米`:''}`);
     // SOP 2.2: customer-fixed sizes are written on the mockup; irregular outlines also give the height.
     if(layer.requested&&layer.sizeCm){const withHeight=irregularShape(shape)||!!requestedDimensions(c.draft.artworks.find(a=>a.id===s.artId)?.prompt)?.height;layer.annotation={text:annotationText(layer.sizeCm,withHeight),withHeight,box:{left,top,w,h}};if(!card.annotateSize)notes.push(`${s.position}：客户指定尺寸，${layer.annotation.text}（可在效果图上显示标注）`);}else delete layer.annotation;

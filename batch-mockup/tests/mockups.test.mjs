@@ -126,6 +126,7 @@ test('位置写法：左前胸仍是胸标，袖子可合图，未写左右时�
  assert.deepEqual([positionInfo('胸前').key,!!positionInfo('胸前').note],['leftChest',true]);
  assert.equal(positionInfo('左袖口').key,'leftSleeve');assert.equal(positionInfo('右袖').key,'rightSleeve');assert.deepEqual([positionInfo('袖子').key,!!positionInfo('袖子').note],['leftSleeve',true]);
  assert.equal(positionInfo('后领下方').key,'upperBack');assert.equal(positionInfo('后背').key,'backCenter');assert.equal(positionInfo('帽子'),null);
+ for(const unsaid of ['','  ','未指定','原需求未指定位置'])assert.deepEqual([positionInfo(unsaid).key,positionInfo(unsaid).defaulted],['leftChest',true]);
 });
 test('尺寸标注文字可由效果图字体完整渲染',async()=>{
  const font=await readFile(new URL('../../public/fonts/DOUYINSANSBOLD.TTF',import.meta.url));
