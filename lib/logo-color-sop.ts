@@ -142,6 +142,17 @@ export function promptFixesLogoColor(prompt: string | undefined) {
   return clauses.some(clause => COLOR_WORD.test(clause) && !KEEPS_ORIGINAL.test(clause) && !images(clause).some(n => subject.has(n)));
 }
 
+/**
+ * Whether the customer's own words name a colour at all, garment colours aside. The requirement model
+ * writes a 颜色 line for every artwork and often describes the reference ("文字使用白色，参考图1和图2的
+ * 白色标识") when the customer said nothing; Wc24f3e5c74eb's right chest stayed white on sky blue for it.
+ */
+export function sourceMentionsColor(source: string | undefined, garmentColors: string[]) {
+  let text = String(source ?? '');
+  for (const name of [...new Set(garmentColors.filter(Boolean))].sort((a, b) => b.length - a.length)) text = text.split(name).join('');
+  return COLOR_WORD.test(text);
+}
+
 export type LogoColorDecision = {
   color: string | null;
   source: 'original' | 'auto' | 'manual';

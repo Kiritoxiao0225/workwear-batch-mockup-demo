@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeLogoColors, decideLogoColor, fromHex, judgeLogoColors, promptFixesLogoColor, recommendLogoColor, type Rgb } from './logo-color-sop';
+import { analyzeLogoColors, decideLogoColor, fromHex, judgeLogoColors, promptFixesLogoColor, recommendLogoColor, sourceMentionsColor, type Rgb } from './logo-color-sop';
 
 type Paint = (x: number, y: number) => string | null;
 function logo(width: number, height: number, paint: Paint) {
@@ -71,5 +71,11 @@ describe('SOP 5 logo colors', () => {
     expect(promptFixesLogoColor(both('人物图形参考图1与图2的原有配色；文字颜色沿用图1。'))).toBe(false);
     expect(promptFixesLogoColor(both('人物图形参考图3的原有配色。'))).toBe(true);
     expect(promptFixesLogoColor(both('文字参考图3的深蓝色。'))).toBe(true);
+  });
+  it('counts only colours the customer wrote, not the garment colours', () => {
+    const wps = '货号:CX8099NS-天蓝色\n左胸:图1\n右胸：用图1的乘风和英文在额外加一个·和体育 类似的\n后背:图1\n颜色:';
+    expect(sourceMentionsColor(wps, ['天蓝色'])).toBe(false);
+    expect(sourceMentionsColor('左胸正前胸和袖子按照下图做\n粉色金字  红色白字', ['粉色', '红色'])).toBe(true);
+    expect(sourceMentionsColor('B01SD-蔚来灰 印图一 印白色', ['蔚来灰'])).toBe(true);
   });
 });

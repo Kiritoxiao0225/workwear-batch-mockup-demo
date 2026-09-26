@@ -10,7 +10,7 @@ import {PROJECTED_BODY_WIDTH_CM,SOP_STRUCTURES,UNMEASURED_TORSO_SHARE,plausibleT
 import {placementGeometry,requestedDimensions,PLACEMENT_POLICY} from './mockup-placement.mjs';
 import {clearFaintSpecks} from '../adapters/production-images.mjs';
 import {alphaSamples,annotationOverlay,annotationText,colorIssue,irregularShape,outsideGarment} from './mockup-checks.mjs';
-import {LOGO_COLOR_POLICY,analyzeLogoColors,decideLogoColor,garmentAccents,promptFixesLogoColor} from '../../lib/logo-color-sop.ts';
+import {LOGO_COLOR_POLICY,analyzeLogoColors,decideLogoColor,garmentAccents,promptFixesLogoColor,sourceMentionsColor} from '../../lib/logo-color-sop.ts';
 import {colorMessages,garmentColorUnder,logoColorAnalysis,recolorLogo} from './mockup-color.mjs';
 import {editRecolorsArtwork} from './production-edit.mjs';
 import { hash,jsonFile,saveJSON,readBytes,atomicFile,assetPath,fail } from '../adapters/a-files.mjs';
@@ -205,7 +205,7 @@ export async function renderMockups(root,c,jobs,catalog){
     const renderedX=(left+w/2)/FRAME.width,renderedY=(top+h/2)/FRAME.height;layer.x=keepPosition&&Math.abs(renderedX-prior.x)<=.501/FRAME.width?prior.x:renderedX;layer.y=keepPosition&&Math.abs(renderedY-prior.y)<=.501/FRAME.height?prior.y:renderedY;layer.width=w/FRAME.width;
     // SOP 5: judged against the garment under the logo. The recolored file becomes the layer asset: dragging shows it, and the artwork column lists it as this garment color's version.
     const prompt=c.draft.artworks.find(a=>a.id===s.artId)?.prompt,garmentColor=garmentColorUnder(baseRaw,left,top,w,h),analysis=garmentColor&&await logoColorAnalysis(trimmed.bytes);
-    const decision=analysis?decideLogoColor(analysis,garmentColor,{setByDesigner:await editRecolorsArtwork(root,s.job),fixedByCustomer:promptFixesLogoColor(prompt),accents:face.accents}):null;let art=trimmed.bytes;
+    const decision=analysis?decideLogoColor(analysis,garmentColor,{setByDesigner:await editRecolorsArtwork(root,s.job),fixedByCustomer:promptFixesLogoColor(prompt)&&(c.entry==='studio'||sourceMentionsColor(c.sourceText,[group.color,...c.draft.artworks.flatMap(a=>a.applications.map(x=>x.color))])),accents:face.accents}):null;let art=trimmed.bytes;
     if(decision?.color){art=await recolorLogo(trimmed.bytes,decision.color);layer.asset=`mockup-assets/logo-${hash(art)}.png`;await atomicFile(assetPath(root,layer.asset),art);}
     layer.colorResult=decision&&{color:decision.color,source:decision.source,blocked:decision.blocked,recommended:{color:decision.recommendation.color,label:decision.recommendation.label}};
     const said=colorMessages(decision);if(said.hint)notes.push(`${s.position}：${said.hint}`);

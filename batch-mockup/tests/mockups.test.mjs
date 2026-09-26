@@ -211,7 +211,7 @@ const colorFixture=async root=>{
  const catalog={styles:async()=>[{styleCode:'S',colors:styles}],detail:async id=>garments[id].detail,bytes:async d=>garments[d.id].bytes,frame:async()=>frame};
  const logo=async color=>{const bytes=await sharp({create:{width:100,height:100,channels:4,background:'#0000'}}).composite([{input:await sharp({create:{width:60,height:40,channels:4,background:color}}).png().toBuffer(),left:20,top:30}]).png().toBuffer();const file={asset:`production-results/${color.slice(1)}.png`,sha256:hash(bytes),width:100,height:100};await atomicFile(assetPath(root,file.asset),bytes);return file;};
  const prompt=color=>`【后背图稿】\n\n主体：使用图1完整Logo。\n\n文字：沿用图1已有文字，不改写。\n\n字体：沿用图1。\n\n颜色：${color}\n\n排版：保持图1原有构图。\n\n尺寸：原需求未指定图稿尺寸。\n\n输出：一张独立平面图稿。`;
- const render=(caseId,colors,color,job)=>renderMockups(root,{caseId,revision:1,draft:{artworks:[{...artwork('logo',colors.map(c=>({style:'S',color:c,position:'后背'}))),prompt:prompt(color)}]}},[job],catalog);
+ const render=(caseId,colors,color,job,sourceText='')=>renderMockups(root,{caseId,revision:1,sourceText,draft:{artworks:[{...artwork('logo',colors.map(c=>({style:'S',color:c,position:'后背'}))),prompt:prompt(color)}]}},[job],catalog);
  const pixel=async(asset,x,y)=>{const {data,info}=await sharp(await readFile(assetPath(root,asset))).raw().toBuffer({resolveWithObject:true});const i=(Math.round(y)*info.width+Math.round(x))*info.channels;return [data[i],data[i+1],data[i+2]];};
  return {logo,render,pixel};
 };
@@ -226,7 +226,10 @@ test('SOP 5 自动改色：深衣服上看不清的 Logo 改成白色，改色�
   assert.notEqual(layer.asset,layer.sourceAsset);assert.deepEqual(await pixel(layer.asset,5,5),[255,255,255]);assert.equal(job.repair,undefined);
   assert.ok(card.hints.some(h=>h.startsWith('后背：Logo 与衣服颜色深浅接近')&&h.includes('已按 SOP 改为白色')&&h.includes('图稿列有这个颜色的版本可下载')));assert.deepEqual(card.warnings,[]);
   const again=(await render('C1',['理想绿'],'沿用图1原有配色。',job)).cards[0];assert.equal(again.render.sha256,card.render.sha256);
-  card=(await render('C1',['理想绿'],'Logo 保持藏蓝色，客户指定。',job)).cards[0];
+  // The model describing the reference in the 颜色 line does not make it the customer's colour (Wc24f3e5c74eb).
+  card=(await render('C1',['理想绿'],'文字使用藏蓝色，参考图1和图2的藏蓝色标识。',job,'货号:S-理想绿\n后背:图1\n颜色:')).cards[0];
+  assert.equal(card.layers[0].colorResult.source,'auto');
+  card=(await render('C1',['理想绿'],'Logo 保持藏蓝色，客户指定。',job,'货号:S-理想绿\n后背:图1，Logo 用藏蓝色')).cards[0];
   assert.equal(card.layers[0].colorResult.blocked,'customer');assert.equal(card.layers[0].asset,card.layers[0].sourceAsset);
   assert.ok(card.warnings.some(w=>w.includes('图稿写明了颜色要求，未自动改色；建议改为白色')));
  }finally{await rm(root,{recursive:true,force:true});}
