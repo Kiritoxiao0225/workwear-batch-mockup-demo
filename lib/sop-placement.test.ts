@@ -31,6 +31,10 @@ describe('SOP placement rules', () => {
     const p = sopPlacement(polo, 'backCenter', { width: 26, height: 8 }, px);
     expect(p).toMatchObject({ x: 500, y: 380 });
   });
+  it('keeps a tall back logo 8 cm below the neck instead of letting it reach the collar', () => {
+    // Centered at 380 a 22 cm logo would start 7 cm below the neck (200).
+    expect(sopPlacement(polo, 'backCenter', { width: 16, height: 22 }, px)).toMatchObject({ y: 200 + 80 + 110, rule: '图稿较高，上沿保持在后领下约8厘米' });
+  });
   it('keeps sleeve logos 0.75 cm outside the sleeve seam on the wearer side', () => {
     const left = sopPlacement(polo, 'leftSleeve', { width: 6, height: 3 }, px);
     expect(left.y).toBe(380);

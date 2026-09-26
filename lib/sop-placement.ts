@@ -3,7 +3,8 @@ import type { Box, PlacementStandard, Point, PositionKey, StructureType } from '
 // Rules from 效果图制作与质量标准 V1.0 (2026-08-17). One copy serves both the catalog
 // preview and the composite, so what the catalog shows is what a mockup uses.
 // v2: confirmed armpits set the body width, and sleeve-merged torso measurements are rejected.
-export const SOP_PLACEMENT_POLICY = 'sop-v2';
+// v3: a tall back print keeps its top edge 8 cm below the neck.
+export const SOP_PLACEMENT_POLICY = 'sop-v3';
 // Catalog photos are ghost-mannequin renders: the visible torso is the body's projected
 // width, not a flat half-chest. The SOP examples (chest 9 cm ≈ 22%, back 28 cm ≈ 70% of
 // that width) and the photos' own shoulder/placket proportions both agree on about 40 cm.
@@ -27,6 +28,9 @@ export const SOP_FACE: Record<SopKey, 'front' | 'back'> = { leftChest: 'front', 
 // button midpoint lands on the measured polos; a logo taller than 6 cm moves down by
 // half a button spacing, matching SOP "高度超过 6 厘米以上统一做在第三个扣子居中位置".
 const CHEST_DROP_CM = 9.5, TALL_CHEST_CM = 6, TALL_SHIFT_CM = 3.3, CHEST_OFFSET = .27, SLEEVE_SEAM_GAP_CM = .75;
+// Centered between shoulders and armholes, a 22 cm tall back print reached the collar (JSH-JSD33);
+// like a front print, its top edge stays at least 8 cm below the neck point.
+const BACK_TOP_MIN_CM = 8;
 
 /** Structure points in one pixel space. left/right follow the image, like catalog landmarks. */
 export type SopStructure = {
@@ -61,7 +65,11 @@ export function sopPlacement(s: SopStructure, key: SopKey, sizeCm: { width: numb
     if (s.button2 && s.button3) { y = tall ? s.button3.y : (s.button2.y + s.button3.y) / 2; rule = tall ? '高度超过6厘米，居中于第三粒扣' : '居中于第二、三粒扣之间'; }
     else { y = s.neck.y + (CHEST_DROP_CM + (tall ? TALL_SHIFT_CM : 0)) * pxPerCm; rule = tall ? '高度超过6厘米，领口下约12.8厘米' : '领口下约9.5厘米（相当于第二、三粒扣之间）'; }
   } else if (key === 'frontCenter') { x = s.center; y = s.neck.y + 8 * pxPerCm + h / 2; rule = '上沿在领口下约8厘米'; }
-  else if (key === 'backCenter') { x = s.center; y = ((s.leftShoulder.y + s.rightShoulder.y) / 2 + (s.leftArmpit.y + s.rightArmpit.y) / 2) / 2; rule = '居中于肩点至袖窿底之间'; }
+  else if (key === 'backCenter') {
+    x = s.center; y = ((s.leftShoulder.y + s.rightShoulder.y) / 2 + (s.leftArmpit.y + s.rightArmpit.y) / 2) / 2; rule = '居中于肩点至袖窿底之间';
+    const lowest = s.neck.y + BACK_TOP_MIN_CM * pxPerCm + h / 2;
+    if (y < lowest) { y = lowest; rule = `图稿较高，上沿保持在后领下约${BACK_TOP_MIN_CM}厘米`; }
+  }
   else if (key === 'upperBack') { x = s.center; y = s.neck.y + 3 * pxPerCm + h / 2; rule = '上沿在后领下约3厘米'; }
   else {
     // Wearer's left sleeve is the image right on the front view; SOP 4.2 keeps 0.5–1 cm from the seam.
