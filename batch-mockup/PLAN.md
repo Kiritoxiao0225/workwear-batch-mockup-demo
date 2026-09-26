@@ -184,3 +184,12 @@ WPS 同步完成后，后台逐条预约尚无识别记录和草稿的有效原�
 - 发布：补丁叠在 `6ab72f2be92e928954ad37b8`（`a70c050`，指纹 `cf4b1df0…`）上，新部署 `6ab73a264fe789a2e8fee9c2`（`90a0b1a`，指纹 `9321a59f…`），6 个文件。Web 先切；worker 切换时有 2 个生图任务在跑，被保护逻辑拦下，等任务结束后再切。发布前 check（1515 项）、干净检出 tsc/vitest（1514）/test:mockups、test:requirements（62）、test:workbench、test:garment、test:catalog（21 组）全过；无数据库迁移；发布后三个容器 6/6 与 `90a0b1a` 一致，三服务 RUNNING，health ready，新版 worker 心跳。`verify-files.mjs` 改为按清单里的提交核对（打包后另一会话又提交了 `e13adb0`，未包含在本次发布）。
 - 构建耗时：`next build` 只要 12–25 秒，推送 30–55 秒；慢在构建机拉取基础镜像（09-26 第一次 960 秒，之后 127 秒左右），补丁层层叠加使镜像越来越大。
 - 回退：`output/default-chest-release-20260926/rollback.json`（回到 `d-6ab72f2b`，恢复 WORKWEAR_BUILD_COMMIT），无需回退数据库。
+
+
+### 2026-09-26 中午：自动改色看客户原文、帽子围裙画框出图、难辨认中文高质量生图（三会话统一发布）
+
+- 问题：Wc24f3e5c74eb 右胸颜色项写“文字使用白色，参考图1和图2的白色标识”，客户原文未提颜色，却被当作客户指定，白 Logo 留在天蓝衣服上。
+- 改动：`3ef1038`（客户指定颜色须原文去掉衣服颜色后仍含颜色字；图稿生成页的设计师需求照旧）；另一会话 `ba4da96`、`f0a0912`（帽子、围裙在素材库照片上直接画印花区域，WPS 批量与简单批量按画框位置出图）；另一会话 `e13adb0`、`4e81975`（生图直接读照片文字；难辨认或书法中文用 high 质量，页面新增“高质量重做”，线上识别提示词副本更新前自动制作仍为 medium）。
+- 发布：补丁叠在 `6ab73a264fe789a2e8fee9c2`（`90a0b1a`，指纹 `9321a59f…`）上，新部署 `6ab741364fe789a2e8feea70`（`4e81975`，指纹 `48fe4dab…`），31 个文件，先两个 worker 后 Web。干净检出 lint、tsc、vitest（1518）、test:mockups（24）、test:requirements（63）、test:workbench、test:batch-cloud、test:batch-claim（7 组）、test:garment（12 组）、test:catalog（21 组）全过；无排队付费任务，无数据库迁移；发布后三个容器 31/31 一致，三服务 RUNNING，health ready，新版 worker 心跳，页面 200。
+- 待核对：帽子/围裙画框出图只有单测覆盖，需用一张已在素材库画框确认的真实帽子需求核对位置与大小；线上识别提示词副本由识图会话在用户确认后写入。
+- 回退：`output/color-source-release-20260926/rollback.json`（回到 `d-6ab73a26`，恢复 WORKWEAR_BUILD_COMMIT），无需回退数据库。
