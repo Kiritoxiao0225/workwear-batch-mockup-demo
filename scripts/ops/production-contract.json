@@ -1,0 +1,38 @@
+{
+  "project": "6ab125431e75dc0f4f4a89ef",
+  "environment": "6ab12543a8cf4c4a48e5fddd",
+  "server": "6aa8bb2cee364b0e40a18904",
+  "database": {
+    "service": "6ab127bd70fe6d989d501456",
+    "image": "docker.m.daocloud.io/library/postgres@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24",
+    "major": 17,
+    "dataDirectory": "/var/lib/postgresql/pgdata",
+    "volume": {
+      "id": "data",
+      "dir": "/var/lib/postgresql"
+    },
+    "systemIdentifier": "7690045641270210599",
+    "guardPath": "/etc/pg-guard/start.sh",
+    "command": [
+      "/bin/sh"
+    ],
+    "args": [
+      "-c",
+      "sh /etc/pg-guard/start.sh"
+    ]
+  },
+  "workers": {
+    "main": {
+      "service": "6ab1346f70fe6d989d5018d9",
+      "concurrency": 6,
+      "rssPauseMB": 1280,
+      "hostReserveMB": 1024
+    },
+    "external": {
+      "service": "6ab12c781e75dc0f4f4a8c8a",
+      "concurrency": 3,
+      "rssPauseMB": 768,
+      "hostReserveMB": 1024
+    }
+  }
+}

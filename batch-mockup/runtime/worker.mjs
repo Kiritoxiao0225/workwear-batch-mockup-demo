@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { createAdmissionGate } from './resource-guard.mjs';
 import { catalogDatabase,catalogTransaction } from '../../lib/server/catalog-database.ts';
 import { cloudStorage,CLOUD_ROOT } from '../adapters/cloud-files.mjs';
 import { executeTask,markInterrupted } from './service.mjs';
@@ -41,25 +42,28 @@ export function workerConcurrency(value = process.env.BATCH_WORKER_CONCURRENCY |
  if (!Number.isInteger(n) || n < 1 || n > 50) throw new Error('BATCH_WORKER_CONCURRENCY 必须是 1 到 50 的整数');
  return n;
 }
-export async function startBatchWorker({scope = workerScope(), concurrency = workerConcurrency()} = {}){
+export async function startBatchWorker({scope = workerScope(), concurrency = workerConcurrency(), admission = createAdmissionGate()} = {}){
  workerScope(scope);
  const owner=scope+':'+randomUUID(),db=catalogDatabase(),running=new Set();let closed=false,pumping=false,lastHeartbeat=0;
  async function heartbeat(){await db.query('INSERT INTO batch_workers(id,build_commit) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET heartbeat_at=now()',[owner,process.env.WORKWEAR_BUILD_COMMIT||null]);await db.query("UPDATE batch_queue SET lease_until=now()+interval '2 minutes',updated_at=now() WHERE owner=$1 AND status='running'",[owner]);lastHeartbeat=Date.now();}
  async function pump(){if(closed||pumping)return;pumping=true;
   try{
+   if(admission.check().paused)return;
    const expired=await expireTasks(scope);
    for(const task of expired.rows)if(task.status==='unknown')await cloudStorage(()=>markInterrupted(CLOUD_ROOT,task),{workspace:task.workspace});
    if(scope==='main')await enqueueWpsSync({automatic:true,workspace:'main'});
-   while(running.size<concurrency&&!closed){
+   while(running.size<concurrency&&!closed&&!admission.check().paused){
     const task=await claimNextTask(owner,scope);
     if(!task)break;
     const work=(async()=>{
      try{await cloudStorage(async adapter=>{await adapter.preload();return executeTask(CLOUD_ROOT,task,t=>adapter.enqueue(t));},{workspace:task.workspace,lease:{id:task.id,owner}});await db.query("UPDATE batch_queue SET status='finished',lease_until=NULL,updated_at=now() WHERE id=$1 AND owner=$2 AND status='running'",[task.id,owner]);}
      catch(e){if(['mockup','sync'].includes(task.kind)&&e.status===409&&(task.payload.attempt||0)<3){await db.query("UPDATE batch_queue SET status='queued',owner=NULL,lease_until=NULL,payload=$3,updated_at=now() WHERE id=$1 AND owner=$2",[task.id,owner,{...task.payload,attempt:(task.payload.attempt||0)+1}]);return;}await db.query("UPDATE batch_queue SET status=$3,error=$4,lease_until=NULL,updated_at=now() WHERE id=$1 AND owner=$2 AND status='running'",[task.id,owner,['mockup','sync'].includes(task.kind)?'failed':'unknown',String(e.message).slice(0,1200)]);if(['production','analysis'].includes(task.kind))await cloudStorage(()=>markInterrupted(CLOUD_ROOT,task),{workspace:task.workspace}).catch(()=>{});console.error('[batch-worker]',task.kind,task.id,e.message);}
     })().finally(()=>running.delete(work));running.add(work);
+    // Ramp up one task per tick so decoded snapshots become visible to the next memory sample.
+    break;
    }
   }finally{pumping=false;}
  }
  await heartbeat();const beat=setInterval(()=>{void heartbeat().catch(e=>console.error('[batch-heartbeat]',e.name));},10000),tick=setInterval(()=>{void pump().catch(e=>console.error('[batch-pump]',e.name));},2000);
- void pump().catch(e=>console.error('[batch-pump]',e.name));return {status:()=>({scope,concurrency,automaticWpsSync:scope==='main',ready:!closed&&Date.now()-lastHeartbeat<30000,running:running.size}),close:async()=>{closed=true;clearInterval(tick);while(pumping)await new Promise(resolve=>setTimeout(resolve,50));await Promise.allSettled([...running]);clearInterval(beat);}};
+ void pump().catch(e=>console.error('[batch-pump]',e.name));return {status:()=>({scope,concurrency,automaticWpsSync:scope==='main',ready:!closed&&Date.now()-lastHeartbeat<30000,running:running.size,admission:admission.status()}),close:async()=>{closed=true;clearInterval(tick);while(pumping)await new Promise(resolve=>setTimeout(resolve,50));await Promise.allSettled([...running]);clearInterval(beat);}};
 }

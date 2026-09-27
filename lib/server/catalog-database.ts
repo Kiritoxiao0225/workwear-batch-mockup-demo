@@ -95,13 +95,19 @@ async function withDatabase<T>(operation: (client: CatalogConnection) => Promise
     }
   }
 }
-export async function catalogTransaction<T>(operation: (client: CatalogQueryClient) => Promise<T>): Promise<T> {
+// Session locks need one reserved connection, without keeping a transaction open
+// during remote object storage requests.
+export async function catalogSession<T>(operation: (client: CatalogQueryClient) => Promise<T>): Promise<T> {
   return withDatabase(async pool => {
     const reserved = await pool.reserve();
-    const client = queryClient(reserved);
+    try { return await operation(queryClient(reserved)); }
+    finally { reserved.release(); }
+  });
+}
+export async function catalogTransaction<T>(operation: (client: CatalogQueryClient) => Promise<T>): Promise<T> {
+  return catalogSession(async client => {
     try { await client.query('BEGIN'); const result = await operation(client); await client.query('COMMIT'); return result; }
     catch (error) { await client.query('ROLLBACK'); throw error; }
-    finally { reserved.release(); }
   });
 }
 export async function closeCatalogDatabase() {

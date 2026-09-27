@@ -3,7 +3,11 @@
 ## 2026-09-27 数据库恢复与持久化保护
 
 - `STORE-DB`：PostgreSQL 17 使用 PVC 内的 `/var/lib/postgresql/pgdata`；`scripts/ops/postgres-start-guard.sh` 校验挂载、版本和系统标识，缺失时拒绝创建空库。Zeabur config 保留 TLS。恢复与容器重启验收分别回读系统身份、57 张表的计数/内容。
-- `FLOW-BACKUP`：main worker → `catalog-offsite-backup.ts` → `backupCatalog` 一致性快照 → 私有 R2 `backups/scheduled-v1/` → R2 Content-MD5 校验及 HEAD 长度/ETag 回读 → `batch_documents/ops/database-backup.json` 成功回执。6 小时间隔、7 天保留、15 分钟失败重试，超过 8 小时无有效备份由 worker 健康状态报告。异地备份在独立 PostgreSQL 17 恢复，48 张业务表逐行哈希核验。
+- `FLOW-BACKUP`：main worker → `catalog-backup-scheduler.ts` → 独立子进程（512 MB JS 堆、20 分钟超时）→ `catalog-backup-stream.ts` 在只读一致性事务内每批 16 行导出 → 事务结束 → 流式压缩、R2 上传 → Content-MD5 + HEAD 长度/ETag → 成功回执。迁移文件名和 SHA、48 张业务表及 9 张明确排除表必须与实际库一致；新增表未声明时拒绝成功。临时文件有磁盘预算，子进程结束后清理。6 小时间隔、7 天保留、15 分钟失败重试；以快照时间判断新鲜度，清理失败不抹掉已经成功的回执。
+- `RULE-WORKER-ADMISSION`：main 6 并发、external 3 并发，每 2 秒最多新领 1 项。`resource-guard.mjs` 在进程 RSS 达阈值或主机可用内存不足时暂停领单，有回滞恢复；batch 与 garment 共用保护，已有任务和心跳继续。`/tmp/batch-worker-drain` 供发布停领单。不会自动重复未知的付费任务。
+- `API-WORKER-HEALTH`：`/`、`/ready` 只看制作后台心跳；`/live` 为进程存活；`/ops/backup` 单独报告备份新鲜度。备份失效不再直接把制作后台的就绪探针变为 503。
+- `RULE-DEPLOY-DB`：`scripts/ops/production-contract.json` 固定 PG17.11 镜像摘要、PVC、PGDATA、系统标识和启动守卫。`npm run ops:preflight` 同时校验平台规格、实际镜像、配置内容和容器内守卫；`release-worker-patch.mjs` 发布前必须通过检查，并要求先暂停空闲后台。环境更新必须全量合并并逐项回读。
+- `TEST-STABILITY`：`npm run test:stability` 覆盖旧版配置漂移、错误 PGDATA、内存回滞、子进程失败/超时和 R2 校验失败；`test:batch-claim` 用真实 PostgreSQL 验证暂停领单时不改任务且心跳正常。完整备份重新导出及恢复核验见故障记录。
 - `RULE-RECOVERY-NO-REPLAY`：恢复人员写入 `recovery-hold.json` 的需求 ID，`queueNewRequirements` 跳过自动分析/续做；清单损坏则停止自动制作，手动操作与恢复后新需求保留。`automatic-flow.test.mjs` 覆盖旧需求/已有模型草稿隔离、新需求正常和损坏清单拒绝。
 - 本次已恢复账号及基础资料，但密码/登录会话以 9 月 22 日快照为准；现有邮箱无密码时走首次设密，不能以新注册覆盖身份。WPS 原始记录只读重新同步。部署与演练状态见 `docs/incident-beijing-20260927.md` 和当次回执。
 

@@ -1,43 +1,65 @@
-import {createHash} from 'node:crypto';
-import {afterEach,beforeEach,expect,it,vi} from 'vitest';
-import {catalogTransaction} from './catalog-database';
-import {runOffsiteBackup} from './catalog-offsite-backup';
-
-const {send}=vi.hoisted(()=>({send:vi.fn()}));
-vi.mock('@aws-sdk/client-s3',()=>({
- S3Client:vi.fn(function(){return{send,destroy:vi.fn()};}),
- PutObjectCommand:vi.fn(function(input){return{kind:'put',input};}),
- HeadObjectCommand:vi.fn(function(input){return{kind:'head',input};}),
- ListObjectsV2Command:vi.fn(function(input){return{kind:'list',input};}),
- DeleteObjectCommand:vi.fn(function(input){return{kind:'delete',input};}),
+import { createHash } from 'node:crypto';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { catalogSession, catalogDatabase } from './catalog-database';
+import { streamCatalogBackup } from './catalog-backup-stream';
+import { runOffsiteBackup, backupFresh } from './catalog-offsite-backup';
+const { send } = vi.hoisted(() => ({ send: vi.fn() }));
+vi.mock('@aws-sdk/client-s3', () => ({
+ S3Client: vi.fn(function() { return { send, destroy: vi.fn() }; }),
+ PutObjectCommand: vi.fn(function(input) { return { kind: 'put', input }; }),
+ HeadObjectCommand: vi.fn(function(input) { return { kind: 'head', input }; }),
+ ListObjectsV2Command: vi.fn(function(input) { return { kind: 'list', input }; }),
+ DeleteObjectCommand: vi.fn(function(input) { return { kind: 'delete', input }; }),
 }));
-vi.mock('./catalog-database',()=>({catalogTransaction:vi.fn()}));
-vi.mock('./catalog-backup',()=>({backupCatalog:async()=>({sha256:'payload-sha',payload:{migrations:[{name:'023_garment_mockup.sql'}],tables:{users:[{id:'existing-user'}]}}})}));
-const query=vi.fn();
-let stored:Buffer,wrong:'digest'|'length'|null;
-beforeEach(()=>{
- vi.clearAllMocks();wrong=null;
- for(const name of ['ENDPOINT','ACCESS_KEY_ID','ACCESS_KEY_SECRET','BUCKET'])vi.stubEnv('CATALOG_R2_'+name,'test');
- query.mockImplementation(async(sql:string)=>({rows:sql.includes('pg_try_advisory')?[{locked:true}]:[],rowCount:0}));
- vi.mocked(catalogTransaction).mockImplementation(operation=>operation({query}));
- send.mockImplementation(async(command:{kind:string;input:{Body:Buffer;ContentMD5:string}})=>{
-  if(command.kind==='put'){
-   stored=command.input.Body;
+vi.mock('./catalog-database', () => ({ catalogSession: vi.fn(), catalogDatabase: vi.fn() }));
+vi.mock('./catalog-backup-stream', () => ({ streamCatalogBackup: vi.fn() }));
+const query = vi.fn(), cleanup = vi.fn();
+let stored: Buffer, wrong: 'digest' | 'length' | null, directory: string;
+beforeEach(async () => {
+ vi.clearAllMocks(); wrong = null;
+ for (const name of ['ENDPOINT', 'ACCESS_KEY_ID', 'ACCESS_KEY_SECRET', 'BUCKET']) vi.stubEnv('CATALOG_R2_' + name, 'test');
+ directory = await mkdtemp(path.join(tmpdir(), 'backup-test-'));
+ const bytes = Buffer.from('verified test archive'), file = path.join(directory, 'backup.gz');
+ await writeFile(file, bytes);
+ vi.mocked(streamCatalogBackup).mockResolvedValue({ archivePath: file, snapshotAt: new Date().toISOString(), sha256: 'payload-sha', archiveSHA256: 'archive-sha', archiveMD5: createHash('md5').update(bytes).digest('hex'), contentMD5: createHash('md5').update(bytes).digest('base64'), bytes: bytes.length, tables: 48, payloadBytes: 100, cleanup });
+ query.mockImplementation(async (sql: string) => ({ rows: sql.includes('pg_try_advisory') ? [{ locked: true }] : [], rowCount: 0 }));
+ vi.mocked(catalogSession).mockImplementation(operation => operation({ query }));
+ vi.mocked(catalogDatabase).mockReturnValue({ query });
+ send.mockImplementation(async command => {
+  if (command.kind === 'put') {
+   const chunks = []; for await (const chunk of command.input.Body) chunks.push(chunk); stored = Buffer.concat(chunks);
    expect(command.input.ContentMD5).toBe(createHash('md5').update(stored).digest('base64'));
+   expect(command.input.ContentLength).toBe(stored.length);
   }
-  if(command.kind==='head')return{ContentLength:stored.length+(wrong==='length'?1:0),ETag:'"'+(wrong==='digest'?'wrong':createHash('md5').update(stored).digest('hex'))+'"'};
-  return{};
+  if (command.kind === 'head') return { ContentLength: stored.length + (wrong === 'length' ? 1 : 0), ETag: '"' + (wrong === 'digest' ? 'wrong' : createHash('md5').update(stored).digest('hex')) + '"' };
+  return {};
  });
 });
-afterEach(()=>vi.unstubAllEnvs());
-it('records success only after the stored digest and length match the uploaded snapshot',async()=>{
- const result=await runOffsiteBackup(true);
- expect(result).toMatchObject({verification:'r2-content-md5+head',archiveMD5:createHash('md5').update(stored).digest('hex'),bytes:stored.length});
- expect(query.mock.calls.some(([sql])=>sql.startsWith('INSERT INTO batch_documents'))).toBe(true);
+afterEach(async () => { vi.unstubAllEnvs(); await rm(directory, { recursive: true, force: true }); });
+it('records a verified streamed upload and releases the session lock without an upload transaction', async () => {
+ const result = await runOffsiteBackup(true);
+ expect(result).toMatchObject({ verification: 'r2-content-md5+head', archiveMD5: createHash('md5').update(stored).digest('hex'), bytes: stored.length });
+ expect(query.mock.calls.some(([sql]) => sql.startsWith('INSERT INTO batch_documents'))).toBe(true);
+ expect(query.mock.calls.at(-1)?.[0]).toContain('pg_advisory_unlock');
+ expect(query.mock.calls.some(([sql]) => /BEGIN|COMMIT/.test(sql))).toBe(false);
+ expect(cleanup).toHaveBeenCalledOnce();
 });
-it.each(['digest','length'] as const)('does not mark success or delete old backups after a stored %s mismatch',async(kind)=>{
- wrong=kind;
- await expect(runOffsiteBackup(true)).rejects.toThrow('readback mismatch');
- expect(query.mock.calls.some(([sql])=>sql.startsWith('INSERT INTO batch_documents'))).toBe(false);
- expect(send.mock.calls.some(([command])=>['list','delete'].includes(command.kind))).toBe(false);
+it.each(['digest', 'length'] as const)('preserves previous backups on a stored %s mismatch', async kind => {
+ wrong = kind; await expect(runOffsiteBackup(true)).rejects.toThrow('readback mismatch');
+ expect(query.mock.calls.some(([sql]) => sql.startsWith('INSERT INTO batch_documents'))).toBe(false);
+ expect(send.mock.calls.some(([command]) => ['list', 'delete'].includes(command.kind))).toBe(false);
+ expect(query.mock.calls.at(-1)?.[0]).toContain('pg_advisory_unlock');
+ expect(cleanup).toHaveBeenCalledOnce();
+});
+it('does not export when another backup owns the lock', async () => {
+ query.mockResolvedValue({ rows: [{ locked: false }], rowCount: 1 });
+ expect(await runOffsiteBackup(true)).toBeNull(); expect(streamCatalogBackup).not.toHaveBeenCalled();
+});
+it('uses snapshot age rather than upload completion time for freshness', () => {
+ expect(backupFresh({ at: new Date().toISOString(), snapshotAt: new Date(Date.now() - 9 * 3600000).toISOString() })).toBe(false);
+ expect(backupFresh({ at: 'invalid' })).toBe(false);
+ expect(backupFresh({ at: new Date(Date.now() + 60000).toISOString() })).toBe(false);
 });

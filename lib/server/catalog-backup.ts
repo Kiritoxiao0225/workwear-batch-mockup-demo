@@ -19,6 +19,9 @@ const SEEDED_ROWS: Partial<Record<(typeof TABLES)[number], { column: string; val
 // The starter price list is seeded by the migration and restored from the backup, so it is
 // cleared wholesale rather than by a single id.
 const SEEDED_TABLES = ['price_list'] as const;
+export const CATALOG_BACKUP_TABLES: readonly string[] = TABLES;
+// Each persisted table must be backed up or explicitly documented as disposable.
+export const CATALOG_BACKUP_EXCLUDED_TABLES = ['schema_migrations', 'email_challenges', 'email_quota', 'sms_challenges', 'sms_quota', 'sms_attempts', 'quota_reservations', 'garment_mockup_workers', 'email_password_tickets'];
 const payloadSchema = z.object({ schemaVersion: z.literal(1), migrations: z.array(z.object({ name: z.string(), sha256: z.string() }).strict()), tables: z.record(z.string(), z.array(z.record(z.string(), z.unknown()))) }).strict();
 export async function backupCatalog() {
   const payload = await catalogTransaction(async client => {

@@ -91,13 +91,13 @@ async function realGarmentProvider(job:{id:string;tenant_id:string;action:Action
   if('mask' in result)return {transparent:asset.url,mask:(await storeAsset(job.tenant_id,result.mask,'蒙版.png',{jobId:job.id})).url,original:(await storeAsset(job.tenant_id,result.original,'抠图原图.png',{jobId:job.id})).url,model:result.model};
   return {image:asset.url,model:result.model};
 }
-export async function startGarmentWorker(){
+export async function startGarmentWorker({canAccept = () => true}: {canAccept?: () => boolean} = {}){
   let closed=false,running:Promise<void>|null=null;const owner=randomUUID();
   const heartbeat=()=>catalogDatabase().query('INSERT INTO garment_mockup_workers(id) VALUES($1) ON CONFLICT(id) DO UPDATE SET heartbeat_at=now()',[owner]);
   await heartbeat();
   const beatTimer=setInterval(()=>{void heartbeat().catch(()=>{});},15000);
   const tick=async()=>{
-    if(closed||running)return;
+    if(closed||running||!canAccept())return;
     running=(async()=>{
       const expired=(await catalogDatabase().query("UPDATE garment_mockup_ai_jobs SET status='unknown',error='后台中断，未重复调用供应商',lease_until=NULL WHERE status='running' AND lease_until<now() RETURNING id,tenant_id,action")).rows;
       for(const j of expired){

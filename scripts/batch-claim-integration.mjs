@@ -15,7 +15,7 @@ const password = randomBytes(24).toString('hex');
 process.env.CATALOG_DATABASE_URL = `postgresql://claim:${password}@127.0.0.1:${port}/postgres`; process.env.CATALOG_DATABASE_CA_CERT = '';
 const database = new EmbeddedPostgres({ databaseDir: join(root, 'pg'), user: 'claim', password, port, persistent: true, authMethod: 'scram-sha-256', postgresFlags: ['-h', '127.0.0.1'], onLog: () => {}, onError: e => console.error(e.name || 'db error') });
 const { catalogDatabase: db, closeCatalogDatabase, migrateCatalog } = await import('../lib/server/catalog-database.ts');
-const { claimNextTask, workerConcurrency } = await import('../batch-mockup/runtime/worker.mjs');
+const { claimNextTask, workerConcurrency, startBatchWorker } = await import('../batch-mockup/runtime/worker.mjs');
 const { cloudStorage } = await import('../batch-mockup/adapters/cloud-files.mjs');
 let checks = 0; const pass = s => { checks++; console.log('PASS', s); };
 try {
@@ -47,5 +47,16 @@ try {
   assert.equal(workerConcurrency(), 3); assert.equal(workerConcurrency('20'), 20);
   assert.throws(() => workerConcurrency('0')); assert.throws(() => workerConcurrency('51')); assert.throws(() => workerConcurrency('2.5'));
   pass('并发数默认 3，可配置 1–50');
+  const beforePause = (await db().query('SELECT id,status,owner FROM batch_queue ORDER BY id')).rows;
+  const admission = {check: () => ({paused:true,reason:'memory_pressure'}), status: () => ({paused:true,reason:'memory_pressure'})};
+  const pausedWorker = await startBatchWorker({scope:'main',admission});
+  try {
+    await new Promise(resolve => setTimeout(resolve,100));
+    assert.equal(pausedWorker.status().ready,true);
+    assert.equal(pausedWorker.status().running,0);
+    assert.equal(pausedWorker.status().admission.reason,'memory_pressure');
+    assert.deepEqual((await db().query('SELECT id,status,owner FROM batch_queue ORDER BY id')).rows,beforePause);
+    pass('内存保护暂停领单，保留已有任务状态，心跳保持健康');
+  } finally {await pausedWorker.close();}
   console.log(`批量领单集成测试通过：${checks} 组`);
 } finally { await closeCatalogDatabase().catch(() => {}); await database.stop().catch(() => {}); await rm(root, { recursive: true, force: true }); }

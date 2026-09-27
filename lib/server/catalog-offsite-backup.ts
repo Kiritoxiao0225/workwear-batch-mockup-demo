@@ -1,59 +1,56 @@
-import {createHash} from 'node:crypto';
-import {gzip} from 'node:zlib';
-import {promisify} from 'node:util';
-import {S3Client,PutObjectCommand,HeadObjectCommand,ListObjectsV2Command,DeleteObjectCommand} from '@aws-sdk/client-s3';
-import {backupCatalog} from './catalog-backup';
-import {catalogTransaction} from './catalog-database';
+import { createReadStream } from 'node:fs';
+import { S3Client, PutObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { catalogDatabase, catalogSession } from './catalog-database';
+import { streamCatalogBackup } from './catalog-backup-stream';
 
-const intervalMs=6*60*60*1000,retentionMs=7*24*60*60*1000;
-const prefix='workwear-mockup/prod/backups/scheduled-v1/';
-const sha=(bytes:Uint8Array|string)=>createHash('sha256').update(bytes).digest('hex');
-type Receipt={at:string;key:string;sha256:string;archiveSHA256:string;archiveMD5?:string;verification?:string;bytes:number;tables:number};
-export async function runOffsiteBackup(force=false):Promise<Receipt|null>{
- const {CATALOG_R2_ENDPOINT:endpoint,CATALOG_R2_ACCESS_KEY_ID:accessKeyId,CATALOG_R2_ACCESS_KEY_SECRET:secretAccessKey,CATALOG_R2_BUCKET:Bucket}=process.env;
- if(!endpoint||!accessKeyId||!secretAccessKey||!Bucket)throw Error('R2 backup configuration missing');
- const client=new S3Client({region:'auto',endpoint,credentials:{accessKeyId,secretAccessKey},requestChecksumCalculation:'WHEN_REQUIRED',responseChecksumValidation:'WHEN_REQUIRED'});
- try{return await catalogTransaction(async db=>{
-  await db.query("SET LOCAL statement_timeout='15min'");
-  const lock=await db.query("SELECT pg_try_advisory_xact_lock(hashtext('catalog-offsite-backup')) AS locked");
-  if(!lock.rows[0]?.locked)return null;
-  const prior=(await db.query("SELECT content_json FROM batch_documents WHERE workspace='main' AND path='ops/database-backup.json'")).rows[0]?.content_json as Receipt|undefined;
-  if(!force&&prior&&Date.now()-Date.parse(prior.at)<intervalMs)return prior;
-  const backup=await backupCatalog();
-  if(backup.payload.migrations.at(-1)?.name!=='023_garment_mockup.sql'||!backup.payload.tables.users?.length)throw Error('Refusing uninitialized database backup');
-  const at=new Date().toISOString(),Body=await promisify(gzip)(JSON.stringify(backup));
-  const archiveSHA256=sha(Body),Key=prefix+at.replaceAll(':','-')+'-'+archiveSHA256+'.json.gz';
-  const digest=createHash('md5').update(Body).digest(),archiveMD5=digest.toString('hex');
-  // R2 validates Content-MD5 before accepting this single-part PUT. Read the stored
-  // object's digest and length back: large GETs from Beijing can time out even when
-  // uploads succeed. Full SHA-256 download/restore checks remain a separate drill.
-  await client.send(new PutObjectCommand({Bucket,Key,Body,ContentMD5:digest.toString('base64'),ContentType:'application/gzip',IfNoneMatch:'*'}),{abortSignal:AbortSignal.timeout(300000)});
-  const read=await client.send(new HeadObjectCommand({Bucket,Key}),{abortSignal:AbortSignal.timeout(30000)});
-  if(read.ContentLength!==Body.length||read.ETag?.replaceAll('"','')!==archiveMD5)throw Error('Offsite backup readback mismatch');
-  const receipt={at,key:Key,sha256:backup.sha256,archiveSHA256,archiveMD5,verification:'r2-content-md5+head',bytes:Body.length,tables:Object.keys(backup.payload.tables).length};
-  await db.query(`INSERT INTO batch_documents(workspace,path,content_json) VALUES('main','ops/database-backup.json',$1)
-   ON CONFLICT(workspace,path) DO UPDATE SET content_json=EXCLUDED.content_json,content_gzip=NULL,revision=batch_documents.revision+1,updated_at=now()`,[receipt]);
-  // Delete only this scheduler's expired archives, after a new one was verified.
-  let token:string|undefined;
-  do{const list=await client.send(new ListObjectsV2Command({Bucket,Prefix:prefix,ContinuationToken:token}),{abortSignal:AbortSignal.timeout(30000)});
-   for(const item of list.Contents||[])if(item.Key&&/^\d{4}-\d{2}-\d{2}T[\d.-]+Z-[a-f0-9]{64}\.json\.gz$/.test(item.Key.slice(prefix.length))&&item.LastModified&&item.LastModified.getTime()<Date.now()-retentionMs){
-    await client.send(new DeleteObjectCommand({Bucket,Key:item.Key}),{abortSignal:AbortSignal.timeout(30000)});
-   }token=list.IsTruncated?list.NextContinuationToken:undefined;
-  }while(token);
-  return receipt;
- });}finally{client.destroy();}
+export const BACKUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const retentionMs = 7 * 24 * 60 * 60 * 1000;
+const prefix = 'workwear-mockup/prod/backups/scheduled-v1/';
+export type BackupReceipt = { at: string; snapshotAt?: string; key: string; sha256: string; archiveSHA256: string; archiveMD5?: string; verification?: string; bytes: number; tables: number };
+export async function readBackupReceipt(): Promise<BackupReceipt | null> {
+  return (await catalogDatabase().query("SELECT content_json FROM batch_documents WHERE workspace='main' AND path='ops/database-backup.json'")).rows[0]?.content_json ?? null;
 }
-export function startOffsiteBackup(){
- const enabled=process.env.CATALOG_OFFSITE_BACKUP_ENABLED==='1'&&process.env.BATCH_WORKER_SCOPE==='main';
- let closed=false,running:Promise<void>|null=null,lastAttempt=0,lastSuccessAt:string|null=null,error:string|null=null;
- async function tick(){
-  if(!enabled||closed||running||Date.now()-lastAttempt<15*60*1000)return;
-  lastAttempt=Date.now();running=(async()=>{
-   try{const result=await runOffsiteBackup();if(result){lastSuccessAt=result.at;error=null;console.log('[database-backup] verified',result.at,result.bytes);}}
-   catch(e){error=e instanceof Error?e.name:'Error';console.error('[database-backup] failed',error);}
-  })().finally(()=>{running=null;});await running;
- }
- const timer=enabled?setInterval(()=>{void tick();},60000):undefined;
- if(enabled)void tick();
- return {status:()=>({enabled,lastSuccessAt,error,ready:!enabled||!!lastSuccessAt&&Date.now()-Date.parse(lastSuccessAt)<8*60*60*1000}),close:async()=>{closed=true;if(timer)clearInterval(timer);await running;}};
+export function backupFresh(receipt: Pick<BackupReceipt, 'at' | 'snapshotAt'> | null, age = 8 * 60 * 60 * 1000) {
+  const timestamp = Date.parse(receipt?.snapshotAt ?? receipt?.at ?? '');
+  return Number.isFinite(timestamp) && timestamp <= Date.now() && Date.now() - timestamp < age;
+}
+export async function runOffsiteBackup(force = false): Promise<BackupReceipt | null> {
+  const { CATALOG_R2_ENDPOINT: endpoint, CATALOG_R2_ACCESS_KEY_ID: accessKeyId, CATALOG_R2_ACCESS_KEY_SECRET: secretAccessKey, CATALOG_R2_BUCKET: Bucket } = process.env;
+  if (!endpoint || !accessKeyId || !secretAccessKey || !Bucket) throw Error('R2 backup configuration missing');
+  const client = new S3Client({ region: 'auto', endpoint, credentials: { accessKeyId, secretAccessKey }, requestChecksumCalculation: 'WHEN_REQUIRED', responseChecksumValidation: 'WHEN_REQUIRED' });
+  try {
+    return await catalogSession(async db => {
+      const lock = await db.query("SELECT pg_try_advisory_lock(hashtext('catalog-offsite-backup')) AS locked");
+      if (!lock.rows[0]?.locked) return null;
+      try {
+        const prior = await readBackupReceipt();
+        if (!force && backupFresh(prior, BACKUP_INTERVAL_MS)) return prior;
+        const backup = await streamCatalogBackup();
+        try {
+          const Key = prefix + backup.snapshotAt.replaceAll(':', '-') + '-' + backup.archiveSHA256 + '.json.gz';
+          const body = createReadStream(backup.archivePath);
+          try {
+            await client.send(new PutObjectCommand({ Bucket, Key, Body: body, ContentLength: backup.bytes, ContentMD5: backup.contentMD5, ContentType: 'application/gzip', IfNoneMatch: '*' }), { abortSignal: AbortSignal.timeout(300000) });
+          } finally { body.destroy(); }
+          const read = await client.send(new HeadObjectCommand({ Bucket, Key }), { abortSignal: AbortSignal.timeout(30000) });
+          if (read.ContentLength !== backup.bytes || read.ETag?.replaceAll('"', '') !== backup.archiveMD5) throw Error('Offsite backup readback mismatch');
+          const receipt: BackupReceipt = { at: new Date().toISOString(), snapshotAt: backup.snapshotAt, key: Key, sha256: backup.sha256, archiveSHA256: backup.archiveSHA256, archiveMD5: backup.archiveMD5, verification: 'r2-content-md5+head', bytes: backup.bytes, tables: backup.tables };
+          await db.query(`INSERT INTO batch_documents(workspace,path,content_json) VALUES('main','ops/database-backup.json',$1)
+            ON CONFLICT(workspace,path) DO UPDATE SET content_json=EXCLUDED.content_json,content_gzip=NULL,revision=batch_documents.revision+1,updated_at=now()`, [receipt]);
+          // Cleanup failure does not invalidate an already verified and recorded backup.
+          try {
+            let token: string | undefined;
+            do {
+              const list = await client.send(new ListObjectsV2Command({ Bucket, Prefix: prefix, ContinuationToken: token }), { abortSignal: AbortSignal.timeout(30000) });
+              for (const item of list.Contents || []) if (item.Key && /^\d{4}-\d{2}-\d{2}T[\d.-]+Z-[a-f0-9]{64}\.json\.gz$/.test(item.Key.slice(prefix.length)) && item.LastModified && item.LastModified.getTime() < Date.now() - retentionMs) {
+                await client.send(new DeleteObjectCommand({ Bucket, Key: item.Key }), { abortSignal: AbortSignal.timeout(30000) });
+              }
+              token = list.IsTruncated ? list.NextContinuationToken : undefined;
+            } while (token);
+          } catch { console.error('[database-backup] retention cleanup failed; verified archive retained'); }
+          return receipt;
+        } finally { await backup.cleanup(); }
+      } finally { await db.query("SELECT pg_advisory_unlock(hashtext('catalog-offsite-backup'))"); }
+    });
+  } finally { client.destroy(); }
 }

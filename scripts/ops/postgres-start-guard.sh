@@ -2,6 +2,7 @@
 # Production restore must prepare this cluster before service startup.
 set -eu
 expected=/var/lib/postgresql/pgdata
+case "$(postgres --version)" in *" 17."*) ;; *) echo "FATAL: PostgreSQL binary must be version 17" >&2; exit 1 ;; esac
 [ "${PGDATA:-}" = "$expected" ] || { echo 'FATAL: PGDATA does not point at the persistent cluster' >&2; exit 1; }
 # Verify the containing mount, not a sibling anonymous /data volume.
 awk -v target="$PGDATA" '

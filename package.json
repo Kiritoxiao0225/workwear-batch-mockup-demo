@@ -46,7 +46,9 @@
     "garment:worker": "tsx scripts/garment-worker.ts",
     "test:garment": "tsx scripts/garment-mockup-integration.ts",
     "garment:styles": "tailwindcss -c scripts/garment-tailwind.config.cjs -i components/garment-editor/utilities.source.css -o components/garment-editor/utilities.css --minify",
-    "garment:worker:local": "tsx scripts/garment-worker.ts --local"
+    "garment:worker:local": "tsx scripts/garment-worker.ts --local",
+    "ops:preflight": "node scripts/ops/production-preflight.mjs",
+    "test:stability": "vitest run lib/server/catalog-offsite-backup.test.ts lib/server/catalog-backup-scheduler.test.ts && node --test batch-mockup/tests/resource-guard.test.mjs scripts/ops/production-preflight.test.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1127.0",

@@ -5,7 +5,8 @@ RUN npm ci --include=dev && npm cache clean --force
 COPY tsconfig.json ./
 COPY lib ./lib
 COPY batch-mockup ./batch-mockup
-COPY scripts/artwork-worker.ts ./scripts/artwork-worker.ts
+COPY scripts/artwork-worker.ts scripts/catalog-offsite-backup.ts ./scripts/
+COPY db/migrations ./db/migrations
 COPY public/fonts ./public/fonts
 COPY public/brand ./public/brand
 ENV NODE_ENV=production PORT=8080

@@ -14,18 +14,21 @@ const objectStore = storage.backend === 'oss' ? catalogObjectStore() : storage.b
 let stop!: () => void;
 const stopped = new Promise<void>(resolve => { stop = resolve; });
 process.once('SIGTERM', stop); process.once('SIGINT', stop);
-const worker = await startBatchWorker();
+const { createAdmissionGate } = await import('../batch-mockup/runtime/resource-guard.mjs');
+const admission = createAdmissionGate();
+const worker = await startBatchWorker({ admission });
 const { startGarmentWorker } = await import('../lib/server/garment-mockup-ai');
-const garmentWorker = await startGarmentWorker();
-const { startOffsiteBackup } = await import('../lib/server/catalog-offsite-backup');
+const garmentWorker = await startGarmentWorker({ canAccept: () => !admission.check().paused });
+const { startOffsiteBackup } = await import('../lib/server/catalog-backup-scheduler');
 const backup = startOffsiteBackup();
 const health = process.env.PORT ? createServer((_request, response) => {
   const status = worker.status();
   const databaseBackup = backup.status();
-  response.writeHead(status.ready && databaseBackup.ready ? 200 : 503, { 'Content-Type': 'application/json' });
+  const ready = _request.url === '/ops/backup' ? databaseBackup.ready : _request.url === '/live' ? true : status.ready;
+  response.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json' });
   response.end(JSON.stringify({ ...status, workflow: 'batch', legacyEnabled: false, databaseBackup,
-    logicVersion: WORKWEAR_LOGIC_VERSION, commit: process.env.WORKWEAR_BUILD_COMMIT ?? null, objectStore }));
+    stabilityRelease: process.env.STABILITY_RELEASE_SHA256 ?? null, logicVersion: WORKWEAR_LOGIC_VERSION, commit: process.env.WORKWEAR_BUILD_COMMIT ?? null, objectStore }));
 }).listen(Number(process.env.PORT), '0.0.0.0') : undefined;
 console.log('[batch-worker] ready:', worker.status().scope, 'legacy worker disabled');
-try { await stopped; await worker.close(); await garmentWorker.close(); await backup.close(); }
+try { await stopped; await Promise.all([worker.close(), garmentWorker.close(), backup.close()]); }
 finally { health?.close(); await closeCatalogDatabase(); }
