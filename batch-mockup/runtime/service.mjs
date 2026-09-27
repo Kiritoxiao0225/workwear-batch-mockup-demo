@@ -16,7 +16,13 @@ import { configuredProduction } from '../adapters/production-images.mjs';
 // Only untouched inputs enter automatically. Re-sync must not restart failed calls or designer edits.
 export async function queueNewRequirements(root,manifest,enqueue,factory=configuredAnalyzer){
  const queued=[],errors=[],existingJobs=await readProductionJobs(root);
+ // A restored snapshot cannot prove which later supplier calls already completed.
+ // Hold that incident's baseline only; manual requests and genuinely new cases still work.
+ const recovery=await jsonFile(resolve(root,'recovery-hold.json'),{blockedCaseIds:[]});
+ if(!Array.isArray(recovery.blockedCaseIds))throw Error('恢复任务隔离清单无效，自动制作已停止');
+ const held=new Set(recovery.blockedCaseIds);
  for(const c of (await requirementWorkbench(root,manifest)).cases){
+  if(held.has(c.caseId))continue;
   if(c.sourceRecordId?.startsWith('upload:')||['studio','batch'].includes(c.entry))continue;
   if(c.active===false||c.sourceChanged||c.sourceReadError)continue;
   try{

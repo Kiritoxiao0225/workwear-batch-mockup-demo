@@ -17,12 +17,15 @@ process.once('SIGTERM', stop); process.once('SIGINT', stop);
 const worker = await startBatchWorker();
 const { startGarmentWorker } = await import('../lib/server/garment-mockup-ai');
 const garmentWorker = await startGarmentWorker();
+const { startOffsiteBackup } = await import('../lib/server/catalog-offsite-backup');
+const backup = startOffsiteBackup();
 const health = process.env.PORT ? createServer((_request, response) => {
   const status = worker.status();
-  response.writeHead(status.ready ? 200 : 503, { 'Content-Type': 'application/json' });
-  response.end(JSON.stringify({ ...status, workflow: 'batch', legacyEnabled: false,
+  const databaseBackup = backup.status();
+  response.writeHead(status.ready && databaseBackup.ready ? 200 : 503, { 'Content-Type': 'application/json' });
+  response.end(JSON.stringify({ ...status, workflow: 'batch', legacyEnabled: false, databaseBackup,
     logicVersion: WORKWEAR_LOGIC_VERSION, commit: process.env.WORKWEAR_BUILD_COMMIT ?? null, objectStore }));
 }).listen(Number(process.env.PORT), '0.0.0.0') : undefined;
 console.log('[batch-worker] ready:', worker.status().scope, 'legacy worker disabled');
-try { await stopped; await worker.close(); await garmentWorker.close(); }
+try { await stopped; await worker.close(); await garmentWorker.close(); await backup.close(); }
 finally { health?.close(); await closeCatalogDatabase(); }

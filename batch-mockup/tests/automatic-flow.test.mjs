@@ -110,3 +110,25 @@ test('刚识别完、会自行接续制作的需求，同时进行的同步不�
  await queueNewRequirements(f.root,f.manifest,f.enqueue,f.analyzerFactory);
  assert.equal((await readProductionJobs(f.root)).length,0);
 });
+
+test('备份恢复基线不自动重复识别或续做，恢复后的新需求仍可自动排队',async t=>{
+ const f=await fixture(t);
+ await saveJSON(resolve(f.root,'recovery-hold.json'),{blockedCaseIds:['A']});
+ await queueNewRequirements(f.root,f.manifest,f.enqueue,f.analyzerFactory);
+ assert.deepEqual([...f.queue.values()].map(x=>x.payload.caseId),['B']);
+ assert.equal((await readRequirementState(f.root,'A')).analyses.length,0);
+ // A recovered model draft must not silently resume production either.
+ await saveJSON(resolve(f.root,'recovery-hold.json'),{blockedCaseIds:['A','B']});
+ const task=[...f.queue.values()][0];
+ await executeTask(f.root,{...task,payload:{...task.payload,autoProduce:false}},f.enqueue,{analyzerFactory:f.analyzerFactory});
+ const state=await readRequirementState(f.root,'B');state.analyses.at(-1).finishedAt='2026-01-01T00:00:00Z';
+ await saveJSON(resolve(f.root,'requirements-state/B.json'),state);
+ const count=f.queue.size;await queueNewRequirements(f.root,f.manifest,f.enqueue,f.analyzerFactory);
+ assert.equal(f.queue.size,count);assert.equal((await readProductionJobs(f.root)).length,0);
+});
+
+test('损坏的恢复隔离清单拒绝自动制作',async t=>{
+ const f=await fixture(t);await saveJSON(resolve(f.root,'recovery-hold.json'),{blockedCaseIds:null});
+ await assert.rejects(queueNewRequirements(f.root,f.manifest,f.enqueue,f.analyzerFactory),/恢复任务隔离清单无效/);
+ assert.equal(f.queue.size,0);
+});
