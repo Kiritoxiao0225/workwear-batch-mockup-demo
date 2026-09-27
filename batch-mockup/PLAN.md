@@ -239,3 +239,12 @@ WPS 同步完成后，后台逐条预约尚无识别记录和草稿的有效原�
 - 发布（按恢复后的新规则）：先跑 `scripts/ops/production-preflight.mjs` 通过。Web 以 `6ab82c36`（e214f3f）为基线打补丁，新部署 `6ab8dbcda26d1d2fd28528a9`（指纹 `7ec5ea8c…`，32 个文件，含另一会话的稳定性源码以保持 Web/worker 源码一致，排除 `Dockerfile.artwork-worker`）。worker 在无任务时加领单锁暂停，以当前 worker 镜像 `d-6ab89e45` 为基线构建补丁（沿用稳定性补丁脚本并扩充文件清单，36 个文件，补丁 SHA `d033ab7f…`），新镜像 `d-6ab8de17`；暂停状态下新部署无法调度，改用镜像标签切换并重启两个 worker。发布后：Web `/api/health` 200、ready；main/external `/ready` `/live` `/ops/backup` 均 200，并发 6/3，源码指纹全部一致；Web 32/32 一致；发布后合同检查再次通过；无排队付费任务。
 - 验证：check（1531）、test:requirements（69）、test:mockups（27）、test:workbench、test:batch-cloud、test:garment 全过。
 - 回退：`output/ocr-color-release-20260927/rollback.json`（Web 回 `d-6ab82c36`，worker 回 `d-6ab89e45`，提示词回 fb26593b），不得动数据库合同。
+
+### 2026-09-27 晚：需求理解文字改为绿 / 黄 / 红三色，有“□”补字前不制作
+
+- 背景：逐字转写后，看不清的字写成“□”，但制作只在缺 Logo 时拦截，带“□”的生图图稿仍会自动出图（生图模型会印方框或猜字）；需求理解里红字 = OCR 印证、橙底 = AI 自认，设计师难以理解；识别问题里关于“□”的长句与正文重复。
+- 改动：`76437f6` 生图正文含“□”时制作任务标为 blocked（“正文有‘□’待补字……”），补字保存后照常制作；`1251932`/`e90ea32`/`1791c98` 需求理解“文字”项里要印的字：OCR 读到的标绿（不用看），只有 AI 读到的标黄（看一眼原图），“□”标红（必须补字，补完才做图），客户原话不标，图例一行；`33286e1` 提到“□”的识别问题不进提醒列表；`d239b47` “需核对”提醒改为同一黄色，因“□”停下的图稿提醒为红色并写明“补上并保存后点重新生成”；“原图识别文字”一行改为灰色参考。
+- 数据：恢复期用旧提示词 fb26593b 识别的 9 条活跃 WPS 需求已按 70d1b3eb 重新识别（约 ¥0.59），结果为待采用候选，未替换正文（采用脚本 `output/reanalyze-verbatim-20260927/adopt.mts` 被自动权限拦截，需放行或页面逐条采用）。
+- 发布：Web 以 `6ab8dbcd`（01e6248）为基线打补丁（3 个文件），新部署 `6ab937ed`，指纹 `edf15768…`；worker 在无任务时加锁暂停，以 `d-6ab8de17` 为基线构建补丁（清单同上次，补丁 SHA `2f7232b4…`），新镜像 `d-6ab9397f`，切换并重启两个 worker。发布后：Web `/api/health` ready、release `edf15768`；main/external 健康、并发、源码哈希一致；Web 3/3 一致；合同检查通过；无排队付费任务。
+- 验证：check（1531）、test:requirements（70）、test:mockups（27）、test:workbench（3）、test:batch-cloud 通过。
+- 回退：`output/ocr-marks-release-20260927/rollback.json`（Web 回 `d-6ab8dbcd`，worker 回 `d-6ab8de17`），无数据库变更。
