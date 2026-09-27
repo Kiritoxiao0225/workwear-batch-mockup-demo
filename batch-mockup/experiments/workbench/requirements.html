@@ -138,7 +138,8 @@ function reminders(c){const out=[],a=c.analysis,add=r=>out.push(r);
  if(c.sourceReadError)add({level:'act',where:'原稿',text:c.sourceReadError});
  if(c.needsReanalysis)add({level:'act',where:'需求',text:'素材已变化，需要重新识别',action:['重新识别','analyze']});
  if(a?.error)add({level:'act',where:'需求',text:a.error,action:['重新识别','analyze']});
- (c.draft?.readingIssues||[]).forEach((i,index)=>add({level:'check',where:i.scope||'需求',text:i.issue,resolve:index}));
+ // An issue about □ repeats what the yellow □ in the text already shows.
+ (c.draft?.readingIssues||[]).forEach((i,index)=>{if(!i.issue.includes('□'))add({level:'check',where:i.scope||'需求',text:i.issue,resolve:index})});
  for(const n of c.notes)add({level:'check',where:'初审',text:typeof n==='string'?n:n.message});
  for(const art of c.draft?.artworks||[]){const j=c.productions?.filter(j=>j.artworkId===art.id).at(-1);if(!j)continue;const where=art.name.replace('图稿','');
   if(['failed','unknown','blocked'].includes(j.status))add({level:'act',where,text:j.error||'图稿没有做完',action:['重新生成','generate',art.id]});
