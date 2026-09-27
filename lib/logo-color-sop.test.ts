@@ -50,6 +50,14 @@ describe('SOP 5 logo colors', () => {
 
   it('leaves a designer’s editor color and a customer’s named color alone', () => {
     expect(decideLogoColor(solid('#031827'), 理想绿, { setByDesigner: true })).toMatchObject({ color: null, source: 'manual', blocked: null });
+  });
+
+  it('never recolours a picture of three or more colours, and keeps the original colours when the designer asks', () => {
+    // A pale rainbow smiley on white (W64b4f64ae9ee): unreadable outline, but four colours.
+    const rainbow = logo(80, 20, x => ['#fff27a', '#ffc4d6', '#b9f0c8', '#f51f9c'][Math.floor(x / 20)]);
+    expect(decideLogoColor(rainbow, garment('#ffffff'))).toMatchObject({ color: null, source: 'original', blocked: 'multi-color' });
+    expect(decideLogoColor(solid('#031827'), 理想绿, { keepOriginal: true })).toMatchObject({ color: null, source: 'original', blocked: 'kept' });
+    expect(decideLogoColor(solid('#031827'), 理想绿).source).toBe('auto');
     expect(decideLogoColor(solid('#031827'), 理想绿, { fixedByCustomer: true })).toMatchObject({ color: null, blocked: 'customer' });
   });
 

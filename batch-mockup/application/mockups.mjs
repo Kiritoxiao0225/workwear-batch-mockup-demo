@@ -22,6 +22,14 @@ export const readMockupState=(root,id)=>jsonFile(statePath(root,id),{revision:0,
 // 更新效果图 queues a render; marking the cards pending shows "正在更新整张图片…" at once (a first render
 // after a worker restart took four minutes and looked like nothing happened) and makes the render
 // recompose instead of reusing the cached picture. Every render outcome replaces the pending status.
+// "用原图颜色": a position whose logo the designer wants in its own colours on every garment colour of the requirement.
+export async function keepMockupColors(root,id,position,keep){
+ if(typeof position!=='string'||!position||position.length>40||typeof keep!=='boolean')throw fail('位置或开关无效');
+ const state=await readMockupState(root,id),cards=state.cards.filter(card=>(card.layers||[]).some(l=>l.position===position)||card.slots?.[position]);
+ if(!cards.length)throw fail('这条需求没有这个位置的效果图',409);
+ for(const card of cards){const kept=new Set(card.keepColors||[]);if(keep)kept.add(position);else kept.delete(position);card.keepColors=[...kept];card.status='pending';}
+ state.revision++;state.updatedAt=stamp();await saveJSON(statePath(root,id),state);return state;
+}
 export async function markMockupsPending(root,id){
  const state=await readMockupState(root,id),cards=state.cards.filter(card=>['ready','preview','failed'].includes(card.status));
  if(!cards.length)return state;
@@ -234,7 +242,7 @@ export async function renderMockups(root,c,jobs,catalog){
     const renderedX=(left+w/2)/FRAME.width,renderedY=(top+h/2)/FRAME.height;layer.x=keepPosition&&Math.abs(renderedX-prior.x)<=.501/FRAME.width?prior.x:renderedX;layer.y=keepPosition&&Math.abs(renderedY-prior.y)<=.501/FRAME.height?prior.y:renderedY;layer.width=w/FRAME.width;
     // SOP 5: judged against the garment under the logo. The recolored file becomes the layer asset: dragging shows it, and the artwork column lists it as this garment color's version.
     const prompt=c.draft.artworks.find(a=>a.id===s.artId)?.prompt,garmentColor=garmentColorUnder(baseRaw,left,top,w,h),analysis=garmentColor&&await logoColorAnalysis(trimmed.bytes);
-    const decision=analysis?decideLogoColor(analysis,garmentColor,{setByDesigner:await editRecolorsArtwork(root,s.job),fixedByCustomer:promptFixesLogoColor(prompt)&&(c.entry==='studio'||sourceMentionsColor(c.sourceText,[group.color,...c.draft.artworks.flatMap(a=>a.applications.map(x=>x.color))])),accents:face.accents}):null;let art=trimmed.bytes;
+    const decision=analysis?decideLogoColor(analysis,garmentColor,{setByDesigner:await editRecolorsArtwork(root,s.job),keepOriginal:(card.keepColors||[]).includes(s.position),fixedByCustomer:promptFixesLogoColor(prompt)&&(c.entry==='studio'||sourceMentionsColor(c.sourceText,[group.color,...c.draft.artworks.flatMap(a=>a.applications.map(x=>x.color))])),accents:face.accents}):null;let art=trimmed.bytes;
     if(decision?.color){art=await recolorLogo(trimmed.bytes,decision.color);layer.asset=`mockup-assets/logo-${hash(art)}.png`;await atomicFile(assetPath(root,layer.asset),art);}
     layer.colorResult=decision&&{color:decision.color,source:decision.source,blocked:decision.blocked,recommended:{color:decision.recommendation.color,label:decision.recommendation.label}};
     const said=colorMessages(decision);if(said.hint)notes.push(`${s.position}：${said.hint}`);

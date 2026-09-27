@@ -31,7 +31,9 @@ export function sourceFor(input) {
   const subject=input.prompt.match(/^主体：([^]*?)^文字：/mu)?.[1]||'';
   // Only a directly named complete source can be reused. Layout references are not artwork pixels.
   const direct=subject.match(/(?:使用|复用)图([0-9]+)完整/u);
-  const source=direct&&selected.find(i=>i.index===Number(direct[1]));
+  // "使用图1的完整主体标志" with 图2 linked for the position (Web69a498a416): the only linked image the subject names is the source.
+  const named=[...new Set([...subject.matchAll(/图([0-9]+)/gu)].map(m=>Number(m[1])))].map(n=>selected.find(i=>i.index===n)).filter(Boolean);
+  const source=(direct&&selected.find(i=>i.index===Number(direct[1])))||(named.length===1?named[0]:null);
   if(!source)throw fail('复用／高清路线未明确唯一内容原图，需要调整素材关联后制作');
   return source;
 }

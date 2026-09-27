@@ -30,6 +30,9 @@ export function colorMessages(decision){
  const {verdict,recommendation:rec,source,blocked}=decision;
  if(source==='auto')return {hint:`${colorProblem(verdict)}，已按 SOP 改为${rec.label}${['图稿原有色','衣服撞色'].includes(rec.label)?' '+rec.color:''}（对比约${ratio(rec.contrast)}），图稿列有这个颜色的版本可下载。需要其他颜色时，在图稿编辑器里设置图层颜色`};
  if(blocked==='customer')return {warning:`${colorProblem(verdict)}；图稿写明了颜色要求，未自动改色；建议改为${rec.label}，可在图稿编辑器里设置图层颜色`};
+ if(blocked==='multi-color')return {warning:`${colorProblem(verdict)}；图稿有多种颜色，整体改成单色会失去原有配色，未自动改色；如需更醒目，可在图稿编辑器里调整部分颜色`};
+ // The designer chose the original colours for this position; say so without calling it a problem.
+ if(blocked==='kept')return {hint:`按你的选择使用原图颜色${verdict.ok?'':`（与衣服对比约${ratio(verdict.contrast)}）`}`};
  if(blocked==='inner-detail')return {warning:`${colorProblem(verdict)}；图稿内部有深浅分区（如白字、未去净的白底），整体改成单色会丢细节，未自动改色。请在图稿编辑器用“去空白”或“选区颜色”处理，或直接设置图层颜色`};
  return {};
 }

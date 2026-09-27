@@ -5,7 +5,7 @@ import sharp from 'sharp';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {mockupGroups,matchGarment,garmentCanvas,renderMockups,saveMockupSelection,readMockupState,markMockupsPending,initialPlacement,hasManualSize,positionInfo,FRAME} from '../application/mockups.mjs';
+import {mockupGroups,matchGarment,garmentCanvas,renderMockups,saveMockupSelection,readMockupState,markMockupsPending,keepMockupColors,initialPlacement,hasManualSize,positionInfo,FRAME} from '../application/mockups.mjs';
 import {annotationOverlay,annotationText,colorIssue} from '../application/mockup-checks.mjs';
 import {missingGlyphs} from '../adapters/font-coverage.ts';
 import {readFile} from 'node:fs/promises';
@@ -235,6 +235,19 @@ test('更新效果图先把卡片标成正在更新，合成结束后恢复并�
   const marked=await markMockupsPending(root,'P1');assert.equal(marked.cards[0].status,'pending');assert.equal((await readMockupState(root,'P1')).cards[0].status,'pending');
   const again=(await render('P1',['理想绿'],'沿用图1原有配色。',job)).cards[0];assert.equal(again.status,first.status);assert.notEqual(again.render.renderedAt,undefined);
   assert.equal((await markMockupsPending(root,'none')).cards.length,0);
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+test('“用原图颜色”对这条需求该位置的所有衣色生效，重新合成保持原色；取消后恢复自动改色',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'mockups-keep-'));
+ try{
+  const {logo,render}=await colorFixture(root),job={id:'c'.repeat(64),artworkId:'logo',revision:1,final:await logo('#031827')};
+  let card=(await render('K1',['理想绿'],'沿用图1原有配色。',job)).cards[0];assert.equal(card.layers[0].colorResult.source,'auto');
+  assert.equal((await keepMockupColors(root,'K1','后背',true)).cards[0].status,'pending');
+  card=(await render('K1',['理想绿'],'沿用图1原有配色。',job)).cards[0];
+  assert.deepEqual([card.layers[0].colorResult.source,card.layers[0].colorResult.blocked],['original','kept']);assert.equal(card.layers[0].asset,card.layers[0].sourceAsset);
+  assert.ok(card.hints.some(h=>h.startsWith('后背：按你的选择使用原图颜色')));
+  await keepMockupColors(root,'K1','后背',false);card=(await render('K1',['理想绿'],'沿用图1原有配色。',job)).cards[0];assert.equal(card.layers[0].colorResult.source,'auto');
+  await assert.rejects(keepMockupColors(root,'K1','帽子',true),/没有这个位置/);
  }finally{await rm(root,{recursive:true,force:true});}
 });
 test('SOP 5 自动改色：深衣服上看不清的 Logo 改成白色，改色文件就是这个衣色的配色版本；客户指定颜色时不改',async()=>{

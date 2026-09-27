@@ -1,7 +1,7 @@
 // Logo against garment color, from 效果图制作与质量标准 V1.0 §5 配色原则. A logo that the
 // garment swallows is shown in one SOP color per garment color and position; the artwork is
 // never regenerated for this, only its pixels are recolored with the alpha left untouched.
-export const LOGO_COLOR_POLICY = 'sop-color-v1';
+export const LOGO_COLOR_POLICY = 'sop-color-v2';
 
 export type Rgb = readonly [number, number, number];
 export type LogoInk = { color: string; label: string };
@@ -13,6 +13,10 @@ export const TARGET_CONTRAST = 3;
 // A logo whose edges are this often another logo color, rather than the garment, depends on
 // those inner color changes (a white 字 on a red seal); one flat color would erase them.
 export const MAX_INNER_EDGES = .25;
+// Three or more colours each covering 5% of the logo make it a multi-colour picture: recolouring it to one colour turned
+// W64b4f64ae9ee's rainbow smiley into a flat rose silhouette, worse than its pale outline on white.
+export const MULTI_COLOR_SHARE = .05, MULTI_COLOR_COUNT = 3;
+export const isMultiColor = (analysis: LogoColorAnalysis) => analysis.swatches.filter(s => s.share >= MULTI_COLOR_SHARE).length >= MULTI_COLOR_COUNT;
 
 export const SOP_INKS = {
   white: { color: '#ffffff', label: '白色' },
@@ -158,16 +162,16 @@ export type LogoColorDecision = {
   source: 'original' | 'auto' | 'manual';
   verdict: LogoColorVerdict;
   recommendation: LogoInk & { contrast: number };
-  blocked: 'customer' | 'inner-detail' | null;
+  blocked: 'customer' | 'inner-detail' | 'multi-color' | 'kept' | null;
 };
 /**
  * A failing logo takes the recommendation, except when a designer already set its color in the
  * artwork editor, the customer fixed its colors, or one flat color would erase inner detail.
  */
-export function decideLogoColor(analysis: LogoColorAnalysis, garment: Rgb, { setByDesigner = false, fixedByCustomer = false, accents = [] as readonly Rgb[] } = {}): LogoColorDecision {
+export function decideLogoColor(analysis: LogoColorAnalysis, garment: Rgb, { setByDesigner = false, fixedByCustomer = false, keepOriginal = false, accents = [] as readonly Rgb[] } = {}): LogoColorDecision {
   const verdict = judgeLogoColors(analysis, garment), recommendation = recommendLogoColor(analysis, garment, accents);
   const base = { verdict, recommendation, color: null, source: setByDesigner ? 'manual' as const : 'original' as const };
   if (verdict.ok || setByDesigner) return { ...base, blocked: null };
-  const blocked = fixedByCustomer ? 'customer' : analysis.innerEdges > MAX_INNER_EDGES ? 'inner-detail' : null;
+  const blocked = keepOriginal ? 'kept' : fixedByCustomer ? 'customer' : analysis.innerEdges > MAX_INNER_EDGES ? 'inner-detail' : isMultiColor(analysis) ? 'multi-color' : null;
   return blocked ? { ...base, blocked } : { ...base, blocked: null, color: recommendation.color, source: 'auto' };
 }

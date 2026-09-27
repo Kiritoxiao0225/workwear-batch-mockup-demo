@@ -47,6 +47,10 @@ test('复用读取明确内容图，位置参考不混进图稿；不调用生�
  const r=await executeProduction(f.root,j.id,{generate:()=>{throw Error('不应生成');},enhance:()=>{throw Error('不应高清');},cutout:async()=>{cuts++;return f.transparent;}});
  assert.equal(r.status,'returned');assert.equal(cuts,1);assert.equal(r.raw.sha256,hash(f.opaque));
  assert.equal(sourceFor({images:[{id:'1',index:1},{id:'2',index:2}],imageIds:['1','2'],prompt}).id,'2');
+ // Web69a498a416: "使用图1的完整主体标志" with 图2 linked only for the position.
+ const named='【左胸图稿】\n\n主体：使用图1的完整主体标志，不包含右下角水印。\n\n文字：沿用图1。\n\n字体：沿用。\n\n颜色：沿用。\n\n排版：图2用于参考左胸位置。\n\n尺寸：未指定。\n\n输出：独立图稿。';
+ assert.equal(sourceFor({images:[{id:'1',index:1},{id:'2',index:2}],imageIds:['1','2'],prompt:named}).id,'1');
+ assert.throws(()=>sourceFor({images:[{id:'1',index:1},{id:'2',index:2}],imageIds:['1','2'],prompt:named.replace('使用图1的完整主体标志','组合图1与图2的标志')}),/未明确唯一内容原图/);
 });
 test('高清路线只有高清再按需抠图，不插入生图',async t=>{
  const f=await fixture(t,'enhance'),[j]=await reserveProduction(f.root,f.manifest,f.requests);let up=0;
