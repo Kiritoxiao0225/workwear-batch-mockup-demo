@@ -63,6 +63,12 @@ test('缺客户Logo不凭空生成；纯文字无图可以生成',async t=>{
  f.state.draft.readingIssues=[];f.state.revision++;await saveJSON(resolve(f.root,'requirements-state/T.json'),f.state);
  const [ok]=await reserveProduction(f.root,f.manifest,[{...f.requests[0],revision:2}]);assert.equal(ok.status,'queued');
 });
+test('生图正文有□待补字时不制作；补字保存后照常制作',async t=>{
+ const f=await fixture(t);f.state.draft.artworks[0].prompt=prompt.replace('保留  A','沿用图2已有文字，逐行为：第一行“□小二”');await saveJSON(resolve(f.root,'requirements-state/T.json'),f.state);
+ const [j]=await reserveProduction(f.root,f.manifest,f.requests);assert.equal(j.status,'blocked');assert.match(j.error,/□/);
+ f.state.draft.artworks[0].prompt=prompt;f.state.revision++;await saveJSON(resolve(f.root,'requirements-state/T.json'),f.state);
+ const [ok]=await reserveProduction(f.root,f.manifest,[{...f.requests[0],revision:2}]);assert.equal(ok.status,'queued');
+});
 test('确认失败后仅续跑抠图，未知抠图不重复付费',async t=>{
  const f=await fixture(t),[j]=await reserveProduction(f.root,f.manifest,f.requests);let generated=0,cuts=0;
  const providers={generate:async()=>{generated++;return f.opaque;},cutout:async()=>{cuts++;throw Object.assign(Error('before submit'),{definiteFailure:true});}};

@@ -54,6 +54,8 @@ export async function reserveProduction(root,manifest,requests) {
       if(!c.images.length&&c.draft.readingIssues.some(x=>/(未提供|缺少|缺失).*(Logo|图片|素材)/iu.test(x.issue)))blocked='缺少客户Logo素材，请补图后制作';
       if(a.route!=='generate')try{sourceFor(input);}catch(e){blocked=e.message;}
       if(a.route==='generate'&&c.images.some((i,n)=>i.index!==n+1))blocked='素材编号有空缺，须保持原图号；未擅自重排后提交';
+      // Recognition writes □ where it could not read a character; the image model would print it or guess one.
+      if(a.route==='generate'&&a.prompt.includes('□'))blocked='正文有“□”待补字，请对照原图补全并保存后再制作';
       await mkdir(dir,{recursive:true});
       const fixed=[];
       for(const image of input.images){
