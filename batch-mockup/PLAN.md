@@ -229,3 +229,13 @@ WPS 同步完成后，后台逐条预约尚无识别记录和草稿的有效原�
 - 回退注意：旧版 schema 不认识 `offsetPolicy`，回退前需去掉已保存标准中的该字段（与 `offsetCm` 上线时相同）。
 
 - 发布（2026-09-27 04:41）：补丁叠在 `6ab7fd7ba26d1d2fd2851f37`（`4d733f8`，指纹 `b3df8cba…`）上，新部署 `6ab82c364236e69929d74ad9`（`e214f3f`，指纹 `165ea94e…`），7 个文件，先两个 worker 后 Web。干净检出 lint、tsc、vitest（1523）、test:mockups（26）、test:requirements（67）、test:workbench、test:garment（12 组）、test:catalog（21 组）、test:batch-cloud 全过；无排队付费任务，无数据库迁移；发布后三个容器 7/7 一致，三服务 RUNNING，health ready，新版 worker 心跳，页面 200。回退见 `output/sopv5-release-20260927/rollback.json`（先去掉 `offsetPolicy`）。已有效果图需点“更新效果图”才按 v5 重排。
+
+
+### 2026-09-27 下午：恢复后补回识别提示词、原图识别文字、多色不自动改色、用原图颜色
+
+- 背景：数据库从 9 月 22 日备份恢复后，线上识别提示词回到 9-13 版（fb26593b），9-26 的逐字转写与识图改进丢失；Web69a498a416 左胸、后背被理解为“复用原图”却同时关联图1、图2，卡在“未明确唯一内容原图”；W64b4f64ae9ee 多色笑脸被整体改成单色 #f51f9c；需求理解没有显示 OCR 读到的文字。
+- 数据：识别提示词写回 70d1b3eb（9-26 识图改进 + 逐字转写 + 新增“reuse/enhance 只关联一张内容原图；有水印等需删改时用 generate”），回退文件 `output/prompt-verbatim-test-20260926/rollback-prompt-20260927.txt`。Web69 用线上模型实测三份均为 generate，左胸、后背只关联图1。
+- 改动（`01e6248`，另含已提交未发布的 `e5cf046`/`ec2a20b` 图例）：需求理解显示“原图识别文字”（水印、状态栏灰字）；三种以上各占 5% 的颜色视为多色图稿，不自动改色只提醒（`sop-color-v2`）；提醒里自动改色的位置可点“用原图颜色”（按位置保存在 `mockups.cards[].keepColors`，可“恢复自动改色”）；复用路线主体只点名一张已关联图时直接用它。
+- 发布（按恢复后的新规则）：先跑 `scripts/ops/production-preflight.mjs` 通过。Web 以 `6ab82c36`（e214f3f）为基线打补丁，新部署 `6ab8dbcda26d1d2fd28528a9`（指纹 `7ec5ea8c…`，32 个文件，含另一会话的稳定性源码以保持 Web/worker 源码一致，排除 `Dockerfile.artwork-worker`）。worker 在无任务时加领单锁暂停，以当前 worker 镜像 `d-6ab89e45` 为基线构建补丁（沿用稳定性补丁脚本并扩充文件清单，36 个文件，补丁 SHA `d033ab7f…`），新镜像 `d-6ab8de17`；暂停状态下新部署无法调度，改用镜像标签切换并重启两个 worker。发布后：Web `/api/health` 200、ready；main/external `/ready` `/live` `/ops/backup` 均 200，并发 6/3，源码指纹全部一致；Web 32/32 一致；发布后合同检查再次通过；无排队付费任务。
+- 验证：check（1531）、test:requirements（69）、test:mockups（27）、test:workbench、test:batch-cloud、test:garment 全过。
+- 回退：`output/ocr-color-release-20260927/rollback.json`（Web 回 `d-6ab82c36`，worker 回 `d-6ab89e45`，提示词回 fb26593b），不得动数据库合同。
