@@ -155,7 +155,7 @@ npm run catalog:restore -- /绝对路径/backup.json
 
 启动命令为 `sh /etc/pg-guard/start.sh`，配置文件来源是 `scripts/ops/postgres-start-guard.sh`（Zeabur config，关闭 envsubst）。它检查真正包含 PGDATA 的 PVC 挂载、PG_VERSION=17，以及 `PG_EXPECTED_SYSTEM_IDENTIFIER`。缺卷、空目录或数据库身份变化时拒绝初始化。恢复到新数据库后必须由恢复人员核实并更新预期身份；不得只为通过检查而修改它。原 TLS 配置仍保留。
 
-`lib/server/catalog-offsite-backup.ts` 由 main worker 启动，且仅在 `CATALOG_OFFSITE_BACKUP_ENABLED=1` 时运行：每 6 小时对业务表和迁移版本做一致性快照，gzip 后写到现有私有 R2 的 `workwear-mockup/prod/backups/scheduled-v1/`。上传后完整下载核对 SHA；成功回执保存在 `batch_documents(main, ops/database-backup.json)`。只有新备份验证成功后，才删除这个专用前缀中超过 7 天的计划备份，其他图片和备份不受影响。失败每 15 分钟重试；成功备份超过 8 小时未更新时 main worker 健康响应为 503，并报告 `databaseBackup` 状态。数据库不可达时 worker 本身也不能健康，不能把单纯 RUNNING 当验收。
+`lib/server/catalog-offsite-backup.ts` 由 main worker 启动，且仅在 `CATALOG_OFFSITE_BACKUP_ENABLED=1` 时运行：每 6 小时对业务表和迁移版本做一致性快照，gzip 后写到现有私有 R2 的 `workwear-mockup/prod/backups/scheduled-v1/`。上传携带 Content-MD5，由 R2 验证内容后落盘；随后 HEAD 回读长度和单次 PUT 的 MD5 ETag。北京整包 GET 实测超时，完整下载 SHA 与恢复验证作为独立演练保留；成功回执保存在 `batch_documents(main, ops/database-backup.json)`。只有新备份验证成功后，才删除这个专用前缀中超过 7 天的计划备份，其他图片和备份不受影响。失败每 15 分钟重试；成功备份超过 8 小时未更新时 main worker 健康响应为 503，并报告 `databaseBackup` 状态。数据库不可达时 worker 本身也不能健康，不能把单纯 RUNNING 当验收。
 
 恢复演练应使用独立空库，先按备份迁移建表，执行 `restoreCatalog`，逐表核对行数和内容，并另验对象存储。数据库角色、TLS 和短期验证码/限流状态不属于应用备份，需要由配置重建。图片字节仍在 R2，数据库备份仅包含对象引用。主机磁盘可用、数据库存储正确与异地备份可恢复，是三项不同的验收。
 

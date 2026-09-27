@@ -21,7 +21,7 @@
 
 1. PGDATA 改为持久卷内 `/var/lib/postgresql/pgdata`。启动守卫检查实际挂载、PG 17 版本和系统标识；缺数据时拒绝自动建空库。配置与 TLS 都通过平台回读核实。
 2. 恢复基线写入 `recovery-hold.json`，阻止自动识别/续做恢复出的旧需求。手动提交和后续新增需求仍可工作。原快照没有 queued/running 付费任务。
-3. main worker 定期将业务一致性快照压缩上传到现有私有 R2，上传后完整下载核对 SHA。间隔 6 小时，专用目录保留 7 天；失败重试和过期健康状态由程序维护。
+3. main worker 定期将业务一致性快照压缩上传到现有私有 R2，上传携带 Content-MD5 让 R2 核验后落盘，再 HEAD 回读长度和 MD5 ETag；SHA-256 随回执保存，完整下载/恢复已另行演练。间隔 6 小时，专用目录保留 7 天；失败重试和过期健康状态由程序维护。
 4. Web 平台探针改为 HTTP `/api/health`，检查数据库及迁移；worker 使用 HTTP `/` 检查心跳，main worker 同时报告备份新鲜度。平台 RUNNING 仍不能替代真实功能检查。
 
 Zeabur 内建自动备份被 API 拒绝，理由是自定义镜像没有被识别为数据库。因此采用项目自身的备份逻辑，没有声称已打开平台自动备份。
@@ -42,8 +42,16 @@ Zeabur 内建自动备份被 API 拒绝，理由是自定义镜像没有被识�
 
 ## 最终部署回读
 
-- main worker 与 external worker 均使用主 worker 仓库镜像标签 `d-6ab88c69dcbdc0de6fc4d62b`，补丁指纹 `4b3a304a8737ae3615a8efc6032cfd20d701d9e876afa66e825cbae256d0c251`。main worker 三个实际源码文件 SHA 与本地逐一一致。
+- main worker 与 external worker 均使用主 worker 仓库镜像标签 `d-6ab89283dcbdc0de6fc4d6ac`，补丁指纹 `33e86aa6fc9c631f8bb9e6ce844bec205ef11d4a3eb2dc5710dbaa14a51198db`。main worker 三个实际源码文件 SHA 与本地逐一一致。
 - main worker 健康响应为 200，`databaseBackup.enabled=true`、`ready=true`；external worker 为 200，scope=external，备份不重复运行。
 - 11:29 又保存了一份包含重新设密和恢复后制作记录的 R2 备份，99,946,101 字节，上传/完整读回 SHA 一致。首份备份已完成独立 PostgreSQL 恢复演练。
 - 恢复后队列已实际完成 10 个分析任务、15 个制作任务、24 个上衣合成任务；这些是运行结果回读，不是本次代理为测试提交的付费请求。自动扫描回执中的新增队列为空，恢复隔离清单保持 59 个 ID。
 - 发布备份补丁时发现仍有制作任务在运行，取消了当次构建；待付费任务结束后才继续发布。生产 Web 保持原运行版本。
+
+### 云端备份校验修正
+
+北京 worker 上传约 100 MB 备份成功，但整包 GET 读回在 300 秒后超时，4 MB Range GET 也在 20 秒超时；同一对象 HEAD 约 0.94 秒成功。现采用 R2 支持的 Content-MD5 入库校验，加 HEAD 回读长度与单次 PUT 的 ETag；任何不匹配都不记成功、不删除旧备份。完整 SHA 下载与独立恢复验证保留为实际演练证据，不能将 HEAD 表述为完整下载。参考：[R2 S3 API 兼容性](https://developers.cloudflare.com/r2/api/s3/api/)。新增三项回归覆盖正确回读、摘要不符和长度不符。
+
+云端执行修正后的备份函数成功，11:49 生成 99,950,296 字节快照并完成 R2 校验与 HEAD 回读；随后从本机完整下载该云端快照，SHA-256 与云端回执一致。证据：`cloud-backup-verification-v2.json`、`cloud-backup-full-readback.json`。
+
+11:56 最终回读：Web、main worker、external worker 均为 HTTP 200 / ready；两个 worker 镜像与三个补丁源码 SHA 一致。main 定时备份已启用，成功回执时间为 11:49，无错误；外部 worker 不重复执行备份。最终证据：`final-verification-v2.json`。

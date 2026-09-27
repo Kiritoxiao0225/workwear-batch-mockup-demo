@@ -3,7 +3,7 @@
 ## 2026-09-27 数据库恢复与持久化保护
 
 - `STORE-DB`：PostgreSQL 17 使用 PVC 内的 `/var/lib/postgresql/pgdata`；`scripts/ops/postgres-start-guard.sh` 校验挂载、版本和系统标识，缺失时拒绝创建空库。Zeabur config 保留 TLS。恢复与容器重启验收分别回读系统身份、57 张表的计数/内容。
-- `FLOW-BACKUP`：main worker → `catalog-offsite-backup.ts` → `backupCatalog` 一致性快照 → 私有 R2 `backups/scheduled-v1/` → 全量下载 SHA 验证 → `batch_documents/ops/database-backup.json` 成功回执。6 小时间隔、7 天保留、15 分钟失败重试，超过 8 小时无有效备份由 worker 健康状态报告。异地备份在独立 PostgreSQL 17 恢复，48 张业务表逐行哈希核验。
+- `FLOW-BACKUP`：main worker → `catalog-offsite-backup.ts` → `backupCatalog` 一致性快照 → 私有 R2 `backups/scheduled-v1/` → R2 Content-MD5 校验及 HEAD 长度/ETag 回读 → `batch_documents/ops/database-backup.json` 成功回执。6 小时间隔、7 天保留、15 分钟失败重试，超过 8 小时无有效备份由 worker 健康状态报告。异地备份在独立 PostgreSQL 17 恢复，48 张业务表逐行哈希核验。
 - `RULE-RECOVERY-NO-REPLAY`：恢复人员写入 `recovery-hold.json` 的需求 ID，`queueNewRequirements` 跳过自动分析/续做；清单损坏则停止自动制作，手动操作与恢复后新需求保留。`automatic-flow.test.mjs` 覆盖旧需求/已有模型草稿隔离、新需求正常和损坏清单拒绝。
 - 本次已恢复账号及基础资料，但密码/登录会话以 9 月 22 日快照为准；现有邮箱无密码时走首次设密，不能以新注册覆盖身份。WPS 原始记录只读重新同步。部署与演练状态见 `docs/incident-beijing-20260927.md` 和当次回执。
 
