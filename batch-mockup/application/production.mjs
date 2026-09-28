@@ -19,6 +19,10 @@ export async function readProductionJobs(root) {
 const application=x=>({style:x.style,color:x.color,position:x.position,
   ...('sizeReference' in x?{sizeReference:x.sizeReference&&{imageId:x.sizeReference.imageId,logoToBody:x.sizeReference.logoToBody,note:x.sizeReference.note}}:{})});
 // quality is added only when high, so every existing medium job keeps its id.
+// Characters recognition could not read: □, or a sentence in 文字 saying so instead ("底部小字无法辨认，待补入").
+// The workbench page marks the same wording red (requirements.html, UNREADABLE).
+const UNREADABLE=/无法[^，。；\n]{0,8}(辨认|辨别|识别|确认|确定)|看不清|待[^，。；\n]{0,6}补入/u;
+export const unreadText=prompt=>prompt.includes('□')||UNREADABLE.test(prompt.match(/^文字：([^]*?)^字体：/mu)?.[1]||'');
 export function productionInput(c,a,quality=a.quality) {
   return {schema:'production-input-v1',caseId:c.caseId,artworkId:a.id,name:a.name,revision:c.revision,
     supplementRevision:c.supplement.revision,prompt:a.prompt,promptSHA256:hash(a.prompt),route:a.route,
@@ -54,8 +58,8 @@ export async function reserveProduction(root,manifest,requests) {
       if(!c.images.length&&c.draft.readingIssues.some(x=>/(未提供|缺少|缺失).*(Logo|图片|素材)/iu.test(x.issue)))blocked='缺少客户Logo素材，请补图后制作';
       if(a.route!=='generate')try{sourceFor(input);}catch(e){blocked=e.message;}
       if(a.route==='generate'&&c.images.some((i,n)=>i.index!==n+1))blocked='素材编号有空缺，须保持原图号；未擅自重排后提交';
-      // Recognition writes □ where it could not read a character; the image model would print it or guess one.
-      if(a.route==='generate'&&a.prompt.includes('□'))blocked='正文有“□”待补字，请对照原图补全并保存后再制作';
+      // The image model would print □ or guess the characters recognition could not read.
+      if(a.route==='generate'&&unreadText(a.prompt))blocked='正文有“□”或没认出的字，请对照原图补全并保存后再制作';
       await mkdir(dir,{recursive:true});
       const fixed=[];
       for(const image of input.images){

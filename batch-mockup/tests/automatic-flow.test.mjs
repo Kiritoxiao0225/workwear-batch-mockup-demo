@@ -100,6 +100,10 @@ test('图稿生成的「AI 整理」只填七项不自动制作；批量识别�
  await executeTask(f.root,byCase.A,f.enqueue,{analyzerFactory:f.analyzerFactory});
  assert.equal((await readRequirementState(f.root,'A')).draft.artworks[0].prompt,prompt);
  assert.equal((await readProductionJobs(f.root)).length,0);assert.equal([...f.queue.values()].filter(task=>task.kind==='production').length,0);
+ // Reading B again replaces its text but leaves the artworks to a person.
+ await executeTask(f.root,byCase.B,f.enqueue,{analyzerFactory:f.analyzerFactory});const b=await readRequirementState(f.root,'B');assert.ok(b.draft);
+ await service(f.root,'/api/requirements/analyze','POST',{caseId:'B',revision:b.revision,supplementRevision:0,requestId:crypto.randomUUID()},{enqueue:f.enqueue});
+ assert.equal([...f.queue.values()].filter(task=>task.kind==='analysis'&&task.payload.caseId==='B').at(-1).payload.autoProduce,false);
 });
 
 test('刚识别完、会自行接续制作的需求，同时进行的同步不再预约第二份制作',async t=>{

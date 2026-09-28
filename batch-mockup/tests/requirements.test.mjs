@@ -86,13 +86,13 @@ test('正文中的图号必须实际关联，不能漏字体参考；不修改�
   assert.throws(()=>validateRequirementDraft(d,[{id:'T-1',index:1},{id:'T-2',index:2}]),/图2/);
   d.artworks[0].imageIds.push('T-2');assert.equal(validateRequirementDraft(d,[{id:'T-1',index:1},{id:'T-2',index:2}]).artworks[0].prompt,d.artworks[0].prompt);
 });
-test('补图后不能沿用旧确认；重识别保留设计师修改，候选经显式保存才替换',async t=>{
+test('补图后不能沿用旧确认；重识别带上设计师修改，结果直接替换正文',async t=>{
   const f=await setup(t,async req=>{const d=draft();if(req.messages[1].content.filter(x=>x.type==='image_url').length===2){const input=JSON.parse(req.messages[1].content[0].text);assert.ok(input.设计师已保存修改);d.artworks[0].prompt+='\n补图后的候选';}return{rawContent:JSON.stringify(d)}});
   await f.analyze();const d=draft();d.artworks[0].prompt+='人工修正';await f.save(d);await f.confirm();
   const r=await f.post('/api/supplements',{caseId:'T',revision:0,action:'upload',id:randomUUID(),name:'补图.png',target:'Logo',base64:f.bytes.toString('base64')});assert.equal(r.status,200);
   assert.equal((await f.get()).confirmation,null);assert.equal((await f.confirm()).status,409);
-  await f.analyze();const c=await f.get();assert.equal(c.draft.artworks[0].prompt,d.artworks[0].prompt);assert.ok(c.analysis.proposedDraft);
-  assert.equal((await f.save(c.analysis.proposedDraft,{analysisId:c.analysis.id})).status,200);assert.equal((await f.confirm()).status,200);
+  await f.analyze();const c=await f.get();assert.match(c.draft.artworks[0].prompt,/补图后的候选/);assert.equal(c.draftAnalysisId,c.analysis.id);assert.equal(c.analysis.proposedDraft,null);
+  assert.equal((await f.confirm()).status,200);
 });
 test('格式错误保存原始返回，不生成候选或假确认，不自动重试',async t=>{
   const f=await setup(t,async()=>({rawContent:'{"broken":true}',httpStatus:200}));await f.analyze();const c=await f.get();assert.equal(c.analysis.status,'invalid_output');assert.equal(c.draft,null);assert.equal(f.calls(),1);assert.equal((await f.confirm()).status,409);

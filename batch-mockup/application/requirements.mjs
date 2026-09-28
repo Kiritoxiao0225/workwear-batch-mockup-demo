@@ -140,7 +140,8 @@ export async function finishRequirementAnalysis(root, manifest, caseId, id, resu
     try { a.parsed = validateRequirementDraft(JSON.parse(result.rawContent), a.images); a.status = 'returned'; }
     catch (e) { a.status = 'invalid_output'; a.error = e.status ? e.message : '返回不是完整JSON；原始返回已保留'; }
     const sup = (await jsonFile(resolve(root, 'supplements.json'), {}))[caseId]?.revision || 0;
-    if (a.status === 'returned' && !state.draft && state.revision === a.revision && sup === a.supplementRevision) {
+    // A new reading replaces the text directly, unless someone saved an edit or added images while it ran.
+    if (a.status === 'returned' && state.revision === a.revision && sup === a.supplementRevision) {
       state.draft = a.parsed; state.draftOrigin = 'model'; state.draftAnalysisId = id;
       state.draftSupplementRevision = sup; state.revision += 1;
       const source=manifest.cases.find(c=>c.caseId===caseId);

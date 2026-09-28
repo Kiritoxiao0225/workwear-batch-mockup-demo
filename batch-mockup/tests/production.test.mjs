@@ -68,6 +68,8 @@ test('生图正文有□待补字时不制作；补字保存后照常制作',asy
  const [j]=await reserveProduction(f.root,f.manifest,f.requests);assert.equal(j.status,'blocked');assert.match(j.error,/□/);
  f.state.draft.artworks[0].prompt=prompt;f.state.revision++;await saveJSON(resolve(f.root,'requirements-state/T.json'),f.state);
  const [ok]=await reserveProduction(f.root,f.manifest,[{...f.requests[0],revision:2}]);assert.equal(ok.status,'queued');
+ f.state.draft.artworks[0].prompt=prompt.replace('保留  A','逐行为：第一行“渝都”。第二行下方的小字无法逐笔辨认，待核对原图后补入');f.state.revision++;await saveJSON(resolve(f.root,'requirements-state/T.json'),f.state);
+ const [held]=await reserveProduction(f.root,f.manifest,[{...f.requests[0],revision:3}]);assert.equal(held.status,'blocked');
 });
 test('确认失败后仅续跑抠图，未知抠图不重复付费',async t=>{
  const f=await fixture(t),[j]=await reserveProduction(f.root,f.manifest,f.requests);let generated=0,cuts=0;

@@ -117,11 +117,12 @@ export async function service(root,path,method,body={},options={}){
   if(path==='/api/supplements'&&body.uploadId){if(body.uploadId!==body.id||!Number.isInteger(body.chunkCount)||body.chunkCount<1||body.chunkCount>21)throw fail('上传编号无效');const chunks=[];for(let n=0;n<body.chunkCount;n++)chunks.push((await jsonFile(resolve(root,'upload-chunks',body.id,n+'.json'))).base64);body.base64=chunks.join('');}
   if(path==='/api/supplements')return saveSupplement(root,body,new Set(manifest.cases.map(c=>c.caseId)));
   if(path==='/api/requirements/analyze'){
-   const reserved=await reserveRequirementAnalysis(root,manifest,body);
+   const hadDraft=!!(await readRequirementState(root,body.caseId)).draft,reserved=await reserveRequirementAnalysis(root,manifest,body);
    if(reserved.execute){
     // The studio's "AI 整理" only fills in the seven fields; the author reviews them and starts production.
     const studio=manifest.cases.find(c=>c.caseId===body.caseId)?.entry==='studio';
-    await queue({id:reserved.analysis.id,kind:'analysis',payload:{caseId:body.caseId,analysisId:reserved.analysis.id,autoProduce:!studio}});
+    // A repeated reading replaces the text but leaves the artworks to a person: they may already be right.
+    await queue({id:reserved.analysis.id,kind:'analysis',payload:{caseId:body.caseId,analysisId:reserved.analysis.id,autoProduce:!studio&&!hadDraft}});
    }
    return {id:reserved.analysis.id,status:reserved.analysis.status};
   }
