@@ -24,11 +24,11 @@ function PasswordField({ id, label, value, onChange, current = false, disabled =
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
     </button></div></div>;
 }
-export function LoginClient({ next, initialMode = 'login' }: { next: string; initialMode?: Mode }) {
+export function LoginClient({ next, initialMode = 'login', sessionExpired = false }: { next: string; initialMode?: Mode; sessionExpired?: boolean }) {
   const [mode, setMode] = useState<Mode>(initialMode), [step, setStep] = useState<1 | 2>(1);
   const [email, setEmail] = useState(''), [code, setCode] = useState(''), [password, setPassword] = useState(''), [confirm, setConfirm] = useState('');
   const [proof, setProof] = useState(''), [cooldown, setCooldown] = useState(0), [busy, setBusy] = useState(false);
-  const [error, setError] = useState(''), [notice, setNotice] = useState('');
+  const [error, setError] = useState(''), [notice, setNotice] = useState(sessionExpired ? '登录已失效，请使用原账号重新登录，登录后会回到刚才的页面。' : '');
   const timer = useRef<ReturnType<typeof setInterval> | null>(null), pending = useRef(false), passwordInput = useRef<HTMLDivElement>(null);
   useEffect(() => () => { if (timer.current) clearInterval(timer.current); }, []);
   useEffect(() => { if (step === 2) passwordInput.current?.querySelector('input')?.focus(); }, [step]);

@@ -1,5 +1,7 @@
 'use client';
 import { fetchApi, readApiJson } from '@/lib/client/api-response';
+import { expiredSessionDestination } from '@/lib/client/session-redirect';
+import { usePathname } from 'next/navigation';
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
@@ -26,6 +28,7 @@ async function readSessionResponse(response: Response) {
 }
 
 export function ProjectSessionProvider({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
   const [session, setSession] = useState<{ user: CatalogUser | null; localStorage: boolean }>({ user: null, localStorage: false });
   const [initialized, setInitialized] = useState(false);
   const [error, setError] = useState('');
@@ -33,17 +36,27 @@ export function ProjectSessionProvider({ children }: { children: React.ReactNode
   const refreshing = useRef(false);
 
   const refresh = useCallback(async () => {
+    // The provider also wraps login/registration/reset. Never redirect these pages or
+    // let a background session check clear a cookie just issued by a successful login.
+    if (/^\/login(?:\/|$)/u.test(pathname)) return;
     if (refreshing.current) return;
     refreshing.current = true;
     setBusy(true);
     try {
       const response = await fetchApi('/api/catalog/session', { cache: 'no-store' });
+      const destination = expiredSessionDestination(response.status, window.location.pathname + window.location.search + window.location.hash);
+      if (destination) {
+        setSession({ user: null, localStorage: false });
+        setError('登录已失效，正在前往登录页…');
+        window.location.replace(destination);
+        return;
+      }
       const next = await readSessionResponse(response);
       setSession(current => JSON.stringify(current) === JSON.stringify(next) ? current : next);
       setError('');
     } catch (error) { setSession({ user: null, localStorage: false }); setError(errorMessage(error)); }
     finally { refreshing.current = false; setBusy(false); setInitialized(true); }
-  }, []);
+  }, [pathname]);
 
   useEffect(() => {
     const whenVisible = () => { if (document.visibilityState === 'visible') void refresh(); };

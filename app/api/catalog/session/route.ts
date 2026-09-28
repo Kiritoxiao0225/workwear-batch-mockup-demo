@@ -1,19 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { assertSameOrigin, catalogUser, CATALOG_COOKIE, loginWorkspace, logoutCatalog, renewCatalogSession, SESSION_SECONDS, workspaceOpenAccess } from '@/lib/server/catalog-auth';
+import { assertSameOrigin, catalogUser, CatalogHttpError, CATALOG_COOKIE, loginWorkspace, logoutCatalog, renewCatalogSession, workspaceOpenAccess } from '@/lib/server/catalog-auth';
 import type { CatalogUser } from '@/lib/catalog';
 import { catalogError, catalogJson } from '@/lib/server/catalog-http';
 import { limitPasswordLogin } from '@/lib/server/password-login-limit';
-import { requestIp } from '@/lib/server/auth-session';
+import { clearedSessionResponse, requestIp, sessionResponse as authenticatedResponse } from '@/lib/server/auth-session';
 export const dynamic = 'force-dynamic';
 function sessionResponse(result: { user: CatalogUser; token?: string }) {
-  const response = NextResponse.json({ user: result.user, localStorage: Boolean(process.env.CATALOG_LOCAL_OBJECT_ROOT) }, { headers: { 'Cache-Control': 'no-store' } });
-  if (!result.token) return response;
-  response.cookies.set(CATALOG_COOKIE, result.token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/api', maxAge: SESSION_SECONDS });
-  response.headers.append('Set-Cookie', `${CATALOG_COOKIE}=; Path=/api/catalog; Max-Age=0; HttpOnly; SameSite=Lax${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`);
-  return response;
+  const body = { user: result.user, localStorage: Boolean(process.env.CATALOG_LOCAL_OBJECT_ROOT) };
+  return result.token ? authenticatedResponse(body, result.token) : NextResponse.json(body, { headers: { 'Cache-Control': 'no-store' } });
 }
-export async function GET(request: NextRequest) { try { return sessionResponse({ user: await catalogUser(request), token: workspaceOpenAccess() ? undefined : request.cookies.get(CATALOG_COOKIE)?.value }); } catch (error) { return catalogError(error); } }
+function sessionError(error: unknown) {
+  // A missing/revoked session cannot recover by retrying the same cookie. Preserve real
+  // server/network failures so they neither erase credentials nor sign the user out.
+  return error instanceof CatalogHttpError && error.status === 401
+    ? clearedSessionResponse({ error: error.message }, 401) : catalogError(error);
+}
+export async function GET(request: NextRequest) { try { return sessionResponse({ user: await catalogUser(request), token: workspaceOpenAccess() ? undefined : request.cookies.get(CATALOG_COOKIE)?.value }); } catch (error) { return sessionError(error); } }
 export async function POST(request: NextRequest) {
   try {
     assertSameOrigin(request);
@@ -28,9 +31,9 @@ export async function PATCH(request: NextRequest) {
     if (workspaceOpenAccess()) { assertSameOrigin(request); return GET(request); }
     return sessionResponse(await renewCatalogSession(request));
   }
-  catch (error) { return catalogError(error); }
+  catch (error) { return sessionError(error); }
 }
 export async function DELETE(request: NextRequest) {
-  try { await logoutCatalog(request); const response = NextResponse.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } }); response.cookies.set(CATALOG_COOKIE, '', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/api', maxAge: 0 }); response.headers.append('Set-Cookie', `${CATALOG_COOKIE}=; Path=/api/catalog; Max-Age=0; HttpOnly; SameSite=Lax`); return response; }
+  try { await logoutCatalog(request); return clearedSessionResponse(); }
   catch (error) { return catalogError(error); }
 }

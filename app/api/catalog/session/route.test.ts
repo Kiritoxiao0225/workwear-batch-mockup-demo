@@ -48,7 +48,7 @@ describe('persistent project sessions', () => {
     for (const response of responses) {
       expect(response.status).toBe(200);
       const cookie = response.cookies.get('catalog_session');
-      expect(cookie).toMatchObject({ value: token, path: '/api', httpOnly: true, secure: true, sameSite: 'lax', maxAge: 30 * 24 * 60 * 60 });
+      expect(cookie).toMatchObject({ value: token, path: '/', httpOnly: true, secure: true, sameSite: 'lax', maxAge: 30 * 24 * 60 * 60 });
       expect(response.headers.getSetCookie().some(value => value.includes('Path=/api/catalog;') && value.includes('Max-Age=0'))).toBe(true);
       expect(cookie?.maxAge).toBe(SESSION_SECONDS);
       expect(response.headers.get('cache-control')).toBe('no-store');
@@ -72,18 +72,32 @@ describe('persistent project sessions', () => {
     expect(loginWorkspace).not.toHaveBeenCalled();
     expect(response.headers.has('set-cookie')).toBe(false);
   });
-  it('does not send a renewed cookie when the session is expired or revoked', async () => {
+  it('clears every historical cookie path when the session is expired or revoked', async () => {
     vi.mocked(renewCatalogSession).mockRejectedValue(new CatalogHttpError(401, '登录已过期，请重新登录'));
     const response = await PATCH(request('PATCH'));
     expect(response.status).toBe(401);
-    expect(response.headers.has('set-cookie')).toBe(false);
+    expect(response.cookies.get('catalog_session')).toMatchObject({ value: '', path: '/', maxAge: 0 });
+    for (const path of ['/api', '/api/catalog']) expect(response.headers.getSetCookie().some(value => value.includes(`Path=${path};`) && value.includes('Max-Age=0'))).toBe(true);
   });
-  it('upgrades the cookie scope without renewing GET and clears both paths on logout', async () => {
-    expect((await GET(request('GET'))).cookies.get('catalog_session')).toMatchObject({ value: token, path: '/api' });
+  it('clears a lost session on GET but preserves credentials on permission and server failures', async () => {
+    vi.mocked(catalogUser).mockRejectedValueOnce(new CatalogHttpError(401, '登录已过期，请重新登录'));
+    const expired = await GET(request('GET'));
+    expect(expired.status).toBe(401);
+    expect(await expired.json()).toEqual({ error: '登录已过期，请重新登录' });
+    expect(expired.cookies.get('catalog_session')).toMatchObject({ value: '', path: '/', maxAge: 0 });
+    for (const status of [403, 500, 503]) {
+      vi.mocked(catalogUser).mockRejectedValueOnce(new CatalogHttpError(status, '暂时无法连接'));
+      const failed = await GET(request('GET'));
+      expect(failed.status).toBe(status);
+      expect(failed.headers.has('set-cookie')).toBe(false);
+    }
+  });
+  it('upgrades to a root cookie without renewing GET and clears all paths on logout', async () => {
+    expect((await GET(request('GET'))).cookies.get('catalog_session')).toMatchObject({ value: token, path: '/' });
     expect(renewCatalogSession).not.toHaveBeenCalled();
     const response = await DELETE(request('DELETE'));
     expect(logoutCatalog).toHaveBeenCalledOnce();
-    expect(response.cookies.get('catalog_session')).toMatchObject({ value: '', path: '/api', maxAge: 0 });
+    expect(response.cookies.get('catalog_session')).toMatchObject({ value: '', path: '/', maxAge: 0 });
     expect(response.headers.getSetCookie().some(value => value.includes('Path=/api/catalog;') && value.includes('Max-Age=0'))).toBe(true);
   });
 });

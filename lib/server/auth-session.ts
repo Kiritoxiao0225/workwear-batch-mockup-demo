@@ -20,8 +20,8 @@ export function sessionResponse(body: Record<string, unknown>, token: string) {
   return response;
 }
 
-export function clearedSessionResponse(body: Record<string, unknown> = { ok: true }) {
-  const response = NextResponse.json(body, { headers: { 'Cache-Control': 'no-store' } });
+export function clearedSessionResponse(body: Record<string, unknown> = { ok: true }, status = 200) {
+  const response = NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
   response.cookies.set(CATALOG_COOKIE, '', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/', maxAge: 0 });
   clearLegacyCookiePaths(response);
   return response;
