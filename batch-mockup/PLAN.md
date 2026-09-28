@@ -248,3 +248,12 @@ WPS 同步完成后，后台逐条预约尚无识别记录和草稿的有效原�
 - 发布：Web 以 `6ab8dbcd`（01e6248）为基线打补丁（3 个文件），新部署 `6ab937ed`，指纹 `edf15768…`；worker 在无任务时加锁暂停，以 `d-6ab8de17` 为基线构建补丁（清单同上次，补丁 SHA `2f7232b4…`），新镜像 `d-6ab9397f`，切换并重启两个 worker。发布后：Web `/api/health` ready、release `edf15768`；main/external 健康、并发、源码哈希一致；Web 3/3 一致；合同检查通过；无排队付费任务。
 - 验证：check（1531）、test:requirements（70）、test:mockups（27）、test:workbench（3）、test:batch-cloud 通过。
 - 回退：`output/ocr-marks-release-20260927/rollback.json`（Web 回 `d-6ab8dbcd`，worker 回 `d-6ab8de17`），无数据库变更。
+
+### 2026-09-28 上午：重新识别直接替换、看不清的字统一 □ 标红、提醒改成大白话
+
+- 背景：点“重新识别”后结果只是候选，还要点“查看新识别结果”再保存，设计师以为没生效；后背有红底要先点“后背”标签才看得到；模型把看不清的小字写成“无法辨认，待补入”，既不标红也不拦制作；标定缺失每个位置一条提醒（5 条）；颜色提醒带“5.9:1”对比度数字；识别问题动辄七八十字。
+- 改动：`d8e8a9f` 识别结果直接替换正文（识别期间有人保存修改或补图则不替换）；已有正文时手动重新识别不自动制作，图稿提示“需求改过了，图稿还是旧的”；“文字”项里“无法辨认/看不清/待补入”这类说法与 □ 一样拦住生图。`9ebee86` 图稿标签显示“要补字/看一眼”，默认打开最需要处理的一份；看不清的整句标红，对应识别问题不再重复；标定缺失只在效果图框里显示一行“这款衣服还没标定，Logo 位置是估算的”；颜色等提醒改成大白话并去掉对比度数字；未加引号逐行写的字也按 OCR 标绿。
+- 数据：识图提示词 70d1b3eb → 30d9ea75（看不清一律按位置写 □ 占位，如 底部弧形小字“□□□□□□□”，不再写说明；□ 不进 readingIssues；readingIssues 每条一句大白话、不超过 30 字）。9 条回归（¥0.8）无编字，W0b7b006f4465 改为 □ 占位，W8332ec036fd4 问题缩为“缺中国移动Logo图片，请补图”。
+- 发布：Web 以 `6ab937ed`（1791c98）为基线打补丁（9 个文件），新部署 `6ab9db00`，指纹 `06e53cdd…`；worker 无任务时加锁暂停，以 `d-6ab9397f` 为基线构建补丁（清单新增 `application/requirements.mjs`，识别结果在 worker 里落定），补丁 SHA `ad72a917…`，新镜像 `d-6ab9dc92`。发布后：Web ready、release `06e53cdd`、9/9 一致；main/external 健康、并发 6/3、源码哈希一致（worker 不含的只有测试和效果图编辑器页面文件）；合同检查通过；提示词回读 30d9ea75。发布前用 `output/plain-reminders-release-20260928/local-preview.mts`（本地只读预览：新页面代码 + 线上数据，写操作全部拒绝）给用户确认。
+- 验证：check（1531）、test:requirements（70）、test:mockups（27）、test:workbench（3）、automatic-flow（11）、test:batch-cloud 通过。
+- 回退：`output/plain-reminders-release-20260928/rollback.json`（Web 回 `d-6ab937ed`，worker 回 `d-6ab9397f`，提示词回 70d1b3eb），无数据库迁移。
