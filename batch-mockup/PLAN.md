@@ -257,3 +257,12 @@ WPS 同步完成后，后台逐条预约尚无识别记录和草稿的有效原�
 - 发布：Web 以 `6ab937ed`（1791c98）为基线打补丁（9 个文件），新部署 `6ab9db00`，指纹 `06e53cdd…`；worker 无任务时加锁暂停，以 `d-6ab9397f` 为基线构建补丁（清单新增 `application/requirements.mjs`，识别结果在 worker 里落定），补丁 SHA `ad72a917…`，新镜像 `d-6ab9dc92`。发布后：Web ready、release `06e53cdd`、9/9 一致；main/external 健康、并发 6/3、源码哈希一致（worker 不含的只有测试和效果图编辑器页面文件）；合同检查通过；提示词回读 30d9ea75。发布前用 `output/plain-reminders-release-20260928/local-preview.mts`（本地只读预览：新页面代码 + 线上数据，写操作全部拒绝）给用户确认。
 - 验证：check（1531）、test:requirements（70）、test:mockups（27）、test:workbench（3）、automatic-flow（11）、test:batch-cloud 通过。
 - 回退：`output/plain-reminders-release-20260928/rollback.json`（Web 回 `d-6ab937ed`，worker 回 `d-6ab9397f`，提示词回 70d1b3eb），无数据库迁移。
+
+### 2026-10-02 中午：管理后台与积分定价 v2（真实成本 × 2）
+
+- 背景：项目开始对外扣费，需要管理员看每个账号花了多少、在哪个页面花的，按页面开关权限，给用户写备注，直接设置余额；价目表是上线时估的成本 × 2，实际加价从 0.7 倍（美图抠图亏本）到 33 倍（增强）不等。
+- 改动（`5661db2`）：管理后台分账号明细（按页面拆花费、逐笔明细）、权限（账号 × 页面勾选，新账号默认全开，WPS 只给内部）、用户管理（筛选、备注、停用即下线）、价目表（只填成本与统一倍率，保存即新增一行价格）、待裁定；“设置积分”可按元或积分直接设余额，差额记流水；每日消费上限（北京时间，默认 2000 积分）。页面由各目录 `layout.tsx` 拦截，成衣与批量接口按页面权限拒绝，成衣页只能读批量结果。迁移 024（users.admin_note、allowed_pages）、025（拆出 `cutout_standard` 火山抠图与 `back_reference` 背面参考；新价 analyze 20、generate 34、enhance 1.2、cutout 28.4、cutout_standard 10、back_reference 44 积分；tenants.daily_spend_cap_cents）。成衣去背景按实际引擎结算，上线前冻结的任务按旧快照结算。成衣页按钮显示“最多 X 积分”。电商主图另一会话未提交，本次不进导航。
+- 成本依据：EvoLink 回执（理解 ≈ ¥0.10、Sunburst ≈ ¥0.17）、配置单价（MediaKit ¥0.006、美图 ¥0.142）、火山显著性分割 ¥0.05（用户给定）、Seedream 5.0 Lite ¥0.22；方案页 `output/credit-pricing-20261002/积分方案.html`。
+- 发布：备份（210 MB，`3c3d9e4f…`）→ `catalog:migrate` 024+025（catalog/assets/standards 指纹不变）→ Web 以 `d-6aba50e2`（b67fa83）为基线打补丁 35 个文件，新部署 `6abf34a8`，指纹 `f59e8222…`，35/35 一致 → worker 无任务时加锁暂停，以 `d-6ab9dc92` 为基线构建补丁（清单新增 credits.ts、catalog-auth.ts），补丁 SHA `c438c5d7…`，新镜像 `d-6abf375a`。发布后：Web ready、release `f59e8222`、migration 025；main/external 健康、源码哈希 41/41 一致；线上价目表 7 项 × 2；所有租户上限 2000；未登录访问 /admin 跳登录、管理接口 401；发布后 WPS 同步 17 次完成。发布前本机 Clash 为全局模式连不上北京库，改为规则模式并对 47.95.254.203、aliyun-zeabur.cn、zeabur.cn 直连后继续。
+- 验证：vitest（1549）、test:saas（13）、test:auth（180）、test:garment（12）、test:requirements（70）、test:batch（63）、test:batch-claim（8）、本地端到端 47 项（`output/admin-console-20261002/check.ts`）。
+- 回退：`output/admin-pricing-release-20261002/rollback.json`（Web 回 `d-6aba50e2`，worker 回 `d-6ab9dc92`；024/025 为新增列与价格行，保留；只想回旧价可再插一行旧价格）。
