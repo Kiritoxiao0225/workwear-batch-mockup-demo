@@ -8,6 +8,7 @@ export const APP_PAGES = [
   { href: '/garment-mockup', label: '成衣效果图' },
   { href: '/batch', label: '批量生成' },
   { href: '/wps-production', label: 'WPS 批量生成' },
+  { href: '/listing-images', label: '电商主图' },
 ] as const;
 
 export type AppPage = (typeof APP_PAGES)[number]['href'];
