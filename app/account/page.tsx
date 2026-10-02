@@ -1,5 +1,5 @@
 import { AccountClient } from '@/components/account-client';
 
-export default function AccountPage() {
-  return <AccountClient />;
+export default async function AccountPage({ searchParams }: { searchParams: Promise<{ denied?: string }> }) {
+  return <AccountClient deniedPage={(await searchParams).denied} />;
 }

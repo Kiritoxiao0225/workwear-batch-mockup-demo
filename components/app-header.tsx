@@ -3,6 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useProjectSession } from "./project-session";
+import { APP_PAGES } from "@/lib/app-pages";
 /** One 48px row on every page; logout lives in the account menu. */
 export function AppHeader({ beforeLogout }: { beforeLogout?: () => Promise<boolean> } = {}) {
   const pathname = usePathname();
@@ -35,9 +36,10 @@ export function AppHeader({ beforeLogout }: { beforeLogout?: () => Promise<boole
   };
   const session = useProjectSession();
   const [account, setAccount] = useState<{
-    user: { displayName: string; email?: string };
+    user: { displayName: string; email?: string; role: string };
     balance: { balanceCents: number; heldCents: number };
     tenant: { internal: boolean };
+    pages: string[];
   } | null>(null);
   useEffect(() => {
     let alive = true;
@@ -65,12 +67,10 @@ export function AppHeader({ beforeLogout }: { beforeLogout?: () => Promise<boole
       <div className="product-header__controls">
         <nav className="product-header__nav" aria-label="主导航">
           {[
-            ["/products", "商品素材库"],
-            ["/artwork-studio", "图稿生成"],
-            ["/garment-mockup", "成衣效果图"],
-            ["/batch", "批量生成"],
-            ["/wps-production", "WPS 批量生成"],
+            // Until the account loads every page shows; afterwards only the ones this account holds.
+            ...APP_PAGES.filter(page => !account || account.pages.includes(page.href)).map(page => [page.href, page.label]),
             ["/account", "我的账户"],
+            ...(account?.user.role === "admin" ? [["/admin", "管理后台"]] : []),
           ].map(([href, label]) => (
             <Link
               key={href}

@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { catalogUser } from '@/lib/server/catalog-auth';
 import { tenantScope, isInternalTenant } from '@/lib/server/tenant-scope';
 import { catalogBody } from '@/lib/server/catalog-http';
+import { assertPageAccess } from '@/lib/server/page-access';
 import { cloudStorage,CLOUD_ROOT,queueHealth,queueActivity } from '@/batch-mockup/adapters/cloud-files.mjs';
 import { service } from '@/batch-mockup/runtime/service.mjs';
 import { enqueueWpsSync,readWpsSyncStatus } from '@/batch-mockup/runtime/sync-scheduler.mjs';
@@ -17,7 +18,10 @@ async function handle(request,context){
  try{
   const write=request.method!=='GET';await catalogUser(request,write);
  // Both browser surfaces resolve their workspace from the authenticated tenant; fail closed.
- const tenant=(await tenantScope(request,write)).tenant;
+ const scope=await tenantScope(request,write),tenant=scope.tenant;
+ // Pages that work through this endpoint, including the WPS workbench proxy. The garment page
+ // only reads artwork results; writing (which can start paid work) needs one of the others.
+ await assertPageAccess(scope.user.id,write?['/batch','/artwork-studio','/wps-production']:['/batch','/artwork-studio','/wps-production','/garment-mockup']);
  const workspace=tenant.workspace;
  const internal=isInternalTenant(tenant);
  const wpsOnly=internal&&request.headers.get('x-wps-workbench')==='1';

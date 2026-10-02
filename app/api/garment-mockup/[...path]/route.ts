@@ -4,9 +4,11 @@ import { tenantScope } from '@/lib/server/tenant-scope';
 import { catalogBody, catalogError } from '@/lib/server/catalog-http';
 import { catalogDatabase } from '@/lib/server/catalog-database';
 import { CatalogHttpError } from '@/lib/server/catalog-auth';
+import { assertPageAccess } from '@/lib/server/page-access';
 import { importAsset, listProjects, projectDetail, projectHead, readAsset, saveProject, storeAsset, ProjectConflictError } from '@/lib/server/garment-mockup-store';
 import { enqueueGarmentAi, garmentAiStatus } from '@/lib/server/garment-mockup-ai';
 import { runGarmentCutout, garmentCutoutStatus } from '@/lib/server/garment-cutout';
+import { currentPrices, microToCents, priceOf } from '@/lib/server/credits';
 
 export const dynamic='force-dynamic';
 // A cutout may use its primary engine and one fallback within a single request.
@@ -16,7 +18,8 @@ const json=(data:unknown,status=200)=>NextResponse.json(data,{status,headers:{'C
 const header=(request:NextRequest,name:string)=>{const v=request.headers.get(name);try{return v?decodeURIComponent(v):null;}catch{return v;}};
 export async function GET(request:NextRequest,context:Context){
   try{
-    const {tenant}=await tenantScope(request),{path}=await context.params;
+    const {tenant,user}=await tenantScope(request),{path}=await context.params;
+    await assertPageAccess(user.id,['/garment-mockup']);
     if(path[0]==='projects'){
       if(!path[1])return json(await listProjects(tenant.id));
       if(path[2]==='head')return json(await projectHead(tenant.id,path[1]));
@@ -32,6 +35,11 @@ export async function GET(request:NextRequest,context:Context){
       // An asset ID always names the same content-addressed bytes, so the browser may keep it.
       return new NextResponse(new Uint8Array(file.bytes),{headers:{'Content-Type':file.file.mime_type,'Cache-Control':'private, max-age=31536000, immutable','ETag':`"${file.file.sha256}"`,'X-Content-Type-Options':'nosniff'}});
     }
+    if(path[0]==='prices'){
+      // Most a click can cost: background removal may fall back to the dearer engine.
+      const prices=await currentPrices();
+      return json({exempt:tenant.billingMode==='exempt',cutout:microToCents(Math.max(priceOf(prices,'cutout').userMicroCents,priceOf(prices,'cutout_standard').userMicroCents)),back:microToCents(priceOf(prices,'back_reference').userMicroCents)});
+    }
     if(path[0]==='cutouts'&&path[1])return json(await garmentCutoutStatus(tenant.id,path[1]));
     if(path[0]==='jobs')return json(await garmentAiStatus(tenant.id,path[1]));
     throw new CatalogHttpError(404,'接口不存在');
@@ -40,6 +48,7 @@ export async function GET(request:NextRequest,context:Context){
 export async function POST(request:NextRequest,context:Context){
   try{
     const {tenant,user}=await tenantScope(request,true),{path}=await context.params;
+    await assertPageAccess(user.id,['/garment-mockup']);
     if(path[0]==='assets'&&path.length===1){
       const bytes=await catalogBody(request,25*1024*1024);
       return json(await storeAsset(tenant.id,bytes,decodeURIComponent(request.headers.get('x-file-name')||'图片.png')));
@@ -63,7 +72,8 @@ export async function POST(request:NextRequest,context:Context){
 }
 export async function DELETE(request:NextRequest,context:Context){
   try{
-    const {tenant}=await tenantScope(request,true),{path}=await context.params;
+    const {tenant,user}=await tenantScope(request,true),{path}=await context.params;
+    await assertPageAccess(user.id,['/garment-mockup']);
     if(path[0]!=='projects'||!path[1])throw new CatalogHttpError(404,'接口不存在');
     z.uuid().parse(path[1]);
     const result=await catalogDatabase().query('UPDATE garment_mockup_projects SET deleted_at=now() WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL RETURNING id',[path[1],tenant.id]);

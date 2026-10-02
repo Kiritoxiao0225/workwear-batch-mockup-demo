@@ -16,7 +16,7 @@ export function workspaceOpenAccess() {
   if (process.env.NODE_ENV === 'production') throw new Error('生产环境禁止 CATALOG_AUTH_MODE=open');
   return true;
 }
-const tokenHash = (value: string) => createHash('sha256').update(value).digest('hex');
+export const tokenHash = (value: string) => createHash('sha256').update(value).digest('hex');
 export async function createCatalogUser(email: string, name: string, password: string, role: CatalogUser['role'] = 'editor', tenantId = INTERNAL_TENANT_ID) {
   const normalizedEmail = email.trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail) || normalizedEmail.length > 254) throw new Error(`邮箱格式无效：${email}`);

@@ -459,7 +459,7 @@ try {
 
   // ---- 第 5 步：积分 ----
   const prices = await currentPrices();
-  check(prices.prices.length === 5, '单价表含五个计费动作');
+  check(prices.prices.length === 7, '单价表含七个计费动作（抠图拆成美图与火山，背面参考单独计价）');
   const gen = prices.prices.find(p => p.action === 'generate')!;
   check(gen.userMicroCents === Math.ceil(gen.costMicroCents * gen.multiplierMilli / 1000), '售价 = 成本 × 倍率，整数运算');
 

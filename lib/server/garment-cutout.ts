@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { catalogDatabase, catalogTransaction } from './catalog-database';
 import { CatalogHttpError } from './catalog-auth';
 import { digest, readAsset, storeAsset } from './garment-mockup-store';
-import { currentPrices, holdCredits, settleHold, releaseHold, microToCents } from './credits';
+import { currentPrices, cutoutAction, holdCredits, priceOf, settleHold, releaseHold, microToCents } from './credits';
 import type { Tenant } from './tenant-scope';
 import { inspectArtworkSource, removeFlatArtworkBackground, alphaMaskReport } from './artwork-image-processing';
 import { volcengineSaliencyCutout } from './garment-mockup-provider';
@@ -237,13 +237,15 @@ export async function runGarmentCutout(tenant: Tenant, userId: string, value: {
   // 3. A model: hold once, primary engine, then at most one fallback.
   const engines = garmentCutoutEngines(mode);
   if (!engines.length) throw new CatalogHttpError(503, '去背景服务未配置，未扣费');
-  const prices = await currentPrices(), price = prices.prices.find(p => p.action === 'cutout');
-  if (!price) throw new CatalogHttpError(503, '当前操作缺少计费配置');
+  // Either engine may end up doing the work, so hold the dearer of the two; settlement charges
+  // the one that actually ran.
+  const prices = await currentPrices();
+  const ceiling = Math.max(...engines.map(engine => priceOf(prices, cutoutAction(engine.id)).userMicroCents));
   const holdId = 'garment:' + input.requestId;
   const claimed = await catalogTransaction(async c => {
     await c.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['garment-ai:' + input.requestId]);
     if ((await c.query('SELECT 1 FROM garment_mockup_ai_jobs WHERE id=$1', [input.requestId])).rowCount) return false;
-    await holdCredits(c, { id: holdId, tenantId: tenant.id, kind: 'production', jobRef: 'garment:cutout:' + input.requestId, billingMode: tenant.billingMode, amountCents: microToCents(price.userMicroCents), snapshot: prices });
+    await holdCredits(c, { id: holdId, tenantId: tenant.id, kind: 'production', jobRef: 'garment:cutout:' + input.requestId, billingMode: tenant.billingMode, amountCents: microToCents(ceiling), snapshot: prices });
     // A lease lets the worker's sweep settle a job whose web process died mid-call.
     await c.query(`INSERT INTO garment_mockup_ai_jobs(id,tenant_id,user_id,project_id,action,input_json,request_hash,status,owner,lease_until)
       VALUES($1,$2,$3,$4,'cutout',$5,$6,'running',$7,now()+interval '2 minutes')`, [input.requestId, tenant.id, userId, input.projectId, jobInput, requestHash, instanceOwner]);
@@ -282,7 +284,7 @@ export async function runGarmentCutout(tenant: Tenant, userId: string, value: {
       attempts.push({ id: attemptId, engine: engine.id, status: 'succeeded', latencyMs });
       timings.provider = Date.now() - providerStarted;
       // Charge once, whatever happened to earlier attempts.
-      await settleHold(holdId, tenant.id, [{ action: 'cutout', billable: true, certain: true, attemptId }]);
+      await settleHold(holdId, tenant.id, [{ action: cutoutAction(engine.id), billable: true, certain: true, attemptId }]);
       const m = meta('provider', { engine: engine.id, model: engine.model, fallbackFrom: index > 0 ? engines[0].id : null, charged: tenant.billingMode === 'charge' });
       await db.query(`UPDATE garment_mockup_ai_jobs SET status='succeeded',result_json=$2,lease_until=NULL,updated_at=now() WHERE id=$1`,
         [input.requestId, { meta: m, cacheKey, route: 'provider', engine: engine.id, model: engine.model, timings: m.timingMs, attempts: publicAttempts(), assets: { state: 'pending' } }]);
@@ -299,7 +301,7 @@ export async function runGarmentCutout(tenant: Tenant, userId: string, value: {
   timings.provider = Date.now() - providerStarted;
   const firstUnknown = attempts.find(a => a.status === 'unknown');
   const summary = attempts.map(a => `${a.engine === 'meitu' ? '美图' : '火山'}：${a.error || a.reason}`).join('；');
-  if (firstUnknown) await settleHold(holdId, tenant.id, [{ action: 'cutout', billable: true, certain: false, attemptId: firstUnknown.id }]).catch(() => {});
+  if (firstUnknown) await settleHold(holdId, tenant.id, [{ action: cutoutAction(firstUnknown.engine), billable: true, certain: false, attemptId: firstUnknown.id }]).catch(() => {});
   else await releaseHold(holdId, tenant.id, '去背景未成功，全额退回').catch(() => {});
   const status = firstUnknown ? 'unknown' : 'failed';
   const message = firstUnknown ? `去背景结果待核实，不会自动重复扣费（${summary}）` : `去背景未完成，未扣费（${summary}）`;

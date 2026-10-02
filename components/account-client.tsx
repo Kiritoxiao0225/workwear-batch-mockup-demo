@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { AppHeader } from '@/components/app-header';
+import { APP_PAGES } from '@/lib/app-pages';
 
 type Account = {
   user: { displayName: string; role: string; email: string; hasPassword: boolean };
@@ -16,12 +17,28 @@ const KIND_LABELS: Record<string, string> = {
   grant: '发放', hold: '冻结', settle: '结算', release: '退回', adjust: '调整',
 };
 
+// Ledger reasons are written for operators ("冻结：production W12/a1"); say what was done instead.
+const workLabel = (kind: string, ref: string) =>
+  ref.startsWith('garment:cutout:') ? '成衣去背景'
+    : ref.startsWith('garment:back:') ? 'AI 背面参考'
+      : ref.startsWith('garment:') ? '成衣 AI 处理'
+        : kind === 'analysis' ? `理解需求 ${ref}` : `制作图稿 ${ref.split('/')[0]}`;
+function plainReason(reason: string) {
+  const hold = reason.match(/^冻结：(\S+) (.+)$/u);
+  if (hold) return `${workLabel(hold[1], hold[2])}：开工前先冻结`;
+  const settle = reason.match(/^结算：(\S+) (.+)$/u);
+  if (settle) return `${workLabel(settle[1], settle[2])}：按实际用量结算，多余的退回`;
+  return reason;
+}
+
 const gib = (bytes: number) => (bytes / 1024 ** 3).toFixed(2);
 const yuan = (cents: number) => (cents / 100).toFixed(2);
 
-export function AccountClient() {
+export function AccountClient({ deniedPage }: { deniedPage?: string }) {
   const [account, setAccount] = useState<Account | null>(null);
   const [error, setError] = useState('');
+  // Sent here by a page this account has not been given.
+  const denied = APP_PAGES.find(item => item.href === deniedPage)?.label ?? '';
 
   useEffect(() => {
     void (async () => {
@@ -42,6 +59,7 @@ export function AccountClient() {
       <AppHeader />
       <div className="account-page">
         <h1>我的账户</h1>
+        {denied && <p className="account-denied" role="alert">当前账号没有开通「{denied}」页面，如需使用请联系管理员。</p>}
         {error && <p className="login-error" role="alert">{error}</p>}
         {!account && !error && <p className="muted-note" role="status">正在读取账户…</p>}
 
@@ -88,7 +106,7 @@ export function AccountClient() {
                   {account.disputed.map(hold => (
                     <li key={hold.id}>
                       <b>{hold.jobRef}</b>
-                      <span>冻结 {hold.amountCents} 分 · 已确认 {hold.confirmedCents} · 未知 {hold.unknownCents}</span>
+                      <span>冻结 {hold.amountCents} 积分 · 已确认 {hold.confirmedCents} · 未知 {hold.unknownCents}</span>
                       <small>{new Date(hold.disputedAt).toLocaleString('zh-CN')}</small>
                     </li>
                   ))}
@@ -105,7 +123,7 @@ export function AccountClient() {
                     {account.ledger.map((entry, index) => (
                       <tr key={`${entry.createdAt}-${index}`}>
                         <td>{new Date(entry.createdAt).toLocaleString('zh-CN')}</td>
-                        <td>{entry.reason}</td>
+                        <td>{plainReason(entry.reason)}</td>
                         <td>{KIND_LABELS[entry.kind] ?? entry.kind}</td>
                         <td className={`right ${entry.amountCents < 0 ? 'minus' : 'plus'}`}>
                           {entry.amountCents > 0 ? '+' : ''}{entry.amountCents}

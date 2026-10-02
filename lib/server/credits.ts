@@ -4,7 +4,12 @@ import { catalogDatabase, catalogTransaction } from './catalog-database';
 
 type Client = { query: (text: string, values?: unknown[]) => Promise<{ rowCount: number | null; rows: Record<string, unknown>[] }> };
 
-export type BillableAction = 'analyze' | 'generate' | 'enhance' | 'cutout' | 'recognize';
+// 'cutout' is the Meitu fine cut; 'cutout_standard' the Volcengine saliency cut; 'back_reference'
+// the garment back view (Seedream). Split so each supplier is charged at its own cost.
+export type BillableAction = 'analyze' | 'generate' | 'enhance' | 'cutout' | 'cutout_standard' | 'back_reference' | 'recognize';
+
+/** Background-removal action for the engine that actually ran. */
+export const cutoutAction = (engine: string): BillableAction => (engine === 'meitu' ? 'cutout' : 'cutout_standard');
 export type HoldKind = 'analysis' | 'production' | 'recognize';
 
 /** 1 credit = 1 cent; a price carries 1000 micro-cents so sub-cent actions stay exact. */
@@ -31,8 +36,13 @@ export async function currentPrices(): Promise<PriceSnapshot> {
   return { takenAt: new Date().toISOString(), unit: 'micro_cents', rounding: 'ceil_at_settlement', prices };
 }
 
-const priceOf = (snapshot: PriceSnapshot, action: BillableAction) => {
-  const entry = snapshot.prices.find(price => price.action === action);
+// Holds reserved before pricing v2 carry snapshots without the split actions; they settle at the
+// price the account was quoted then.
+const SNAPSHOT_FALLBACK: Partial<Record<BillableAction, BillableAction>> = { cutout_standard: 'cutout', back_reference: 'generate' };
+
+export const priceOf = (snapshot: PriceSnapshot, action: BillableAction) => {
+  const entry = snapshot.prices.find(price => price.action === action)
+    ?? snapshot.prices.find(price => price.action === SNAPSHOT_FALLBACK[action]);
   if (!entry) throw new CatalogHttpError(503, `缺少 ${action} 的计费单价`);
   return entry;
 };
@@ -90,6 +100,21 @@ export async function holdCredits(client: Client, input: {
 
   // Exempt tenants keep a hold row for cost reporting, but their balance is never touched.
   if (input.billingMode === 'exempt' || amount === 0) return { held: true as const, charged: false as const };
+
+  // Daily cap per Beijing day. Locking the account row first serialises concurrent holds, so two
+  // requests cannot both pass the check. Open holds count at their reserved amount until settled.
+  await client.query('SELECT 1 FROM credit_accounts WHERE tenant_id=$1 FOR UPDATE', [input.tenantId]);
+  const today = await client.query(
+    `SELECT t.daily_spend_cap_cents AS cap,
+            COALESCE((SELECT sum(CASE h.state WHEN 'settled' THEN h.settled_cents WHEN 'released' THEN 0 ELSE h.amount_cents END)
+                        FROM credit_holds h
+                       WHERE h.tenant_id = t.id AND h.billing_mode = 'charge' AND h.id <> $2
+                         AND h.created_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'Asia/Shanghai')), 0) AS spent
+       FROM tenants t WHERE t.id = $1`, [input.tenantId, input.id]);
+  const { cap, spent } = today.rows[0] as { cap: string | null; spent: string };
+  if (cap !== null && Number(spent) + amount > Number(cap)) {
+    throw new CatalogHttpError(402, `今天已用 ${Number(spent)} 积分，本次最多需要 ${amount}，超过每日上限 ${Number(cap)}；明天自动恢复，或联系管理员调高`);
+  }
 
   const charged = await client.query(
     `UPDATE credit_accounts SET balance_cents = balance_cents - $2, held_cents = held_cents + $2, updated_at = now()
@@ -264,6 +289,33 @@ export async function grantCredits(tenantId: string, amountCents: number, reason
       reason: reason.trim(), operatorId,
     });
     return { balanceCents: Number(row.balance_cents) };
+  });
+}
+
+/**
+ * Operator sets the spendable balance to an exact figure. The difference is written to the
+ * ledger like any grant; credits frozen by running work are left alone and settle as usual.
+ */
+export async function setCreditBalance(tenantId: string, targetCents: number, reason: string, operatorId: string) {
+  const target = Math.trunc(targetCents);
+  if (!Number.isSafeInteger(target) || target < 0) throw new CatalogHttpError(400, '积分必须是不小于 0 的整数');
+  if (!reason.trim()) throw new CatalogHttpError(400, '请填写调整原因');
+  return catalogTransaction(async raw => {
+    const client = raw as Client;
+    const found = await client.query('SELECT balance_cents FROM credit_accounts WHERE tenant_id=$1 FOR UPDATE', [tenantId]);
+    if (!found.rowCount) throw new CatalogHttpError(404, '账号缺少积分账户');
+    const delta = target - Number((found.rows[0] as { balance_cents: string }).balance_cents);
+    if (delta === 0) return { balanceCents: target, deltaCents: 0 };
+    const updated = await client.query(
+      `UPDATE credit_accounts SET balance_cents = $2, updated_at = now() WHERE tenant_id = $1
+        RETURNING balance_cents, held_cents`, [tenantId, target]);
+    const row = updated.rows[0] as { balance_cents: string; held_cents: string };
+    await writeLedger(client, {
+      tenantId, kind: delta > 0 ? 'grant' : 'adjust', amountCents: delta,
+      balanceAfter: Number(row.balance_cents), heldAfter: Number(row.held_cents),
+      reason: reason.trim(), operatorId,
+    });
+    return { balanceCents: target, deltaCents: delta };
   });
 }
 

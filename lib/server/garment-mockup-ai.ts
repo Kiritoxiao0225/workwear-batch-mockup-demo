@@ -4,7 +4,7 @@ import { catalogDatabase, catalogTransaction } from './catalog-database';
 import { CatalogHttpError } from './catalog-auth';
 import { readAsset, storeAsset, digest, assertAssetOwned } from './garment-mockup-store';
 import { assetId } from '../garment-editor/project-state';
-import { currentPrices, holdCredits, settleHold, releaseHold, microToCents, type BillableAction } from './credits';
+import { currentPrices, cutoutAction, holdCredits, priceOf, settleHold, releaseHold, microToCents, type BillableAction } from './credits';
 import type { Tenant } from './tenant-scope';
 import { GARMENT_MODELS, callGarmentModel, assertGarmentProviderConfigured } from './garment-mockup-provider';
 
@@ -12,7 +12,8 @@ import { GARMENT_MODELS, callGarmentModel, assertGarmentProviderConfigured } fro
 // Older rows may still say understand/generate: they stay readable and settle as before.
 const actionSchema=z.enum(['cutout','back']);
 type Action=z.infer<typeof actionSchema>;
-const billable=(action:string):BillableAction=>action==='understand'?'analyze':action==='cutout'?'cutout':'generate';
+// The AI-queue cutout runs on Volcengine saliency; the sweep below passes the engine it recorded.
+const billable=(action:string,engine='volcengine'):BillableAction=>action==='understand'?'analyze':action==='cutout'?cutoutAction(engine):action==='back'?'back_reference':'generate';
 const inputSchema=z.object({instruction:z.string().trim().max(500).default(''),images:z.array(z.object({fileName:z.string().max(200),base64Image:z.string().max(200)})).max(2).default([]),base64Image:z.string().max(200).optional()});
 type Input=z.infer<typeof inputSchema>;
 export async function enqueueGarmentAi(tenant:Tenant,user:string,value:unknown) {
@@ -23,8 +24,7 @@ export async function enqueueGarmentAi(tenant:Tenant,user:string,value:unknown) 
     await assertAssetOwned(tenant.id,id);
   }
   const hash=digest(b),prices=await currentPrices();
-  const price=prices.prices.find(p=>p.action===billable(b.action));
-  if(!price)throw new CatalogHttpError(503,'当前操作缺少计费配置');
+  const price=priceOf(prices,billable(b.action));
   return catalogTransaction(async c=>{
     await c.query('SELECT pg_advisory_xact_lock(hashtext($1))',['garment-ai:'+b.id]);
     const previous=(await c.query('SELECT id,tenant_id,request_hash,status FROM garment_mockup_ai_jobs WHERE id=$1',[b.id])).rows[0];
@@ -101,8 +101,8 @@ export async function startGarmentWorker({canAccept = () => true}: {canAccept?: 
     running=(async()=>{
       const expired=(await catalogDatabase().query("UPDATE garment_mockup_ai_jobs SET status='unknown',error='后台中断，未重复调用供应商',lease_until=NULL WHERE status='running' AND lease_until<now() RETURNING id,tenant_id,action")).rows;
       for(const j of expired){
-        const attempts=(await catalogDatabase().query('SELECT id,status FROM garment_mockup_ai_attempts WHERE job_id=$1',[j.id])).rows;
-        if(attempts.length)await settleHold('garment:'+j.id,j.tenant_id,attempts.map(a=>({action:billable(j.action),billable:true,certain:a.status==='succeeded',attemptId:a.id}))).catch(()=>{});
+        const attempts=(await catalogDatabase().query('SELECT id,status,provider FROM garment_mockup_ai_attempts WHERE job_id=$1',[j.id])).rows;
+        if(attempts.length)await settleHold('garment:'+j.id,j.tenant_id,attempts.map(a=>({action:billable(j.action,a.provider),billable:true,certain:a.status==='succeeded',attemptId:a.id}))).catch(()=>{});
         else await releaseHold('garment:'+j.id,j.tenant_id,'后台在提交前中断').catch(()=>{});
       }
       const job=await catalogTransaction(async c=>{

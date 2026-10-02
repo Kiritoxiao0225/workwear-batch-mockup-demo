@@ -187,6 +187,16 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
   const [previewingElement, setPreviewingElement] = useState<string | null>(null);
   const [artworks, setArtworks] = useState<StudioArtwork[] | null>(null);
   const [artworksReadAt, setArtworksReadAt] = useState(0);
+  // Credits a click may cost, shown on the paid buttons; internal accounts are exempt.
+  const [prices, setPrices] = useState<{ exempt: boolean; cutout: number; back: number } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/garment-mockup/prices', { cache: 'no-store' })
+      .then(async response => { if (response.ok && alive) setPrices(await response.json()); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  const costHint = (credits: number) => (prices && !prices.exempt ? <small className="gme-cost">最多 {credits} 积分</small> : null);
   const [artworksError, setArtworksError] = useState('');
   const handledPendingArtworkRef = useRef<PendingArtwork | null>(null);
 
@@ -1480,7 +1490,7 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
           </>
         ) : !selectedHasCutout && (
           <button type="button" className="gme-btn-primary" disabled={aiProcessingType !== null} onClick={() => void removeLogoBackground(selectedLogoForImageEdit.id)}>
-            <Sparkles size={14} aria-hidden="true" />{selectedCutout?.state === 'failed' ? '重试去背景' : '去背景'}
+            <Sparkles size={14} aria-hidden="true" />{selectedCutout?.state === 'failed' ? '重试去背景' : '去背景'}{prices && costHint(prices.cutout)}
           </button>
         )
       )}
@@ -1555,7 +1565,7 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
                 <button type="button" className="gme-btn" onClick={handleGenerateBack} disabled={aiProcessingType !== null}>
                   {aiProcessingType === 'generateBack'
                     ? <><i className="gme-spin" aria-hidden="true" />正在生成背面图…</>
-                    : <><Sparkles size={14} aria-hidden="true" />AI 生成背面图</>}
+                    : <><Sparkles size={14} aria-hidden="true" />AI 生成背面图{prices && costHint(prices.back)}</>}
                 </button>
                 <p className="gme-hint">没有背面素材时使用，生成结果仅作参考。</p>
               </section>

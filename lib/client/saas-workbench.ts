@@ -215,7 +215,7 @@ export const chargeLabel = (
   prices
     ? prices.exempt
       ? "内部免计费"
-      : `最多冻结 ${prices[kind]} 分`
+      : `最多 ${prices[kind]} 积分`
     : "读取计价中";
 export async function uploadImages(files: File[]) {
   if (files.length > 10) throw new Error("最多 10 张素材图");

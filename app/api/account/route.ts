@@ -4,6 +4,7 @@ import { tenantScope } from '@/lib/server/tenant-scope';
 import { creditBalance } from '@/lib/server/credits';
 import { tenantUsage } from '@/lib/server/quota';
 import { catalogDatabase } from '@/lib/server/catalog-database';
+import { userPages } from '@/lib/server/page-access';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -12,7 +13,7 @@ export const runtime = 'nodejs';
 export async function GET(request: NextRequest) {
   try {
     const { user, tenant } = await tenantScope(request);
-    const [balance, usage, ledger, disputed, credentials] = await Promise.all([
+    const [balance, usage, ledger, disputed, credentials, pages] = await Promise.all([
       creditBalance(tenant.id),
       tenantUsage(tenant.id),
       catalogDatabase().query(
@@ -22,10 +23,12 @@ export async function GET(request: NextRequest) {
         `SELECT id, job_ref, amount_cents, confirmed_cents, unknown_cents, disputed_at
            FROM credit_holds WHERE tenant_id=$1 AND state='disputed' ORDER BY disputed_at DESC`, [tenant.id]),
       catalogDatabase().query('SELECT password_hash IS NOT NULL AS has_password FROM users WHERE id=$1', [user.id]),
+      userPages(user.id),
     ]);
     return NextResponse.json({
       user: { displayName: user.displayName, role: user.role, email: user.email, hasPassword: Boolean(credentials.rows[0]?.has_password) },
       tenant: { name: tenant.name, plan: tenant.plan, internal: tenant.workspace === 'main' },
+      pages,
       balance,
       quota: usage,
       ledger: ledger.rows.map(row => ({

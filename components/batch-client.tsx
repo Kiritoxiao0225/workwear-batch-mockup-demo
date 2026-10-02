@@ -685,7 +685,7 @@ export function BatchClient() {
           >
             识别全部草稿（{pending.length} 条
             {prices && !prices.exempt
-              ? ` · 识别冻结 ${pending.length * prices.analyze} 分`
+              ? ` · 识别最多 ${pending.length * prices.analyze} 积分`
               : ""}
             ）
           </button>

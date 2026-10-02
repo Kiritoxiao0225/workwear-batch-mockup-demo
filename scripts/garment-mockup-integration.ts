@@ -121,7 +121,7 @@ try{
   pass('自带透明与纯色底在本地免费处理，不冻结积分、不调用模型');
   const beforeProvider=await balance(),r3=randomUUID();res=await cutout(0,enclosedLogo,{'x-request-id':r3});
   assert.equal(meta(res).route,'provider');assert.equal(meta(res).engine,'volcengine');assert.equal(engineCalls.volcengine,1);
-  assert.equal(await holdState(r3),'settled');const charged=beforeProvider-(await balance());assert.ok(charged>0);
+  assert.equal(await holdState(r3),'settled');const charged=beforeProvider-(await balance());assert.equal(charged,10);
   await persisted(r3);
   res=await cutout(0,enclosedLogo,{'x-request-id':r3});assert.equal(engineCalls.volcengine,1);assert.equal(meta(res).engine,'volcengine');
   await cutout(0,flatLogo,{'x-request-id':r3},409);
@@ -134,11 +134,11 @@ try{
   const r5=randomUUID(),beforeFallback=await balance();res=await cutout(0,enclosedLogo,{'x-request-id':r5,'x-cutout-mode':'standard'});
   assert.equal(meta(res).engine,'meitu');assert.equal(meta(res).fallbackFrom,'volcengine');
   assert.deepEqual((await db().query('SELECT provider,status FROM garment_mockup_ai_attempts WHERE job_id=$1 ORDER BY started_at',[r5])).rows.map(a=>a.provider+':'+a.status),['volcengine:failed','meitu:succeeded']);
-  assert.equal(await holdState(r5),'settled');assert.equal(beforeFallback-(await balance()),charged);
+  assert.equal(await holdState(r5),'settled');assert.equal(beforeFallback-(await balance()),29);
   stub('volcengine',succeed);const meituCalls=engineCalls.meitu,r6=randomUUID();
   res=await cutout(0,flatLogo,{'x-request-id':r6,'x-cutout-mode':'graphic'});
   assert.equal(meta(res).route,'provider');assert.equal(meta(res).engine,'meitu');assert.equal(engineCalls.meitu,meituCalls+1);
-  pass('火山明确失败自动改用美图且只扣一次；图形精细优先美图，明确选择时跳过本地处理');
+  pass('火山按 10 积分、改用美图按 29 积分各只扣一次；图形精细优先美图，明确选择时跳过本地处理');
   stub('volcengine',async hooks=>{await hooks.beforeSubmit();throw new UnknownOutcomeError('模拟超时');});
   stub('meitu',async()=>{throw new NotSubmittedError('模拟上传失败');});
   const r7=randomUUID(),volcCalls=engineCalls.volcengine;await cutout(0,flatLogo,{'x-request-id':r7,'x-cutout-mode':'standard'},504);
