@@ -274,3 +274,10 @@ WPS 同步完成后，后台逐条预约尚无识别记录和草稿的有效原�
 - 发布：Web 以 `d-6abf34a8`（5661db2 / 7ff1d50）为基线打补丁 34 个文件（Dockerfile 只 COPY app、lib、public），新部署 `6ac06e87`，指纹 `8aaf586e…`，34/34 一致，环境变量只改 release。不动 worker 和数据库。发布前线上无排队付费任务。
 - 验证：tsc、eslint 通过；本地 `catalog:dev:local` 预览确认导航、页面与预览；发布后 Web ready、release `8aaf586e`、migration 025；未登录访问 `/listing-images`、`/listing-images/preview` 跳登录，示例图 200（`output/listing-images-release-20261002/live-verification.json`）。
 - 回退：`output/listing-images-release-20261002/rollback-web.json`（Web 回 `d-6abf34a8`，release 回 `f59e8222…`），无数据库变更。
+
+### 2026-10-03 中午：电商主图预览——AI 分类乱放的素材、先确认再出图
+
+- 背景：用户要求拖进来的文件夹不必按“店透视”的结构放；出图前先确认素材和卖点（卖点错了 17 张全要重做）；开工前看到要用多少积分。
+- 改动（`ecbb7d4`）：预览页新增“工作外套（乱放的文件夹）”和“确认素材和卖点”弹窗，内容包括分类（可改）、颜色、卖点（可改）和预计积分；去掉“出图前先看文案”开关，改为每款必须确认；出图方案显示积分（实测成本 × 2，6 色约 1070 积分），线上只显示积分，不显示人民币。流水线（output/listing-studio-demo-20260929/plan.mjs）改为递归收集、编号与文件夹无关，模型在策划同一次调用里输出 assets 分类，程序量出的形状（主图只能是 1:1 或 3:4）作为事实给模型并兜底更正。乱序测试 bench/messy-folder（37 张、带标准答案）：未加形状规则时 26/37，加了以后 37/37，6 色都对应到 SKU 图，每次约 ¥0.89。
+- 发布：Web 以 `d-6ac06e87`（4ccd868/eaa07bf）为基线打补丁，11 个文件（preview-html.ts 与 10 张 sorted-*.webp），新部署 `6ac087c0`，指纹 `72ec2627…`，11/11 一致；线上构建产物中有新弹窗和新文案，旧的“自动开始”文案已不在；health ready、migration 025。worker 与数据库未动。
+- 回退：`output/listing-review-release-20261003/rollback-web.json`（Web 回 `d-6ac06e87`）。
