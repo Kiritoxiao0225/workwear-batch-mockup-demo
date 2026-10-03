@@ -20,7 +20,7 @@ const SYSTEM = `你是淘宝服装类目的资深电商视觉策划。你会收�
 5. 主图按给定的角色顺序出。每张 1–2 个卖点，同一组内卖点不重复，前后连贯像一个故事；scene 写这张图用什么画面直观演示卖点（比如水珠演示防泼水、拉扯演示抗撕裂、手机放进口袋演示收纳）。
 6. 3:4 主图与 1:1 讲同一套卖点，文案可以微调。2:3 是店铺首页海报，氛围感最强。
 7. 多色图（多人或多件同框）最多 4 种颜色，在该图的 colors 里列出用到的颜色名，名字必须和 product.colors 里的完全一致；单色图的 colors 只写主色。
-8. SKU 图每个颜色一张，tag 写颜色名旁的短标签（如“男女同款”），只能用素材里有依据的说法。
+8. SKU 图每个颜色一张，tag 写颜色名旁的短标签（如“男女同款”），fabric 写面料小图下方的小字（不超过 6 个字，如“三防面料”），都只能用素材里有依据的说法，没有依据就留空。
 
 输出 JSON 结构：
 {
@@ -32,7 +32,7 @@ const SYSTEM = `你是淘宝服装类目的资深电商视觉策划。你会收�
     "portrait": [ 同上 ],
     "poster":   [ 同上 ]
   },
-  "sku": { "tag": "", "items": [{ "color": "", "sku": "M3" }] }
+  "sku": { "tag": "", "fabric": "", "items": [{ "color": "", "sku": "M3" }] }
 }`;
 
 const roleText = (count: number) => rolesFor(count).map((r, i) => `${i + 1}. ${r}：${MAIN_ROLES[r]}`).join('\n');
@@ -71,7 +71,7 @@ const planSchema = z.object({
   }),
   sellingPoints: z.array(z.object({ id: z.string(), type: z.string().default(''), text: z.string(), evidence: z.array(z.string()).default([]), priority: z.number().default(99) })),
   main: z.object({ square: z.array(slotSchema).default([]), portrait: z.array(slotSchema).default([]), poster: z.array(slotSchema).default([]) }),
-  sku: z.object({ tag: z.string().default(''), items: z.array(z.object({ color: z.string(), sku: z.string() })).default([]) }),
+  sku: z.object({ tag: z.string().default(''), fabric: z.string().default(''), items: z.array(z.object({ color: z.string(), sku: z.string() })).default([]) }),
 });
 export type ListingPlan = z.infer<typeof planSchema>;
 

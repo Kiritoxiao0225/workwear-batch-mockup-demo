@@ -5,6 +5,7 @@ import { CatalogHttpError } from '@/lib/server/catalog-auth';
 import { assertPageAccess } from '@/lib/server/page-access';
 import { addSourceImage, confirmProject, createProject, deleteProject, listProjects, MAX_SOURCE_BYTES, projectDetail, readListingAsset, saveReview } from '@/lib/server/listing-store';
 import { planPrice, requestPlan } from '@/lib/server/listing-jobs';
+import { downloadZip, estimate, redoSlot, slotStates, startGeneration } from '@/lib/server/listing-generation';
 import { LISTING_LAYOUTS } from '@/lib/listing/layouts';
 
 export const dynamic = 'force-dynamic';
@@ -17,7 +18,18 @@ export async function GET(request: NextRequest, context: Context) {
     const { tenant, user } = await tenantScope(request), { path } = await context.params;
     await assertPageAccess(user.id, ['/listing-images']);
     if (path[0] === 'config') return json({ layouts: LISTING_LAYOUTS, planCredits: await planPrice(), exempt: tenant.billingMode === 'exempt' });
-    if (path[0] === 'projects') return json(path[1] ? await projectDetail(tenant.id, path[1]) : await listProjects(tenant.id));
+    if (path[0] === 'projects' && path[1] && path[2] === 'download') {
+      await projectDetail(tenant.id, path[1]);
+      const zip = await downloadZip(path[1]);
+      return new NextResponse(new Uint8Array(zip.bytes), { headers: { 'Content-Type': 'application/zip', 'Cache-Control': 'no-store',
+        'Content-Disposition': `attachment; filename="listing-images.zip"; filename*=UTF-8''${encodeURIComponent(zip.name)}` } });
+    }
+    if (path[0] === 'projects' && path[1]) {
+      const detail = await projectDetail(tenant.id, path[1]);
+      const priced = ['review', 'confirmed'].includes(detail.status) && detail.plan ? await estimate(detail.plan as never, detail.review, detail.counts).catch(() => null) : null;
+      return json({ ...detail, estimate: priced, slots: await slotStates(path[1]) });
+    }
+    if (path[0] === 'projects') return json(await listProjects(tenant.id));
     if (path[0] === 'assets' && path[1]) {
       const file = await readListingAsset(tenant.id, path[1]);
       // An asset ID always names the same bytes, so the browser may keep it.
@@ -40,6 +52,8 @@ export async function POST(request: NextRequest, context: Context) {
     if (path[0] === 'projects' && path[2] === 'plan') return json(await requestPlan(tenant, user.id, path[1]));
     if (path[0] === 'projects' && path[2] === 'review') return json(await saveReview(tenant.id, path[1], body));
     if (path[0] === 'projects' && path[2] === 'confirm') return json(await confirmProject(tenant.id, path[1]));
+    if (path[0] === 'projects' && path[2] === 'generate') return json(await startGeneration(tenant, user.id, path[1]));
+    if (path[0] === 'projects' && path[2] === 'redo') return json(await redoSlot(tenant, user.id, path[1], String(body.slot ?? ''), String(body.note ?? '')));
     throw new CatalogHttpError(404, '接口不存在');
   } catch (error) { return catalogError(error); }
 }

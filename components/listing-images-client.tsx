@@ -5,8 +5,8 @@ import { AppHeader } from "./app-header";
 import { ASSET_ROLES, DEFAULT_COUNTS, LISTING_LAYOUTS, type AssetRole, type ListingCounts } from "@/lib/listing/layouts";
 import "./listing-images.css";
 
-type Summary = { id: string; name: string; layout: string; counts: ListingCounts; status: "uploading" | "planning" | "review" | "confirmed" | "failed"; error: string | null; images: number; cover: string | null };
-type Slot = { n: number; role: string; title: string; subtitle: string; bullets: string[] };
+type Summary = { id: string; name: string; layout: string; counts: ListingCounts; status: "uploading" | "planning" | "review" | "confirmed" | "failed" | "generating" | "done"; error: string | null; images: number; cover: string | null; slots: number; made: number; broken: number };
+type Slot = { n: number; role: string; title: string; subtitle: string; bullets: string[]; scene: string };
 type Plan = {
   plan: {
     assets: { id: string; role: AssetRole; color: string; reason: string }[];
@@ -16,8 +16,10 @@ type Plan = {
   };
   corrected: string[]; problems: string[];
 };
-type Review = { roles: Record<string, AssetRole>; colors: { sku: string; name: string }[]; points: { id: string; text: string }[] };
-type Detail = Summary & { images: { id: string; label: string; name: string; path: string; shape: string; url: string }[]; plan: Plan | null; review: Review | null };
+type Words = { title: string; subtitle: string; bullets: string[] };
+type Review = { roles: Record<string, AssetRole>; colors: { sku: string; name: string }[]; slots: Record<string, Words> };
+type SlotState = { slot: string; status: string; error: string | null; image: string | null; versions: number; input: { kind: string; slot?: { role: string; title: string } } };
+type Detail = Summary & { images: { id: string; label: string; name: string; path: string; shape: string; url: string }[]; plan: Plan | null; review: Review | null; estimate: { images: number; credits: number } | null; slots: SlotState[] };
 type Group = { name: string; files: { file: File; path: string }[] };
 
 const IMAGE = /\.(jpe?g|png|webp)$/i;
@@ -74,7 +76,9 @@ const statusOf = (p: Summary, upload?: { done: number; total: number; failed: nu
   if (p.status === "uploading") return upload ? { c: "", text: `上传中 ${upload.done}/${upload.total}${upload.failed ? `，${upload.failed} 张没传上` : ""}` } : { c: "y", text: `已上传 ${p.images} 张，还没开始分析` };
   if (p.status === "planning") return { c: "", text: "AI 正在读商品、给图片分类，约 1 分钟" };
   if (p.status === "failed") return { c: "r", text: p.error || "分析失败" };
-  if (p.status === "confirmed") return { c: "g", text: "已确认 · 出图功能下一期上线" };
+  if (p.status === "confirmed") return { c: "b", text: "已确认，可以开始出图" };
+  if (p.status === "generating") return { c: "", text: `出图中 ${p.made}/${p.slots}，每张约 1 分钟` };
+  if (p.status === "done") return p.broken ? { c: "y", text: `完成 ${p.made}/${p.slots} · ${p.broken} 张没成功，可以重做` } : { c: "g", text: `完成 ${p.made}/${p.slots}` };
   const problems = detail?.plan?.problems.length ?? 0;
   return problems ? { c: "y", text: `整理好了，有 ${problems} 处要你看一眼` } : { c: "b", text: "素材和卖点整理好了，等你确认" };
 };
@@ -104,13 +108,13 @@ export function ListingImagesClient() {
     const list = await api<Summary[]>("projects");
     setProjects(list);
     // Products waiting for the user need their plan to show problems in the row.
-    const needed = list.filter(p => p.status === "review" || p.status === "confirmed");
+    const needed = list.filter(p => ["review", "confirmed", "generating", "done"].includes(p.status));
     const loaded = await Promise.all(needed.map(p => api<Detail>("projects/" + p.id).catch(() => null)));
     setDetails(old => ({ ...old, ...Object.fromEntries(loaded.filter((d): d is Detail => !!d).map(d => [d.id, d])) }));
   }, []);
   useEffect(() => { refresh().catch(error => say(error.message)); }, [refresh, say]);
   /* eslint-enable react-hooks/set-state-in-effect */
-  const busy = projects.some(p => p.status === "planning") || Object.keys(uploads).length > 0;
+  const busy = projects.some(p => p.status === "planning" || p.status === "generating") || Object.keys(uploads).length > 0;
   useEffect(() => { if (!busy) return; const t = setInterval(() => void refresh().catch(() => {}), 3000); return () => clearInterval(t); }, [busy, refresh]);
 
   const startPlan = async (id: string) => {
@@ -143,6 +147,18 @@ export function ListingImagesClient() {
   const onDrop = async (event: React.DragEvent) => { event.preventDefault(); setOver(false); await startGroups(await groupsFromDrop(event.dataTransfer.items)); };
   const pick = useRef<HTMLInputElement>(null);
 
+  const generate = async (id: string) => {
+    try { await post(`projects/${id}/generate`); setOpen(o => ({ ...o, [id]: true })); await refresh(); } catch (error) { say((error as Error).message); }
+  };
+  const redo = async (id: string, slot: string, label: string) => {
+    const note = window.prompt(`重做「${label}」。有补充要求可以写在这里（可不填），比如：模特换成女生、背景更亮`, "");
+    if (note === null) return;
+    try {
+      const r = await post<{ images: number }>(`projects/${id}/redo`, { slot, note });
+      say(r.images > 1 ? `已重新排队 ${r.images} 张：这张和因为它没做出来的图` : "已重新排队");
+      await refresh();
+    } catch (error) { say((error as Error).message); }
+  };
   const toggle = async (id: string) => {
     setOpen(o => ({ ...o, [id]: !o[id] }));
     if (!details[id]) { const d = await api<Detail>("projects/" + id).catch(() => null); if (d) setDetails(old => ({ ...old, [id]: d })); }
@@ -225,20 +241,24 @@ export function ListingImagesClient() {
                   <div className="acts" onClick={e => e.stopPropagation()}>
                     {p.status === "review" && <button type="button" className="lp-btn sm primary" onClick={() => setReviewing(p.id)}>确认素材和卖点</button>}
                     {(p.status === "failed" || (p.status === "uploading" && !uploads[p.id] && p.images > 0)) && <button type="button" className="lp-btn sm primary" onClick={() => void startPlan(p.id)}>{p.status === "failed" ? "重新分析" : "开始分析"}</button>}
-                    {p.status === "confirmed" && <button type="button" className="lp-btn sm" onClick={() => setReviewing(p.id)}>查看</button>}
-                    {p.status !== "planning" && !uploads[p.id] && <button type="button" className="lp-btn sm ghost" onClick={() => void remove(p)}>删除</button>}
+                    {p.status === "confirmed" && <button type="button" className="lp-btn sm primary" onClick={() => void generate(p.id)}>开始出图{d?.estimate && !config?.exempt ? `（约 ${d.estimate.credits} 积分）` : ""}</button>}
+                    {p.made > 0 && <a className="lp-btn sm" href={`/api/listing/projects/${p.id}/download`}>下载</a>}
+                    {["confirmed", "generating", "done"].includes(p.status) && <button type="button" className="lp-btn sm ghost" onClick={() => setReviewing(p.id)}>素材和卖点</button>}
+                    {!["planning", "generating"].includes(p.status) && !uploads[p.id] && <button type="button" className="lp-btn sm ghost" onClick={() => void remove(p)}>删除</button>}
                   </div>
                 </div>
                 {open[p.id] && (
                   <div className="lp-pb">
-                    {!d ? <span className="lp-muted">正在读取…</span> : (
+                    {!d ? <span className="lp-muted">正在读取…</span> : (<>
+                      {d.slots.length > 0 && <Results detail={d} onRedo={(slot, label) => void redo(p.id, slot, label)} />}
+                      {d.slots.length > 0 && <div className="lp-lane-label">原始素材 {d.images.length} 张</div>}
                       <div className="lp-tiles">{d.images.map(img => (
                         <a key={img.id} className="lp-tile" href={img.url} target="_blank" rel="noreferrer" title={img.path}>
                           <img src={img.url} alt="" loading="lazy" />
                           {roles[img.label] && <span className={"role" + (roles[img.label] === "不用" ? " unused" : "")}>{roles[img.label]}</span>}
                           <small>{img.path}</small>
                         </a>))}
-                      </div>)}
+                      </div></>)}
                   </div>)}
               </div>
             );
@@ -246,7 +266,7 @@ export function ListingImagesClient() {
         </div>
       </main>
       {reviewing && details[reviewing]?.plan && (
-        <ReviewDialog detail={details[reviewing]} readOnly={details[reviewing].status === "confirmed"} onClose={() => setReviewing(null)}
+        <ReviewDialog detail={details[reviewing]} readOnly={details[reviewing].status !== "review"} exempt={!!config?.exempt} onClose={() => setReviewing(null)}
           onDone={async message => { setReviewing(null); say(message); await refresh(); }} onError={say} />
       )}
       {toast && <div className="lp-toast" role="status">{toast}</div>}
@@ -254,31 +274,89 @@ export function ListingImagesClient() {
   );
 }
 
-function ReviewDialog({ detail, readOnly, onClose, onDone, onError }: { detail: Detail; readOnly: boolean; onClose: () => void; onDone: (message: string) => Promise<void>; onError: (message: string) => void }) {
+const KIND_LABEL: Record<string, string> = { square: "1:1 主图", portrait: "3:4 主图", poster: "2:3 海报", sku: "SKU 图", product: "白底产品图" };
+const SHAPE: Record<string, string> = { square: "1 / 1", portrait: "3 / 4", poster: "2 / 3", sku: "1 / 1", product: "1 / 1" };
+
+/** Generated images grouped by kind; a failed one says why under the image. */
+function Results({ detail, onRedo }: { detail: Detail; onRedo: (slot: string, label: string) => void }) {
+  const colors = new Map((detail.plan?.plan.product.colors ?? []).map(c => [c.sku, detail.review?.colors.find(r => r.sku === c.sku)?.name ?? c.name]));
+  const labelOf = (s: SlotState) => {
+    const [kind, key] = s.slot.split(":");
+    if (kind === "sku" || kind === "product") return colors.get(key) ?? key;
+    return kind === "poster" ? "海报" : `第 ${key} 张 · ${s.input.slot?.role ?? ""}`;
+  };
+  const order = (slot: string) => slot.replace(/\d+$/, n => n.padStart(2, "0"));
+  return (<>{(["square", "portrait", "poster", "sku", "product"] as const).map(kind => {
+    const items = detail.slots.filter(s => s.slot.startsWith(kind + ":")).sort((a, b) => order(a.slot).localeCompare(order(b.slot)));
+    if (!items.length) return null;
+    return (
+      <div className="lp-lane" key={kind}>
+        <div className="lp-lane-label">{KIND_LABEL[kind]}</div>
+        <div className="lp-tiles">{items.map(s => {
+          const label = labelOf(s), busy = s.status === "queued" || s.status === "running", bad = !s.image && !busy;
+          return (
+            <div key={s.slot} className={"lp-out" + (bad ? " bad" : "")}>
+              <div className="lp-out-img" style={{ aspectRatio: SHAPE[kind] }}>
+                {s.image && <a href={`/api/listing/assets/${s.image}`} target="_blank" rel="noreferrer"><img src={`/api/listing/assets/${s.image}`} alt={label} loading="lazy" /></a>}
+                {busy && <span className="lp-out-wait">{s.status === "running" ? "出图中…" : "排队中"}</span>}
+                {bad && <span className="lp-out-wait">没做出来</span>}
+              </div>
+              <b title={label}>{label}{s.versions > 1 ? ` · 第 ${s.versions} 版` : ""}</b>
+              {bad && s.error && <small className="lp-out-why">{s.error}</small>}
+              {!busy && detail.status !== "generating" && <button type="button" className="lp-btn sm" onClick={() => onRedo(s.slot, label)}>重做</button>}
+            </div>);
+        })}</div>
+      </div>);
+  })}</>);
+}
+
+function ReviewDialog({ detail, readOnly, exempt, onClose, onDone, onError }: { detail: Detail; readOnly: boolean; exempt: boolean; onClose: () => void; onDone: (message: string) => Promise<void>; onError: (message: string) => void }) {
   const plan = detail.plan!.plan, byLabel = new Map(detail.images.map(i => [i.label, i]));
   const [roles, setRoles] = useState<Record<string, AssetRole>>(detail.review?.roles ?? {});
   const [colors, setColors] = useState<Record<string, string>>(Object.fromEntries((detail.review?.colors ?? plan.product.colors.map(c => ({ sku: c.sku, name: c.name }))).map(c => [c.sku, c.name])));
-  const [points, setPoints] = useState<Record<string, string>>(Object.fromEntries((detail.review?.points ?? plan.sellingPoints.map(p => ({ id: p.id, text: p.text }))).map(p => [p.id, p.text])));
+  const slots = ([["square", "1:1"], ["portrait", "3:4"], ["poster", "2:3"]] as const)
+    .flatMap(([key, ratio]) => plan.main[key].slice(0, detail.counts[key]).map((s, i) => ({ ...s, key: `${key}:${i + 1}`, ratio })));
+  const [words, setWords] = useState<Record<string, Words>>(Object.fromEntries(slots.map(s => [s.key, detail.review?.slots?.[s.key] ?? { title: s.title, subtitle: s.subtitle, bullets: s.bullets.slice(0, 3) }])));
   const [saving, setSaving] = useState(false);
   const roleOf = (id: string) => roles[id] ?? plan.assets.find(a => a.id === id)?.role ?? "不用";
   const missing = plan.product.colors.filter(c => roleOf(c.sku) !== "SKU");
-  const review = (): Review => ({ roles, colors: plan.product.colors.map(c => ({ sku: c.sku, name: colors[c.sku]?.trim() || c.name })), points: plan.sellingPoints.map(p => ({ id: p.id, text: points[p.id] ?? p.text })) });
+  const edit = (key: string, patch: Partial<Words>) => setWords(w => ({ ...w, [key]: { ...w[key], ...patch } }));
   const submit = async () => {
     setSaving(true);
     try {
-      await post(`projects/${detail.id}/review`, review());
+      await post(`projects/${detail.id}/review`, { roles, colors: plan.product.colors.map(c => ({ sku: c.sku, name: colors[c.sku]?.trim() || c.name })), slots: words });
       await post(`projects/${detail.id}/confirm`);
-      await onDone("已确认，出图功能下一期上线后可以直接开始");
+      await post(`projects/${detail.id}/generate`);
+      await onDone("已开始出图，每张约 1 分钟，做好的会陆续出现");
     } catch (error) { onError((error as Error).message); } finally { setSaving(false); }
   };
-  const slots = ([["square", "1:1"], ["portrait", "3:4"], ["poster", "2:3"]] as const).flatMap(([key, ratio]) => plan.main[key].map(s => ({ ...s, ratio })));
   return (
     <div className="lp-modal" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="lp-box" role="dialog" aria-modal="true" aria-label="确认素材和卖点">
         <div className="lp-box-head"><h3>{readOnly ? "素材和卖点" : "确认素材和卖点"} · {detail.name}</h3><div className="grow" /><button type="button" className="lp-btn sm ghost" onClick={onClose}>关闭</button></div>
         <div className="lp-box-body">
-          {detail.plan!.problems.length > 0 && <div className="lp-alert y">AI 的结果有 {detail.plan!.problems.length} 处对不上：{detail.plan!.problems.join("；")}。分类不对的请在下面改；其余的出图前会再检查一遍。</div>}
+          {detail.plan!.problems.length > 0 && <div className="lp-alert y">AI 的结果有 {detail.plan!.problems.length} 处对不上：{detail.plan!.problems.join("；")}。分类不对的请在下面改；其余的出图时会按规则处理。</div>}
           {missing.length > 0 && <div className="lp-alert y">颜色「{missing.map(c => colors[c.sku] || c.name).join("、")}」对应的图被改成了非 SKU。出图要靠这张图定颜色，请改回 SKU。</div>}
+          <div className="lp-sec">
+            <h4>每张图上写什么<span>字会原样印在图上；没写的地方不会自己加字</span></h4>
+            <div className="lp-words">{slots.map(s => (
+              <div key={s.key} className="lp-word">
+                <em>{s.ratio} 第 {s.key.split(":")[1]} 张<br /><small>{s.role}</small></em>
+                <input value={words[s.key].title} maxLength={20} disabled={readOnly} placeholder="主标题" onChange={e => edit(s.key, { title: e.target.value })} />
+                <input value={words[s.key].subtitle} maxLength={30} disabled={readOnly} placeholder="副标题（可空）" onChange={e => edit(s.key, { subtitle: e.target.value })} />
+                <input value={words[s.key].bullets.join("、")} disabled={readOnly} placeholder="要点，用顿号隔开，最多 3 条（可空）"
+                  onChange={e => edit(s.key, { bullets: e.target.value.split(/[、,，]/).map(t => t.trim()).filter(Boolean).slice(0, 3) })} />
+              </div>))}
+              {slots.length === 0 && <span className="lp-muted">这一款没有选主图</span>}
+            </div>
+          </div>
+          <div className="lp-sec">
+            <h4>颜色<span>每个颜色出一张 SKU 图，名字原样写在图上</span></h4>
+            <div className="lp-colors">{plan.product.colors.map(c => (
+              <label key={c.sku} className="lp-color">{byLabel.get(c.sku) && <img src={byLabel.get(c.sku)!.url} alt="" />}
+                <input value={colors[c.sku] ?? c.name} maxLength={20} disabled={readOnly} onChange={e => setColors(v => ({ ...v, [c.sku]: e.target.value }))} /></label>))}
+            </div>
+          </div>
           <div className="lp-sec">
             <h4>素材分类<span>{detail.images.length} 张 · AI 看图分的，不对就改；「不用」的图不会参考</span></h4>
             <div className="lp-sort">{plan.assets.map(a => {
@@ -293,30 +371,11 @@ function ReviewDialog({ detail, readOnly, onClose, onDone, onError }: { detail: 
                 </figure>);
             })}</div>
           </div>
-          <div className="lp-sec">
-            <h4>颜色<span>名字会原样写在 SKU 图上，以 SKU 图上的为准</span></h4>
-            <div className="lp-colors">{plan.product.colors.map(c => (
-              <label key={c.sku} className="lp-color">{byLabel.get(c.sku) && <img src={byLabel.get(c.sku)!.url} alt="" />}
-                <input value={colors[c.sku] ?? c.name} maxLength={20} disabled={readOnly} onChange={e => setColors(v => ({ ...v, [c.sku]: e.target.value }))} /></label>))}
-            </div>
-          </div>
-          <div className="lp-sec">
-            <h4>卖点<span>只用素材里有依据的；可以改说法</span></h4>
-            <div className="lp-points">{plan.sellingPoints.map(p => (
-              <label key={p.id} className="lp-point">{p.type || "卖点"}<input value={points[p.id] ?? p.text} maxLength={40} disabled={readOnly} onChange={e => setPoints(v => ({ ...v, [p.id]: e.target.value }))} /></label>))}
-            </div>
-          </div>
-          <div className="lp-sec">
-            <h4>每张图讲什么<span>按版式和你选的张数排好</span></h4>
-            <div className="lp-slots">{slots.map(s => <div key={s.ratio + s.n}><em>{s.ratio} 第 {s.n} 张</em><b>{s.title}</b><span className="lp-muted">{s.role}{s.subtitle ? " · " + s.subtitle : ""}</span></div>)}
-              {slots.length === 0 && <span className="lp-muted">这一款没有选主图</span>}
-            </div>
-          </div>
         </div>
         <div className="lp-box-foot">
-          <div className="grow">{readOnly ? "已确认。出图功能下一期上线。" : <>确认后保存这份分类和卖点；<b>出图功能下一期上线</b>，上线后可以直接开始出图。</>}</div>
+          <div className="grow">{readOnly ? "已确认，出图按这一份来。" : <>确认后马上开始出图：共 <b>{detail.estimate?.images ?? "—"}</b> 张（每个颜色一张白底产品图 + 一张 SKU 图，加上主图）{!exempt && detail.estimate && <>，约 <b>{detail.estimate.credits}</b> 积分，先冻结，没做出来的退回</>}。</>}</div>
           <button type="button" className="lp-btn" onClick={onClose}>{readOnly ? "关闭" : "先不确认"}</button>
-          {!readOnly && <button type="button" className="lp-btn primary" disabled={saving || missing.length > 0} onClick={() => void submit()}>{saving ? "正在保存…" : "确认"}</button>}
+          {!readOnly && <button type="button" className="lp-btn primary" disabled={saving || missing.length > 0 || slots.some(s => !words[s.key].title.trim())} onClick={() => void submit()}>{saving ? "正在开始…" : "确认并开始出图"}</button>}
         </div>
       </div>
     </div>

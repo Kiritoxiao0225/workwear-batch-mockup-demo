@@ -13,6 +13,7 @@ import { layoutById, countsSchema } from '../listing/layouts';
 import { parsePlan, planRequest, type PlanImage } from './listing-plan';
 import { assertListingProviderConfigured, callPlanModel, LISTING_PLAN_MODEL, type PlanCall } from './listing-provider';
 import { sourceImages, type StoredPlan } from './listing-store';
+import { executeImage, failBlocked, finishRun, type JobInput } from './listing-generation';
 import type { Tenant } from './tenant-scope';
 
 const holdId = (jobId: string) => 'listing:' + jobId;
@@ -112,41 +113,74 @@ export async function executePlan(job: JobRow, provider: Provider = (request, ho
   }
 }
 
-export async function startListingWorker({ canAccept = () => true }: { canAccept?: () => boolean } = {}) {
-  let closed = false, running: Promise<void> | null = null;
-  const owner = randomUUID();
+/**
+ * Runs up to `LISTING_WORKER_CONCURRENCY` jobs at once (images mostly wait on the provider). An
+ * image job starts only when the images it builds on exist; if one of them failed, it is
+ * skipped and costs nothing.
+ */
+export async function startListingWorker({ canAccept = () => true, concurrency = Number(process.env.LISTING_WORKER_CONCURRENCY || 6), generate }: { canAccept?: () => boolean; concurrency?: number; generate?: Parameters<typeof executeImage>[1] } = {}) {
+  let closed = false, ticking = false;
+  const running = new Set<Promise<void>>(), owner = randomUUID();
   const heartbeat = () => db().query('INSERT INTO listing_workers(id) VALUES($1) ON CONFLICT(id) DO UPDATE SET heartbeat_at=now()', [owner]);
   await heartbeat();
   const beatTimer = setInterval(() => { void heartbeat().catch(() => {}); }, 15000);
-  const tick = async () => {
-    if (closed || running || !canAccept()) return;
-    running = (async () => {
-      // A job whose worker vanished: settle what was sent, return what was not, never resend.
-      const expired = (await db().query(`UPDATE listing_jobs SET status='unknown',error='后台中断，未重复调用模型',lease_until=NULL
-        WHERE status='running' AND lease_until<now() RETURNING id,tenant_id,project_id`)).rows;
-      for (const j of expired) {
-        const attempts = (await db().query('SELECT id,status FROM listing_attempts WHERE job_id=$1', [j.id])).rows;
-        if (attempts.length) await settleHold(holdId(j.id), j.tenant_id, attempts.map(a => ({ action: 'listing_plan' as const, billable: true, certain: a.status === 'succeeded', attemptId: a.id }))).catch(() => {});
-        else await releaseHold(holdId(j.id), j.tenant_id, '后台在提交前中断').catch(() => {});
-        await db().query(`UPDATE listing_projects SET status='failed',error='后台中断，请重新分析',updated_at=now() WHERE id=$1 AND status='planning'`, [j.project_id]);
+  const sweep = async () => {
+    // A job whose worker vanished: never resend; plans settle here, image runs when they finish.
+    const expired = (await db().query(`UPDATE listing_jobs SET status='unknown',error='后台中断，未重复调用模型；可能已产生费用，由管理员核对',lease_until=NULL
+      WHERE status='running' AND lease_until<now() RETURNING id,tenant_id,project_id,step,run_id`)).rows;
+    for (const j of expired) {
+      if (j.step !== 'plan') { await finishRun(j.run_id, j.tenant_id, j.project_id); continue; }
+      const attempts = (await db().query('SELECT id,status FROM listing_attempts WHERE job_id=$1', [j.id])).rows;
+      if (attempts.length) await settleHold(holdId(j.id), j.tenant_id, attempts.map(a => ({ action: 'listing_plan' as const, billable: true, certain: a.status === 'succeeded', attemptId: a.id }))).catch(() => {});
+      else await releaseHold(holdId(j.id), j.tenant_id, '后台在提交前中断').catch(() => {});
+      await db().query(`UPDATE listing_projects SET status='failed',error='后台中断，请重新分析',updated_at=now() WHERE id=$1 AND status='planning'`, [j.project_id]);
+    }
+  };
+  type Claimed = { id: string; tenant_id: string; project_id: string; step: string; run_id: string; slot: string; input: JobInput; depends: string[] };
+  const claim = () => catalogTransaction(async c => {
+    const queued = (await c.query(`SELECT j.id,j.tenant_id,j.project_id,j.step,j.run_id,j.slot,j.input,j.depends FROM listing_jobs j JOIN tenants t ON t.id=j.tenant_id
+      WHERE j.status='queued' AND NOT t.disabled ORDER BY j.created_at FOR UPDATE OF j SKIP LOCKED LIMIT 30`)).rows as Claimed[];
+    for (const j of queued) {
+      if (j.depends.length) {
+        // A prerequisite remade in the same run must finish first: an older image of that slot
+        // (say, a product image being redone) must not be used.
+        const same = (await c.query(`SELECT DISTINCT ON (slot) slot,status FROM listing_jobs WHERE run_id=$1 AND slot = ANY($2) ORDER BY slot, created_at DESC`, [j.run_id, j.depends])).rows as { slot: string; status: string }[];
+        const broken = same.find(d => d.status === 'failed' || d.status === 'unknown');
+        if (broken) return { blocked: j, reason: `前一步「${broken.slot}」没做出来` };
+        if (same.some(d => d.status !== 'succeeded')) continue;
+        const have = (await c.query(`SELECT count(DISTINCT slot)::int n FROM listing_assets WHERE project_id=$1 AND slot = ANY($2)`, [j.project_id, j.depends])).rows[0].n;
+        if (have < j.depends.length) return { blocked: j, reason: '前一步的图找不到了' };
       }
-      const job = await catalogTransaction(async c => {
-        const j = (await c.query(`SELECT j.id,j.tenant_id,j.project_id,j.step FROM listing_jobs j JOIN tenants t ON t.id=j.tenant_id
-          WHERE j.status='queued' AND NOT t.disabled ORDER BY j.created_at FOR UPDATE OF j SKIP LOCKED LIMIT 1`)).rows[0] as JobRow | undefined;
-        if (j) await c.query(`UPDATE listing_jobs SET status='running',owner=$2,lease_until=now()+interval '3 minutes' WHERE id=$1`, [j.id, owner]);
-        return j;
-      });
-      if (!job) return;
-      const beat = setInterval(() => { void db().query(`UPDATE listing_jobs SET lease_until=now()+interval '3 minutes' WHERE id=$1 AND owner=$2 AND status='running'`, [job.id, owner]).catch(() => {}); }, 15000);
-      try { await executePlan(job); } finally { clearInterval(beat); }
-    })().catch(error => console.error('[listing-worker]', error instanceof Error ? error.name : 'error')).finally(() => { running = null; });
-    await running;
+      await c.query(`UPDATE listing_jobs SET status='running',owner=$2,lease_until=now()+interval '3 minutes' WHERE id=$1`, [j.id, owner]);
+      return { job: j };
+    }
+    return null;
+  });
+  const run = (job: Claimed) => {
+    const beat = setInterval(() => { void db().query(`UPDATE listing_jobs SET lease_until=now()+interval '3 minutes' WHERE id=$1 AND owner=$2 AND status='running'`, [job.id, owner]).catch(() => {}); }, 15000);
+    const task = (job.step === 'plan' ? executePlan(job) : executeImage(job, generate))
+      .catch(error => console.error('[listing-worker]', error instanceof Error ? error.message : 'error'))
+      .finally(() => { clearInterval(beat); running.delete(task); });
+    running.add(task);
+  };
+  const tick = async () => {
+    if (closed || ticking || !canAccept()) return;
+    ticking = true;
+    try {
+      await sweep();
+      while (!closed && running.size < concurrency) {
+        const next = await claim();
+        if (!next) break;
+        if ('blocked' in next && next.blocked) { await failBlocked(next.blocked, next.reason!); continue; }
+        if ('job' in next && next.job) run(next.job);
+      }
+    } catch (error) { console.error('[listing-worker]', error instanceof Error ? error.name : 'error'); } finally { ticking = false; }
   };
   const timer = setInterval(() => void tick(), 2000);
   void tick();
   return {
     close: async () => {
-      closed = true; clearInterval(timer); clearInterval(beatTimer); await running;
+      closed = true; clearInterval(timer); clearInterval(beatTimer); await Promise.all(running);
       await db().query(`UPDATE listing_workers SET heartbeat_at=now()-interval '1 day' WHERE id=$1`, [owner]);
     },
   };

@@ -20,7 +20,9 @@ const database = new EmbeddedPostgres({ databaseDir: join(root, 'pg'), user: 'li
 const { catalogDatabase: db, closeCatalogDatabase, migrateCatalog } = await import('../lib/server/catalog-database');
 const { createCatalogUser, loginCatalog } = await import('../lib/server/catalog-auth');
 const routes = await import('../app/api/listing/[...path]/route');
-const { executePlan } = await import('../lib/server/listing-jobs');
+const { executePlan, startListingWorker } = await import('../lib/server/listing-jobs');
+const { executeImage } = await import('../lib/server/listing-generation');
+const JSZip = (await import('jszip')).default;
 let checks = 0; const pass = (s: string) => { checks++; console.log('PASS', s); };
 try {
   await database.initialise(); await database.start(); await migrateCatalog();
@@ -28,7 +30,7 @@ try {
   for (const [i, t] of tenants.entries()) {
     await db().query("INSERT INTO tenants(id,name,style_quota,storage_quota_bytes,workspace) VALUES($1,'电商主图验收',10,10000000,$2)", [t, 'lst-test-' + t]);
     await db().query('INSERT INTO tenant_usage(tenant_id) VALUES($1)', [t]);
-    await db().query('INSERT INTO credit_accounts(tenant_id,balance_cents) VALUES($1,1000)', [t]);
+    await db().query('INSERT INTO credit_accounts(tenant_id,balance_cents) VALUES($1,5000)', [t]);
     await createCatalogUser(`lst${i}@example.test`, '验收账号', password, 'editor', t);
     tokens.push((await loginCatalog(`lst${i}@example.test`, password)).token);
   }
@@ -68,12 +70,12 @@ try {
   pass('上传：量出形状、同图不重复存、坏图拒收、跨租户读不到、文件不会被回收');
 
   await call(0, `projects/${id}/plan`, {}, 503);
-  assert.equal(await balance(tenants[0]), 1000);
+  assert.equal(await balance(tenants[0]), 5000);
   await db().query("INSERT INTO listing_workers(id) VALUES($1)", [randomUUID()]);
   await call(1, `projects/${id}/plan`, {}, 404);
   assert.equal((await (await call(0, `projects/${id}/plan`, {})).json()).status, 'planning');
   assert.equal((await (await call(0, `projects/${id}/plan`, {})).json()).status, 'planning');
-  assert.equal(await balance(tenants[0]), 820);
+  assert.equal(await balance(tenants[0]), 4820);
   await upload(0, id, await image(700, 700, '#123456'), '晚到的.jpg', 409);
   pass('后台没连上不冻结积分；冻结 180 积分只冻一次；开始分析后不能再加图');
 
@@ -109,6 +111,117 @@ try {
   assert.equal(confirmed.status, 'confirmed'); assert.equal(confirmed.review.colors[0].name, '经典黑');
   await call(0, `projects/${id}/review`, { roles: {} }, 409);
   pass('确认：颜色图改成非 SKU 时拦住；改过的颜色名保存；确认后不能再改');
+
+  // ---- 第 2 期：出图 ----
+  const estimate = (await (await call(0, 'projects/' + id)).json()).estimate;
+  assert.deepEqual(estimate, { images: 4, credits: 4 * 44 });
+  await call(1, `projects/${id}/generate`, {}, 404);
+  const beforeRun = await balance(tenants[0]);
+  assert.equal((await (await call(0, `projects/${id}/generate`, {})).json()).status, 'generating');
+  assert.equal((await (await call(0, `projects/${id}/generate`, {})).json()).status, 'generating');
+  type ImgJob = { id: string; tenant_id: string; project_id: string; run_id: string; slot: string; input: never };
+  const jobs = (await db().query("SELECT id,tenant_id,project_id,run_id,slot,input,depends FROM listing_jobs WHERE project_id=$1 AND step<>'plan' ORDER BY created_at", [id])).rows as (ImgJob & { depends: string[] })[];
+  assert.deepEqual(jobs.map(j => j.slot), [`product:${SKU}`, `sku:${SKU}`, 'square:1', 'square:2']);
+  assert.equal(beforeRun - await balance(tenants[0]), 4 * 44);
+  const png = await sharp({ create: { width: 64, height: 64, channels: 3, background: '#222' } }).png().toBuffer();
+  const seen: { slot: string; refs: number; prompt: string }[] = [];
+  const fake = (slot: string, fail = false) => async (input: { prompt: string; references: Buffer[] }, hooks: { beforeSubmit: () => Promise<void>; receipt: (id: string) => Promise<void> }) => {
+    seen.push({ slot, refs: input.references.length, prompt: input.prompt });
+    await hooks.beforeSubmit(); await hooks.receipt('task-unified-' + slot.replace(':', '-'));
+    if (fail) throw Object.assign(new Error('供应商判定失败'), { notCharged: true });
+    return { bytes: png, taskId: 'task-unified-x', credits: 2, durationMs: 1 };
+  };
+  for (const j of jobs) await executeImage(j, fake(j.slot, j.slot === 'square:2'));
+  assert.deepEqual(seen.map(s => `${s.slot}:${s.refs}`), [`product:${SKU}:1`, `sku:${SKU}:1`, 'square:1:1', 'square:2:1']);
+  assert.match(seen[1].prompt, /颜色名「经典黑」/); assert.match(seen[2].prompt, /主标题「轻盈抗造工作服」/);
+  const runHold = (await db().query("SELECT state,settled_cents FROM credit_holds WHERE id=$1", ['listing:run:' + jobs[0].run_id])).rows[0];
+  assert.deepEqual([runHold.state, Number(runHold.settled_cents)], ['settled', 3 * 44]);
+  assert.equal(beforeRun - await balance(tenants[0]), 3 * 44);
+  const done = (await (await call(0, 'projects')).json()).find((p: { id: string }) => p.id === id);
+  assert.deepEqual([done.status, done.slots, done.made, done.broken], ['done', 4, 3, 1]);
+  const failedSlot = (await (await call(0, 'projects/' + id)).json()).slots.find((s: { slot: string }) => s.slot === 'square:2');
+  assert.match(failedSlot.error, /没扣费/);
+  pass('出图：整套冻结 4 张，按依赖顺序出；供应商判定失败的那张不收费，结算 3 张，项目完成并标出 1 张没成功');
+
+  await call(1, `projects/${id}/redo`, { slot: 'square:2', note: '' }, 404);
+  await call(0, `projects/${id}/redo`, { slot: 'square:2', note: '背景更亮' });
+  await call(0, `projects/${id}/redo`, { slot: 'square:2', note: '' }, 409);
+  const redoJob = (await db().query("SELECT id,tenant_id,project_id,run_id,slot,input FROM listing_jobs WHERE project_id=$1 AND slot='square:2' AND status='queued'", [id])).rows[0] as ImgJob;
+  await executeImage(redoJob, fake('square:2'));
+  assert.match(seen.at(-1)!.prompt, /补充要求：背景更亮/);
+  await call(0, `projects/${id}/redo`, { slot: 'square:1', note: '' });
+  const again = (await db().query("SELECT id,tenant_id,project_id,run_id,slot,input FROM listing_jobs WHERE project_id=$1 AND slot='square:1' AND status='queued'", [id])).rows[0] as ImgJob;
+  await executeImage(again, fake('square:1'));
+  const after = await (await call(0, 'projects/' + id)).json();
+  assert.equal(after.slots.find((s: { slot: string }) => s.slot === 'square:1').versions, 2);
+  assert.equal(beforeRun - await balance(tenants[0]), 5 * 44);
+  pass('重做：别人重做不了、出图中不能重复重做；补充要求写进提示词；旧版本保留，每次重做只扣一张');
+
+  await call(1, `projects/${id}/download`, undefined, 404);
+  const zip = await JSZip.loadAsync(Buffer.from(await (await call(0, `projects/${id}/download`)).arrayBuffer()));
+  assert.deepEqual(Object.keys(zip.files).filter(n => !n.endsWith('/')).sort(), ['1比1主图-01-首图.png', '1比1主图-02-收口.png', 'SKU-经典黑.png', '白底产品图/经典黑.png']);
+  pass('下载：按淘宝顺序命名，颜色用改过的名字，别人下载不了');
+
+  // ---- 后台按依赖领任务：产品图结果不明时，依赖它的图都不做、不收费 ----
+  const second = randomUUID();
+  await call(0, 'projects', { id: second, name: '第二款', layout: 'commute-split', counts: { square: 1, portrait: 0, poster: 0 } });
+  await upload(0, second, sku, 'SKU图/黑色.jpg'); await upload(0, second, main, '1比1主图/主图_1.jpg');
+  await call(0, `projects/${second}/plan`, {});
+  const plan2 = (await db().query("SELECT id,tenant_id,project_id,step FROM listing_jobs WHERE project_id=$1", [second])).rows[0] as Job;
+  const d2 = await (await call(0, 'projects/' + second)).json();
+  const [M_MAIN, M_SKU] = ['1比1主图/主图_1.jpg', 'SKU图/黑色.jpg'].map(path => d2.images.find((i: { path: string }) => i.path === path).label);
+  await executePlan(plan2, async (_r, hooks) => { await hooks.beforeSubmit(); return { content: JSON.stringify({
+    assets: [{ id: M_MAIN, role: '主图' }, { id: M_SKU, role: 'SKU', color: '黑色' }],
+    product: { name: '第二款', garment: ['立领'], colors: [{ name: '黑色', hex: '#111', sku: M_SKU }] },
+    sellingPoints: [], main: { square: [{ n: 1, role: '首图', title: '利落上岗', colors: ['黑色'] }] }, sku: { tag: '', items: [] } }), model: 'm', requestId: 'r', usage: null, durationMs: 1 }; });
+  await call(0, `projects/${second}/confirm`, {});
+  const beforeSecond = await balance(tenants[0]);
+  await call(0, `projects/${second}/generate`, {});
+  const calls: string[] = [];
+  const worker = await startListingWorker({ concurrency: 2, generate: async (input, hooks) => {
+    calls.push(input.prompt.slice(0, 12));
+    await hooks.beforeSubmit(); throw new Error('连接中断');
+  } });
+  for (let i = 0; i < 60; i++) {
+    if (!(await db().query("SELECT 1 FROM listing_jobs WHERE project_id=$1 AND status IN ('queued','running')", [second])).rowCount) break;
+    await new Promise(r => setTimeout(r, 250));
+  }
+  await worker.close();
+  const states = Object.fromEntries((await db().query("SELECT slot,status,error FROM listing_jobs WHERE project_id=$1 AND step<>'plan'", [second])).rows.map(r => [r.slot, `${r.status}|${r.error}`]));
+  assert.equal(calls.length, 1);
+  assert.match(states[`product:${M_SKU}`], /^unknown\|.*管理员核对/);
+  assert.match(states[`sku:${M_SKU}`], /^failed\|前一步.*没扣费/); assert.match(states['square:1'], /^failed\|前一步.*没扣费/);
+  const secondRun = (await db().query("SELECT h.state,h.confirmed_cents,h.unknown_cents FROM credit_holds h WHERE h.job_ref LIKE $1", [`listing:run:${second}:%`])).rows[0];
+  assert.deepEqual([secondRun.state, Number(secondRun.confirmed_cents), Number(secondRun.unknown_cents)], ['disputed', 0, 44]);
+  assert.equal((await (await call(0, 'projects/' + second)).json()).status, 'done');
+  assert.equal(beforeSecond - await balance(tenants[0]), 3 * 44);
+  pass('后台：按依赖顺序领任务，只提交了产品图；它结果不明时后面两张跳过不提交，只有这一张冻结待裁定');
+  const redone = await (await call(0, `projects/${second}/redo`, { slot: `product:${M_SKU}`, note: '' })).json();
+  assert.equal(redone.images, 3);
+  assert.deepEqual((await db().query("SELECT slot FROM listing_jobs WHERE project_id=$1 AND status='queued' ORDER BY created_at", [second])).rows.map(r => r.slot), [`product:${M_SKU}`, `sku:${M_SKU}`, 'square:1']);
+  pass('重做产品图时，因为它被跳过的 SKU 图和主图一起重新排队、一起冻结');
+  // 重做的产品图做好之前，SKU 图不能拿旧图开工；做好后用的必须是新图。
+  const old = (await db().query("SELECT file_id FROM listing_assets WHERE project_id=$1 AND slot=$2", [second, `product:${M_SKU}`])).rows;
+  assert.equal(old.length, 0);
+  const made: { order: string[]; productBytes?: Buffer; skuRef?: Buffer } = { order: [] };
+  let shade = 0;
+  const worker2 = await startListingWorker({ concurrency: 4, generate: async (input, hooks) => {
+    const which = input.prompt.includes('白底产品图') && input.prompt.startsWith('从参考图') ? 'product' : input.prompt.includes('SKU 规格图') ? 'sku' : 'main';
+    made.order.push(which);
+    if (which === 'sku') made.skuRef = input.references[0];
+    await hooks.beforeSubmit(); await hooks.receipt('task-unified-' + which);
+    const bytes = await sharp({ create: { width: 32, height: 32, channels: 3, background: { r: 10 * ++shade, g: 0, b: 0 } } }).png().toBuffer();
+    if (which === 'product') made.productBytes = bytes;
+    return { bytes, taskId: 't', credits: 1, durationMs: 1 };
+  } });
+  for (let i = 0; i < 80; i++) {
+    if (!(await db().query("SELECT 1 FROM listing_jobs WHERE project_id=$1 AND status IN ('queued','running')", [second])).rowCount) break;
+    await new Promise(r => setTimeout(r, 250));
+  }
+  await worker2.close();
+  assert.deepEqual(made.order, ['product', 'sku', 'main']);
+  assert.ok(made.skuRef && made.productBytes && made.skuRef.equals(made.productBytes));
+  pass('连带重做按顺序执行：产品图做好之后 SKU 图才开工，用的是新做的产品图');
 
   const run = async (provider: Parameters<typeof executePlan>[1]) => {
     const pid = randomUUID();

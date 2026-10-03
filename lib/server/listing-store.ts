@@ -82,8 +82,14 @@ export type StoredPlan = { plan: ListingPlan; corrected: string[]; problems: str
 export async function listProjects(tenant: string) {
   const rows = (await catalogDatabase().query(
     `SELECT p.id,p.name,p.layout,p.counts,p.status,p.error,p.updated_at,p.created_at,
-            (SELECT count(*)::int FROM listing_assets a WHERE a.project_id=p.id) AS images,
-            (SELECT a.id FROM listing_assets a WHERE a.project_id=p.id ORDER BY a.rel_path LIMIT 1) AS cover
+            (SELECT count(*)::int FROM listing_assets a WHERE a.project_id=p.id AND a.kind='source') AS images,
+            COALESCE((SELECT a.id FROM listing_assets a WHERE a.project_id=p.id AND a.slot='square:1' ORDER BY a.created_at DESC LIMIT 1),
+                     (SELECT a.id FROM listing_assets a WHERE a.project_id=p.id AND a.kind='source' ORDER BY a.rel_path LIMIT 1)) AS cover,
+            (SELECT count(DISTINCT j.slot)::int FROM listing_jobs j WHERE j.project_id=p.id AND j.slot IS NOT NULL) AS slots,
+            (SELECT count(DISTINCT a.slot)::int FROM listing_assets a WHERE a.project_id=p.id AND a.slot IS NOT NULL) AS made,
+            (SELECT count(*)::int FROM (SELECT DISTINCT ON (j.slot) j.status, j.slot FROM listing_jobs j WHERE j.project_id=p.id AND j.slot IS NOT NULL
+               ORDER BY j.slot, j.created_at DESC) latest
+               WHERE latest.status IN ('failed','unknown') AND NOT EXISTS (SELECT 1 FROM listing_assets a WHERE a.project_id=p.id AND a.slot=latest.slot)) AS broken
        FROM listing_projects p WHERE p.tenant_id=$1 AND p.deleted_at IS NULL ORDER BY p.created_at DESC LIMIT 200`, [tenant])).rows;
   return rows.map(r => ({ ...r, cover: r.cover ? assetUrl(r.cover) : null }));
 }
@@ -102,11 +108,14 @@ export async function projectDetail(tenant: string, id: string) {
 const reviewSchema = z.object({
   roles: z.record(z.string(), z.enum(ASSET_ROLES)).default({}),
   colors: z.array(z.object({ sku: z.string(), name: z.string().trim().min(1).max(20) })).default([]),
-  points: z.array(z.object({ id: z.string(), text: z.string().trim().max(40) })).default([]),
+  // The words printed on each image, keyed by slot ("square:1", "portrait:2", "poster:1").
+  slots: z.record(z.string().regex(/^(square|portrait|poster):\d$/), z.object({
+    title: z.string().trim().min(1).max(20), subtitle: z.string().trim().max(30).default(''), bullets: z.array(z.string().trim().max(16)).max(3).default([]),
+  })).default({}),
 });
 export type Review = z.infer<typeof reviewSchema>;
 
-/** The user's corrections to the sorting, colour names and selling points; nothing is paid here. */
+/** The user's corrections to the sorting, colour names and image words; nothing is paid here. */
 export async function saveReview(tenant: string, id: string, input: unknown) {
   const review = reviewSchema.parse(input);
   const updated = await catalogDatabase().query(
@@ -139,4 +148,31 @@ export async function deleteProject(tenant: string, id: string) {
   const result = await catalogDatabase().query('UPDATE listing_projects SET deleted_at=now() WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL RETURNING id', [id, tenant]);
   if (!result.rowCount) throw new CatalogHttpError(404, '商品不存在');
   return { ok: true };
+}
+
+/** A generated image: one row per version, the newest per slot is the current one. */
+export async function storeOutput(tenant: string, projectId: string, slot: string, jobId: string, bytes: Buffer) {
+  const meta = await sharp(bytes, { failOn: 'error' }).metadata();
+  if (!meta.width || !meta.height) throw new Error('出图结果不是有效图片');
+  const kind = slot.startsWith('product:') ? 'product' : 'output', name = `${slot.replace(':', '-')}.${meta.format ?? 'png'}`;
+  let asset = '';
+  await saveCatalogFile(bytes, name, 'production', async (c, fileId) => {
+    await c.query('SELECT id FROM tenants WHERE id=$1 FOR UPDATE', [tenant]);
+    const owned = await c.query('SELECT 1 FROM tenant_file_refs WHERE tenant_id=$1 AND file_id=$2 LIMIT 1', [tenant, fileId]);
+    // Results are already paid for: they are kept even when the storage quota is exceeded.
+    if (!owned.rowCount) await c.query('UPDATE tenant_usage SET bytes_used=bytes_used+$2 WHERE tenant_id=$1', [tenant, bytes.length]);
+    asset = randomUUID();
+    await c.query(`INSERT INTO listing_assets(id,tenant_id,project_id,file_id,kind,name,rel_path,width,height,slot,job_id)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [asset, tenant, projectId, fileId, kind, name, `${slot}#${jobId}`, meta.width, meta.height, slot, jobId]);
+    await registerFileRef(fileId, tenant, 'listing-images', name, c);
+  });
+  return asset;
+}
+
+/** Newest image per slot of a project. */
+export async function latestOutputs(projectId: string) {
+  const rows = (await catalogDatabase().query(
+    `SELECT DISTINCT ON (slot) id,slot,file_id,width,height,created_at FROM listing_assets
+      WHERE project_id=$1 AND slot IS NOT NULL ORDER BY slot, created_at DESC`, [projectId])).rows as { id: string; slot: string; file_id: string; width: number; height: number }[];
+  return new Map(rows.map(row => [row.slot, row]));
 }

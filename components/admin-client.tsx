@@ -38,6 +38,8 @@ const ACTIONS: { action: string; label: string; where: string; supplier: string;
   { action: 'back_reference', label: 'AI 背面参考', where: '成衣效果图', supplier: '火山 Seedream' },
   { action: 'recognize', label: '素材库识别', where: '商品素材库', supplier: '豆包 Seed Lite', free: true },
   { action: 'listing_plan', label: '读商品与策划', where: '电商主图', supplier: 'EvoLink gpt-6.1-sol' },
+  { action: 'listing_image', label: '出一张图', where: '电商主图', supplier: 'EvoLink Sunburst' },
+  { action: 'listing_image_multi', label: '出一张多色图', where: '电商主图', supplier: 'EvoLink Sunburst' },
 ];
 const STATE_LABEL: Record<string, string> = { held: '冻结中', settled: '已扣', released: '已退回', disputed: '待裁定' };
 
