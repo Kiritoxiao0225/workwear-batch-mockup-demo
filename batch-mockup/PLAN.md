@@ -266,3 +266,11 @@ WPS 同步完成后，后台逐条预约尚无识别记录和草稿的有效原�
 - 发布：备份（210 MB，`3c3d9e4f…`）→ `catalog:migrate` 024+025（catalog/assets/standards 指纹不变）→ Web 以 `d-6aba50e2`（b67fa83）为基线打补丁 35 个文件，新部署 `6abf34a8`，指纹 `f59e8222…`，35/35 一致 → worker 无任务时加锁暂停，以 `d-6ab9dc92` 为基线构建补丁（清单新增 credits.ts、catalog-auth.ts），补丁 SHA `c438c5d7…`，新镜像 `d-6abf375a`。发布后：Web ready、release `f59e8222`、migration 025；main/external 健康、源码哈希 41/41 一致；线上价目表 7 项 × 2；所有租户上限 2000；未登录访问 /admin 跳登录、管理接口 401；发布后 WPS 同步 17 次完成。发布前本机 Clash 为全局模式连不上北京库，改为规则模式并对 47.95.254.203、aliyun-zeabur.cn、zeabur.cn 直连后继续。
 - 验证：vitest（1549）、test:saas（13）、test:auth（180）、test:garment（12）、test:requirements（70）、test:batch（63）、test:batch-claim（8）、本地端到端 47 项（`output/admin-console-20261002/check.ts`）。
 - 回退：`output/admin-pricing-release-20261002/rollback.json`（Web 回 `d-6aba50e2`，worker 回 `d-6ab9dc92`；024/025 为新增列与价格行，保留；只想回旧价可再插一行旧价格）。
+
+### 2026-10-03 上午：新增「电商主图」tab（流程预览）
+
+- 背景：电商主图（上传主图 / SKU / 详情 → 读商品、提取白底产品图 → 按版式出 1:1 / 3:4 / 2:3 主图与 SKU 图）还在开发，用户要求先上线一个能看流程的页面，名称「电商主图」，对所有账号开放。
+- 改动（`4ccd868`）：`lib/app-pages.ts` 加 `/listing-images`（默认对所有账号开放，管理后台可按账号关闭）；`app/listing-images/page.tsx` 全站导航下嵌入静态预览，`layout.tsx` 与 `preview/route.ts` 都调用 `requirePage('/listing-images')`（路由不经过 layout）；预览页内容 `lib/listing-images/preview-html.ts` 与 29 张示例图 `public/listing-images/` 由本地 `output/listing-studio-demo-20260929/build-online.mjs` 生成。页面不调用任何接口、不扣积分，去掉了所有人民币成本显示；示例商品「立领拉链工作外套」是真实出图结果，其他款为示意。示例图是公开静态文件（未登录可按地址访问），页面本身要登录。
+- 发布：Web 以 `d-6abf34a8`（5661db2 / 7ff1d50）为基线打补丁 34 个文件（Dockerfile 只 COPY app、lib、public），新部署 `6ac06e87`，指纹 `8aaf586e…`，34/34 一致，环境变量只改 release。不动 worker 和数据库。发布前线上无排队付费任务。
+- 验证：tsc、eslint 通过；本地 `catalog:dev:local` 预览确认导航、页面与预览；发布后 Web ready、release `8aaf586e`、migration 025；未登录访问 `/listing-images`、`/listing-images/preview` 跳登录，示例图 200（`output/listing-images-release-20261002/live-verification.json`）。
+- 回退：`output/listing-images-release-20261002/rollback-web.json`（Web 回 `d-6abf34a8`，release 回 `f59e8222…`），无数据库变更。
