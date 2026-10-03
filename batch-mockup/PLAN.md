@@ -281,3 +281,11 @@ WPS 同步完成后，后台逐条预约尚无识别记录和草稿的有效原�
 - 改动（`ecbb7d4`）：预览页新增“工作外套（乱放的文件夹）”和“确认素材和卖点”弹窗，内容包括分类（可改）、颜色、卖点（可改）和预计积分；去掉“出图前先看文案”开关，改为每款必须确认；出图方案显示积分（实测成本 × 2，6 色约 1070 积分），线上只显示积分，不显示人民币。流水线（output/listing-studio-demo-20260929/plan.mjs）改为递归收集、编号与文件夹无关，模型在策划同一次调用里输出 assets 分类，程序量出的形状（主图只能是 1:1 或 3:4）作为事实给模型并兜底更正。乱序测试 bench/messy-folder（37 张、带标准答案）：未加形状规则时 26/37，加了以后 37/37，6 色都对应到 SKU 图，每次约 ¥0.89。
 - 发布：Web 以 `d-6ac06e87`（4ccd868/eaa07bf）为基线打补丁，11 个文件（preview-html.ts 与 10 张 sorted-*.webp），新部署 `6ac087c0`，指纹 `72ec2627…`，11/11 一致；线上构建产物中有新弹窗和新文案，旧的“自动开始”文案已不在；health ready、migration 025。worker 与数据库未动。
 - 回退：`output/listing-review-release-20261003/rollback-web.json`（Web 回 `d-6ac06e87`）。
+
+### 2026-10-03 下午：取消每日消费上限
+
+- 背景：025 给所有账号设了每日 2000 积分上限；电商主图一款约 1100 积分，一个外部账号一天只能做一款。用户决定取消，用户想花多少就花多少（余额仍是硬限制）。
+- 改动（`410d878`）：迁移 026 把 `tenants.daily_spend_cap_cents` 默认值改为 NULL（不限），并把现有账号清为 NULL；管理后台按账号设上限的功能保留（留空 = 不限）。健康检查由“最新迁移恰好是 025”改为“至少 025”，只改数据的迁移可以在发布之后再跑，线上不会出现 health 503 的空档。
+- 发布：只读快照 3 个租户上限均为 2000（`output/no-daily-cap-release-20261003/caps-before.json`）→ Web 以 `d-6ac087c0`（ecbb7d4 / e57b1e6）为基线打补丁 2 个文件（app、db），新部署 `6ac09723`，指纹 `a3d9a73e…`，2/2 一致；新 Web 在 025 上 ready → `catalog:migrate` 应用 026（输出里的两条 NOTICE 是 schema / schema_migrations 已存在）。不动 worker（`holdCredits` 本来就把 NULL 当不限）。
+- 验证：test:saas（13）、test:auth（180）从空库跑完 001–026；发布后 Web ready、migration 026、release `a3d9a73e`；3 个租户上限均为不限，列默认值 NULL。
+- 回退：先把上限按 `caps-before.json` 写回（都是 2000）并 `ALTER … SET DEFAULT 2000`；旧 Web 健康检查要求恰好 025，迁移后不要回退 Web 镜像（Web 回退见 `rollback-web.json`，只适用于 026 之前）。
