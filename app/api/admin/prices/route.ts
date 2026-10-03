@@ -8,7 +8,7 @@ import { catalogDatabase, catalogTransaction } from '@/lib/server/catalog-databa
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-const ACTIONS = ['analyze', 'generate', 'enhance', 'cutout', 'cutout_standard', 'back_reference', 'recognize'] as const;
+const ACTIONS = ['analyze', 'generate', 'enhance', 'cutout', 'cutout_standard', 'back_reference', 'recognize', 'listing_plan'] as const;
 
 /** Current price per action and how often each was billed in the last 30 days. */
 export async function GET(request: NextRequest) {

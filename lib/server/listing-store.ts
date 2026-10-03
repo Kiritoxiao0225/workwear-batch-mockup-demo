@@ -1,0 +1,142 @@
+/** 电商主图 projects and their uploaded images, scoped to one tenant. */
+import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
+import sharp from 'sharp';
+import { catalogDatabase, catalogTransaction } from './catalog-database';
+import { CatalogHttpError } from './catalog-auth';
+import { saveCatalogFile, readCatalogFile } from './catalog-files';
+import { registerFileRef } from './file-authorization';
+import { ASSET_ROLES, countsSchema, layoutById, shapeOf } from '../listing/layouts';
+import type { ListingPlan } from './listing-plan';
+
+export const MAX_SOURCE_IMAGES = 80;
+export const MAX_SOURCE_BYTES = 25 * 1024 * 1024;
+export const assetUrl = (id: string) => `/api/listing/assets/${id}`;
+
+export async function createProject(tenant: string, user: string, input: unknown) {
+  const b = z.object({ id: z.uuid(), name: z.string().trim().min(1).max(120), layout: z.string(), counts: countsSchema }).parse(input);
+  if (!layoutById(b.layout)) throw new CatalogHttpError(400, '没有这个版式');
+  await catalogDatabase().query(
+    `INSERT INTO listing_projects(id,tenant_id,created_by,name,layout,counts) VALUES($1,$2,$3,$4,$5,$6)
+     ON CONFLICT (id) DO NOTHING`, [b.id, tenant, user, b.name, b.layout, b.counts]);
+  const row = (await catalogDatabase().query('SELECT tenant_id FROM listing_projects WHERE id=$1', [b.id])).rows[0];
+  if (row?.tenant_id !== tenant) throw new CatalogHttpError(409, '商品编号冲突');
+  return { id: b.id };
+}
+
+/** One uploaded image. Same content uploaded twice to one project keeps the first copy. */
+export async function addSourceImage(tenant: string, projectId: string, bytes: Buffer, name: string, relPath: string) {
+  z.uuid().parse(projectId);
+  if (bytes.length > MAX_SOURCE_BYTES) throw new CatalogHttpError(413, '单张图片不能超过 25MB');
+  let meta: Awaited<ReturnType<ReturnType<typeof sharp>["metadata"]>>;
+  try { meta = await sharp(bytes, { failOn: 'error', limitInputPixels: 60_000_000 }).metadata(); } catch { throw new CatalogHttpError(400, `不是能读取的图片：${name}`); }
+  if (!['jpeg', 'png', 'webp'].includes(meta.format ?? '')) throw new CatalogHttpError(400, `只支持 JPG、PNG、WebP：${name}`);
+  const rotated = (meta.orientation ?? 1) >= 5;
+  const width = (rotated ? meta.height : meta.width) ?? 0, height = (rotated ? meta.width : meta.height) ?? 0;
+  const rel = relPath.replace(/\\/g, '/').replace(/^\/+/, '').slice(0, 400) || name;
+  let asset = '';
+  await saveCatalogFile(bytes, name.slice(0, 200), 'production', async (c, fileId) => {
+    // Locks the tenant row: serialises quota accounting and the per-project limit.
+    await c.query('SELECT id FROM tenants WHERE id=$1 AND NOT disabled FOR UPDATE', [tenant]);
+    const project = (await c.query('SELECT status FROM listing_projects WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL', [projectId, tenant])).rows[0];
+    if (!project) throw new CatalogHttpError(404, '商品不存在');
+    if (project.status !== 'uploading') throw new CatalogHttpError(409, '这个商品已经开始分析，不能再加图');
+    const existing = (await c.query('SELECT id FROM listing_assets WHERE project_id=$1 AND (rel_path=$2 OR file_id=$3) LIMIT 1', [projectId, rel, fileId])).rows[0];
+    if (existing) { asset = existing.id; return; }
+    const count = Number((await c.query('SELECT count(*) n FROM listing_assets WHERE project_id=$1', [projectId])).rows[0].n);
+    if (count >= MAX_SOURCE_IMAGES) throw new CatalogHttpError(413, `一个商品最多 ${MAX_SOURCE_IMAGES} 张图`);
+    const owned = await c.query('SELECT 1 FROM tenant_file_refs WHERE tenant_id=$1 AND file_id=$2 LIMIT 1', [tenant, fileId]);
+    if (!owned.rowCount) {
+      const updated = await c.query(`UPDATE tenant_usage u SET bytes_used=bytes_used+$2 FROM tenants t
+        WHERE u.tenant_id=$1 AND t.id=u.tenant_id AND u.bytes_used+u.bytes_reserved+$2<=t.storage_quota_bytes RETURNING u.tenant_id`, [tenant, bytes.length]);
+      if (!updated.rowCount) throw new CatalogHttpError(413, '存储空间不足');
+    }
+    asset = randomUUID();
+    await c.query(`INSERT INTO listing_assets(id,tenant_id,project_id,file_id,kind,name,rel_path,width,height)
+      VALUES($1,$2,$3,$4,'source',$5,$6,$7,$8)`, [asset, tenant, projectId, fileId, name.slice(0, 200), rel, width, height]);
+    await registerFileRef(fileId, tenant, 'listing-images', name.slice(0, 200), c);
+    await c.query('UPDATE listing_projects SET updated_at=now() WHERE id=$1', [projectId]);
+  });
+  return { id: asset, url: assetUrl(asset), width, height, shape: shapeOf(width, height) };
+}
+
+export async function readListingAsset(tenant: string, id: string) {
+  z.uuid().parse(id);
+  const row = (await catalogDatabase().query('SELECT file_id FROM listing_assets WHERE id=$1 AND tenant_id=$2', [id, tenant])).rows[0];
+  if (!row) throw new CatalogHttpError(404, '图片不存在');
+  return readCatalogFile(row.file_id);
+}
+
+/** Images in a stable order; the plan refers to them as M1, M2, … in this order. */
+export async function sourceImages(projectId: string) {
+  const rows = (await catalogDatabase().query(
+    `SELECT id,file_id,name,rel_path,width,height FROM listing_assets WHERE project_id=$1 AND kind='source'`, [projectId])).rows as
+    { id: string; file_id: string; name: string; rel_path: string; width: number; height: number }[];
+  rows.sort((a, b) => a.rel_path.localeCompare(b.rel_path, 'zh', { numeric: true }));
+  return rows.map((row, i) => ({ ...row, label: `M${i + 1}`, shape: shapeOf(row.width, row.height) }));
+}
+
+type ProjectRow = { id: string; name: string; layout: string; counts: unknown; status: string; plan: StoredPlan | null; review: Review | null; error: string | null; created_at: string; updated_at: string; confirmed_at: string | null };
+export type StoredPlan = { plan: ListingPlan; corrected: string[]; problems: string[]; model: string };
+
+export async function listProjects(tenant: string) {
+  const rows = (await catalogDatabase().query(
+    `SELECT p.id,p.name,p.layout,p.counts,p.status,p.error,p.updated_at,p.created_at,
+            (SELECT count(*)::int FROM listing_assets a WHERE a.project_id=p.id) AS images,
+            (SELECT a.id FROM listing_assets a WHERE a.project_id=p.id ORDER BY a.rel_path LIMIT 1) AS cover
+       FROM listing_projects p WHERE p.tenant_id=$1 AND p.deleted_at IS NULL ORDER BY p.created_at DESC LIMIT 200`, [tenant])).rows;
+  return rows.map(r => ({ ...r, cover: r.cover ? assetUrl(r.cover) : null }));
+}
+
+export async function projectDetail(tenant: string, id: string) {
+  z.uuid().parse(id);
+  const p = (await catalogDatabase().query(
+    `SELECT id,name,layout,counts,status,plan,review,error,created_at,updated_at,confirmed_at FROM listing_projects
+      WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL`, [id, tenant])).rows[0] as ProjectRow | undefined;
+  if (!p) throw new CatalogHttpError(404, '商品不存在');
+  const images = (await sourceImages(id)).map(({ id: assetId, label, name, rel_path, width, height, shape }) =>
+    ({ id: assetId, label, name, path: rel_path, width, height, shape, url: assetUrl(assetId) }));
+  return { ...p, images };
+}
+
+const reviewSchema = z.object({
+  roles: z.record(z.string(), z.enum(ASSET_ROLES)).default({}),
+  colors: z.array(z.object({ sku: z.string(), name: z.string().trim().min(1).max(20) })).default([]),
+  points: z.array(z.object({ id: z.string(), text: z.string().trim().max(40) })).default([]),
+});
+export type Review = z.infer<typeof reviewSchema>;
+
+/** The user's corrections to the sorting, colour names and selling points; nothing is paid here. */
+export async function saveReview(tenant: string, id: string, input: unknown) {
+  const review = reviewSchema.parse(input);
+  const updated = await catalogDatabase().query(
+    `UPDATE listing_projects SET review=$3, updated_at=now() WHERE id=$1 AND tenant_id=$2 AND status='review' AND deleted_at IS NULL RETURNING id`,
+    [id, tenant, review]);
+  if (!updated.rowCount) throw new CatalogHttpError(409, '只有等你确认的商品可以修改');
+  return { ok: true };
+}
+
+export async function confirmProject(tenant: string, id: string) {
+  return catalogTransaction(async c => {
+    const p = (await c.query(`SELECT status,plan,review FROM listing_projects WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL FOR UPDATE`, [id, tenant])).rows[0];
+    if (!p) throw new CatalogHttpError(404, '商品不存在');
+    if (p.status === 'confirmed') return { ok: true };
+    if (p.status !== 'review') throw new CatalogHttpError(409, '还没有分析完，不能确认');
+    const stored = p.plan as StoredPlan;
+    const review = (p.review ?? {}) as Partial<Review>;
+    const roles = new Map(stored.plan.assets.map(a => [a.id, review.roles?.[a.id] ?? a.role]));
+    const missing = stored.plan.product.colors.filter(color => roles.get(color.sku) !== 'SKU');
+    if (missing.length) throw new CatalogHttpError(409, `颜色「${missing.map(c => c.name).join('、')}」对应的图被改成了非 SKU，请改回或换一张`);
+    await c.query(`UPDATE listing_projects SET status='confirmed', confirmed_at=now(), updated_at=now() WHERE id=$1`, [id]);
+    return { ok: true };
+  });
+}
+
+export async function deleteProject(tenant: string, id: string) {
+  z.uuid().parse(id);
+  const running = await catalogDatabase().query(`SELECT 1 FROM listing_jobs WHERE project_id=$1 AND tenant_id=$2 AND status IN ('queued','running') LIMIT 1`, [id, tenant]);
+  if (running.rowCount) throw new CatalogHttpError(409, '正在分析，等分析完再删除');
+  const result = await catalogDatabase().query('UPDATE listing_projects SET deleted_at=now() WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL RETURNING id', [id, tenant]);
+  if (!result.rowCount) throw new CatalogHttpError(404, '商品不存在');
+  return { ok: true };
+}

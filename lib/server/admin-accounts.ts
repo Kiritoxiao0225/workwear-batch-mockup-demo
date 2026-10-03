@@ -28,6 +28,7 @@ async function caseEntries(workspaces: string[]) {
 
 function pageOf(kind: string, jobRef: string, entries: Map<string, string> | undefined): SpendPage {
   if (jobRef.startsWith('garment:')) return '/garment-mockup';
+  if (jobRef.startsWith('listing:')) return '/listing-images';
   if (kind === 'analysis' || kind === 'production') {
     return entries?.get(jobRef.split('/')[0]) === 'studio' ? '/artwork-studio' : '/batch';
   }
@@ -56,7 +57,7 @@ export async function listAccounts(range: { from: Date; to: Date }) {
       [range.from, range.to]),
   ]);
 
-  const entries = await caseEntries([...new Set(spend.rows.filter(row => !String(row.job_ref).startsWith('garment:')).map(row => row.workspace as string))]);
+  const entries = await caseEntries([...new Set(spend.rows.filter(row => !/^(garment|listing):/.test(String(row.job_ref))).map(row => row.workspace as string))]);
   const byTenant = new Map<string, Partial<Record<SpendPage, number>>>();
   for (const row of spend.rows) {
     const page = pageOf(row.kind as string, row.job_ref as string, entries.get(row.workspace as string));
