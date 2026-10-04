@@ -20,7 +20,8 @@ type Words = { title: string; subtitle: string; bullets: string[]; scene?: strin
 type Review = { roles: Record<string, AssetRole>; colors: { sku: string; name: string }[]; slots: Record<string, Words> };
 type SlotState = { slot: string; status: string; error: string | null; image: string | null; versions: number; history: { id: string; words: Words | null }[]; words: Words | null; input: { kind: string; skus?: string[]; slot?: { role: string; title: string } } };
 type Detail = Summary & { images: { id: string; label: string; name: string; path: string; shape: string; url: string }[]; plan: Plan | null; review: Review | null; estimate: { images: number; credits: number } | null; slots: SlotState[] };
-type Group = { name: string; files: { file: File; path: string }[] };
+/** One dropped folder = one product; the upload dialog fills in its layout and counts. */
+type Group = { name: string; files: { file: File; path: string }[]; layout?: string; counts?: ListingCounts };
 
 const IMAGE = /\.(jpe?g|png|webp)$/i;
 const SETTINGS_KEY = "listing-images-plan";
@@ -110,7 +111,7 @@ export function ListingImagesClient() {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [uploads, setUploads] = useState<Record<string, { done: number; total: number; failed: number }>>({});
   const [settings, setSettings] = useState<{ layout: string; counts: ListingCounts }>({ layout: LISTING_LAYOUTS[0].id, counts: DEFAULT_COUNTS });
-  const [planOpen, setPlanOpen] = useState(true);
+  const [pending, setPending] = useState<Group[] | null>(null);
   const [over, setOver] = useState(false);
   const [reviewing, setReviewing] = useState<string | null>(null);
   const [toast, setToast] = useState("");
@@ -119,7 +120,7 @@ export function ListingImagesClient() {
 
   /* eslint-disable react-hooks/set-state-in-effect -- localStorage and the server list exist only after mount. */
   useEffect(() => {
-    try { const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null"); if (saved?.layout && saved?.counts) { setSettings(saved); setPlanOpen(false); } } catch { /* first visit */ }
+    try { const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null"); if (saved?.layout && saved?.counts) setSettings(saved); } catch { /* first visit */ }
     api<{ planCredits: number; imageCredits: number; multiCredits: number; exempt: boolean }>("config").then(setConfig).catch(error => say(error.message));
   }, [say]);
   const saveSettings = (next: typeof settings) => { setSettings(next); try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(next)); } catch { /* optional */ } };
@@ -144,7 +145,7 @@ export function ListingImagesClient() {
     if (!groups.length) return say("没有找到图片（只支持 JPG、PNG、WebP）");
     for (const group of groups) {
       const id = crypto.randomUUID();
-      try { await post("projects", { id, name: group.name.slice(0, 120), layout: settings.layout, counts: settings.counts }); }
+      try { await post("projects", { id, name: group.name.slice(0, 120), layout: group.layout ?? settings.layout, counts: group.counts ?? settings.counts }); }
       catch (error) { say(`「${group.name}」没建成：${(error as Error).message}`); continue; }
       setUploads(u => ({ ...u, [id]: { done: 0, total: group.files.length, failed: 0 } }));
       await refresh();
@@ -167,7 +168,9 @@ export function ListingImagesClient() {
       await startPlan(id);
     }
   };
-  const onDrop = async (event: React.DragEvent) => { event.preventDefault(); setOver(false); await startGroups(await groupsFromDrop(event.dataTransfer.items)); };
+  // Dropped folders first get a layout each; uploading starts from the dialog.
+  const choose = (groups: Group[]) => { if (!groups.length) say("没有找到图片（只支持 JPG、PNG、WebP）"); else setPending(groups); };
+  const onDrop = async (event: React.DragEvent) => { event.preventDefault(); setOver(false); choose(await groupsFromDrop(event.dataTransfer.items)); };
   const pick = useRef<HTMLInputElement>(null);
 
   const generate = async (id: string) => {
@@ -191,64 +194,21 @@ export function ListingImagesClient() {
     try { await api("projects/" + p.id, { method: "DELETE" }); await refresh(); } catch (error) { say((error as Error).message); }
   };
 
-  const layout = LISTING_LAYOUTS.find(l => l.id === settings.layout) ?? LISTING_LAYOUTS[0];
-  const lane = (key: keyof ListingCounts, label: string, cls: string, max: number) => (
-    <div className="lp-count" key={key}>
-      <label>{label}</label>
-      <div className="lp-boxes">{settings.counts[key] ? Array.from({ length: settings.counts[key] }, (_, i) => <i key={i} className={cls} />) : "不出"}</div>
-      <div className="lp-stepper">
-        <button type="button" aria-label="减少" onClick={() => saveSettings({ ...settings, counts: { ...settings.counts, [key]: Math.max(0, settings.counts[key] - 1) } })}>−</button>
-        <b>{settings.counts[key]} 张</b>
-        <button type="button" aria-label="增加" onClick={() => saveSettings({ ...settings, counts: { ...settings.counts, [key]: Math.min(max, settings.counts[key] + 1) } })}>+</button>
-      </div>
-    </div>
-  );
   const editDetail = editing ? details[editing.project] : undefined, editSlot = editDetail?.slots.find(x => x.slot === editing?.slot);
-  const noImages = settings.counts.square + settings.counts.portrait + settings.counts.poster === 0;
 
   return (
     <>
       <AppHeader />
       <main className="listing-page">
-        <section className="lp-card lp-plan">
-          {planOpen ? (<>
-            <div className="lp-plan-head"><h2>出图方案</h2><span>拖进来的款都按这个出；改了只影响之后拖进来的款</span><div style={{ flex: 1 }} /><button type="button" className="lp-btn sm" onClick={() => setPlanOpen(false)}>收起</button></div>
-            <div className="lp-plan-body">
-              <div>
-                <div className="lp-q"><i>1</i>用哪个版式</div>
-                <div className="lp-layouts">{LISTING_LAYOUTS.map(l => (
-                  <button type="button" key={l.id} className={"lp-layout" + (l.id === settings.layout ? " on" : "")} onClick={() => saveSettings({ ...settings, layout: l.id })}>
-                    <span className="ok">✓</span>
-                    <div className="pics">{l.samples.map(src => <img key={src} src={src} alt="" />)}</div>
-                    <b>{l.name}</b><p>{l.description}</p>
-                  </button>))}
-                </div>
-              </div>
-              <div>
-                <div className="lp-q"><i>2</i>每款出哪些图</div>
-                <div className="lp-counts">
-                  {lane("square", "1:1 主图", "sq", 5)}{lane("portrait", "3:4 主图", "pt", 5)}{lane("poster", "2:3 海报", "ps", 1)}
-                  <div className="lp-count"><label>SKU 图</label><div className="lp-boxes">每个颜色 1 张，有几个颜色出几张</div><span /></div>
-                </div>
-              </div>
-            </div>
-          </>) : (
-            <div className="lp-plan-mini">
-              <b>出图方案</b><img src={layout.samples[0]} alt="" /><span>{layout.name}</span>
-              <span className="lp-muted">每款 1:1×{settings.counts.square} · 3:4×{settings.counts.portrait} · 2:3×{settings.counts.poster} · SKU 每色 1 张</span>
-              <div style={{ flex: 1 }} /><button type="button" className="lp-btn sm" onClick={() => setPlanOpen(true)}>改</button>
-            </div>
-          )}
-        </section>
 
-        <button type="button" className={"lp-drop" + (over ? " over" : "")} disabled={noImages}
+        <button type="button" className={"lp-drop" + (over ? " over" : "")}
           onDragOver={e => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={onDrop} onClick={() => pick.current?.click()}>
-          <b>{noImages ? "先在上面选至少 1 张主图" : "拖入商品文件夹，放进来就上传并开始分析"}</b>
-          可以一次拖多个 · 每个文件夹一个款 · 里面的图随便放，AI 会自己分类
+          <b>拖入商品文件夹，放进来先选版式</b>
+          可以一次拖多个 · 每个文件夹一个款 · 每款可以用不同的版式 · 里面的图随便放，AI 会自己分类
           {config && !config.exempt && <> · 每款分析 {config.planCredits} 积分</>}
         </button>
         <input ref={pick} type="file" multiple hidden {...{ webkitdirectory: "" }} accept="image/*"
-          onChange={e => { const g = groupsFromInput(e.target.files!); e.target.value = ""; void startGroups(g); }} />
+          onChange={e => { const g = groupsFromInput(e.target.files!); e.target.value = ""; choose(g); }} />
 
         <div className="lp-list">
           {!projects.length && <div className="lp-card lp-empty">还没有商品。把一个商品的主图、SKU 图、详情图放进同一个文件夹，拖到上面。</div>}
@@ -260,7 +220,7 @@ export function ListingImagesClient() {
                   <span className="chev">▶</span><span className={"lp-dot " + s.c} />
                   {p.cover ? <img className="th" src={p.cover} alt="" /> : <div className="th">{p.name.slice(0, 1)}</div>}
                   <div className="nm" title={p.name}>{p.name}</div>
-                  <div className="tp">{LISTING_LAYOUTS.find(l => l.id === p.layout)?.name ?? p.layout}</div>
+                  <div className="tp"><b>{LISTING_LAYOUTS.find(l => l.id === p.layout)?.name ?? p.layout}</b>{countsText(p.counts)}</div>
                   <div className={"ss " + s.c}>{s.text}</div>
                   <div className="acts" onClick={e => e.stopPropagation()}>
                     {p.status === "review" && <button type="button" className="lp-btn sm primary" onClick={() => setReviewing(p.id)}>确认内容</button>}
@@ -295,10 +255,76 @@ export function ListingImagesClient() {
         <ReviewDialog detail={details[reviewing]} readOnly={details[reviewing].status !== "review"} exempt={!!config?.exempt} onClose={() => setReviewing(null)}
           onDone={async message => { setReviewing(null); say(message); await refresh(); }} onError={say} />
       )}
+      {pending && <UploadDialog groups={pending} defaults={settings} planCredits={config?.exempt ? 0 : config?.planCredits ?? 0}
+        onCancel={() => setPending(null)} onStart={groups => { setPending(null); saveSettings({ layout: groups.at(-1)!.layout!, counts: groups.at(-1)!.counts! }); void startGroups(groups); }} />}
       {editDetail && editSlot && <EditDialog key={editSlot.slot} detail={editDetail} slot={editSlot} prices={{ image: config?.imageCredits ?? 0, multi: config?.multiCredits ?? 0 }} exempt={!!config?.exempt || !config}
         onClose={() => setEditing(null)} onDone={async message => { setEditing(null); say(message); await refresh(); }} onError={say} />}
       {toast && <div className="lp-toast" role="status">{toast}</div>}
     </>
+  );
+}
+
+const countsText = (c: ListingCounts) => `1:1×${c.square} · 3:4×${c.portrait} · 海报×${c.poster}`;
+const COUNT_KEYS = [["square", "1:1", 5], ["portrait", "3:4", 5], ["poster", "海报", 1]] as const;
+
+/** Pick one layout from the cards; the samples show the style only. */
+function LayoutPicker({ title, current, onPick, onClose }: { title: string; current: string; onPick: (id: string) => void; onClose: () => void }) {
+  return (
+    <div className="lp-modal top" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="lp-box" role="dialog" aria-modal="true" aria-label="选一个版式">
+        <div className="lp-box-head"><div><h3>{title}</h3><p className="lp-sub">样图是用别的衣服出的，只看风格和排法。</p></div><div className="grow" /><button type="button" className="lp-btn sm ghost" onClick={onClose}>关闭</button></div>
+        <div className="lp-box-body">
+          <div className="lp-layouts">{LISTING_LAYOUTS.map(l => (
+            <button type="button" key={l.id} className={"lp-layout" + (l.id === current ? " on" : "")} onClick={() => onPick(l.id)}>
+              <span className="ok">✓</span>
+              <div className="pics">{l.samples.map(src => <img key={src} src={src} alt="" />)}</div>
+              <b>{l.name}</b><p>{l.description}</p>
+            </button>))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** After a drop: each product gets its own layout and image counts before anything is uploaded or charged. */
+function UploadDialog({ groups, defaults, planCredits, onCancel, onStart }: { groups: Group[]; defaults: { layout: string; counts: ListingCounts }; planCredits: number; onCancel: () => void; onStart: (groups: Group[]) => void }) {
+  const [rows, setRows] = useState(groups.map(g => ({ ...g, layout: defaults.layout, counts: { ...defaults.counts } })));
+  const [all, setAll] = useState(defaults.layout);
+  const [picking, setPicking] = useState<number | "all" | null>(null);
+  const layoutOf = (id: string) => LISTING_LAYOUTS.find(l => l.id === id) ?? LISTING_LAYOUTS[0];
+  const pickButton = (id: string, onClick: () => void, wide = true) => {
+    const l = layoutOf(id);
+    return <button type="button" className="lp-pick" style={wide ? undefined : { width: "auto", minWidth: 220 }} onClick={onClick}>
+      <span className="ims">{l.samples.slice(0, 2).map(src => <img key={src} src={src} alt="" />)}</span><span className="nm">{l.name}</span><i>换 ▾</i></button>;
+  };
+  const step = (i: number, key: keyof ListingCounts, max: number, d: number) => setRows(r => r.map((row, k) => k === i ? { ...row, counts: { ...row.counts, [key]: Math.max(0, Math.min(max, row.counts[key] + d)) } } : row));
+  const empty = rows.some(r => r.counts.square + r.counts.portrait + r.counts.poster === 0);
+  return (
+    <div className="lp-modal" onClick={e => { if (e.target === e.currentTarget) onCancel(); }}>
+      <div className="lp-box" role="dialog" aria-modal="true" aria-label="选版式">
+        <div className="lp-box-head"><div><h3>这次拖进来 {rows.length} 款，各用什么版式？</h3><p className="lp-sub">每款可以用不同的版式和张数，点版式可以换。</p></div><div className="grow" /><button type="button" className="lp-btn sm ghost" onClick={onCancel}>取消</button></div>
+        <div className="lp-box-body">
+          {rows.length > 1 && <div className="lp-all">全部用：{pickButton(all, () => setPicking("all"), false)}<button type="button" className="lp-btn sm" onClick={() => setRows(r => r.map(row => ({ ...row, layout: all })))}>应用到全部</button></div>}
+          <div className="lp-rows">{rows.map((row, i) => (
+            <div key={row.name + i} className="lp-uprow">
+              <div className="nm"><b>{row.name}</b><small>{row.files.length} 张图</small></div>
+              {pickButton(row.layout, () => setPicking(i))}
+              <div className="lp-mini">{COUNT_KEYS.map(([key, label, max]) => (
+                <span key={key}>{label}<span className="lp-stepper sm"><button type="button" aria-label={`${label}减少`} onClick={() => step(i, key, max, -1)}>−</button><b>{row.counts[key]}</b><button type="button" aria-label={`${label}增加`} onClick={() => step(i, key, max, 1)}>+</button></span></span>))}
+              </div>
+            </div>))}
+          </div>
+        </div>
+        <div className="lp-box-foot">
+          <div className="grow">{empty ? <span className="lp-bad">每款至少出 1 张主图或海报</span> : planCredits ? <>分析每款 {planCredits} 积分，这次共 <b>{planCredits * rows.length}</b> 积分；出图费用在你确认内容后再扣</> : "确认内容后才开始出图"}</div>
+          <button type="button" className="lp-btn" onClick={onCancel}>取消</button>
+          <button type="button" className="lp-btn primary" disabled={empty} onClick={() => onStart(rows)}>开始上传并分析</button>
+        </div>
+      </div>
+      {picking !== null && <LayoutPicker title={picking === "all" ? "全部用哪个版式" : `给「${rows[picking].name}」选版式`} current={picking === "all" ? all : rows[picking].layout}
+        onClose={() => setPicking(null)} onPick={id => { if (picking === "all") setAll(id); else setRows(r => r.map((row, k) => k === picking ? { ...row, layout: id } : row)); setPicking(null); }} />}
+    </div>
   );
 }
 
