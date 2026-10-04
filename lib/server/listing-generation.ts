@@ -8,6 +8,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import JSZip from 'jszip';
+import sharp from 'sharp';
 import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './catalog-database';
 import { CatalogHttpError } from './catalog-auth';
 import { readCatalogFile } from './catalog-files';
@@ -27,11 +28,11 @@ type Stored = StoredPlan & { images: { label: string; assetId: string }[] };
  */
 type Words = { title: string; subtitle: string; bullets: string[] };
 export type JobInput = (
-  | { kind: 'product'; sku: string }
+  | { kind: 'product'; sku: string; direct?: boolean }
   | { kind: 'sku'; sku: string; anchor?: string }
   | { kind: 'main'; slot: MainSlot; skus: string[]; edit?: { base: string; from: Words } }
 ) & { note?: string };
-type PlannedJob = { slot: string; step: 'product' | 'image'; input: JobInput; depends: string[]; multi: boolean };
+type PlannedJob = { slot: string; step: 'product' | 'image'; input: JobInput; depends: string[]; multi: boolean; free?: boolean };
 const db = () => catalogDatabase();
 const runHold = (runId: string) => 'listing:run:' + runId;
 const action = (input: JobInput) => input.kind === 'main' && input.skus.length > 1 && !input.edit ? 'listing_image_multi' as const : 'listing_image' as const;
@@ -49,7 +50,9 @@ export function planJobs(stored: Stored, review: Partial<Review> | null, counts:
   const byName = new Map(stored.plan.product.colors.map((c, i) => [c.name, colors[i]]));
   const jobs: PlannedJob[] = [];
   const [first] = colors;
-  for (const c of colors) jobs.push({ slot: `product:${c.sku}`, step: 'product', input: { kind: 'product', sku: c.sku }, depends: [], multi: false });
+  // A clean still life of the colour is the product image itself: copied, not generated, not charged.
+  const direct = new Set(stored.direct ?? []);
+  for (const c of colors) jobs.push({ slot: `product:${c.sku}`, step: 'product', input: { kind: 'product', sku: c.sku, ...(direct.has(c.sku) ? { direct: true } : {}) }, depends: [], multi: false, free: direct.has(c.sku) });
   for (const c of colors) {
     const anchor = c.sku === first.sku ? undefined : first.sku;
     jobs.push({ slot: `sku:${c.sku}`, step: 'image', input: { kind: 'sku', sku: c.sku, anchor }, depends: [`product:${c.sku}`, ...(anchor ? [`sku:${anchor}`] : [])], multi: false });
@@ -71,12 +74,21 @@ export function planJobs(stored: Stored, review: Partial<Review> | null, counts:
   return jobs;
 }
 
-const priceFor = (prices: PriceSnapshot, jobs: Pick<PlannedJob, 'multi'>[]) =>
-  jobs.reduce((sum, job) => sum + priceOf(prices, job.multi ? 'listing_image_multi' : 'listing_image').userMicroCents, 0);
+const priceFor = (prices: PriceSnapshot, jobs: Pick<PlannedJob, 'multi' | 'free'>[]) =>
+  jobs.reduce((sum, job) => sum + (job.free ? 0 : priceOf(prices, job.multi ? 'listing_image_multi' : 'listing_image').userMicroCents), 0);
 
+/** The set's price with its lines, for the page's price detail. */
 export async function estimate(stored: Stored, review: Partial<Review> | null, counts: unknown) {
-  const jobs = planJobs(stored, review, counts);
-  return { images: jobs.length, credits: microToCents(priceFor(await currentPrices(), jobs)) };
+  const jobs = planJobs(stored, review, counts), prices = await currentPrices();
+  const unit = microToCents(priceOf(prices, 'listing_image').userMicroCents), multiUnit = microToCents(priceOf(prices, 'listing_image_multi').userMicroCents);
+  const of = (label: string, list: PlannedJob[], note = '') => {
+    const multi = list.filter(j => j.multi && !j.free).length, free = list.filter(j => j.free).length, plain = list.length - multi - free;
+    return [plain ? { label, count: plain, unit, credits: plain * unit, note } : null, multi ? { label: `${label}（多色同框）`, count: multi, unit: multiUnit, credits: multi * multiUnit, note: '' } : null,
+      free ? { label, count: free, unit: 0, credits: 0, note: '直接用你的静物图，不收费' } : null].filter(Boolean);
+  };
+  const lines = [...of('白底产品图', jobs.filter(j => j.step === 'product'), '从原图提取'), ...of('SKU 图', jobs.filter(j => j.slot.startsWith('sku:'))),
+    ...of('1:1 主图', jobs.filter(j => j.slot.startsWith('square:'))), ...of('3:4 主图', jobs.filter(j => j.slot.startsWith('portrait:'))), ...of('2:3 海报', jobs.filter(j => j.slot.startsWith('poster:')))];
+  return { images: jobs.length, credits: microToCents(priceFor(prices, jobs)), lines };
 }
 
 async function queueRun(c: CatalogQueryClient, tenant: Tenant, user: string, projectId: string, jobs: PlannedJob[], prices: PriceSnapshot) {
@@ -142,7 +154,8 @@ export async function redoSlot(tenant: Tenant, user: string, projectId: string, 
       const { title, subtitle, bullets, scene } = input.slot;
       await c.query('UPDATE listing_projects SET review=$2 WHERE id=$1', [projectId, { ...review, slots: { ...review.slots, [slot]: { title, subtitle, bullets, scene } } }]);
     }
-    const jobs: PlannedJob[] = [{ slot, step: last.step, input, depends: last.depends, multi: action(input) === 'listing_image_multi' }];
+    const free = (x: JobInput) => x.kind === 'product' && !!x.direct;
+    const jobs: PlannedJob[] = [{ slot, step: last.step, input, depends: last.depends, multi: action(input) === 'listing_image_multi', free: free(input) }];
     // Images that were skipped because this one (or one of them) was missing come along.
     const skipped = (await c.query(`SELECT DISTINCT ON (slot) slot,step,input,depends,status,error FROM listing_jobs
       WHERE project_id=$1 AND slot IS NOT NULL AND slot<>$2 ORDER BY slot, created_at DESC`, [projectId, slot])).rows
@@ -150,7 +163,7 @@ export async function redoSlot(tenant: Tenant, user: string, projectId: string, 
     for (let grew = true; grew;) {
       grew = false;
       for (const j of skipped) if (!jobs.some(q => q.slot === j.slot) && j.depends.some(d => jobs.some(q => q.slot === d))) {
-        jobs.push({ slot: j.slot, step: j.step, input: j.input, depends: j.depends, multi: action(j.input) === 'listing_image_multi' }); grew = true;
+        jobs.push({ slot: j.slot, step: j.step, input: j.input, depends: j.depends, multi: action(j.input) === 'listing_image_multi', free: free(j.input) }); grew = true;
       }
     }
     await queueRun(c, tenant, user, projectId, jobs, prices);
@@ -177,6 +190,17 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
     const colorOf = (sku: string) => colors.find(c => c.sku === sku) ?? (() => { throw new Error(`颜色不存在：${sku}`); })();
     const input = job.input;
     let prompt: string, references: Buffer[], ratio: 'square' | 'portrait' | 'poster' = 'square';
+    if (input.kind === 'product' && input.direct) {
+      // The colour's own clean still life, on a white square: no model call, nothing charged.
+      const assetId = stored.images.find(i => i.label === input.sku)?.assetId;
+      const source = assetId && (await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [assetId])).rows[0];
+      if (!source) throw new Error('找不到这个颜色的衣服图（原始素材可能已在最后一次出图 30 天后清理）');
+      const square = await sharp(await fileOf(source.file_id), { limitInputPixels: 60_000_000 }).rotate().flatten({ background: '#ffffff' })
+        .resize(1024, 1024, { fit: 'contain', background: '#ffffff' }).png().toBuffer();
+      const asset = await storeOutput(job.tenant_id, job.project_id, job.slot, job.id, square);
+      await db().query(`UPDATE listing_jobs SET status='succeeded',result_asset=$2,error=NULL,lease_until=NULL,updated_at=now() WHERE id=$1`, [job.id, asset]);
+      return;
+    }
     if (input.kind === 'product') {
       const assetId = stored.images.find(i => i.label === input.sku)?.assetId;
       const source = assetId && (await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [assetId])).rows[0];

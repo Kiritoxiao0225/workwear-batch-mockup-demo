@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppHeader } from "./app-header";
 import { ASSET_ROLES, DEFAULT_COUNTS, LISTING_LAYOUTS, type AssetRole, type ListingCounts } from "@/lib/listing/layouts";
+import { checkOf, defaultChoice, MaterialsDialog, payload, PriceInfo, settled, type Choice, type Materials, type PriceLine } from "./listing-materials";
 import "./listing-images.css";
 
-type Summary = { id: string; name: string; layout: string; counts: ListingCounts; status: "uploading" | "planning" | "review" | "confirmed" | "failed" | "generating" | "done"; error: string | null; images: number; cover: string | null; slots: number; made: number; broken: number; updated_at: string; sources_cleared_at: string | null };
+type Summary = { id: string; name: string; layout: string; counts: ListingCounts; status: "uploading" | "planning" | "materials" | "writing" | "review" | "confirmed" | "failed" | "generating" | "done"; error: string | null; images: number; cover: string | null; slots: number; made: number; broken: number; created_at: string; updated_at: string; sources_cleared_at: string | null; batch_id: string | null };
 type Slot = { n: number; role: string; title: string; subtitle: string; bullets: string[]; scene: string };
 type Plan = {
   plan: {
@@ -23,7 +24,7 @@ type SlotState = { slot: string; status: string; error: string | null; image: st
 type LayoutCard = { id: string; name: string; description: string; samples: string[]; own: boolean; by?: string; createdAt?: string };
 type Config = { layouts: LayoutCard[]; learning: { id: string; name: string; status: string }[]; planCredits: number; imageCredits: number; multiCredits: number; layoutCredits: number; exempt: boolean };
 const BUILT_IN: LayoutCard[] = LISTING_LAYOUTS.map(l => ({ id: l.id, name: l.name, description: l.description, samples: l.samples, own: false }));
-type Detail = Summary & { images: { id: string; label: string; name: string; path: string; shape: string; url: string }[]; plan: Plan | null; review: Review | null; estimate: { images: number; credits: number } | null; slots: SlotState[] };
+type Detail = Summary & { images: { id: string; label: string; name: string; path: string; shape: string; url: string }[]; plan: Plan | null; review: Review | null; materials: Materials | null; estimate: { images: number; credits: number; lines: PriceLine[] } | null; slots: SlotState[] };
 /** One dropped folder = one product; the upload dialog fills in its layout and counts. */
 type Group = { name: string; files: { file: File; path: string }[]; layout?: string; counts?: ListingCounts };
 
@@ -96,15 +97,32 @@ function groupsFromInput(list: FileList): Group[] {
   return [...groups.values()];
 }
 
-const statusOf = (p: Summary, upload?: { done: number; total: number; failed: number }, detail?: Detail): { c: string; text: string } => {
+const statusOf = (p: Summary, upload?: { done: number; total: number; failed: number }, detail?: Detail, choice?: Choice | null): { c: string; text: string } => {
   if (p.status === "uploading") return upload ? { c: "", text: `上传中 ${upload.done}/${upload.total}${upload.failed ? `，${upload.failed} 张没传上` : ""}` } : { c: "y", text: `已上传 ${p.images} 张，还没开始分析` };
-  if (p.status === "planning") return { c: "", text: "AI 正在读商品、给图片分类，约 1 分钟" };
+  if (p.status === "planning") return { c: "", text: "AI 正在整理素材：去重、分类、挑图、读卖点，约 1–2 分钟" };
+  if (p.status === "materials") {
+    if (!choice) return { c: "b", text: "素材整理好了，等你确认" };
+    const k = checkOf(choice);
+    return { c: k.level === "g" ? "g" : k.level, text: (p.error ? p.error + "；" : "") + k.text };
+  }
+  if (p.status === "writing") return { c: "", text: "AI 正在写每张图的内容，约 1 分钟" };
   if (p.status === "failed") return { c: "r", text: p.error || "分析失败" };
   if (p.status === "confirmed") return { c: "b", text: "已确认，可以开始出图" };
   if (p.status === "generating") return { c: "", text: `出图中 ${p.made}/${p.slots}，每张约 1 分钟` };
   if (p.status === "done") return p.broken ? { c: "y", text: `完成 ${p.made}/${p.slots} · ${p.broken} 张没成功，可以重做` } : { c: "g", text: `完成 ${p.made}/${p.slots}` };
   const problems = detail?.plan?.problems.length ?? 0;
   return problems ? { c: "y", text: `整理好了，有 ${problems} 处要你看一眼` } : { c: "b", text: "AI 写好了每张图的内容，等你确认" };
+};
+const whenOf = (iso: string) => {
+  const d = new Date(iso), now = new Date(), hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const days = Math.round((new Date(now.toDateString()).getTime() - new Date(d.toDateString()).getTime()) / 86400_000);
+  return days === 0 ? `今天 ${hm}` : days === 1 ? `昨天 ${hm}` : `${d.getMonth() + 1} 月 ${d.getDate()} 日 ${hm}`;
+};
+/** Price lines of several products added up by kind, for one batch button. */
+const sumLines = (all: PriceLine[][]) => {
+  const by = new Map<string, PriceLine>();
+  for (const l of all.flat()) { const k = l.label + l.unit; const o = by.get(k); by.set(k, o ? { ...o, count: o.count + l.count, credits: o.credits + l.credits } : { ...l }); }
+  return [...by.values()];
 };
 
 export function ListingImagesClient() {
@@ -120,6 +138,10 @@ export function ListingImagesClient() {
   const [pending, setPending] = useState<Group[] | null>(null);
   const [over, setOver] = useState(false);
   const [reviewing, setReviewing] = useState<string | null>(null);
+  const [checking, setChecking] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, Choice>>({});
+  const [filter, setFilter] = useState("全部");
+  const [openBatch, setOpenBatch] = useState<Record<string, boolean>>({});
   const [toast, setToast] = useState("");
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const say = useCallback((text: string, ms = 3200) => { setToast(text); clearTimeout(toastTimer.current); toastTimer.current = setTimeout(() => setToast(""), ms); }, []);
@@ -135,13 +157,13 @@ export function ListingImagesClient() {
     const list = await api<Summary[]>("projects");
     setProjects(list);
     // Products waiting for the user need their plan to show problems in the row.
-    const needed = list.filter(p => ["review", "confirmed", "generating", "done"].includes(p.status));
+    const needed = list.filter(p => ["materials", "review", "confirmed", "generating", "done"].includes(p.status));
     const loaded = await Promise.all(needed.map(p => api<Detail>("projects/" + p.id).catch(() => null)));
     setDetails(old => ({ ...old, ...Object.fromEntries(loaded.filter((d): d is Detail => !!d).map(d => [d.id, d])) }));
   }, []);
   useEffect(() => { refresh().catch(error => say(error.message)); }, [refresh, say]);
   /* eslint-enable react-hooks/set-state-in-effect */
-  const busy = projects.some(p => p.status === "planning" || p.status === "generating") || Object.keys(uploads).length > 0;
+  const busy = projects.some(p => ["planning", "writing", "generating"].includes(p.status)) || Object.keys(uploads).length > 0;
   useEffect(() => { if (!busy) return; const t = setInterval(() => void refresh().catch(() => {}), 3000); return () => clearInterval(t); }, [busy, refresh]);
 
   const startPlan = async (id: string) => {
@@ -149,9 +171,12 @@ export function ListingImagesClient() {
   };
   const startGroups = async (groups: Group[]) => {
     if (!groups.length) return say("没有找到图片（只支持 JPG、PNG、WebP）");
+    // Folders dropped together are one batch: they are listed, confirmed and generated together.
+    const batchId = crypto.randomUUID();
+    setOpenBatch(o => ({ ...Object.fromEntries(Object.keys(o).map(k => [k, false])), [batchId]: true }));
     for (const group of groups) {
       const id = crypto.randomUUID();
-      try { await post("projects", { id, name: group.name.slice(0, 120), layout: group.layout ?? settings.layout, counts: group.counts ?? settings.counts }); }
+      try { await post("projects", { id, name: group.name.slice(0, 120), layout: group.layout ?? settings.layout, counts: group.counts ?? settings.counts, batchId }); }
       catch (error) { say(`「${group.name}」没建成：${(error as Error).message}`); continue; }
       setUploads(u => ({ ...u, [id]: { done: 0, total: group.files.length, failed: 0 } }));
       await refresh();
@@ -200,6 +225,36 @@ export function ListingImagesClient() {
     try { await api("projects/" + p.id, { method: "DELETE" }); await refresh(); } catch (error) { say((error as Error).message); }
   };
 
+  const choiceOf = (id: string): Choice | null => drafts[id] ?? (details[id]?.materials ? defaultChoice(details[id].materials!) : null);
+  const confirmMaterials = async (ids: string[], bulk: boolean) => {
+    let ok = 0;
+    for (const id of ids) {
+      const choice = choiceOf(id); if (!choice) continue;
+      try { await post(`projects/${id}/materials`, payload(bulk ? settled(choice) : choice)); ok++; } catch (error) { say(`「${projects.find(p => p.id === id)?.name}」：${(error as Error).message}`, 8000); }
+    }
+    await refresh();
+    return ok;
+  };
+  const startGeneration = async (ids: string[]) => {
+    let ok = 0;
+    for (const id of ids) {
+      try { await post(`projects/${id}/confirm`); await post(`projects/${id}/generate`); ok++; } catch (error) { say(`「${projects.find(p => p.id === id)?.name}」：${(error as Error).message}`, 8000); }
+    }
+    await refresh();
+    return ok;
+  };
+  const downloadAll = (ids: string[]) => ids.forEach((id, i) => setTimeout(() => { const a = document.createElement("a"); a.href = `/api/listing/projects/${id}/download`; a.click(); }, i * 1200));
+  const needsMe = (p: Summary) => ["materials", "review", "confirmed", "failed"].includes(p.status) || (p.status === "uploading" && !uploads[p.id] && p.images > 0);
+  const running = (p: Summary) => ["planning", "writing", "generating"].includes(p.status) || !!uploads[p.id];
+  const pass = { 全部: () => true, 需要我处理: needsMe, 进行中: running, 已完成: (p: Summary) => p.status === "done" }[filter] ?? (() => true);
+  const batches = (() => {
+    const by = new Map<string, Summary[]>();
+    for (const p of projects) by.set(p.batch_id ?? "earlier", [...(by.get(p.batch_id ?? "earlier") ?? []), p]);
+    return [...by].map(([key, list]) => ({ key, list, at: list.reduce((a, p) => (p.created_at < a ? p.created_at : a), list[0].created_at) }))
+      .sort((a, b) => (a.key === "earlier" ? 1 : b.key === "earlier" ? -1 : b.at.localeCompare(a.at)));
+  })();
+  // The newest batch and any batch with something to do start open.
+  const isOpen = (key: string) => filter !== "全部" || (openBatch[key] ?? (key === batches[0]?.key || !!batches.find(b => b.key === key)?.list.some(p => needsMe(p) || running(p))));
   const loadConfig = () => api<Config>("config").then(setConfig).catch(error => say((error as Error).message));
   const layouts = config?.layouts ?? BUILT_IN;
   const defaults = { ...settings, layout: layouts.some(l => l.id === settings.layout) ? settings.layout : layouts[0].id };
@@ -229,10 +284,37 @@ export function ListingImagesClient() {
         <input ref={pick} type="file" multiple hidden {...{ webkitdirectory: "" }} accept="image/*"
           onChange={e => { const g = groupsFromInput(e.target.files!); e.target.value = ""; choose(g); }} />
 
-        <div className="lp-list">
-          {!projects.length && <div className="lp-card lp-empty">还没有商品。把一个商品的主图、SKU 图、详情图放进同一个文件夹，拖到上面。</div>}
-          {projects.map(p => {
-            const d = details[p.id], s = statusOf(p, uploads[p.id], d), roles = d?.plan ? { ...Object.fromEntries(d.plan.plan.assets.map(a => [a.id, a.role])), ...(d.review?.roles ?? {}) } : {};
+        <div className="lp-filters">看哪些：{(["全部", "需要我处理", "进行中", "已完成"] as const).map(f => {
+          const n = projects.filter({ 全部: () => true, 需要我处理: needsMe, 进行中: running, 已完成: (p: Summary) => p.status === "done" }[f]).length;
+          return <button type="button" key={f} className={filter === f ? "on" : ""} onClick={() => setFilter(f)}>{f} {f === "需要我处理" && n ? <b>{n}</b> : n}</button>;
+        })}</div>
+        {!projects.length && <div className="lp-card lp-empty">还没有商品。把一个商品的主图、SKU 图、详情图放进同一个文件夹，拖到上面。</div>}
+        {batches.map(b => {
+          const list = b.list.filter(pass);
+          if (!list.length) return null;
+          const mats = b.list.filter(p => p.status === "materials" && choiceOf(p.id)), level = (p: Summary) => checkOf(choiceOf(p.id)!).level;
+          const ready = mats.filter(p => level(p) !== "r"), reviews = b.list.filter(p => p.status === "review"), done = b.list.filter(p => p.made > 0);
+          const backOpen = mats.filter(p => choiceOf(p.id)!.parts.some(x => x.part === "背面" && !x.pick && !x.skip));
+          const total = reviews.reduce((n, p) => n + (details[p.id]?.estimate?.credits ?? 0), 0);
+          const count = (n: number, cls: string, text: string) => n ? <span className={"lp-chip " + cls}>{text.replace("#", String(n))}</span> : null;
+          const by = (st: string) => b.list.filter(p => p.status === st).length;
+          return (
+            <section key={b.key} className="lp-batch">
+              <div className="lp-bhead">
+                <button type="button" className="tg" onClick={() => setOpenBatch(o => ({ ...o, [b.key]: !isOpen(b.key) }))}>{isOpen(b.key) ? "▼" : "▶"}</button>
+                <b>{b.key === "earlier" ? "更早上传" : `${whenOf(b.at)} 拖入`} · {b.list.length} 款</b>
+                {count(b.list.filter(p => !!uploads[p.id]).length, "", "# 款上传中")}{count(by("planning"), "", "# 款 AI 整理素材中")}
+                {count(mats.filter(p => level(p) === "r").length, "r", "✕ # 款必须处理")}{count(mats.filter(p => level(p) === "y").length, "y", "! # 款素材有建议")}{count(mats.filter(p => level(p) === "g").length, "g", "✓ # 款素材没问题")}
+                {count(by("writing"), "", "# 款 AI 正在写内容")}{count(reviews.length, "", "# 款内容写好了")}{count(by("generating"), "", "# 款出图中")}{count(by("done"), "g", "✓ # 款已完成")}{count(by("failed"), "r", "# 款失败")}
+                <span className="grow" />
+                {backOpen.length > 0 && <button type="button" className="lp-btn sm" onClick={() => { setDrafts(d => ({ ...d, ...Object.fromEntries(backOpen.map(p => { const c = choiceOf(p.id)!; return [p.id, { ...c, parts: c.parts.map(x => x.part === "背面" && !x.pick ? { ...x, skip: true } : x) }]; })) })); say("这批都按「不需要背面图」处理，出图时不会出现背面角度"); }}>这批都不需要背面图</button>}
+                {ready.length > 0 && <button type="button" className="lp-btn sm primary" onClick={() => void confirmMaterials(ready.map(p => p.id), true).then(n => say(`已确认 ${n} 款，AI 开始写每张图的内容；没补的建议项按「不需要」处理`, 6000))}>一键确认 {ready.length} 款素材（没有红色问题的）</button>}
+                {reviews.length > 0 && <button type="button" className="lp-btn sm primary" onClick={() => void startGeneration(reviews.map(p => p.id)).then(n => say(`${n} 款开始出图，做好的会陆续出现`))}>一键开始出图 {reviews.length} 款{!config?.exempt && total ? `（共约 ${total} 积分）` : ""}</button>}
+                {reviews.length > 0 && !config?.exempt && total > 0 && <PriceInfo lines={sumLines(reviews.map(p => details[p.id]?.estimate?.lines ?? []))} total={total} extra={`${reviews.length} 款合计；分析费已在上传后扣过`} />}
+                {done.length > 0 && <button type="button" className="lp-btn sm" onClick={() => downloadAll(done.map(p => p.id))}>全部下载（{done.length} 款）</button>}
+              </div>
+              {isOpen(b.key) && <div className="lp-list">{list.map(p => {
+            const d = details[p.id], s = statusOf(p, uploads[p.id], d, p.status === "materials" ? choiceOf(p.id) : null), roles = d?.plan ? { ...Object.fromEntries(d.plan.plan.assets.map(a => [a.id, a.role])), ...(d.review?.roles ?? {}) } : {};
             return (
               <div key={p.id} className={"lp-card lp-prod" + (open[p.id] ? " open" : "") + (s.c === "r" || s.c === "y" ? " att" : "")}>
                 <div className="lp-ph" onClick={() => void toggle(p.id)}>
@@ -242,12 +324,16 @@ export function ListingImagesClient() {
                   <div className="tp"><b>{layouts.find(l => l.id === p.layout)?.name ?? "已删除的版式"}</b>{countsText(p.counts)}</div>
                   <div className={"ss " + s.c}>{s.text}</div>
                   <div className="acts" onClick={e => e.stopPropagation()}>
-                    {p.status === "review" && <button type="button" className="lp-btn sm primary" onClick={() => setReviewing(p.id)}>确认内容</button>}
+                    {p.status === "materials" && <button type="button" className={"lp-btn sm" + (s.c === "r" ? " primary" : "")} onClick={() => setChecking(p.id)}>{s.c === "r" ? "去处理" : "确认素材"}</button>}
+                    {p.status === "review" && <button type="button" className="lp-btn sm" onClick={() => setReviewing(p.id)}>看内容</button>}
+                    {p.status === "review" && <button type="button" className="lp-btn sm primary" onClick={() => void startGeneration([p.id]).then(n => { if (n) say(`「${p.name}」开始出图`); })}>开始出图{d?.estimate && !config?.exempt ? `（约 ${d.estimate.credits} 积分）` : ""}</button>}
+                    {p.status === "review" && d?.estimate && !config?.exempt && <PriceInfo lines={d.estimate.lines} total={d.estimate.credits} extra="分析费已在上传后扣过" />}
                     {(p.status === "failed" || (p.status === "uploading" && !uploads[p.id] && p.images > 0)) && <button type="button" className="lp-btn sm primary" onClick={() => void startPlan(p.id)}>{p.status === "failed" ? "重新分析" : "开始分析"}</button>}
                     {p.status === "confirmed" && <button type="button" className="lp-btn sm primary" onClick={() => void generate(p.id)}>开始出图{d?.estimate && !config?.exempt ? `（约 ${d.estimate.credits} 积分）` : ""}</button>}
+                    {p.status === "confirmed" && d?.estimate && !config?.exempt && <PriceInfo lines={d.estimate.lines} total={d.estimate.credits} />}
                     {p.made > 0 && <a className="lp-btn sm" href={`/api/listing/projects/${p.id}/download`}>下载</a>}
                     {["confirmed", "generating", "done"].includes(p.status) && <button type="button" className="lp-btn sm ghost" onClick={() => setReviewing(p.id)}>素材和卖点</button>}
-                    {!["planning", "generating"].includes(p.status) && !uploads[p.id] && <button type="button" className="lp-btn sm ghost" onClick={() => void remove(p)}>删除</button>}
+                    {!["planning", "writing", "generating"].includes(p.status) && !uploads[p.id] && <button type="button" className="lp-btn sm ghost" onClick={() => void remove(p)}>删除</button>}
                   </div>
                 </div>
                 {open[p.id] && (
@@ -267,8 +353,9 @@ export function ListingImagesClient() {
                   </div>)}
               </div>
             );
-          })}
-        </div>
+              })}</div>}
+            </section>);
+        })}
       </main>
       {reviewing && details[reviewing]?.plan && (
         <ReviewDialog detail={details[reviewing]} readOnly={details[reviewing].status !== "review"} exempt={!!config?.exempt} onClose={() => setReviewing(null)}
@@ -281,6 +368,17 @@ export function ListingImagesClient() {
       {learning && <LearnDialog resume={learning.resume} price={config?.exempt ? 0 : config?.layoutCredits ?? 0} onError={say}
         onClose={() => { setLearning(null); void loadConfig(); }}
         onSaved={async (id, name) => { await loadConfig(); learning.apply?.(id); setLearning(null); say(learning.apply ? `已保存「${name}」，并给这一款用上了` : `已保存「${name}」，团队里的人上传时都能选`); }} />}
+      {checking && details[checking]?.materials && <MaterialsDialog name={details[checking].name} materials={details[checking].materials!}
+        paths={new Map(details[checking].images.map(i => [i.id, i.path]))} choice={choiceOf(checking)!} onChange={c => setDrafts(d => ({ ...d, [checking]: c }))}
+        onUpload={async file => {
+          try {
+            const added = await api<{ label: string; url: string }>(`projects/${checking}/extra`, { method: "POST", body: await shrink(file), headers: { "Content-Type": "application/octet-stream", "x-file-name": encodeURIComponent(file.name) } });
+            const d = await api<Detail>("projects/" + checking); setDetails(o => ({ ...o, [checking]: d }));
+            return added;
+          } catch (error) { say((error as Error).message); throw error; }
+        }}
+        onClose={() => setChecking(null)}
+        onConfirm={async () => { if (await confirmMaterials([checking], false)) { setChecking(null); say("AI 开始按挑出的素材写每张图的内容，约 1 分钟"); } }} />}
       {editDetail && editSlot && <EditDialog key={editSlot.slot} detail={editDetail} slot={editSlot} prices={{ image: config?.imageCredits ?? 0, multi: config?.multiCredits ?? 0 }} exempt={!!config?.exempt || !config}
         onClose={() => setEditing(null)} onDone={async message => { setEditing(null); say(message); await refresh(); }} onError={say} />}
       {toast && <div className="lp-toast" role="status">{toast}</div>}
@@ -530,7 +628,9 @@ function Results({ detail, onEdit, onRedo }: { detail: Detail; onEdit: (slot: Sl
           return (
             <div key={s.slot} className={"lp-out" + (bad ? " bad" : "")}>
               <div className="lp-out-img" style={{ aspectRatio: SHAPE[kind] }}>
-                {s.image && <a href={`/api/listing/assets/${s.image}`} target="_blank" rel="noreferrer"><img src={`/api/listing/assets/${s.image}`} alt={label} loading="lazy" /></a>}
+                {s.image && (MAIN.test(s.slot) && s.history.length && !busy && detail.status !== "generating"
+                  ? <button type="button" className="lp-out-open" title="点图修改这一张" onClick={() => onEdit(s)}><img src={`/api/listing/assets/${s.image}`} alt={label} loading="lazy" /></button>
+                  : <a href={`/api/listing/assets/${s.image}`} target="_blank" rel="noreferrer"><img src={`/api/listing/assets/${s.image}`} alt={label} loading="lazy" /></a>)}
                 {s.versions > 1 && version > 0 && <span className="lp-out-ver">第 {version} 版</span>}
                 {busy && <span className="lp-out-wait">{s.status === "running" ? "出图中…" : "排队中"}</span>}
                 {bad && <span className="lp-out-wait">没做出来</span>}
@@ -656,7 +756,7 @@ function ReviewDialog({ detail, readOnly, exempt, onClose, onDone, onError }: { 
               })}</div>
             </div>))}
           {slots.length === 0 && <span className="lp-muted">这一款没有选主图</span>}
-          <details className="lp-more" open={missing.length > 0 || problems.length > 0}>
+          {!detail.materials && <details className="lp-more" open={missing.length > 0 || problems.length > 0}>
             <summary>颜色和素材分类{problems.length ? `（AI 有 ${problems.length} 处对不上，请看一眼）` : "（AI 已分好，一般不用动）"}</summary>
             {problems.length > 0 && <div className="lp-alert y">AI 的结果有 {problems.length} 处对不上：{problems.join("；")}。分类不对的请在下面改；其余的出图时会按规则处理。</div>}
             <div className="lp-sec">
@@ -680,10 +780,10 @@ function ReviewDialog({ detail, readOnly, exempt, onClose, onDone, onError }: { 
                   </figure>);
               })}</div>
             </div>
-          </details>
+          </details>}
         </div>
         <div className="lp-box-foot">
-          <div className="grow">{readOnly ? "已经出图了。" : <>共出 <b>{detail.estimate?.images ?? "—"}</b> 张（含白底图和 SKU 图）{!exempt && detail.estimate && <>，约 <b>{detail.estimate.credits}</b> 积分，先冻结，没做出来的退回</>}{changed > 0 && <> · 你改了 {changed} 张</>}{empty && <span className="lp-bad"> · 有图没写大标题</span>}</>}</div>
+          <div className="grow">{readOnly ? "已经出图了。" : <>共出 <b>{detail.estimate?.images ?? "—"}</b> 张（含白底图和 SKU 图）{!exempt && detail.estimate && <>，约 <b>{detail.estimate.credits}</b> 积分 <PriceInfo lines={detail.estimate.lines} total={detail.estimate.credits} extra="分析费已在上传后扣过" />，先冻结，没做出来的退回</>}{changed > 0 && <> · 你改了 {changed} 张</>}{empty && <span className="lp-bad"> · 有图没写大标题</span>}</>}</div>
           <button type="button" className="lp-btn" onClick={onClose}>{readOnly ? "关闭" : "先不出图"}</button>
           {!readOnly && <button type="button" className="lp-btn primary" disabled={saving || missing.length > 0 || empty} onClick={() => void submit()}>{saving ? "正在开始…" : "开始出图"}</button>}
         </div>

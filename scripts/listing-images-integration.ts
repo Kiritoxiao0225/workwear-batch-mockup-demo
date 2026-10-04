@@ -20,7 +20,7 @@ const database = new EmbeddedPostgres({ databaseDir: join(root, 'pg'), user: 'li
 const { catalogDatabase: db, closeCatalogDatabase, migrateCatalog } = await import('../lib/server/catalog-database');
 const { createCatalogUser, loginCatalog } = await import('../lib/server/catalog-auth');
 const routes = await import('../app/api/listing/[...path]/route');
-const { executePlan, startListingWorker } = await import('../lib/server/listing-jobs');
+const { executePlan, executeWrite, startListingWorker } = await import('../lib/server/listing-jobs');
 const { clearOldSources } = await import('../lib/server/listing-store');
 const { executeImage } = await import('../lib/server/listing-generation');
 const JSZip = (await import('jszip')).default;
@@ -81,27 +81,58 @@ try {
   pass('后台没连上不冻结积分；冻结 180 积分只冻一次；开始分析后不能再加图');
 
   type Job = { id: string; tenant_id: string; project_id: string; step: string };
+  type Reply = { content: string; model: string; requestId: string; usage: null; durationMs: number };
+  const reply = (content: unknown): Reply => ({ content: JSON.stringify(content), model: 'gpt-6.1-sol', requestId: 'chatcmpl-test', usage: null, durationMs: 1 });
+  /** Sort (paid), confirm the material, write (free): the three steps that turn a folder into words. */
+  const toReview = async (project: string, organized: unknown, choice: unknown, written: unknown) => {
+    const plan = (await db().query("SELECT id,tenant_id,project_id,step FROM listing_jobs WHERE project_id=$1 AND step='plan' ORDER BY created_at DESC LIMIT 1", [project])).rows[0] as Job;
+    await executePlan(plan, async (_r, hooks) => { await hooks.beforeSubmit(); return reply(organized); });
+    await call(0, `projects/${project}/materials`, choice);
+    const write = (await db().query("SELECT id,tenant_id,project_id,step FROM listing_jobs WHERE project_id=$1 AND step='write' ORDER BY created_at DESC LIMIT 1", [project])).rows[0] as Job;
+    let request: unknown;
+    await executeWrite(write, async (r, hooks) => { request = r; await hooks.beforeSubmit(); return reply(written); });
+    return request;
+  };
   const job = (await db().query("SELECT id,tenant_id,project_id,step FROM listing_jobs WHERE project_id=$1", [id])).rows[0] as Job;
-  const good = JSON.stringify({
-    assets: [{ id: MAIN, role: '主图' }, { id: SKU, role: 'SKU', color: '黑色' }, { id: DETAIL, role: '主图' }],
-    product: { name: '立领工作外套', garment: ['立领', '两侧拉链口袋'], colors: [{ name: '黑色', hex: '#1f1f1f', sku: SKU }] },
-    sellingPoints: [{ id: 'P1', type: '功能', text: '三防面料', evidence: [DETAIL], priority: 1 }],
-    main: { square: [{ n: 1, role: '首图', title: '轻盈抗造工作服', points: ['P1'], colors: ['黑色'] }, { n: 2, role: '收口', title: '团队穿出同一范', colors: ['黑色'] }] },
-    sku: { tag: '男女同款', items: [{ color: '黑色', sku: SKU }] },
-  });
   let sent = 0;
-  await executePlan(job, async (_request, hooks) => { await hooks.beforeSubmit(); sent++; await hooks.receipt('chatcmpl-test'); return { content: good, model: 'gpt-6.1-sol', requestId: 'chatcmpl-test', usage: null, durationMs: 1 }; });
-  const planned = await (await call(0, 'projects/' + id)).json();
-  assert.equal(planned.status, 'review'); assert.equal(sent, 1);
-  assert.equal(planned.plan.plan.assets.find((a: { id: string }) => a.id === DETAIL).role, '详情');
-  assert.deepEqual(planned.plan.corrected, [`${DETAIL} 主图→详情（形状不是 1:1 或 3:4）`]);
-  assert.deepEqual(planned.plan.problems, []);
-  assert.equal(planned.plan.images.length, 3);
+  await executePlan(job, async (_request, hooks) => { await hooks.beforeSubmit(); sent++; await hooks.receipt('chatcmpl-test'); return reply({
+    images: [{ id: MAIN, kind: '卖点图', color: '黑色', front: true, text: true }, { id: SKU, kind: '颜色款图', color: '黑色', front: true }, { id: DETAIL, kind: '详情页', text: true }],
+    colors: [{ name: '黑色', hex: '#1f1f1f', from: [SKU] }, { name: '藏青', hex: '#1d2a44', from: [] }],
+    points: [{ type: '功能', text: '三防面料', from: [DETAIL] }, { type: '做工', text: '顺滑拉链', from: [DETAIL] }], notes: ['色卡里有藏青，但没有藏青的衣服图'] }); });
+  const sortedP = await (await call(0, 'projects/' + id)).json();
+  assert.equal(sortedP.status, 'materials'); assert.equal(sent, 1); assert.equal(sortedP.plan, null);
+  assert.deepEqual(sortedP.materials.chosen.colors.map((c: { name: string; pick: string | null }) => [c.name, c.pick]), [['黑色', SKU], ['藏青', null]]);
+  assert.equal(sortedP.materials.chosen.parts[0].pick, SKU);
+  assert.equal(sortedP.materials.images.length, 3);
   const hold = (await db().query("SELECT state,settled_cents FROM credit_holds WHERE id=$1", ['listing:' + job.id])).rows[0];
   assert.deepEqual([hold.state, Number(hold.settled_cents)], ['settled', 180]);
   assert.equal((await db().query("SELECT status,provider_request_id FROM listing_attempts WHERE job_id=$1", [job.id])).rows[0].provider_request_id, 'chatcmpl-test');
   assert.equal((await db().query("SELECT count(*)::int n FROM usage_events WHERE tenant_id=$1 AND metric_code='listing_plan'", [tenants[0]])).rows[0].n, 1);
-  pass('分析成功：形状不对的“主图”改成详情，按 180 积分结算并记用量，回执编号已保存');
+  pass('整理素材：AI 分类、认颜色（色卡里有但缺图的颜色也列出）、程序挑每色的图和正面全身；按 180 积分结算并记用量');
+
+  const choice = { colors: [{ name: '黑色', hex: '#1f1f1f', pick: SKU }], parts: [{ part: '正面全身', pick: SKU, skip: false }, { part: '背面', pick: null, skip: true }],
+    points: [{ type: '功能', text: '三防面料', from: [DETAIL], on: true }, { type: '做工', text: '顺滑拉链', from: [DETAIL], on: false }] };
+  await call(0, `projects/${id}/materials`, { ...choice, colors: [...choice.colors, { name: '藏青', hex: '', pick: '' }] }, 400);
+  await call(0, `projects/${id}/materials`, { ...choice, parts: [{ part: '正面全身', pick: null, skip: false }] }, 400);
+  await call(0, `projects/${id}/materials`, { ...choice, colors: [{ name: '黑色', hex: '', pick: 'M99' }] }, 400);
+  await call(1, `projects/${id}/materials`, choice, 404);
+  await call(0, `projects/${id}/materials`, choice);
+  assert.equal((await (await call(0, 'projects/' + id)).json()).status, 'writing');
+  const writeJob = (await db().query("SELECT id,tenant_id,project_id,step FROM listing_jobs WHERE project_id=$1 AND step='write'", [id])).rows[0] as Job;
+  let writeRequest = '';
+  await executeWrite(writeJob, async (request, hooks) => {
+    writeRequest = JSON.stringify(request); await hooks.beforeSubmit();
+    return reply({ product: { name: '立领工作外套', garment: ['立领', '两侧拉链口袋'] },
+      main: { square: [{ n: 1, role: '首图', title: '轻盈抗造工作服', points: ['P1'], colors: ['黑色'] }, { n: 2, role: '收口', title: '团队穿出同一范', colors: ['黑色'] }] }, sku: { tag: '男女同款', fabric: '' } });
+  });
+  const planned = await (await call(0, 'projects/' + id)).json();
+  assert.equal(planned.status, 'review');
+  assert.deepEqual(planned.plan.plan.product.colors, [{ name: '黑色', hex: '#1f1f1f', sku: SKU }]);
+  assert.deepEqual(planned.plan.plan.sellingPoints.map((p: { text: string }) => p.text), ['三防面料']);
+  assert.deepEqual(planned.plan.direct, []); assert.equal(planned.plan.images.length, 3);
+  assert.match(writeRequest, /用户说不需要这些：背面/); assert.match(writeRequest, /颜色「黑色」的衣服图/); assert.doesNotMatch(writeRequest, /顺滑拉链/);
+  assert.equal(await balance(tenants[0]), 4820);
+  pass('确认素材：缺颜色图、缺正面全身、不存在的图都拦住；写内容不另收费，只用勾选的卖点，「不需要背面」写进要求');
 
   await call(0, `projects/${id}/review`, { roles: { [SKU]: '详情' }, colors: [{ sku: SKU, name: '经典黑' }], points: [{ id: 'P1', text: '三防耐脏' }] });
   await call(1, `projects/${id}/review`, { roles: {} }, 409);
@@ -116,13 +147,13 @@ try {
 
   // ---- 第 2 期：出图 ----
   const estimate = (await (await call(0, 'projects/' + id)).json()).estimate;
-  assert.deepEqual(estimate, { images: 4, credits: 4 * 44 });
+  assert.deepEqual([estimate.images, estimate.credits], [4, 4 * 44]); assert.deepEqual(estimate.lines.map((l: { label: string; credits: number }) => [l.label, l.credits]), [["白底产品图", 44], ["SKU 图", 44], ["1:1 主图", 88]]);
   await call(1, `projects/${id}/generate`, {}, 404);
   const beforeRun = await balance(tenants[0]);
   assert.equal((await (await call(0, `projects/${id}/generate`, {})).json()).status, 'generating');
   assert.equal((await (await call(0, `projects/${id}/generate`, {})).json()).status, 'generating');
   type ImgJob = { id: string; tenant_id: string; project_id: string; run_id: string; slot: string; input: never };
-  const jobs = (await db().query("SELECT id,tenant_id,project_id,run_id,slot,input,depends FROM listing_jobs WHERE project_id=$1 AND step<>'plan' ORDER BY created_at", [id])).rows as (ImgJob & { depends: string[] })[];
+  const jobs = (await db().query("SELECT id,tenant_id,project_id,run_id,slot,input,depends FROM listing_jobs WHERE project_id=$1 AND step NOT IN ('plan','write') ORDER BY created_at", [id])).rows as (ImgJob & { depends: string[] })[];
   assert.deepEqual(jobs.map(j => j.slot), [`product:${SKU}`, `sku:${SKU}`, 'square:1', 'square:2']);
   assert.equal(beforeRun - await balance(tenants[0]), 4 * 44);
   const png = await sharp({ create: { width: 64, height: 64, channels: 3, background: '#222' } }).png().toBuffer();
@@ -198,13 +229,11 @@ try {
   await call(0, 'projects', { id: second, name: '第二款', layout: 'commute-split', counts: { square: 1, portrait: 0, poster: 0 } });
   await upload(0, second, sku, 'SKU图/黑色.jpg'); await upload(0, second, main, '1比1主图/主图_1.jpg');
   await call(0, `projects/${second}/plan`, {});
-  const plan2 = (await db().query("SELECT id,tenant_id,project_id,step FROM listing_jobs WHERE project_id=$1", [second])).rows[0] as Job;
   const d2 = await (await call(0, 'projects/' + second)).json();
   const [M_MAIN, M_SKU] = ['1比1主图/主图_1.jpg', 'SKU图/黑色.jpg'].map(path => d2.images.find((i: { path: string }) => i.path === path).label);
-  await executePlan(plan2, async (_r, hooks) => { await hooks.beforeSubmit(); return { content: JSON.stringify({
-    assets: [{ id: M_MAIN, role: '主图' }, { id: M_SKU, role: 'SKU', color: '黑色' }],
-    product: { name: '第二款', garment: ['立领'], colors: [{ name: '黑色', hex: '#111', sku: M_SKU }] },
-    sellingPoints: [], main: { square: [{ n: 1, role: '首图', title: '利落上岗', colors: ['黑色'] }] }, sku: { tag: '', items: [] } }), model: 'm', requestId: 'r', usage: null, durationMs: 1 }; });
+  await toReview(second, { images: [{ id: M_MAIN, kind: '卖点图', color: '黑色', front: true }, { id: M_SKU, kind: '颜色款图', color: '黑色', front: true }], colors: [{ name: '黑色', hex: '#111', from: [M_SKU] }], points: [] },
+    { colors: [{ name: '黑色', hex: '#111', pick: M_SKU }], parts: [{ part: '正面全身', pick: M_SKU }], points: [] },
+    { product: { name: '第二款', garment: ['立领'] }, main: { square: [{ n: 1, role: '首图', title: '利落上岗', colors: ['黑色'] }] }, sku: { tag: '' } });
   await call(0, `projects/${second}/confirm`, {});
   const beforeSecond = await balance(tenants[0]);
   await call(0, `projects/${second}/generate`, {});
@@ -218,7 +247,7 @@ try {
     await new Promise(r => setTimeout(r, 250));
   }
   await worker.close();
-  const states = Object.fromEntries((await db().query("SELECT slot,status,error FROM listing_jobs WHERE project_id=$1 AND step<>'plan'", [second])).rows.map(r => [r.slot, `${r.status}|${r.error}`]));
+  const states = Object.fromEntries((await db().query("SELECT slot,status,error FROM listing_jobs WHERE project_id=$1 AND step NOT IN ('plan','write')", [second])).rows.map(r => [r.slot, `${r.status}|${r.error}`]));
   assert.equal(calls.length, 1);
   assert.match(states[`product:${M_SKU}`], /^unknown\|.*管理员核对/);
   assert.match(states[`sku:${M_SKU}`], /^failed\|前一步.*没扣费/); assert.match(states['square:1'], /^failed\|前一步.*没扣费/);
@@ -293,17 +322,15 @@ try {
     texts = ((request as { messages: { content: unknown }[] }).messages[1].content as { type: string; text?: string }[]).filter(c => c.type === 'text').map(c => c.text).join('\n');
     const sent = [...new Set(texts.match(/M\d+/g))];
     await hooks.beforeSubmit();
-    return { content: JSON.stringify({ assets: sent.map((m, i) => ({ id: m, role: i === 0 ? 'SKU' : '主图', color: i === 0 ? '黑色' : '' })),
-      product: { name: '大款', garment: ['立领'], colors: [{ name: '黑色', hex: '#111', sku: sent[0] }] }, sellingPoints: [],
-      main: { square: [{ n: 1, role: '首图', title: '大款首图', colors: ['黑色'] }] }, sku: { tag: '', items: [] } }), model: 'm', requestId: 'r', usage: null, durationMs: 1 };
+    return reply({ images: sent.map((m, i) => ({ id: m, kind: i === 0 ? '静物' : '模特实拍', color: i === 0 ? '黑色' : '', front: i === 0 })), colors: [{ name: '黑色', hex: '#111', from: [sent[0]] }], points: [] });
   });
   const bigPlan = await (await call(0, 'projects/' + bigId)).json();
-  assert.equal(bigPlan.status, 'review');
+  assert.equal(bigPlan.status, 'materials');
   assert.match(texts, /【拼图：4 张素材.*形状都是 1:1/); assert.ok((texts.match(/【/g) ?? []).length <= 48);
-  assert.equal(bigPlan.plan.plan.assets.length, 61);
-  const twin = bigPlan.plan.plan.assets.find((a: { reason: string }) => a.reason.startsWith('相似图'));
-  assert.equal(bigPlan.images.find((i: { label: string }) => i.label === twin.id).path, '模特图/IMG_1_连拍.png'); assert.equal(twin.role, '不用');
-  pass('大款：61 张中颜色相近的照片都保留，按需拼成宫格不超过 50 张图，每张都有分类；完全相同的副本只看一次，标为相似图可手动改回');
+  assert.equal(bigPlan.materials.sorted.images.length, 60); assert.equal(bigPlan.materials.duplicates.length, 1);
+  const [twinId] = bigPlan.materials.duplicates[0];
+  assert.equal(bigPlan.images.find((i: { label: string }) => i.label === twinId).path, '模特图/IMG_1_连拍.png');
+  pass('大款：61 张中颜色相近的照片都保留，按需拼成宫格不超过 50 张图，每张都有分类；完全相同的副本只看一次，记为重复');
 
   // ---- 学新版式：参考图 3–10 张，冻结 100 积分，学好出样图，保存后团队共用 ----
   const lay = randomUUID();
@@ -349,11 +376,16 @@ try {
   await call(0, 'projects', { id: randomUUID(), name: '删了的版式', layout: lay, counts: { square: 1, portrait: 0, poster: 0 } }, 400);
   await upload(0, usesLayout, main, 'a.jpg');
   await call(0, `projects/${usesLayout}/plan`, {});
-  const layoutJob = (await db().query("SELECT id,tenant_id,project_id,step FROM listing_jobs WHERE project_id=$1", [usesLayout])).rows[0] as Job;
-  let planTask = '';
-  await executePlan(layoutJob, async (request, hooks) => { planTask = ((request as { messages: { content: { text?: string }[] }[] }).messages[1].content[0].text ?? ''); await hooks.beforeSubmit(); throw Object.assign(new Error('分析接口 HTTP 400'), { definite: true }); });
+  const label = (await (await call(0, 'projects/' + usesLayout)).json()).images[0].label;
+  const written = await toReview(usesLayout, { images: [{ id: label, kind: '静物', color: '黑色', front: true }], colors: [{ name: '黑色', hex: '#111', from: [label] }], points: [] },
+    { colors: [{ name: '黑色', hex: '#111', pick: label }], parts: [{ part: '正面全身', pick: label }], points: [] },
+    { product: { name: '用学来的版式', garment: ['立领'] }, main: { square: [{ n: 1, role: '首图', title: '利落上岗', colors: ['黑色'] }] }, sku: { tag: '' } });
+  const planTask = ((written as { messages: { content: { text?: string }[] }[] }).messages[1].content[0].text ?? '');
   assert.match(planTask, /这一款用「细节特写格」版式：顶部超大白色粗体标题/);
-  pass('学新版式：至少 3 张参考图，冻结并扣 100 积分，出 3 张样图；保存后团队可选、别人看不到用不了；删除后用过它的款照样能用');
+  const usesPlan = await (await call(0, 'projects/' + usesLayout)).json();
+  assert.deepEqual(usesPlan.plan.direct, [label]);
+  assert.deepEqual(usesPlan.estimate.lines.find((l: { unit: number }) => l.unit === 0), { label: '白底产品图', count: 1, unit: 0, credits: 0, note: '直接用你的静物图，不收费' });
+  pass('学新版式：至少 3 张参考图，冻结并扣 100 积分，出 3 张样图；保存后团队可选、别人看不到用不了；删除后用过它的款照样能用；干净静物直接当白底图、不收费');
   const bad = randomUUID();
   await call(0, 'layouts', { id: bad, name: '学不成' });
   for (const r of [150, 170, 190]) await addRef(0, bad, await refImg(r));

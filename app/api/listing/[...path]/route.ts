@@ -4,7 +4,7 @@ import { catalogBody, catalogError } from '@/lib/server/catalog-http';
 import { CatalogHttpError } from '@/lib/server/catalog-auth';
 import { assertPageAccess } from '@/lib/server/page-access';
 import { addSourceImage, chooseVersion, confirmProject, createProject, deleteProject, listProjects, MAX_SOURCE_BYTES, projectDetail, readListingAsset, saveReview } from '@/lib/server/listing-store';
-import { imagePrices, planPrice, requestPlan } from '@/lib/server/listing-jobs';
+import { addExtraImage, confirmMaterials, imagePrices, planPrice, requestPlan } from '@/lib/server/listing-jobs';
 import { downloadZip, estimate, redoSlot, slotStates, startGeneration } from '@/lib/server/listing-generation';
 import { addLayoutRef, createLayout, deleteLayout, layoutCards, layoutFile, layoutState, openLayouts, saveLayout, startLearning } from '@/lib/server/listing-layouts';
 
@@ -52,6 +52,10 @@ export async function POST(request: NextRequest, context: Context) {
       const bytes = await catalogBody(request, MAX_SOURCE_BYTES);
       return json(await addLayoutRef(tenant.id, path[1], bytes, header(request, 'x-file-name') || '参考图'));
     }
+    if (path[0] === 'projects' && path[1] && path[2] === 'extra') {
+      const bytes = await catalogBody(request, MAX_SOURCE_BYTES);
+      return json(await addExtraImage(tenant.id, path[1], bytes, header(request, 'x-file-name') || '补传.jpg'));
+    }
     if (path[0] === 'projects' && path[1] && path[2] === 'images') {
       const bytes = await catalogBody(request, MAX_SOURCE_BYTES);
       return json(await addSourceImage(tenant.id, path[1], bytes, header(request, 'x-file-name') || '图片', header(request, 'x-file-path')));
@@ -63,6 +67,7 @@ export async function POST(request: NextRequest, context: Context) {
     if (path[0] === 'layouts' && path[2] === 'save') return json(await saveLayout(tenant.id, path[1]));
     if (path[0] === 'projects' && path[2] === 'plan') return json(await requestPlan(tenant, user.id, path[1]));
     if (path[0] === 'projects' && path[2] === 'review') return json(await saveReview(tenant.id, path[1], body));
+    if (path[0] === 'projects' && path[2] === 'materials') return json(await confirmMaterials(tenant.id, user.id, path[1], body));
     if (path[0] === 'projects' && path[2] === 'confirm') return json(await confirmProject(tenant.id, path[1]));
     if (path[0] === 'projects' && path[2] === 'generate') return json(await startGeneration(tenant, user.id, path[1]));
     if (path[0] === 'projects' && path[2] === 'redo') {

@@ -183,3 +183,74 @@
 .lp-samples { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 6px; }
 .lp-samples img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; display: block; }
 @media (max-width: 900px) { .lp-mine { width: 100%; } .lp-learned { grid-template-columns: 1fr; } }
+
+/* Batches and filters: every drop is one batch; the filters cut across all of them. */
+.lp-filters { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; font-size: 12.5px; color: var(--muted); }
+.lp-filters button { height: 30px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); font-size: 13px; }
+.lp-filters button.on { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+.lp-filters button b { color: var(--danger); }
+.lp-batch { margin-bottom: 14px; display: grid; gap: 8px; }
+.lp-bhead { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.lp-bhead .tg { border: 0; background: none; color: var(--muted); width: 18px; font-size: 13px; }
+.lp-bhead b { font-size: 14.5px; } .lp-bhead .grow { flex: 1; }
+.lp-chip { font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); white-space: nowrap; }
+.lp-chip.g { color: var(--brand); background: var(--brand-soft); border-color: color-mix(in srgb, var(--brand) 40%, var(--line)); }
+.lp-chip.y { color: var(--warning); background: color-mix(in srgb, #e6a100 14%, var(--panel)); border-color: color-mix(in srgb, #e6a100 50%, var(--line)); }
+.lp-chip.r { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, var(--panel)); border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); }
+.lp-out-open { border: 0; padding: 0; background: none; width: 100%; height: 100%; display: block; cursor: pointer; }
+.lp-out-open:hover img { outline: 2px solid var(--brand); outline-offset: -2px; }
+
+/* ⓘ price detail */
+.lp-price { position: relative; display: inline-flex; vertical-align: middle; }
+.lp-i { width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--line); background: var(--panel); color: var(--muted); font-size: 11px; font-weight: 700; font-style: italic; padding: 0; line-height: 1; }
+.lp-pop { position: absolute; right: 0; top: 24px; z-index: 95; width: 300px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 10px 12px; display: grid; gap: 4px; font-size: 12.5px; color: var(--ink); text-align: left; font-weight: 400; }
+.lp-pop .ln { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; } .lp-pop .ln small { grid-column: 1 / -1; margin-top: -3px; }
+.lp-pop small { color: var(--muted); font-size: 11.5px; line-height: 1.45; }
+
+/* Confirming the sorted material */
+.lp-box.lp-mat { width: min(1180px, 100%); }
+.lp-flow { font-size: 13px; } .lp-flow b { font-size: 15px; }
+.lp-alert.g { background: var(--brand-soft); color: var(--brand); }
+.lp-alert small { display: block; color: var(--muted); margin-top: 4px; }
+.lp-msec { border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: grid; gap: 10px; }
+.lp-mhead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.lp-mhead h4 { margin: 0; font-size: 15px; } .lp-mhead p { margin: 0; font-size: 12.5px; color: var(--muted); flex-basis: 100%; }
+.lp-mhead .n { width: 22px; height: 22px; border-radius: 50%; background: var(--ink); color: var(--panel); display: inline-grid; place-items: center; font-size: 12px; font-weight: 700; align-self: center; }
+.lp-mhead .tg { font-size: 11px; padding: 1px 8px; border-radius: 999px; font-weight: 600; }
+.lp-mhead .tg.r { background: color-mix(in srgb, var(--danger) 10%, var(--panel)); color: var(--danger); } .lp-mhead .tg.y { background: color-mix(in srgb, #e6a100 14%, var(--panel)); color: var(--warning); }
+.lp-mcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.lp-mcard { border: 1px solid var(--line); border-radius: 12px; padding: 8px; display: grid; gap: 6px; align-content: start; background: var(--panel); min-width: 0; }
+.lp-mcard .pic { position: relative; aspect-ratio: 1; border-radius: 8px; overflow: hidden; background: var(--panel-soft); }
+.lp-mcard .pic img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.lp-mcard .pic .src { position: absolute; left: 5px; top: 5px; font-size: 10.5px; padding: 1px 6px; border-radius: 999px; background: #ffffffe8; color: #17211c; font-weight: 600; }
+.lp-mcard .row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.lp-mcard .row input { flex: 1; width: 0; min-width: 0; border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; font: inherit; font-size: 13px; font-weight: 600; background: var(--panel); color: var(--ink); }
+.lp-mcard .dotc { width: 14px; height: 14px; border-radius: 50%; flex: none; border: 1px solid #0002; }
+.lp-mcard .lbl { font-size: 13px; font-weight: 600; }
+.lp-mcard .warn { color: var(--warning); font-size: 11.5px; line-height: 1.4; }
+.lp-mcard.missing { border: 1.5px dashed color-mix(in srgb, var(--danger) 60%, var(--line)); background: color-mix(in srgb, var(--danger) 6%, var(--panel)); }
+.lp-mcard.optional { border: 1.5px dashed color-mix(in srgb, #e6a100 60%, var(--line)); background: color-mix(in srgb, #e6a100 8%, var(--panel)); }
+.lp-mcard.skip { border: 1.5px dashed var(--line); background: var(--panel-muted); }
+.lp-mcard.missing .pic, .lp-mcard.optional .pic, .lp-mcard.skip .pic { display: grid; place-items: center; text-align: center; font-size: 12px; padding: 8px; background: transparent; color: var(--muted); }
+.lp-mcard.missing .pic { color: var(--danger); } .lp-mcard.optional .pic { color: var(--warning); }
+.lp-points { display: grid; gap: 6px; }
+.lp-pt { display: grid; grid-template-columns: 22px 72px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); }
+.lp-pt.off { opacity: .55; }
+.lp-pt input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--brand); }
+.lp-pt .ty { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--panel-soft); color: var(--muted); text-align: center; }
+.lp-pt .txt { border: 1px solid transparent; border-radius: 6px; padding: 4px 6px; font: inherit; font-size: 13.5px; background: transparent; color: var(--ink); min-width: 0; width: 100%; }
+.lp-pt .txt:hover, .lp-pt .txt:focus { border-color: var(--line); background: var(--panel); }
+.lp-pt .txt.warn { background: color-mix(in srgb, #e6a100 14%, var(--panel)); }
+.lp-pt .ev { display: flex; gap: 3px; align-items: center; font-size: 11px; color: var(--muted); }
+.lp-pt .ev img { width: 30px; height: 30px; object-fit: cover; border-radius: 5px; }
+.lp-all summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+.lp-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0; }
+.lp-tabs button { height: 28px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); font-size: 12.5px; }
+.lp-tabs button.on { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+.lp-lib { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
+.lp-lib .it { position: relative; border: 0; padding: 0; background: none; text-align: left; color: inherit; text-decoration: none; }
+.lp-lib .it img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; display: block; background: var(--panel-soft); }
+.lp-lib .it .cat { position: absolute; left: 4px; top: 4px; font-size: 10.5px; padding: 1px 6px; border-radius: 999px; background: #ffffffe8; color: #17211c; }
+.lp-lib .it small { display: block; font-size: 10.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+button.it:hover img { outline: 2px solid var(--brand); outline-offset: -2px; }
+@media (max-width: 900px) { .lp-pt { grid-template-columns: 22px 1fr; } .lp-pt .ty { display: none; } .lp-pt .ev { grid-column: 2; } .lp-pop { right: auto; left: -140px; } }

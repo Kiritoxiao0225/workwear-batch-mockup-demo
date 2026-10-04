@@ -34,16 +34,34 @@ async function fingerprint(bytes: Buffer) {
 type Print = Awaited<ReturnType<typeof fingerprint>>;
 const nearlySame = (a: Print, b: Print) => a.bits.every((bit, i) => bit === b.bits[i]) && a.cells.every((v, i) => Math.abs(v - b.cells[i]) <= 2);
 
-/** Identical copies: each extra copy points at the one that is seen. */
+/**
+ * Copies of one picture: each extra copy points at the one that is seen. Two kinds:
+ * - the same file name (in any folder) with the same proportions and the same structure: a
+ *   resized or re-saved copy, like a 小图 folder. A different colour of a garment never shares a
+ *   file name, so a loose colour match is safe here; the largest copy is kept.
+ * - any other pair that is pixel-identical (see nearlySame).
+ */
 export async function findDuplicates(sources: PlanSource[]) {
-  // Of two look-alikes the shorter name is kept: copies tend to get suffixes (IMG_1 vs IMG_1_连拍).
-  const ordered = [...sources].sort((a, b) => a.name.length - b.name.length || byPath(a, b)), kept: { source: PlanSource; print: Print }[] = [], duplicates = new Map<string, string>();
-  for (const source of ordered) {
-    const print = await fingerprint(source.bytes);
-    const twin = kept.find(k => k.source.shape === source.shape && Math.abs(k.source.width / k.source.height - source.width / source.height) < 0.02 && nearlySame(k.print, print));
-    if (twin) duplicates.set(source.id, twin.source.id); else kept.push({ source, print });
+  const prints = new Map<string, Print>();
+  for (const s of sources) prints.set(s.id, await fingerprint(s.bytes));
+  const duplicates = new Map<string, string>(), ratio = (s: PlanSource) => s.width / s.height;
+  const byName = new Map<string, PlanSource[]>();
+  for (const s of sources) byName.set(s.name.toLowerCase(), [...(byName.get(s.name.toLowerCase()) ?? []), s]);
+  for (const group of byName.values()) {
+    const ordered = [...group].sort((a, b) => b.width * b.height - a.width * a.height || byPath(a, b));
+    for (const [i, s] of ordered.entries()) {
+      const keep = ordered.slice(0, i).find(k => !duplicates.has(k.id) && Math.abs(ratio(k) - ratio(s)) < 0.02
+        && prints.get(k.id)!.bits.filter((bit, j) => bit !== prints.get(s.id)!.bits[j]).length <= 10);
+      if (keep) duplicates.set(s.id, keep.id);
+    }
   }
-  return { kept: kept.map(k => k.source), duplicates };
+  // Of two pixel-identical pictures the shorter name is kept: copies tend to get suffixes (IMG_1 vs IMG_1_连拍).
+  const ordered = sources.filter(s => !duplicates.has(s.id)).sort((a, b) => a.name.length - b.name.length || byPath(a, b)), kept: PlanSource[] = [];
+  for (const source of ordered) {
+    const twin = kept.find(k => k.shape === source.shape && Math.abs(ratio(k) - ratio(source)) < 0.02 && nearlySame(prints.get(k.id)!, prints.get(source.id)!));
+    if (twin) duplicates.set(source.id, twin.id); else kept.push(source);
+  }
+  return { kept, duplicates };
 }
 
 const single = async (s: PlanSource, side: number): Promise<PlanView> => ({
