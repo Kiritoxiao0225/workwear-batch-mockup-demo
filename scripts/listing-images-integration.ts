@@ -15,7 +15,7 @@ const password = randomBytes(24).toString('hex');
 process.env.CATALOG_DATABASE_URL = `postgresql://listing:${password}@127.0.0.1:${port}/postgres`;
 process.env.CATALOG_DATABASE_CA_CERT = ''; process.env.CATALOG_LOCAL_OBJECT_ROOT = join(root, 'objects');
 process.env.CATALOG_APP_ORIGIN = 'http://localhost:3189'; delete process.env.CATALOG_AUTH_MODE;
-process.env.EVOLINK_API_KEY = 'test-key-never-sent';
+process.env.EVOLINK_API_KEY = 'test-key-never-sent'; delete process.env.MEDIAKIT_API_KEY;
 const database = new EmbeddedPostgres({ databaseDir: join(root, 'pg'), user: 'listing', password, port, persistent: true, authMethod: 'scram-sha-256', postgresFlags: ['-h', '127.0.0.1'], onLog: () => {}, onError: () => {} });
 const { catalogDatabase: db, closeCatalogDatabase, migrateCatalog } = await import('../lib/server/catalog-database');
 const { createCatalogUser, loginCatalog } = await import('../lib/server/catalog-auth');
@@ -155,11 +155,15 @@ try {
   const after = await (await call(0, 'projects/' + id)).json();
   assert.equal(after.slots.find((s: { slot: string }) => s.slot === 'square:1').versions, 2);
   assert.equal(beforeRun - await balance(tenants[0]), 5 * 44);
+  const mainFile = (await db().query("SELECT a.width,a.height,f.mime_type FROM listing_assets a JOIN files f ON f.id=a.file_id WHERE a.project_id=$1 AND a.slot='square:1' ORDER BY a.created_at DESC LIMIT 1", [id])).rows[0];
+  assert.deepEqual([mainFile.width, mainFile.height, mainFile.mime_type], [1440, 1440, 'image/jpeg']);
+  assert.equal((await db().query("SELECT a.receipt->>'upscaled' u FROM listing_attempts a JOIN listing_jobs j ON j.id=a.job_id WHERE j.id=$1", [again.id])).rows[0].u, 'plain');
+  pass('放大：火山不可用时主图仍按普通放大存成 1440×1440 JPG，回执记下放大方式');
   pass('重做：别人重做不了、出图中不能重复重做；补充要求写进提示词；旧版本保留，每次重做只扣一张');
 
   await call(1, `projects/${id}/download`, undefined, 404);
   const zip = await JSZip.loadAsync(Buffer.from(await (await call(0, `projects/${id}/download`)).arrayBuffer()));
-  assert.deepEqual(Object.keys(zip.files).filter(n => !n.endsWith('/')).sort(), ['1比1主图-01-首图.png', '1比1主图-02-收口.png', 'SKU-经典黑.png', '白底产品图/经典黑.png']);
+  assert.deepEqual(Object.keys(zip.files).filter(n => !n.endsWith('/')).sort(), ['1比1主图-01-首图.jpg', '1比1主图-02-收口.jpg', 'SKU-经典黑.png', '白底产品图/经典黑.png']);
   pass('下载：按淘宝顺序命名，颜色用改过的名字，别人下载不了');
 
   // ---- 后台按依赖领任务：产品图结果不明时，依赖它的图都不做、不收费 ----

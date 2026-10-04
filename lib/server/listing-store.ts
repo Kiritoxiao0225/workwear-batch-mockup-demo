@@ -172,7 +172,7 @@ export async function storeOutput(tenant: string, projectId: string, slot: strin
 /** Newest image per slot of a project. */
 export async function latestOutputs(projectId: string) {
   const rows = (await catalogDatabase().query(
-    `SELECT DISTINCT ON (slot) id,slot,file_id,width,height,created_at FROM listing_assets
-      WHERE project_id=$1 AND slot IS NOT NULL ORDER BY slot, created_at DESC`, [projectId])).rows as { id: string; slot: string; file_id: string; width: number; height: number }[];
+    `SELECT DISTINCT ON (slot) id,slot,file_id,name,width,height,created_at FROM listing_assets
+      WHERE project_id=$1 AND slot IS NOT NULL ORDER BY slot, created_at DESC`, [projectId])).rows as { id: string; slot: string; file_id: string; name: string; width: number; height: number }[];
   return new Map(rows.map(row => [row.slot, row]));
 }

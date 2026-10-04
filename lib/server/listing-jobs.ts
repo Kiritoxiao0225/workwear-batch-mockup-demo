@@ -13,7 +13,7 @@ import { layoutById, countsSchema } from '../listing/layouts';
 import { parsePlan, planRequest, type PlanImage } from './listing-plan';
 import { assertListingProviderConfigured, callPlanModel, LISTING_PLAN_MODEL, type PlanCall } from './listing-provider';
 import { sourceImages, type StoredPlan } from './listing-store';
-import { executeImage, failBlocked, finishRun, type JobInput } from './listing-generation';
+import { executeImage, failBlocked, finishRun, type JobInput, type Upscale } from './listing-generation';
 import type { Tenant } from './tenant-scope';
 
 const holdId = (jobId: string) => 'listing:' + jobId;
@@ -118,7 +118,7 @@ export async function executePlan(job: JobRow, provider: Provider = (request, ho
  * image job starts only when the images it builds on exist; if one of them failed, it is
  * skipped and costs nothing.
  */
-export async function startListingWorker({ canAccept = () => true, concurrency = Number(process.env.LISTING_WORKER_CONCURRENCY || 6), generate }: { canAccept?: () => boolean; concurrency?: number; generate?: Parameters<typeof executeImage>[1] } = {}) {
+export async function startListingWorker({ canAccept = () => true, concurrency = Number(process.env.LISTING_WORKER_CONCURRENCY || 6), generate, upscale }: { canAccept?: () => boolean; concurrency?: number; generate?: Parameters<typeof executeImage>[1]; upscale?: Upscale } = {}) {
   let closed = false, ticking = false;
   const running = new Set<Promise<void>>(), owner = randomUUID();
   const heartbeat = () => db().query('INSERT INTO listing_workers(id) VALUES($1) ON CONFLICT(id) DO UPDATE SET heartbeat_at=now()', [owner]);
@@ -158,7 +158,7 @@ export async function startListingWorker({ canAccept = () => true, concurrency =
   });
   const run = (job: Claimed) => {
     const beat = setInterval(() => { void db().query(`UPDATE listing_jobs SET lease_until=now()+interval '3 minutes' WHERE id=$1 AND owner=$2 AND status='running'`, [job.id, owner]).catch(() => {}); }, 15000);
-    const task = (job.step === 'plan' ? executePlan(job) : executeImage(job, generate))
+    const task = (job.step === 'plan' ? executePlan(job) : executeImage(job, generate, upscale))
       .catch(error => console.error('[listing-worker]', error instanceof Error ? error.message : 'error'))
       .finally(() => { clearInterval(beat); running.delete(task); });
     running.add(task);

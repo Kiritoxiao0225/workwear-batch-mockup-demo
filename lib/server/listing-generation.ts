@@ -16,6 +16,7 @@ import { countsSchema, layoutById, rolesFor, type MainRole } from '../listing/la
 import { mainPrompt, productPrompt, skuPrompt, type Color, type MainSlot } from './listing-prompts';
 import { generateListingImage, LISTING_IMAGE_MODEL, type ImageCall } from './listing-provider';
 import { latestOutputs, storeOutput, type Review, type StoredPlan } from './listing-store';
+import { upscaleListingImage } from './listing-upscale';
 import type { Tenant } from './tenant-scope';
 
 type Stored = StoredPlan & { images: { label: string; assetId: string }[] };
@@ -133,11 +134,12 @@ export async function redoSlot(tenant: Tenant, user: string, projectId: string, 
 
 type ImageJob = { id: string; tenant_id: string; project_id: string; run_id: string; slot: string; input: JobInput };
 type Generate = (input: Parameters<typeof generateListingImage>[0], hooks: { beforeSubmit: () => Promise<void>; receipt: (id: string) => Promise<void> }) => Promise<ImageCall>;
+export type Upscale = typeof upscaleListingImage;
 
 async function fileOf(fileId: string) { return (await readCatalogFile(fileId)).bytes; }
 
 /** One image: gather the reference images it depends on, call the generator, keep the result. */
-export async function executeImage(job: ImageJob, generate: Generate = (input, hooks) => generateListingImage(input, hooks)) {
+export async function executeImage(job: ImageJob, generate: Generate = (input, hooks) => generateListingImage(input, hooks), upscale: Upscale = upscaleListingImage) {
   const attemptId = randomUUID();
   let submitted = false;
   try {
@@ -172,8 +174,16 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
       },
       receipt: async id => { await db().query('UPDATE listing_attempts SET provider_request_id=$2 WHERE id=$1', [attemptId, id]); },
     });
-    await db().query(`UPDATE listing_attempts SET status='succeeded',receipt=$2,finished_at=now() WHERE id=$1`, [attemptId, { taskId: call.taskId, credits: call.credits, durationMs: call.durationMs }]);
-    const asset = await storeOutput(job.tenant_id, job.project_id, job.slot, job.id, call.bytes);
+    // Main images and the poster go out at the platforms' sizes; the paid 1K image is kept if that fails.
+    let bytes = call.bytes, upscaled: 'mediakit' | 'plain' | 'none' | undefined;
+    if (input.kind === 'main') {
+      try { const up = await upscale(call.bytes, input.slot.kind); bytes = up.bytes; upscaled = up.enhanced ? 'mediakit' : 'plain'; } catch (error) {
+        upscaled = 'none';
+        console.error('[listing] upscale', error instanceof Error ? error.message : error);
+      }
+    }
+    await db().query(`UPDATE listing_attempts SET status='succeeded',receipt=$2,finished_at=now() WHERE id=$1`, [attemptId, { taskId: call.taskId, credits: call.credits, durationMs: call.durationMs, upscaled }]);
+    const asset = await storeOutput(job.tenant_id, job.project_id, job.slot, job.id, bytes);
     await db().query(`UPDATE listing_jobs SET status='succeeded',result_asset=$2,error=NULL,lease_until=NULL,updated_at=now() WHERE id=$1`, [job.id, asset]);
   } catch (error) {
     const message = (error instanceof Error ? error.message : '出图失败').slice(0, 300);
@@ -223,8 +233,9 @@ export async function downloadZip(projectId: string) {
     const o = outputs.get(s.slot); if (!o) continue;
     const [kind, key] = s.slot.split(':');
     const color = colors.find(c => c.sku === key)?.name ?? key;
-    const name = kind === 'product' ? `白底产品图/${color}.png` : kind === 'sku' ? `SKU-${color}.png`
-      : kind === 'poster' ? `${ROLE_FILE.poster}.png` : `${ROLE_FILE[kind]}-${key.padStart(2, '0')}-${s.input.kind === 'main' ? s.input.slot.role : ''}.png`;
+    const ext = o.name.split('.').pop() === 'jpeg' ? 'jpg' : 'png';
+    const name = kind === 'product' ? `白底产品图/${color}.${ext}` : kind === 'sku' ? `SKU-${color}.${ext}`
+      : kind === 'poster' ? `${ROLE_FILE.poster}.${ext}` : `${ROLE_FILE[kind]}-${key.padStart(2, '0')}-${s.input.kind === 'main' ? s.input.slot.role : ''}.${ext}`;
     zip.file(name, await fileOf(o.file_id));
   }
   if (!Object.keys(zip.files).length) throw new CatalogHttpError(409, '还没有出好的图');
