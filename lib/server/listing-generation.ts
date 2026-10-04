@@ -13,23 +13,27 @@ import { CatalogHttpError } from './catalog-auth';
 import { readCatalogFile } from './catalog-files';
 import { currentPrices, holdCredits, microToCents, priceOf, settleHold, type AttemptOutcome, type PriceSnapshot } from './credits';
 import { countsSchema, layoutById, rolesFor, type MainRole } from '../listing/layouts';
-import { mainPrompt, productPrompt, skuPrompt, type Color, type MainSlot } from './listing-prompts';
+import { mainPrompt, productPrompt, skuPrompt, textEditPrompt, type Color, type MainSlot } from './listing-prompts';
 import { generateListingImage, LISTING_IMAGE_MODEL, type ImageCall } from './listing-provider';
-import { latestOutputs, storeOutput, type Review, type StoredPlan } from './listing-store';
+import { latestOutputs, slotWordsSchema, storeOutput, type Review, type StoredPlan } from './listing-store';
 import { upscaleListingImage } from './listing-upscale';
 import type { Tenant } from './tenant-scope';
 
 type Stored = StoredPlan & { images: { label: string; assetId: string }[] };
-/** `note` is the user's extra instruction on a redo. */
+/**
+ * `note` is the user's extra instruction on a redo. `edit` changes only the words of an existing
+ * image (`base`, a listing asset), which is then the only reference.
+ */
+type Words = { title: string; subtitle: string; bullets: string[] };
 export type JobInput = (
   | { kind: 'product'; sku: string }
   | { kind: 'sku'; sku: string; anchor?: string }
-  | { kind: 'main'; slot: MainSlot; skus: string[] }
+  | { kind: 'main'; slot: MainSlot; skus: string[]; edit?: { base: string; from: Words } }
 ) & { note?: string };
 type PlannedJob = { slot: string; step: 'product' | 'image'; input: JobInput; depends: string[]; multi: boolean };
 const db = () => catalogDatabase();
 const runHold = (runId: string) => 'listing:run:' + runId;
-const action = (input: JobInput) => input.kind === 'main' && input.skus.length > 1 ? 'listing_image_multi' as const : 'listing_image' as const;
+const action = (input: JobInput) => input.kind === 'main' && input.skus.length > 1 && !input.edit ? 'listing_image_multi' as const : 'listing_image' as const;
 
 /** The colours after the user's renames, in the plan's order; the first is the main colour. */
 function colorsOf(stored: Stored, review: Partial<Review> | null): (Color & { sku: string })[] {
@@ -58,7 +62,7 @@ export function planJobs(stored: Stored, review: Partial<Review> | null, counts:
       const skus = [...new Set(p.colors.map(name => byName.get(name)?.sku).filter((s): s is string => !!s))].slice(0, 4);
       const used = skus.length ? skus : [first.sku];
       const slot: MainSlot = { kind, n: i + 1, total: planned.length, role: roles[i] ?? '首图', title: words?.title ?? p.title, subtitle: words?.subtitle ?? p.subtitle,
-        bullets: (words?.bullets ?? p.bullets).filter(Boolean).slice(0, 3), scene: p.scene, colors: used.map(s => colors.find(c => c.sku === s)!.name) };
+        bullets: (words?.bullets ?? p.bullets).filter(Boolean).slice(0, 3), scene: words?.scene ?? p.scene, colors: used.map(s => colors.find(c => c.sku === s)!.name) };
       const multi = used.length > 1;
       jobs.push({ slot: `${kind}:${i + 1}`, step: 'image', input: { kind: 'main', slot, skus: used }, depends: multi ? used.map(s => `sku:${s}`) : [`product:${used[0]}`], multi });
     });
@@ -103,8 +107,12 @@ export async function startGeneration(tenant: Tenant, user: string, projectId: s
   });
 }
 
-/** Make one image again (optionally with an extra instruction); earlier versions are kept. */
-export async function redoSlot(tenant: Tenant, user: string, projectId: string, slot: string, note: string) {
+export type RedoChange = { mode?: 'redraw' | 'text'; words?: unknown; base?: string };
+/**
+ * Make one image again; earlier versions are kept. For a main image the user may give new words
+ * and picture (`redraw`), or new words only on the image they are looking at (`text`).
+ */
+export async function redoSlot(tenant: Tenant, user: string, projectId: string, slot: string, note: string, change: RedoChange = {}) {
   const prices = await currentPrices();
   return catalogTransaction(async c => {
     const p = (await c.query(`SELECT status FROM listing_projects WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL FOR UPDATE`, [projectId, tenant.id])).rows[0];
@@ -115,7 +123,24 @@ export async function redoSlot(tenant: Tenant, user: string, projectId: string, 
     if ((await c.query(`SELECT 1 FROM listing_jobs WHERE project_id=$1 AND slot=$2 AND status IN ('queued','running')`, [projectId, slot])).rowCount) {
       throw new CatalogHttpError(409, '这张图正在出，等它出完再重做');
     }
-    const input = { ...last.input, note: note.trim().slice(0, 200) || undefined } as JobInput;
+    let input = { ...last.input, note: note.trim().slice(0, 200) || undefined } as JobInput;
+    if (input.kind === 'main') delete input.edit;
+    if (change.words !== undefined || change.mode === 'text') {
+      if (input.kind !== 'main') throw new CatalogHttpError(400, '只有主图和海报能改内容');
+      const words = slotWordsSchema.parse(change.words);
+      if (change.mode === 'text') {
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(change.base ?? '')) throw new CatalogHttpError(404, '没有这个版本');
+        const base = (await c.query(`SELECT a.id,j.input FROM listing_assets a LEFT JOIN listing_jobs j ON j.id=a.job_id WHERE a.id=$1 AND a.project_id=$2 AND a.slot=$3`, [change.base, projectId, slot])).rows[0];
+        if (!base?.input?.slot) throw new CatalogHttpError(404, '没有这个版本');
+        const from = base.input.slot as MainSlot;
+        // Only the words change; the picture is the base image's.
+        input = { ...input, slot: { ...from, title: words.title, subtitle: words.subtitle, bullets: words.bullets }, edit: { base: base.id, from: { title: from.title, subtitle: from.subtitle, bullets: from.bullets } }, note: undefined };
+      } else input = { ...input, slot: { ...input.slot, title: words.title, subtitle: words.subtitle, bullets: words.bullets, scene: words.scene ?? input.slot.scene } };
+      // The confirm dialog shows what the image now says.
+      const review = ((await c.query('SELECT review FROM listing_projects WHERE id=$1', [projectId])).rows[0].review ?? {}) as Partial<Review>;
+      const { title, subtitle, bullets, scene } = input.slot;
+      await c.query('UPDATE listing_projects SET review=$2 WHERE id=$1', [projectId, { ...review, slots: { ...review.slots, [slot]: { title, subtitle, bullets, scene } } }]);
+    }
     const jobs: PlannedJob[] = [{ slot, step: last.step, input, depends: last.depends, multi: action(input) === 'listing_image_multi' }];
     // Images that were skipped because this one (or one of them) was missing come along.
     const skipped = (await c.query(`SELECT DISTINCT ON (slot) slot,step,input,depends,status,error FROM listing_jobs
@@ -160,6 +185,12 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
     } else if (input.kind === 'sku') {
       prompt = skuPrompt({ layout, color: colorOf(input.sku).name, anchor: input.anchor && colorOf(input.anchor).name, tag: stored.plan.sku.tag, fabric: stored.plan.sku.fabric, garment });
       references = [await output(`product:${input.sku}`), ...(input.anchor ? [await output(`sku:${input.anchor}`)] : [])];
+    } else if (input.edit) {
+      const base = (await db().query('SELECT file_id FROM listing_assets WHERE id=$1 AND project_id=$2', [input.edit.base, job.project_id])).rows[0];
+      if (!base) throw new Error('找不到要改字的那一版图');
+      prompt = textEditPrompt({ kind: input.slot.kind, from: input.edit.from, to: input.slot });
+      references = [await fileOf(base.file_id)];
+      ratio = input.slot.kind;
     } else {
       const multi = input.skus.length > 1;
       prompt = mainPrompt({ layout, slot: input.slot, used: input.skus.map(colorOf), all: colors, fromSku: multi, garment });
@@ -215,12 +246,20 @@ export async function finishRun(runId: string, tenantId: string, projectId: stri
   }
 }
 
-/** Per slot: the newest job's state and the current image, for the page. */
+/**
+ * Per slot: the newest job's state, the current image and every version (oldest first) with the
+ * words and picture it was made from, for the page.
+ */
 export async function slotStates(projectId: string) {
   const jobs = (await db().query(`SELECT DISTINCT ON (slot) slot,status,error,input FROM listing_jobs WHERE project_id=$1 AND slot IS NOT NULL ORDER BY slot, created_at DESC`, [projectId])).rows as { slot: string; status: string; error: string | null; input: JobInput }[];
   const outputs = await latestOutputs(projectId);
-  const versions = new Map(((await db().query(`SELECT slot,count(*)::int n FROM listing_assets WHERE project_id=$1 AND slot IS NOT NULL GROUP BY slot`, [projectId])).rows as { slot: string; n: number }[]).map(r => [r.slot, r.n]));
-  return jobs.map(j => ({ slot: j.slot, status: j.status, error: j.error, input: j.input, image: outputs.get(j.slot)?.id ?? null, versions: versions.get(j.slot) ?? 0 }));
+  const made = (await db().query(`SELECT a.id,a.slot,j.input FROM listing_assets a LEFT JOIN listing_jobs j ON j.id=a.job_id WHERE a.project_id=$1 AND a.slot IS NOT NULL ORDER BY a.created_at`, [projectId])).rows as { id: string; slot: string; input: JobInput | null }[];
+  const wordsOf = (input: JobInput | null) => input?.kind === 'main' ? { title: input.slot.title, subtitle: input.slot.subtitle, bullets: input.slot.bullets, scene: input.slot.scene } : null;
+  return jobs.map(j => {
+    const history = made.filter(v => v.slot === j.slot).map(v => ({ id: v.id, words: wordsOf(v.input) }));
+    const image = outputs.get(j.slot)?.id ?? null;
+    return { slot: j.slot, status: j.status, error: j.error, input: j.input, image, versions: history.length, history, words: history.find(v => v.id === image)?.words ?? wordsOf(j.input) };
+  });
 }
 
 const ROLE_FILE: Record<string, string> = { square: '1比1主图', portrait: '3比4主图', poster: '2比3海报' };

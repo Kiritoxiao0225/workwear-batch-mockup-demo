@@ -3,8 +3,8 @@ import { tenantScope } from '@/lib/server/tenant-scope';
 import { catalogBody, catalogError } from '@/lib/server/catalog-http';
 import { CatalogHttpError } from '@/lib/server/catalog-auth';
 import { assertPageAccess } from '@/lib/server/page-access';
-import { addSourceImage, confirmProject, createProject, deleteProject, listProjects, MAX_SOURCE_BYTES, projectDetail, readListingAsset, saveReview } from '@/lib/server/listing-store';
-import { planPrice, requestPlan } from '@/lib/server/listing-jobs';
+import { addSourceImage, chooseVersion, confirmProject, createProject, deleteProject, listProjects, MAX_SOURCE_BYTES, projectDetail, readListingAsset, saveReview } from '@/lib/server/listing-store';
+import { imagePrices, planPrice, requestPlan } from '@/lib/server/listing-jobs';
 import { downloadZip, estimate, redoSlot, slotStates, startGeneration } from '@/lib/server/listing-generation';
 import { LISTING_LAYOUTS } from '@/lib/listing/layouts';
 
@@ -17,7 +17,7 @@ export async function GET(request: NextRequest, context: Context) {
   try {
     const { tenant, user } = await tenantScope(request), { path } = await context.params;
     await assertPageAccess(user.id, ['/listing-images']);
-    if (path[0] === 'config') return json({ layouts: LISTING_LAYOUTS, planCredits: await planPrice(), exempt: tenant.billingMode === 'exempt' });
+    if (path[0] === 'config') return json({ layouts: LISTING_LAYOUTS, planCredits: await planPrice(), ...await imagePrices(), exempt: tenant.billingMode === 'exempt' });
     if (path[0] === 'projects' && path[1] && path[2] === 'download') {
       await projectDetail(tenant.id, path[1]);
       const zip = await downloadZip(path[1]);
@@ -53,7 +53,14 @@ export async function POST(request: NextRequest, context: Context) {
     if (path[0] === 'projects' && path[2] === 'review') return json(await saveReview(tenant.id, path[1], body));
     if (path[0] === 'projects' && path[2] === 'confirm') return json(await confirmProject(tenant.id, path[1]));
     if (path[0] === 'projects' && path[2] === 'generate') return json(await startGeneration(tenant, user.id, path[1]));
-    if (path[0] === 'projects' && path[2] === 'redo') return json(await redoSlot(tenant, user.id, path[1], String(body.slot ?? ''), String(body.note ?? '')));
+    if (path[0] === 'projects' && path[2] === 'redo') {
+      return json(await redoSlot(tenant, user.id, path[1], String(body.slot ?? ''), String(body.note ?? ''),
+        { mode: body.mode === 'text' ? 'text' : 'redraw', words: body.words, base: typeof body.base === 'string' ? body.base : undefined }));
+    }
+    if (path[0] === 'projects' && path[2] === 'current') {
+      await projectDetail(tenant.id, path[1]);
+      return json(await chooseVersion(tenant.id, path[1], String(body.slot ?? ''), String(body.asset ?? '')));
+    }
     throw new CatalogHttpError(404, '接口不存在');
   } catch (error) { return catalogError(error); }
 }

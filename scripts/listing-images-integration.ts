@@ -105,7 +105,8 @@ try {
   await call(0, `projects/${id}/review`, { roles: { [SKU]: '详情' }, colors: [{ sku: SKU, name: '经典黑' }], points: [{ id: 'P1', text: '三防耐脏' }] });
   await call(1, `projects/${id}/review`, { roles: {} }, 409);
   await call(0, `projects/${id}/confirm`, {}, 409);
-  await call(0, `projects/${id}/review`, { roles: {}, colors: [{ sku: SKU, name: '经典黑' }], points: [] });
+  await call(0, `projects/${id}/review`, { roles: {}, colors: [{ sku: SKU, name: '经典黑' }], slots: { 'square:1': { title: '', subtitle: '', bullets: [] } } }, 400);
+  await call(0, `projects/${id}/review`, { roles: {}, colors: [{ sku: SKU, name: '经典黑' }], points: [], slots: { 'square:1': { title: '轻盈抗造工作服', subtitle: '', bullets: ['三防'], scene: '模特站在雪地里' } } });
   await call(0, `projects/${id}/confirm`, {});
   const confirmed = await (await call(0, 'projects/' + id)).json();
   assert.equal(confirmed.status, 'confirmed'); assert.equal(confirmed.review.colors[0].name, '经典黑');
@@ -133,7 +134,7 @@ try {
   };
   for (const j of jobs) await executeImage(j, fake(j.slot, j.slot === 'square:2'));
   assert.deepEqual(seen.map(s => `${s.slot}:${s.refs}`), [`product:${SKU}:1`, `sku:${SKU}:1`, 'square:1:1', 'square:2:1']);
-  assert.match(seen[1].prompt, /颜色名「经典黑」/); assert.match(seen[2].prompt, /主标题「轻盈抗造工作服」/);
+  assert.match(seen[1].prompt, /颜色名「经典黑」/); assert.match(seen[2].prompt, /主标题「轻盈抗造工作服」/); assert.match(seen[2].prompt, /画面.*模特站在雪地里/);
   const runHold = (await db().query("SELECT state,settled_cents FROM credit_holds WHERE id=$1", ['listing:run:' + jobs[0].run_id])).rows[0];
   assert.deepEqual([runHold.state, Number(runHold.settled_cents)], ['settled', 3 * 44]);
   assert.equal(beforeRun - await balance(tenants[0]), 3 * 44);
@@ -160,6 +161,31 @@ try {
   assert.equal((await db().query("SELECT a.receipt->>'upscaled' u FROM listing_attempts a JOIN listing_jobs j ON j.id=a.job_id WHERE j.id=$1", [again.id])).rows[0].u, 'plain');
   pass('放大：火山不可用时主图仍按普通放大存成 1440×1440 JPG，回执记下放大方式');
   pass('重做：别人重做不了、出图中不能重复重做；补充要求写进提示词；旧版本保留，每次重做只扣一张');
+
+  // ---- 出图后改内容：整张重画、只改字、切回旧版本 ----
+  const queuedJob = async (slot: string) => (await db().query("SELECT id,tenant_id,project_id,run_id,slot,input FROM listing_jobs WHERE project_id=$1 AND slot=$2 AND status='queued'", [id, slot])).rows[0] as ImgJob;
+  const slotOf = async (slot: string) => (await (await call(0, 'projects/' + id)).json()).slots.find((s: { slot: string }) => s.slot === slot);
+  let s1 = await slotOf('square:1');
+  assert.equal(s1.history.length, 2); assert.equal(s1.image, s1.history[1].id); assert.equal(s1.words.scene, '模特站在雪地里');
+  await call(0, `projects/${id}/redo`, { slot: 'square:1', mode: 'redraw', words: { title: '新标题', subtitle: '', bullets: ['耐磨'], scene: '工地上搬货' }, note: '' });
+  await executeImage(await queuedJob('square:1'), fake('square:1'));
+  assert.match(seen.at(-1)!.prompt, /主标题「新标题」/); assert.match(seen.at(-1)!.prompt, /工地上搬货/); assert.equal(seen.at(-1)!.refs, 1);
+  assert.equal((await (await call(0, 'projects/' + id)).json()).review.slots['square:1'].title, '新标题');
+  await call(0, `projects/${id}/redo`, { slot: 'square:1', mode: 'text', words: { title: 'x', subtitle: '', bullets: [] }, base: randomUUID() }, 404);
+  await call(0, `projects/${id}/redo`, { slot: `sku:${SKU}`, mode: 'redraw', words: { title: 'x', subtitle: '', bullets: [] } }, 400);
+  await call(0, `projects/${id}/redo`, { slot: 'square:1', mode: 'text', words: { title: '只改字', subtitle: '', bullets: ['耐磨'] }, base: s1.history[0].id });
+  const textJob = await queuedJob('square:1');
+  assert.equal((textJob.input as unknown as { edit: { base: string } }).edit.base, s1.history[0].id);
+  await executeImage(textJob, fake('square:1'));
+  assert.match(seen.at(-1)!.prompt, /只改文字/); assert.match(seen.at(-1)!.prompt, /主标题「轻盈抗造工作服」改成「只改字」/); assert.equal(seen.at(-1)!.refs, 1);
+  assert.equal(beforeRun - await balance(tenants[0]), 7 * 44);
+  s1 = await slotOf('square:1');
+  assert.equal(s1.history.length, 4); assert.equal(s1.image, s1.history[3].id); assert.equal(s1.words.title, '只改字'); assert.equal(s1.words.scene, '模特站在雪地里');
+  await call(1, `projects/${id}/current`, { slot: 'square:1', asset: s1.history[0].id }, 404);
+  await call(0, `projects/${id}/current`, { slot: 'square:1', asset: s1.history[2].id });
+  s1 = await slotOf('square:1');
+  assert.equal(s1.image, s1.history[2].id); assert.equal(s1.words.title, '新标题');
+  pass('改内容：按新字和新画面整张重画；只改字以选中的旧版为唯一参考图、单张价；可以切回任意旧版本，别人切不了');
 
   await call(1, `projects/${id}/download`, undefined, 404);
   const zip = await JSZip.loadAsync(Buffer.from(await (await call(0, `projects/${id}/download`)).arrayBuffer()));

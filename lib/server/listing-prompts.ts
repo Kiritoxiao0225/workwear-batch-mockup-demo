@@ -64,3 +64,25 @@ ${slot.scene ? `- 画面（要用画面直观演示卖点）：${slot.scene}\n` 
 
 ${NO_EXTRA}`;
 }
+
+type Words = { title: string; subtitle: string; bullets: string[] };
+/**
+ * Change only the words of a finished main image: the image itself is the reference, so the
+ * people, scene and layout stay; the text keeps its place and style.
+ */
+export function textEditPrompt(input: { kind: MainSlot['kind']; from: Words; to: Words }) {
+  const { from, to } = input;
+  const line = (label: string, a: string, b: string) => a === b ? (b ? `- ${label}「${b}」不变` : '') : !a ? `- 新增${label}「${b}」，放在和整体排版协调的位置` : !b ? `- 去掉${label}「${a}」，那里改成画面或留空` : `- ${label}「${a}」改成「${b}」`;
+  const bullets = from.bullets.join('、') === to.bullets.join('、') ? (to.bullets.length ? `- 标签「${to.bullets.join('」「')}」不变` : '')
+    : `- 标签${from.bullets.length ? `「${from.bullets.join('」「')}」` : '（原来没有）'}改成${to.bullets.length ? `「${to.bullets.join('」「')}」` : '没有标签，原来的标签位置改成画面'}`;
+  const words = [`主标题「${to.title}」`, to.subtitle && `副标题「${to.subtitle}」`, ...to.bullets.map(b => `标签「${b}」`)].filter(Boolean);
+  return `参考图是一张已经做好的淘宝服装主图，${RATIO_NAME[input.kind]}。在这张图上只改文字，其他一律不动：
+- 人物、衣服、姿势、表情、背景、光线、构图、配色、图标和装饰，全部和参考图一模一样。
+- 文字的位置、大小、字体风格、颜色和排版照参考图，只换内容。
+
+文字这样改：
+${[line('主标题', from.title, to.title), line('副标题', from.subtitle, to.subtitle), bullets].filter(Boolean).join('\n')}
+
+改完后画面上的文字只有：${words.join('，')}。
+${NO_EXTRA}`;
+}

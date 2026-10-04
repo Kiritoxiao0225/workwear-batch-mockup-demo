@@ -106,13 +106,18 @@ export async function projectDetail(tenant: string, id: string) {
   return { ...p, images };
 }
 
+/** What one main image says and shows; the user can change all of it. No scene: keep the AI's. */
+export const slotWordsSchema = z.object({
+  title: z.string().trim().min(1, '大标题不能空').max(20), subtitle: z.string().trim().max(30).default(''),
+  bullets: z.array(z.string().trim().max(16)).max(3).default([]).transform(b => b.filter(Boolean)),
+  scene: z.string().trim().max(400).optional(),
+});
+export type SlotWords = z.infer<typeof slotWordsSchema>;
 const reviewSchema = z.object({
   roles: z.record(z.string(), z.enum(ASSET_ROLES)).default({}),
   colors: z.array(z.object({ sku: z.string(), name: z.string().trim().min(1).max(20) })).default([]),
-  // The words printed on each image, keyed by slot ("square:1", "portrait:2", "poster:1").
-  slots: z.record(z.string().regex(/^(square|portrait|poster):\d$/), z.object({
-    title: z.string().trim().min(1).max(20), subtitle: z.string().trim().max(30).default(''), bullets: z.array(z.string().trim().max(16)).max(3).default([]),
-  })).default({}),
+  // Each main image's words and picture, keyed by slot ("square:1", "portrait:2", "poster:1").
+  slots: z.record(z.string().regex(/^(square|portrait|poster):\d$/), slotWordsSchema).default({}),
 });
 export type Review = z.infer<typeof reviewSchema>;
 
@@ -170,10 +175,19 @@ export async function storeOutput(tenant: string, projectId: string, slot: strin
   return asset;
 }
 
-/** Newest image per slot of a project. */
+/** Current image per slot: the version the user went back to, unless a newer one was made since. */
 export async function latestOutputs(projectId: string) {
   const rows = (await catalogDatabase().query(
     `SELECT DISTINCT ON (slot) id,slot,file_id,name,width,height,created_at FROM listing_assets
-      WHERE project_id=$1 AND slot IS NOT NULL ORDER BY slot, created_at DESC`, [projectId])).rows as { id: string; slot: string; file_id: string; name: string; width: number; height: number }[];
+      WHERE project_id=$1 AND slot IS NOT NULL ORDER BY slot, GREATEST(created_at, COALESCE(chosen_at, created_at)) DESC`, [projectId])).rows as { id: string; slot: string; file_id: string; name: string; width: number; height: number }[];
   return new Map(rows.map(row => [row.slot, row]));
+}
+
+/** Go back to an earlier version of a main image; downloads and the page use it from now on. */
+export async function chooseVersion(tenant: string, projectId: string, slot: string, assetId: string) {
+  z.uuid().parse(assetId);
+  if (!/^(square|portrait|poster):\d$/.test(slot)) throw new CatalogHttpError(400, '只有主图和海报能换版本');
+  const updated = await catalogDatabase().query(`UPDATE listing_assets SET chosen_at=clock_timestamp() WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND slot=$4 RETURNING id`, [assetId, tenant, projectId, slot]);
+  if (!updated.rowCount) throw new CatalogHttpError(404, '没有这个版本');
+  return { ok: true };
 }

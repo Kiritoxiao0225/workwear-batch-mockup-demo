@@ -19,6 +19,12 @@ import type { Tenant } from './tenant-scope';
 const holdId = (jobId: string) => 'listing:' + jobId;
 const db = () => catalogDatabase();
 
+/** Credits for one image and one multi-colour image, for the redo buttons. */
+export async function imagePrices() {
+  const prices = await currentPrices();
+  return { imageCredits: microToCents(priceOf(prices, 'listing_image').userMicroCents), multiCredits: microToCents(priceOf(prices, 'listing_image_multi').userMicroCents) };
+}
+
 /** Credits the planning step will hold, for the page to show before the user starts. */
 export async function planPrice() {
   return microToCents(priceOf(await currentPrices(), 'listing_plan').userMicroCents);
