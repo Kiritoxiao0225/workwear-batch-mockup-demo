@@ -21,6 +21,7 @@ const { catalogDatabase: db, closeCatalogDatabase, migrateCatalog } = await impo
 const { createCatalogUser, loginCatalog } = await import('../lib/server/catalog-auth');
 const routes = await import('../app/api/listing/[...path]/route');
 const { executePlan, startListingWorker } = await import('../lib/server/listing-jobs');
+const { clearOldSources } = await import('../lib/server/listing-store');
 const { executeImage } = await import('../lib/server/listing-generation');
 const JSZip = (await import('jszip')).default;
 let checks = 0; const pass = (s: string) => { checks++; console.log('PASS', s); };
@@ -275,12 +276,59 @@ try {
   const garbled = await run(async (_r, hooks) => { await hooks.beforeSubmit(); return { content: '{"assets":[]}', model: 'm', requestId: 'r', usage: null, durationMs: 1 }; });
   assert.equal(garbled.hold, 'settled'); assert.equal(garbled.project.status, 'failed'); assert.match(garbled.project.error, /已扣费/);
   pass('模型返回不完整：调用已发生按实扣费，商品标为失败可重试');
+  const refused = await run(async (_r, hooks) => { await hooks.beforeSubmit(); throw Object.assign(new Error('分析接口 HTTP 400'), { definite: true }); });
+  assert.equal(refused.hold, 'released'); assert.equal(refused.project.status, 'failed'); assert.match(refused.project.error, /接口拒绝.*未扣费/);
+  pass('接口直接拒收（4xx）：没有产生费用，冻结的积分退回，可以重新分析');
 
+  // ---- 大款：拼起来给 AI 看，几乎一样的图只看一次 ----
+  const bigId = randomUUID();
+  await call(0, 'projects', { id: bigId, name: '大款', layout: 'warm-impact', counts: { square: 1, portrait: 0, poster: 0 } });
+  const solid = (r: number, g: number, b: number) => sharp({ create: { width: 300, height: 300, channels: 3, background: { r, g, b } } }).png().toBuffer();
+  for (let i = 0; i < 60; i++) await upload(0, bigId, await solid(i * 4, 100, 240 - i * 3), `模特图/IMG_${i + 1}.png`);
+  await upload(0, bigId, await solid(1, 100, 240), '模特图/IMG_1_连拍.png');
+  await call(0, `projects/${bigId}/plan`, {});
+  const bigJob = (await db().query("SELECT id,tenant_id,project_id,step FROM listing_jobs WHERE project_id=$1", [bigId])).rows[0] as Job;
+  let texts = '';
+  await executePlan(bigJob, async (request, hooks) => {
+    texts = ((request as { messages: { content: unknown }[] }).messages[1].content as { type: string; text?: string }[]).filter(c => c.type === 'text').map(c => c.text).join('\n');
+    const sent = [...new Set(texts.match(/M\d+/g))];
+    await hooks.beforeSubmit();
+    return { content: JSON.stringify({ assets: sent.map((m, i) => ({ id: m, role: i === 0 ? 'SKU' : '主图', color: i === 0 ? '黑色' : '' })),
+      product: { name: '大款', garment: ['立领'], colors: [{ name: '黑色', hex: '#111', sku: sent[0] }] }, sellingPoints: [],
+      main: { square: [{ n: 1, role: '首图', title: '大款首图', colors: ['黑色'] }] }, sku: { tag: '', items: [] } }), model: 'm', requestId: 'r', usage: null, durationMs: 1 };
+  });
+  const bigPlan = await (await call(0, 'projects/' + bigId)).json();
+  assert.equal(bigPlan.status, 'review');
+  assert.match(texts, /【拼图：4 张 1:1 素材/); assert.ok((texts.match(/【/g) ?? []).length <= 48);
+  assert.equal(bigPlan.plan.plan.assets.length, 61);
+  const twin = bigPlan.plan.plan.assets.find((a: { reason: string }) => a.reason.startsWith('相似图'));
+  assert.equal(bigPlan.images.find((i: { label: string }) => i.label === twin.id).path, '模特图/IMG_1_连拍.png'); assert.equal(twin.role, '不用');
+  pass('大款：61 张中颜色相近的照片都保留，按需拼成宫格不超过 50 张图，每张都有分类；完全相同的副本只看一次，标为相似图可手动改回');
+
+  // ---- 存储：出图 30 天后清掉原始素材；删除一款退还空间（别的款还在用的文件照样计入） ----
+  const usage = async () => Number((await db().query('SELECT bytes_used FROM tenant_usage WHERE tenant_id=$1', [tenants[0]])).rows[0].bytes_used);
+  const refs = async (fileId: string) => (await db().query("SELECT 1 FROM tenant_file_refs WHERE tenant_id=$1 AND file_id=$2", [tenants[0], fileId])).rowCount;
+  const fileOf = async (project: string, path: string) => (await db().query('SELECT file_id FROM listing_assets WHERE project_id=$1 AND rel_path=$2', [project, path])).rows[0].file_id as string;
+  const skuFile = await fileOf(second, 'SKU图/黑色.jpg'), sourceMain = await fileOf(id, '1比1主图/主图_1.jpg');
+  await db().query("UPDATE listing_projects SET updated_at=now()-interval '29 days' WHERE id=$1", [second]);
+  assert.equal(await clearOldSources(), 0);
+  await db().query("UPDATE listing_projects SET updated_at=now()-interval '31 days' WHERE id=$1", [second]);
+  const outputsBefore = (await db().query("SELECT count(*)::int n FROM listing_assets WHERE project_id=$1 AND kind<>'source'", [second])).rows[0].n;
+  assert.equal(await clearOldSources(), 1);
+  assert.equal((await db().query("SELECT count(*)::int n FROM listing_assets WHERE project_id=$1 AND kind='source'", [second])).rows[0].n, 0);
+  assert.equal((await db().query("SELECT count(*)::int n FROM listing_assets WHERE project_id=$1 AND kind<>'source'", [second])).rows[0].n, outputsBefore);
+  assert.ok((await (await call(0, 'projects')).json()).find((p: { id: string }) => p.id === second).sources_cleared_at);
+  assert.equal(await refs(skuFile), 1);
+  assert.equal(await clearOldSources(), 0);
+  pass('清理：最后一次出图满 30 天才清原始素材，生成的图都在；同一张图别的款还在用就照样计入空间');
+  const usedBefore = await usage();
   await call(1, 'projects/' + id, undefined, 404, 'DELETE');
-  await call(0, 'projects/' + id, undefined, 200, 'DELETE');
+  const deleted = await (await call(0, 'projects/' + id, undefined, 200, 'DELETE')).json();
+  assert.ok(deleted.freedBytes > 0); assert.equal(usedBefore - await usage(), deleted.freedBytes);
+  assert.equal(await refs(skuFile), 0); assert.equal(await refs(sourceMain), 1);
   await call(0, 'projects/' + id, undefined, 404);
   assert.ok(!(await (await call(0, 'projects')).json()).some((p: { id: string }) => p.id === id));
-  pass('删除：别人删不了，删除后列表和详情都看不到');
+  pass('删除：别人删不了，删除后列表和详情都看不到；退还空间，别的款还在用的文件照样计入');
   console.log(`COMPLETE ${checks} checks; no external provider called`);
 } finally {
   await closeCatalogDatabase(); await database.stop().catch(() => {}); await rm(root, { recursive: true, force: true });

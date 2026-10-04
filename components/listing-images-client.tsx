@@ -5,7 +5,7 @@ import { AppHeader } from "./app-header";
 import { ASSET_ROLES, DEFAULT_COUNTS, LISTING_LAYOUTS, type AssetRole, type ListingCounts } from "@/lib/listing/layouts";
 import "./listing-images.css";
 
-type Summary = { id: string; name: string; layout: string; counts: ListingCounts; status: "uploading" | "planning" | "review" | "confirmed" | "failed" | "generating" | "done"; error: string | null; images: number; cover: string | null; slots: number; made: number; broken: number };
+type Summary = { id: string; name: string; layout: string; counts: ListingCounts; status: "uploading" | "planning" | "review" | "confirmed" | "failed" | "generating" | "done"; error: string | null; images: number; cover: string | null; slots: number; made: number; broken: number; updated_at: string; sources_cleared_at: string | null };
 type Slot = { n: number; role: string; title: string; subtitle: string; bullets: string[]; scene: string };
 type Plan = {
   plan: {
@@ -275,7 +275,9 @@ export function ListingImagesClient() {
                   <div className="lp-pb">
                     {!d ? <span className="lp-muted">正在读取…</span> : (<>
                       {d.slots.length > 0 && <Results detail={d} onEdit={s => setEditing({ project: p.id, slot: s.slot })} onRedo={(slot, label) => void redo(p.id, slot, label)} />}
-                      {d.slots.length > 0 && <div className="lp-lane-label">原始素材 {d.images.length} 张</div>}
+                      {d.slots.length > 0 && <div className="lp-lane-label">原始素材 {d.images.length} 张
+                        <span className="lp-keep">{p.sources_cleared_at ? `已在 ${dayOf(p.sources_cleared_at)} 清理（最后一次出图 30 天后），生成的图不受影响`
+                          : p.status === "done" ? `会在 ${dayOf(new Date(Date.parse(p.updated_at) + 30 * 86400_000).toISOString())} 自动清理（最后一次出图 30 天后），生成的图不受影响` : ""}</span></div>}
                       <div className="lp-tiles">{d.images.map(img => (
                         <a key={img.id} className="lp-tile" href={img.url} target="_blank" rel="noreferrer" title={img.path}>
                           <img src={img.url} alt="" loading="lazy" />
@@ -303,6 +305,7 @@ export function ListingImagesClient() {
 const KIND_LABEL: Record<string, string> = { square: "1:1 主图", portrait: "3:4 主图", poster: "2:3 海报", sku: "SKU 图", product: "白底产品图" };
 const SHAPE: Record<string, string> = { square: "1 / 1", portrait: "3 / 4", poster: "2 / 3", sku: "1 / 1", product: "1 / 1" };
 const MAIN = /^(square|portrait|poster):/;
+const dayOf = (iso: string) => { const d = new Date(iso); return `${d.getMonth() + 1} 月 ${d.getDate()} 日`; };
 const numOf = (slot: string) => slot.startsWith("poster") ? "海报" : `第 ${slot.split(":")[1]} 张`;
 
 /** One main image's content as the user edits it; labels follow the page wording (小字 = subtitle, 标签 = bullets). */

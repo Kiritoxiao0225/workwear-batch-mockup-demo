@@ -7,12 +7,14 @@ import { z } from 'zod';
 import { ASSET_ROLES, MAIN_ROLES, rolesFor, type ListingCounts, type ListingLayout } from '../listing/layouts';
 
 export type PlanImage = { id: string; name: string; folder: string; shape: '1:1' | '3:4' | '其他'; width: number; height: number; dataUrl: string };
+/** One picture sent to the model: a single image, or several packed together (see listing-plan-views). */
+type PlanView = { text: string; dataUrl: string };
 
 const SYSTEM = `你是淘宝服装类目的资深电商视觉策划。你会收到同一款商品的全部素材图，每张图前面标了编号。
 你的任务：先给每张素材分类，再读懂这件商品，为它策划一套主图和 SKU 图的文案。只输出 JSON。
 
 规则：
-0. 素材分类（assets）：每张图都要分类，一张不漏。role 只能是：主图（带模特或场景的商品展示图，含方图和竖图）、SKU（单个颜色的商品图，用来区分颜色款）、详情（详情页切图：卖点说明、面料、细节、参数等）、尺码表（尺码数字表格）、不用（二维码、客服/好评/聊天截图、店铺公告、与本款无关的其他商品、看不清的图）。所在文件夹名只是提示，可能放错，一律以图的内容为准。区分主图和详情先看形状（每张图前面写了程序量出来的形状）：淘宝主图只有 1:1 和 3:4 两种，所以形状是 1:1 或 3:4 的图判为主图或 SKU，哪怕画面是细节特写拼排、写满卖点；形状是“其他”的图一律不是主图也不是 SKU（多半是详情切片，即使画面像海报）。只有空白图、二维码、平台价格说明、与本款无关的图判为不用；尺码数字表格判为尺码表。SKU 图写出 color（颜色名）；同一颜色有多张 SKU 图时选最清楚的一张放进 product.colors，其余标详情或不用。reason 用一句话说明判断依据。标为“不用”的图不得出现在 evidence、refs、sku 里。
+0. 素材分类（assets）：每张图都要分类，一张不漏。role 只能是：主图（带模特或场景的商品展示图，含方图和竖图）、SKU（单个颜色的商品图，用来区分颜色款）、详情（详情页切图：卖点说明、面料、细节、参数等）、尺码表（尺码数字表格）、不用（二维码、客服/好评/聊天截图、店铺公告、与本款无关的其他商品、看不清的图）。所在文件夹名只是提示，可能放错，一律以图的内容为准。区分主图和详情先看形状（每张图前面写了程序量出来的形状）：淘宝主图只有 1:1 和 3:4 两种，所以形状是 1:1 或 3:4 的图判为主图或 SKU，哪怕画面是细节特写拼排、写满卖点；形状是“其他”的图一律不是主图也不是 SKU（多半是详情切片，即使画面像海报）。只有空白图、二维码、平台价格说明、与本款无关的图判为不用；尺码数字表格判为尺码表。SKU 图写出 color（颜色名）；同一颜色有多张 SKU 图时选最清楚的一张放进 product.colors，其余标详情或不用。reason 用一句话说明判断依据。标为“不用”的图不得出现在 evidence、refs、sku 里。素材多时会拼在一起发给你：拼图里的每一格、长图里的每一段都是一张独立素材，按说明里的顺序对应编号，同样要逐张分类、逐张写进 assets，引用时写那一格或那一段自己的编号。
 1. 事实只能来自素材：面料、功能、参数、服务都必须在素材里出现过，并在 evidence 里写出处编号；看不清的不要猜，不要编造数据、认证和销量。原主图上的大字主打卖点（如首图标题和标签）必须进卖点库，并排在最前面优先使用。
 2. 文案全部重新写：意思可以沿用，但不能照抄素材原句。主标题不超过 10 个字，副标题不超过 16 个字，要点每条不超过 10 个字。
 3. 素材可能来自别家店铺：不要写任何品牌名、店铺名，也不要描述或保留任何 logo、水印。
@@ -37,7 +39,7 @@ const SYSTEM = `你是淘宝服装类目的资深电商视觉策划。你会收�
 
 const roleText = (count: number) => rolesFor(count).map((r, i) => `${i + 1}. ${r}：${MAIN_ROLES[r]}`).join('\n');
 
-export function planRequest(input: { images: PlanImage[]; counts: ListingCounts; layout: ListingLayout; model: string }) {
+export function planRequest(input: { views: PlanView[]; counts: ListingCounts; layout: ListingLayout; model: string }) {
   const { counts, layout } = input;
   const task = `这一款用「${layout.name}」版式：${layout.style}
 
@@ -49,10 +51,7 @@ ${counts.poster ? '- 2:3 首页海报 1 张' : '- 不出 2:3 海报（main.poste
 
 下面是全部素材图。`;
   const content: Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }> = [{ type: 'text', text: task }];
-  for (const image of input.images) {
-    content.push({ type: 'text', text: `【${image.id}】形状：${image.shape}（${image.width}×${image.height}），所在文件夹：${image.folder || '（根目录）'}，文件名：${image.name}` },
-      { type: 'image_url', image_url: { url: image.dataUrl } });
-  }
+  for (const view of input.views) content.push({ type: 'text', text: view.text }, { type: 'image_url', image_url: { url: view.dataUrl } });
   return { model: input.model, reasoning_effort: 'low', max_completion_tokens: 16000, response_format: { type: 'json_object' }, stream: false,
     messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content }] };
 }
@@ -105,4 +104,10 @@ export function parsePlan(content: string, images: Pick<PlanImage, 'id' | 'shape
     if (slot.colors.length > 4) problems.push(`第 ${slot.n} 张图用了 ${slot.colors.length} 种颜色，最多 4 种`);
   }
   return { plan, corrected, problems };
+}
+
+/** Images left out as near-duplicates are listed too, as unused, so the user can still pick them. */
+export function addDuplicates(parsed: ReturnType<typeof parsePlan>, duplicates: Map<string, string>) {
+  for (const [id, twin] of duplicates) parsed.plan.assets.push({ id, role: '不用', color: '', reason: `相似图，已跳过（和 ${twin} 几乎一样）` });
+  return parsed;
 }

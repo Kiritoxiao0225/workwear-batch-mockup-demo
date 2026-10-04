@@ -233,7 +233,7 @@ try {
   check(created.tenant.workspace !== 'main', '新租户绝不落在交付工作区');
   check(created.tenant.plan === 'free' && created.tenant.billingMode === 'charge', '新租户为免费计费档');
   check(created.tenant.styleQuota === FREE_STYLE_QUOTA, `免费款式配额 ${FREE_STYLE_QUOTA}`);
-  check(created.tenant.storageQuotaBytes === FREE_STORAGE_BYTES, '免费存储配额 0.5 GiB');
+  check(created.tenant.storageQuotaBytes === FREE_STORAGE_BYTES, '免费存储配额 2 GiB');
   const freshUsage = await db.query('SELECT 1 FROM tenant_usage WHERE tenant_id=$1', [created.tenant.id]);
   check(freshUsage.rowCount === 1, '建号事务同时创建用量记录，否则首次上传必失败');
   const noPassword = await db.query('SELECT password_hash FROM users WHERE id=$1', [signedIn.user.id]);

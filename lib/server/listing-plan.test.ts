@@ -53,7 +53,7 @@ describe('listing plan', () => {
   it('asks only for the images the user chose, in buying order', () => {
     expect(rolesFor(3)).toEqual(['首图', '功能', '收口']);
     expect(rolesFor(0)).toEqual([]);
-    const request = planRequest({ images: [{ id: 'M1', name: 'a.jpg', folder: '', shape: '1:1', width: 800, height: 800, dataUrl: 'data:image/jpeg;base64,' }],
+    const request = planRequest({ views: [{ text: '【M1】形状：1:1', dataUrl: 'data:image/jpeg;base64,' }],
       counts: { square: 2, portrait: 0, poster: 0 }, layout: LISTING_LAYOUTS[0], model: 'gpt-6.1-sol' });
     const task = (request.messages[1].content as { type: string; text?: string }[])[0].text!;
     expect(task).toContain('1:1 主图 2 张');

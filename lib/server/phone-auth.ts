@@ -10,7 +10,7 @@ import {
 type Client = { query: (text: string, values?: unknown[]) => Promise<{ rowCount: number | null; rows: Record<string, unknown>[] }> };
 
 export const FREE_STYLE_QUOTA = 5;
-export const FREE_STORAGE_BYTES = 536_870_912; // 0.5 GiB
+export const FREE_STORAGE_BYTES = 2_147_483_648; // 2 GiB
 
 const maskedName = (phone: string) => `${phone.slice(0, 3)}****${phone.slice(7)}`;
 // RFC 2606 reserves `.invalid`, so a placeholder can never be delivered to by accident.

@@ -179,7 +179,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
     if (input.kind === 'product') {
       const assetId = stored.images.find(i => i.label === input.sku)?.assetId;
       const source = assetId && (await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [assetId])).rows[0];
-      if (!source) throw new Error('找不到这个颜色的 SKU 原图');
+      if (!source) throw new Error('找不到这个颜色的 SKU 原图（原始素材可能已在最后一次出图 30 天后清理）');
       prompt = productPrompt({ color: colorOf(input.sku).name, garment });
       references = [await fileOf(source.file_id)];
     } else if (input.kind === 'sku') {

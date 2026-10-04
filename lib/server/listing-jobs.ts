@@ -4,15 +4,15 @@
  */
 import { randomUUID } from 'node:crypto';
 import { posix } from 'node:path';
-import sharp from 'sharp';
 import { catalogDatabase, catalogTransaction } from './catalog-database';
 import { CatalogHttpError } from './catalog-auth';
 import { readCatalogFile } from './catalog-files';
 import { currentPrices, holdCredits, microToCents, priceOf, releaseHold, settleHold } from './credits';
 import { layoutById, countsSchema } from '../listing/layouts';
-import { parsePlan, planRequest, type PlanImage } from './listing-plan';
+import { addDuplicates, parsePlan, planRequest } from './listing-plan';
+import { planViews, type PlanSource } from './listing-plan-views';
 import { assertListingProviderConfigured, callPlanModel, LISTING_PLAN_MODEL, type PlanCall } from './listing-provider';
-import { sourceImages, type StoredPlan } from './listing-store';
+import { clearOldSources, sourceImages, type StoredPlan } from './listing-store';
 import { executeImage, failBlocked, finishRun, type JobInput, type Upscale } from './listing-generation';
 import type { Tenant } from './tenant-scope';
 
@@ -57,24 +57,14 @@ export async function requestPlan(tenant: Tenant, user: string, projectId: strin
 type JobRow = { id: string; tenant_id: string; project_id: string; step: string };
 type Provider = (request: object, hooks: { beforeSubmit: () => Promise<void>; receipt: (id: string) => Promise<void> }) => Promise<PlanCall>;
 
-/** Above this many images, photos go to the model smaller so the planning cost stays near that of 40. */
-export const PLAN_FULL_SIZE_IMAGES = 40;
-/**
- * Planning images go to the model at most 1024 px on the long side. In a large set, 1:1 and 3:4
- * photos go at 512 px (enough for role and colour); detail slices and posters, which carry the
- * selling points as text, stay at 1024.
- */
-export const planImageSide = (count: number, shape: string) => count > PLAN_FULL_SIZE_IMAGES && shape !== '其他' ? 512 : 1024;
-async function planImages(projectId: string): Promise<{ images: PlanImage[]; map: { label: string; assetId: string }[] }> {
+/** Every source image of the product, read once; the planning call sees them packed (see listing-plan-views). */
+async function planSources(projectId: string): Promise<{ sources: PlanSource[]; map: { label: string; assetId: string }[] }> {
   const rows = await sourceImages(projectId);
-  const images = await Promise.all(rows.map(async row => {
-    const file = await readCatalogFile(row.file_id), side = planImageSide(rows.length, row.shape);
-    const jpeg = await sharp(file.bytes, { limitInputPixels: 60_000_000 }).rotate().resize(side, side, { fit: 'inside' }).jpeg({ quality: 80 }).toBuffer();
+  const sources = await Promise.all(rows.map(async row => {
     const folder = posix.dirname(row.rel_path);
-    return { id: row.label, name: row.name, folder: folder === '.' ? '' : folder, shape: row.shape, width: row.width, height: row.height,
-      dataUrl: `data:image/jpeg;base64,${jpeg.toString('base64')}` };
+    return { id: row.label, name: row.name, folder: folder === '.' ? '' : folder, shape: row.shape, width: row.width, height: row.height, bytes: (await readCatalogFile(row.file_id)).bytes };
   }));
-  return { images, map: rows.map(row => ({ label: row.label, assetId: row.id })) };
+  return { sources, map: rows.map(row => ({ label: row.label, assetId: row.id })) };
 }
 
 export async function executePlan(job: JobRow, provider: Provider = (request, hooks) => callPlanModel(request, hooks)) {
@@ -90,8 +80,9 @@ export async function executePlan(job: JobRow, provider: Provider = (request, ho
     const project = (await db().query('SELECT layout,counts FROM listing_projects WHERE id=$1', [job.project_id])).rows[0];
     const layout = layoutById(project.layout);
     if (!layout) throw new Error('版式不存在');
-    const { images, map } = await planImages(job.project_id);
-    const request = planRequest({ images, counts: countsSchema.parse(project.counts), layout, model });
+    const { sources, map } = await planSources(job.project_id);
+    const { views, duplicates } = await planViews(sources);
+    const request = planRequest({ views, counts: countsSchema.parse(project.counts), layout, model });
     const call = await provider(request, {
       beforeSubmit: async () => {
         await db().query(`INSERT INTO listing_attempts(id,job_id,provider,model,status) VALUES($1,$2,'evolink',$3,'submitted')`, [attemptId, job.id, model]);
@@ -104,7 +95,7 @@ export async function executePlan(job: JobRow, provider: Provider = (request, ho
       [attemptId, { model: call.model, usage: call.usage, durationMs: call.durationMs }]);
     await settleHold(holdId(job.id), job.tenant_id, [{ action: 'listing_plan', billable: true, certain: true, attemptId }]);
     let parsed: ReturnType<typeof parsePlan>;
-    try { parsed = parsePlan(call.content, images); } catch (error) {
+    try { parsed = addDuplicates(parsePlan(call.content, sources.filter(s => !duplicates.has(s.id))), duplicates); } catch (error) {
       await fail('分析结果不完整：' + (error instanceof Error ? error.message : '格式错误') + '。本次已扣费，可以重新分析', 'failed');
       return;
     }
@@ -113,7 +104,13 @@ export async function executePlan(job: JobRow, provider: Provider = (request, ho
     await db().query(`UPDATE listing_jobs SET status='succeeded',lease_until=NULL,updated_at=now() WHERE id=$1`, [job.id]);
   } catch (error) {
     const message = error instanceof Error ? error.message : '分析失败';
-    if (submitted) {
+    const settled = submitted && (await db().query('SELECT status FROM listing_attempts WHERE id=$1', [attemptId])).rows[0]?.status === 'succeeded';
+    if (submitted && !settled && (error as { definite?: boolean }).definite) {
+      // The provider refused the request outright (4xx): nothing was produced or charged.
+      await db().query(`UPDATE listing_attempts SET status='failed',finished_at=now() WHERE id=$1`, [attemptId]);
+      await releaseHold(holdId(job.id), job.tenant_id, '分析接口拒绝').catch(() => {});
+      await fail(`${message}（接口拒绝了这次请求）。未扣费，可以重新分析`, 'failed');
+    } else if (submitted) {
       // A request that reached the provider may have been charged; it is never sent again.
       await db().query(`UPDATE listing_attempts SET status=CASE WHEN status='succeeded' THEN status ELSE 'unknown' END,finished_at=now() WHERE id=$1`, [attemptId]);
       const certain = (await db().query('SELECT status FROM listing_attempts WHERE id=$1', [attemptId])).rows[0]?.status === 'succeeded';
@@ -176,11 +173,14 @@ export async function startListingWorker({ canAccept = () => true, concurrency =
       .finally(() => { clearInterval(beat); running.delete(task); });
     running.add(task);
   };
+  let clearedAt = 0;
   const tick = async () => {
     if (closed || ticking || !canAccept()) return;
     ticking = true;
     try {
       await sweep();
+      // Old products' source images: checked hourly; an advisory lock keeps the workers apart.
+      if (Date.now() - clearedAt > 3600_000) { clearedAt = Date.now(); await clearOldSources().catch(error => console.error('[listing-worker] clear', error instanceof Error ? error.message : 'error')); }
       while (!closed && running.size < concurrency) {
         const next = await claim();
         if (!next) break;

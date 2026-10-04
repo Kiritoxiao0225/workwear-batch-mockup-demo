@@ -4,6 +4,7 @@ import { CatalogHttpError, createSession } from './catalog-auth';
 import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './catalog-database';
 import { EMAIL_CODE_TTL, emailCodeHash, emailConfiguration, newEmailCode, normalizeEmail, sendEmailCode, type EmailPurpose } from './email';
 import { hashAccountPassword, validatePassword } from './passwords';
+import { FREE_STORAGE_BYTES } from './phone-auth';
 
 const ticketHash = (value: string) => createHash('sha256').update(value).digest('hex');
 const lockEmail = (client: CatalogQueryClient, email: string) => client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", ['email-auth:' + email]);
@@ -108,7 +109,7 @@ export async function completeEmailPassword(input: { email: string; purpose: Ema
       if (existing) throw new CatalogHttpError(409, '此邮箱已有账号，请返回登录');
       const userId = randomUUID(), tenantId = randomUUID(), name = email.split('@')[0].slice(0, 60);
       await client.query(`INSERT INTO tenants(id,name,plan,billing_mode,style_quota,storage_quota_bytes,workspace)
-        VALUES($1,$2,'free','charge',5,536870912,$3)`, [tenantId, name, 't-' + tenantId]);
+        VALUES($1,$2,'free','charge',5,$3,$4)`, [tenantId, name, FREE_STORAGE_BYTES, 't-' + tenantId]);
       await client.query('INSERT INTO tenant_usage(tenant_id) VALUES($1)', [tenantId]);
       await client.query('INSERT INTO credit_accounts(tenant_id) VALUES($1)', [tenantId]);
       await client.query("INSERT INTO users(id,email,display_name,password_hash,role,tenant_id,tenant_role,password_version) VALUES($1,$2,$3,$4,'editor',$5,'owner',1)", [userId, email, name, passwordHash, tenantId]);

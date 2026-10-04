@@ -2,15 +2,18 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import sharp from 'sharp';
-import { catalogDatabase, catalogTransaction } from './catalog-database';
+import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './catalog-database';
 import { CatalogHttpError } from './catalog-auth';
 import { saveCatalogFile, readCatalogFile } from './catalog-files';
 import { registerFileRef } from './file-authorization';
 import { ASSET_ROLES, countsSchema, layoutById, shapeOf } from '../listing/layouts';
 import type { ListingPlan } from './listing-plan';
 
-// Users drop a whole product folder; the page shrinks photos to 2048 px before upload.
-export const MAX_SOURCE_IMAGES = 200;
+// Users drop a whole product folder; the page shrinks photos to 2048 px before upload, and the
+// planning call packs large folders (listing-plan-views), so the limit is only a safety net.
+export const MAX_SOURCE_IMAGES = 500;
+/** Source images are cleared this long after a product's last image was made. */
+export const SOURCE_KEEP_DAYS = 30;
 export const MAX_SOURCE_BYTES = 25 * 1024 * 1024;
 export const assetUrl = (id: string) => `/api/listing/assets/${id}`;
 
@@ -82,7 +85,7 @@ export type StoredPlan = { plan: ListingPlan; corrected: string[]; problems: str
 
 export async function listProjects(tenant: string) {
   const rows = (await catalogDatabase().query(
-    `SELECT p.id,p.name,p.layout,p.counts,p.status,p.error,p.updated_at,p.created_at,
+    `SELECT p.id,p.name,p.layout,p.counts,p.status,p.error,p.updated_at,p.created_at,p.sources_cleared_at,
             (SELECT count(*)::int FROM listing_assets a WHERE a.project_id=p.id AND a.kind='source') AS images,
             COALESCE((SELECT a.id FROM listing_assets a WHERE a.project_id=p.id AND a.slot='square:1' ORDER BY a.created_at DESC LIMIT 1),
                      (SELECT a.id FROM listing_assets a WHERE a.project_id=p.id AND a.kind='source' ORDER BY a.rel_path LIMIT 1)) AS cover,
@@ -147,13 +150,56 @@ export async function confirmProject(tenant: string, id: string) {
   });
 }
 
+/**
+ * Give back the storage of files this tenant no longer uses: a file still shown by another of its
+ * products, or held by another feature, keeps counting. The objects themselves stay in storage.
+ */
+async function releaseFiles(c: CatalogQueryClient, tenant: string, fileIds: string[]) {
+  let freed = 0;
+  for (const fileId of new Set(fileIds)) {
+    const used = await c.query(`SELECT 1 FROM listing_assets a JOIN listing_projects p ON p.id=a.project_id
+      WHERE a.tenant_id=$1 AND a.file_id=$2 AND p.deleted_at IS NULL LIMIT 1`, [tenant, fileId]);
+    if (used.rowCount) continue;
+    await c.query(`DELETE FROM tenant_file_refs WHERE tenant_id=$1 AND file_id=$2 AND purpose='listing-images'`, [tenant, fileId]);
+    if ((await c.query('SELECT 1 FROM tenant_file_refs WHERE tenant_id=$1 AND file_id=$2 LIMIT 1', [tenant, fileId])).rowCount) continue;
+    const size = Number((await c.query('SELECT byte_length FROM files WHERE id=$1', [fileId])).rows[0]?.byte_length ?? 0);
+    await c.query('UPDATE tenant_usage SET bytes_used=GREATEST(bytes_used-$2,0) WHERE tenant_id=$1', [tenant, size]);
+    freed += size;
+  }
+  return freed;
+}
+
+/** Deleting a product hides it and gives its storage back. */
 export async function deleteProject(tenant: string, id: string) {
   z.uuid().parse(id);
-  const running = await catalogDatabase().query(`SELECT 1 FROM listing_jobs WHERE project_id=$1 AND tenant_id=$2 AND status IN ('queued','running') LIMIT 1`, [id, tenant]);
-  if (running.rowCount) throw new CatalogHttpError(409, '正在分析，等分析完再删除');
-  const result = await catalogDatabase().query('UPDATE listing_projects SET deleted_at=now() WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL RETURNING id', [id, tenant]);
-  if (!result.rowCount) throw new CatalogHttpError(404, '商品不存在');
-  return { ok: true };
+  return catalogTransaction(async c => {
+    await c.query('SELECT id FROM tenants WHERE id=$1 FOR UPDATE', [tenant]);
+    const running = await c.query(`SELECT 1 FROM listing_jobs WHERE project_id=$1 AND tenant_id=$2 AND status IN ('queued','running') LIMIT 1`, [id, tenant]);
+    if (running.rowCount) throw new CatalogHttpError(409, '正在分析或出图，等完成后再删除');
+    const result = await c.query('UPDATE listing_projects SET deleted_at=now() WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL RETURNING id', [id, tenant]);
+    if (!result.rowCount) throw new CatalogHttpError(404, '商品不存在');
+    const files = (await c.query('SELECT file_id FROM listing_assets WHERE project_id=$1', [id])).rows.map(r => r.file_id as string);
+    return { ok: true, freedBytes: await releaseFiles(c, tenant, files) };
+  });
+}
+
+/**
+ * Products whose last image was made SOURCE_KEEP_DAYS ago lose their uploaded images (the
+ * generated ones stay) and the storage is given back. Run by the workers; one at a time.
+ */
+export async function clearOldSources(limit = 20) {
+  return catalogTransaction(async c => {
+    if (!(await c.query("SELECT pg_try_advisory_xact_lock(hashtext('listing-clear-sources')) AS ok")).rows[0].ok) return 0;
+    const due = (await c.query(`SELECT id,tenant_id FROM listing_projects WHERE status='done' AND deleted_at IS NULL AND sources_cleared_at IS NULL
+      AND updated_at < now() - make_interval(days => $1) ORDER BY updated_at LIMIT $2`, [SOURCE_KEEP_DAYS, limit])).rows as { id: string; tenant_id: string }[];
+    for (const p of due) {
+      await c.query('SELECT id FROM tenants WHERE id=$1 FOR UPDATE', [p.tenant_id]);
+      const files = (await c.query(`DELETE FROM listing_assets WHERE project_id=$1 AND kind='source' RETURNING file_id`, [p.id])).rows.map(r => r.file_id as string);
+      await releaseFiles(c, p.tenant_id, files);
+      await c.query('UPDATE listing_projects SET sources_cleared_at=now() WHERE id=$1', [p.id]);
+    }
+    return due.length;
+  });
 }
 
 /** A generated image: one row per version, the newest per slot is the current one. */
