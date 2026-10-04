@@ -51,13 +51,20 @@ const single = async (s: PlanSource, side: number): Promise<PlanView> => ({
   dataUrl: await jpeg(sharp(s.bytes, { limitInputPixels: 60_000_000 }).rotate().resize(side, side, { fit: 'inside' })),
 });
 
+/**
+ * A detail-page slice: Taobao detail pages are 750–790 px wide, or the piece is very tall. Camera
+ * photos, their small copies and posters are photos even when they are not 1:1 or 3:4. A slice
+ * taken for a photo (or the other way round) only changes how it is packed, never the result.
+ */
+const isSlice = (s: PlanSource) => s.shape === '其他' && ((s.width >= 700 && s.width <= 800) || s.height / s.width > 2.2);
+
 /** Consecutive slices of one detail page (same folder, same width) stacked back into one tall image. */
-async function strips(slices: PlanSource[]): Promise<PlanView[]> {
+async function strips(slices: PlanSource[], maxRun: number, maxRatio: number): Promise<PlanView[]> {
   const runs: PlanSource[][] = [];
   for (const s of [...slices].sort(byPath)) {
     const run = runs.at(-1), first = run?.[0];
     const height = run ? run.reduce((h, x) => h + x.height * (first!.width / x.width), 0) : 0;
-    if (run && first && first.folder === s.folder && Math.abs(first.width - s.width) <= 2 && run.length < 4 && height + s.height <= first.width * 3.2) run.push(s); else runs.push([s]);
+    if (run && first && first.folder === s.folder && Math.abs(first.width - s.width) <= 2 && run.length < maxRun && height + s.height <= first.width * maxRatio) run.push(s); else runs.push([s]);
   }
   return Promise.all(runs.map(async run => {
     if (run.length === 1) return single(run[0], 1024);
@@ -74,10 +81,18 @@ async function strips(slices: PlanSource[]): Promise<PlanView[]> {
   }));
 }
 
-/** Photos of one shape, `perSide`² to a sheet, in folder order. Cells shrink as sheets get denser. */
+/** Photos are packed with others of a similar shape so the cells waste little room. */
+type Group = { label: string; w: number; h: number };
+const GROUPS: Record<string, Group> = {
+  square: { label: '1:1', w: 1, h: 1 }, portrait: { label: '3:4', w: 0.88, h: 1.18 },
+  tall: { label: '“其他”（竖图）', w: 0.8, h: 1.25 }, wide: { label: '“其他”（横图）', w: 1.25, h: 0.8 }, other: { label: '“其他”', w: 1, h: 1 },
+};
+const groupOf = (s: PlanSource) => s.shape === '1:1' ? 'square' : s.shape === '3:4' ? 'portrait' : s.height / s.width > 1.1 ? 'tall' : s.width / s.height > 1.1 ? 'wide' : 'other';
+
+/** Photos of one group, `perSide`² to a sheet, in folder order. Cells shrink as sheets get denser. */
 const CELL: Record<number, number> = { 2: 400, 3: 340, 4: 280, 5: 230, 6: 190, 7: 160 };
-async function grids(photos: PlanSource[], shape: '1:1' | '3:4', perSide: number): Promise<PlanView[]> {
-  const c = CELL[perSide], [cw, ch] = shape === '1:1' ? [c, c] : [Math.round(c * 0.88), Math.round(c * 1.18)];
+async function grids(photos: PlanSource[], group: Group, perSide: number): Promise<PlanView[]> {
+  const c = CELL[perSide], cw = Math.round(c * group.w), ch = Math.round(c * group.h);
   const gap = 8, per = perSide * perSide, ordered = [...photos].sort(byPath), views: PlanView[] = [];
   for (let i = 0; i < ordered.length; i += per) {
     const page = ordered.slice(i, i + per), cols = Math.min(perSide, page.length), rows = Math.ceil(page.length / perSide);
@@ -86,11 +101,20 @@ async function grids(photos: PlanSource[], shape: '1:1' | '3:4', perSide: number
       .composite(cells.map((input, k) => ({ input, left: (k % perSide) * (cw + gap), top: Math.floor(k / perSide) * (ch + gap) })));
     views.push({
       ids: page.map(s => s.id),
-      text: `【拼图：${page.length} 张 ${shape} 素材排成 ${rows} 行 ${cols} 列（灰线隔开），从左到右、从上到下依次是 ${page.map(describe).join('、')}】每一格都是一张独立素材，形状都是 ${shape}`,
+      text: `【拼图：${page.length} 张素材排成 ${rows} 行 ${cols} 列（灰线隔开），从左到右、从上到下依次是 ${page.map(describe).join('、')}】每一格都是一张独立素材，形状都是 ${group.label}`,
       dataUrl: await jpeg(sheet),
     });
   }
   return views;
+}
+
+/** Packs photos into as few sheets as needed to fit `room`, using the least dense grid that fits. */
+async function packed(photos: PlanSource[], room: number) {
+  const byGroup = new Map<string, PlanSource[]>();
+  for (const s of photos) byGroup.set(groupOf(s), [...(byGroup.get(groupOf(s)) ?? []), s]);
+  const perSide = [2, 3, 4, 5, 6, 7].find(n => [...byGroup.values()].reduce((sum, list) => sum + Math.ceil(list.length / n / n), 0) <= room);
+  if (!perSide) return null;
+  return (await Promise.all([...byGroup].map(([key, list]) => grids(list, GROUPS[key], perSide)))).flat();
 }
 
 /** The provider takes at most 50 pictures per request; a little room is left. */
@@ -100,25 +124,29 @@ export const PLAN_MAX_PICTURES = 48;
  * The pictures for one planning call, plus which images were left out as copies of which. The
  * price follows the pixels sent, not the number of pictures, so packing is only for the
  * 50-picture limit: colour images (by folder or file name) go one by one at 768 px, detail
- * slices are stitched back into tall pages, and the other photos go one by one at 384 px, packed
- * into grids only as far as needed to fit.
+ * slices are stitched back into tall pages, and the other photos (any shape) go one by one at
+ * 384 px, packed into grids only as far as needed to fit. If that is still too many, slices are
+ * stitched into longer pages and colour images are packed too.
  */
 export async function planViews(sources: PlanSource[], fullSize = PLAN_FULL_SIZE_IMAGES) {
   const { kept, duplicates } = await findDuplicates(sources);
   if (kept.length <= fullSize) return { views: await Promise.all([...kept].sort(byPath).map(s => single(s, 1024))), duplicates };
-  const colour = kept.filter(s => s.shape !== '其他' && SKU_HINT.test(s.folder + '/' + s.name)).sort(byPath);
-  const photos = kept.filter(s => s.shape !== '其他' && !colour.includes(s)).sort(byPath);
-  const detail = await strips(kept.filter(s => s.shape === '其他'));
-  const room = PLAN_MAX_PICTURES - detail.length - colour.length;
-  const tooMany = () => new Error(`素材太多（去掉重复后 ${kept.length} 张），一次分析放不下，请拆成几款再传`);
-  if (room < 1) throw tooMany();
-  let photoViews: PlanView[];
-  if (photos.length <= room) photoViews = await Promise.all(photos.map(s => single(s, 384)));
-  else {
-    const square = photos.filter(s => s.shape === '1:1'), portrait = photos.filter(s => s.shape === '3:4');
-    const perSide = [2, 3, 4, 5, 6, 7].find(n => Math.ceil(square.length / n / n) + Math.ceil(portrait.length / n / n) <= room);
-    if (!perSide) throw tooMany();
-    photoViews = [...await grids(square, '1:1', perSide), ...await grids(portrait, '3:4', perSide)];
+  const colour = kept.filter(s => !isSlice(s) && SKU_HINT.test(s.folder + '/' + s.name)).sort(byPath);
+  // Each step gives up a little clarity to fit: longer detail pages, then colour images in grids,
+  // then everything in grids (a small photo taken for a slice only costs packing, never the call).
+  const steps = [{ run: 4, ratio: 3.2, colours: 'single' }, { run: 8, ratio: 6.5, colours: 'single' }, { run: 8, ratio: 6.5, colours: 'packed' }, { run: 0, ratio: 0, colours: 'packed' }] as const;
+  for (const step of steps) {
+    const slices = step.run ? kept.filter(isSlice) : [];
+    const photos = kept.filter(s => !slices.includes(s) && !colour.includes(s)).sort(byPath);
+    const detail = step.run ? await strips(slices, step.run, step.ratio) : [];
+    const colourViews = step.colours === 'single'
+      ? (colour.length + detail.length <= PLAN_MAX_PICTURES - 6 ? await Promise.all(colour.map(s => single(s, 768))) : null)
+      : await packed(colour, Math.max(1, Math.floor((PLAN_MAX_PICTURES - detail.length) / 3)));
+    if (!colourViews) continue;
+    const room = PLAN_MAX_PICTURES - detail.length - colourViews.length;
+    if (room < 1 && photos.length) continue;
+    const photoViews = photos.length <= room ? await Promise.all(photos.map(s => single(s, 384))) : await packed(photos, room);
+    if (photoViews) return { views: [...colourViews, ...photoViews, ...detail], duplicates };
   }
-  return { views: [...await Promise.all(colour.map(s => single(s, 768))), ...photoViews, ...detail], duplicates };
+  throw new Error(`素材太多（去掉重复后 ${kept.length} 张），一次分析放不下，请拆成几款再传`);
 }

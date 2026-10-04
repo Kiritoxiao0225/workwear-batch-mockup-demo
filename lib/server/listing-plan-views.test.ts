@@ -39,9 +39,31 @@ describe('planning views', () => {
     expect(views[0].ids).toEqual(['M200']);
     expect(views.filter(v => v.text.startsWith('【拼图')).map(v => v.ids.length)).toEqual([...Array(30).fill(4)]);
     expect(views.find(v => v.text.startsWith('【拼图'))!.text).toContain('从左到右、从上到下依次是 M1（模特图/IMG_1.jpg）、M2');
+    // Fifty colour images do not fit one by one: they are packed too rather than refused.
     const colours: PlanSource[] = [];
     for (let i = 0; i < 50; i++) colours.push(await source(`C${i + 1}`, 'SKU', `色${i + 1}.jpg`, '1:1', [(i * 37) % 256, (i * 11) % 256, (i * 73) % 256]));
-    await expect(planViews(colours)).rejects.toThrow('一次分析放不下');
+    const packedColours = await planViews(colours);
+    expect(packedColours.views.length).toBeLessThanOrEqual(48);
+    expect(packedColours.views.flatMap(v => v.ids).sort()).toEqual(colours.map(c => c.id).sort());
+  });
+
+  it('fits a real-sized folder: camera photos (2:3) and their small copies, still lifes, detail slices and colour images', async () => {
+    // Shaped like a product folder seen in production: 322 images, 87 camera photos twice over.
+    const all: PlanSource[] = [];
+    let seed = 0;
+    const add = async (prefix: string, folder: string, n: number, shape: PlanSource['shape'], w: number, h: number) => {
+      seed += 37;
+      for (let i = 0; i < n; i++) all.push(await source(`${prefix}${i + 1}`, folder, `${prefix}_${i + 1}.jpg`, shape, [(i * 29 + seed) % 256, (i * 53 + seed * 3) % 256, (i * 17 + seed * 7) % 256], w, h));
+    };
+    await add('P', '模特图', 87, '其他', 1366, 2048); await add('S', '小图/模特图', 87, '其他', 600, 900);
+    await add('Q', '静物图', 28, '1:1', 400, 400); await add('D', '详情页', 19, '其他', 790, 1100);
+    await add('K', '颜色图', 9, '1:1', 400, 400); await add('H', '宣传海报图', 5, '其他', 600, 975);
+    const { views, duplicates } = await planViews(all);
+    expect(views.length).toBeLessThanOrEqual(48);
+    expect([...views.flatMap(v => v.ids), ...duplicates.keys()].sort()).toEqual(all.map(s => s.id).sort());
+    expect(views.slice(0, 9).every(v => v.ids.length === 1 && v.ids[0].startsWith('K'))).toBe(true);
+    expect(views.filter(v => v.text.startsWith('【长图')).every(v => v.ids.every(id => id.startsWith('D')))).toBe(true);
+    expect(views.some(v => v.text.includes('“其他”（竖图）'))).toBe(true);
   });
 });
 
