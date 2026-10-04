@@ -14,7 +14,7 @@ import { PARTS, type Organized } from './listing-organize';
 export const choiceSchema = z.object({
   colors: z.array(z.object({ name: z.string().trim().min(1, '颜色名不能空').max(12), hex: z.string().max(16).default(''), pick: z.string().min(1, '每个颜色都要有一张衣服图') })).min(1, '至少要有一个颜色'),
   parts: z.array(z.object({ part: z.enum(PARTS), pick: z.string().nullable().default(null), skip: z.boolean().default(false) })).default([]),
-  points: z.array(z.object({ type: z.string().max(10).default(''), text: z.string().trim().min(1).max(16), from: z.array(z.string()).default([]), on: z.boolean().default(true) })).default([]),
+  points: z.array(z.object({ type: z.string().max(10).default(''), text: z.string().trim().min(1).max(16), from: z.array(z.string()).default([]), why: z.string().max(80).default(''), on: z.boolean().default(true) })).default([]),
 });
 export type Choice = z.infer<typeof choiceSchema>;
 
@@ -25,7 +25,7 @@ const SYSTEM = `你是淘宝服装类目的资深电商视觉策划。用户已�
 1. 颜色和卖点以用户给的为准，不增不改；卖点只能用列出来的这些，照原文用，不换说法（品牌名、型号、数字都照原样保留），不要编造数据、认证和销量。
 2. garment（衣服结构）要逐条写到生图模型能照做的程度：领型、门襟与拉链、分割线、口袋（数量、位置、开口方式）、袖口、下摆、衣长版型、面料质感。以衣服图和结构参考图为准，看不清的不要猜。它会原样写进每一张图的提示词，用来锁死衣服不变。生图时看不到这些素材图，所以 garment 和 scene 里不要写图片编号（如“参照 M2”），把形状直接写出来。
 3. 图上的字直接用卖点原文，不改写、不美化：主标题不超过 10 个字，副标题不超过 16 个字，要点每条不超过 10 个字；原文超长时只截取其中连续的关键部分，不换字。画面里不要画 logo 图案和水印。
-4. 主图按给定的角色顺序出。每张 1–2 个卖点，同一组内卖点不重复，前后连贯像一个故事；scene 写这张图用什么画面直观演示卖点。
+4. 主图按给定的角色顺序出。卖点编号就是重要性排名（P1 最重要）：首图用排名最前的 1–2 条；其余每张按角色挑对应类型的卖点，同类里排名靠前的优先用。每张 1–2 个卖点，同一组内卖点不重复，前后连贯像一个故事；scene 写这张图用什么画面直观演示卖点。
 5. 3:4 主图与 1:1 讲同一套卖点，文案可以微调。2:3 是店铺首页海报，氛围感最强。
 6. 多色图（多人或多件同框）最多 4 种颜色，在该图的 colors 里列出用到的颜色名，名字必须和用户给的颜色完全一致；单色图的 colors 只写主色。
 7. SKU 图：tag 写颜色名旁的短标签（如“男女同款”），fabric 写面料小图下方的小字（不超过 6 个字），只用卖点里有依据的说法，没有就留空。

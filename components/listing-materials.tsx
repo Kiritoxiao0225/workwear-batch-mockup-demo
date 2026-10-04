@@ -11,9 +11,9 @@ export const KINDS = ["颜色款图", "静物", "3D渲染", "模特实拍", "细
 export const PARTS = ["正面全身", "领口", "拉链和袖口", "口袋", "面料", "背面"] as const;
 type Part = (typeof PARTS)[number];
 export type Sorted = { id: string; kind: string; color: string; front: boolean; detail: string; text: boolean; logo: boolean; same: string };
-export type Choice = { colors: { name: string; hex: string; pick: string | null }[]; parts: { part: Part; pick: string | null; skip: boolean }[]; points: { type: string; text: string; from: string[]; on: boolean }[] };
+export type Choice = { colors: { name: string; hex: string; pick: string | null }[]; parts: { part: Part; pick: string | null; skip: boolean }[]; points: { type: string; text: string; from: string[]; why?: string; on: boolean }[] };
 export type Materials = {
-  sorted: { images: Sorted[]; colors: { name: string; hex: string; from: string[] }[]; points: { type: string; text: string; from: string[] }[]; notes: string[] };
+  sorted: { images: Sorted[]; colors: { name: string; hex: string; from: string[] }[]; points: { type: string; text: string; from: string[]; why?: string }[]; notes: string[] };
   chosen: { colors: { name: string; hex: string; pick: string | null; candidates: string[] }[]; parts: { part: Part; pick: string | null; candidates: string[] }[] };
   duplicates: [string, string][]; images: { label: string; assetId: string }[]; choice?: Choice;
 };
@@ -139,13 +139,14 @@ export function MaterialsDialog({ name, materials, paths, choice, onChange, onUp
           </div>
 
           <div className="lp-msec">
-            <div className="lp-mhead"><span className="n">3</span><h4>卖点</h4><span className="tg y">建议 6–10 条</span><p>从详情页、海报、做好的主图上的文字里读出来的，每条都标了出处。勾选的才会写进图里，可以改字，也可以自己加。</p></div>
+            <div className="lp-mhead"><span className="n">3</span><h4>卖点</h4><span className="tg y">建议 6–10 条</span><p>从素材上的文字里提炼的，已按重要性排好：排前两条的上首图，其余按类型分到后面几张。每条标了出处和排序理由，顺序不对点 ↑ 往前挪。勾选的才会写进图里，可以改字，也可以自己加。</p></div>
             <div className="lp-points">{choice.points.map((p, i) => (
               <div key={i} className={"lp-pt" + (p.on ? "" : " off")}>
                 <input type="checkbox" checked={p.on} onChange={e => setPoint(i, { on: e.target.checked })} aria-label="用这条" />
                 <span className="ty">{p.type || "自己加"}</span>
                 <input className="txt" value={p.text} maxLength={16} placeholder="写一条卖点" onChange={e => setPoint(i, { text: e.target.value })} />
-                <span className="ev">{p.from.length ? <>出处{p.from.slice(0, 3).map(l => byLabel.get(l) && <img key={l} src={byLabel.get(l)!.url} title={byLabel.get(l)!.path} alt="" />)}</> : "你加的"}</span>
+                <span className="ev">{i > 0 && <button type="button" className="up" title="往前挪一位" onClick={() => set({ points: [...choice.points.slice(0, i - 1), p, choice.points[i - 1], ...choice.points.slice(i + 1)] })}>↑</button>}{p.from.length ? <>出处{p.from.slice(0, 3).map(l => byLabel.get(l) && <img key={l} src={byLabel.get(l)!.url} title={byLabel.get(l)!.path} alt="" />)}</> : "你加的"}</span>
+                {p.why && <small className="why">第 {i + 1} · {p.why}</small>}
               </div>))}
             </div>
             <div><button type="button" className="lp-btn sm" onClick={() => set({ points: [...choice.points, { type: "", text: "", from: [], on: true }] })}>＋ 加一条卖点</button> <span className="lp-muted" style={{ fontSize: 13 }}>已选 {on} 条</span></div>

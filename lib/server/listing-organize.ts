@@ -30,13 +30,13 @@ const SYSTEM = `你是淘宝服装店的素材整理员。你会收到同一款�
 
 整款：
 - colors：这款衣服的全部颜色。名字严格照抄颜色图、色卡、详情页上写的颜色名，一个字都不改（带品牌词的如“爱马仕橙”也照抄，不要换说法、不要自己起更好听的名字）；素材上完全没写颜色名的，才按你看到的颜色起一个常见名；hex 是你看到的颜色；from 写能看到这个颜色衣服的图的编号（最多 5 个）。色卡或文字里提到、但素材里没有这个颜色衣服图的，也要列出来，from 留空。
-- points：卖点，只能来自图上的文字或清楚可见的演示（如水珠滚落），不要编造；text 只做提炼：用素材原文里的字和说法（品牌名、型号、数字都照原样保留），不改写、不换说法、不美化；原文超过 16 个字时只截取其中最关键的连续部分；type 是 定位/功能/面料/做工/实用/颜色款式/人群场景/服务定制 之一；from 写出处编号。按重要性排序，最多 16 条。
+- points：卖点，只能来自图上的文字或清楚可见的演示（如水珠滚落），不要编造；text 只做提炼：用素材原文里的字和说法（品牌名、型号、数字都照原样保留），不改写、不换说法、不美化；原文超过 16 个字时只截取其中最关键的连续部分；type 是 定位/功能/面料/做工/实用/颜色款式/人群场景/服务定制 之一；from 写出处编号。最多 16 条，按重要性从高到低排，排第一、第二的会放上首图。重要性看两点：① 商家有多强调——在素材里反复出现、放在显眼位置（大标题、首屏）讲的更重要；② 买家有多在乎——买这类衣服的人做决定时最先看的更重要。why 用一句话（不超过 30 个字）说明排在这里的理由，如“主图和详情页 5 处都在讲，冲锋衣买家最先看防水”。
 - notes：你发现的问题，比如“色卡里有藏青，但没有藏青的衣服图”“没有背面图”，没有就空数组。
 
 输出：
 { "images": [{ "id": "M1", "kind": "", "color": "", "front": false, "detail": "", "text": false, "logo": false, "same": "" }],
   "colors": [{ "name": "", "hex": "", "from": ["M1"] }],
-  "points": [{ "type": "", "text": "", "from": ["M1"] }],
+  "points": [{ "type": "", "text": "", "from": ["M1"], "why": "" }],
   "notes": [""] }`;
 
 export function organizeRequest(input: { views: PlanView[]; model: string; product: string }) {
@@ -54,7 +54,7 @@ const imageSchema = z.object({
 const organizeSchema = z.object({
   images: z.array(imageSchema),
   colors: z.array(z.object({ name: z.string().trim().min(1).max(12), hex: z.string().default(''), from: z.array(z.string()).default([]) })),
-  points: z.array(z.object({ type: z.string().default(''), text: z.string().trim().min(1).max(20), from: z.array(z.string()).default([]) })).default([]),
+  points: z.array(z.object({ type: z.string().default(''), text: z.string().trim().min(1).max(20), from: z.array(z.string()).default([]), why: z.string().max(80).default('') })).default([]),
   notes: z.array(z.string()).default([]),
 });
 export type Organized = z.infer<typeof organizeSchema>;
