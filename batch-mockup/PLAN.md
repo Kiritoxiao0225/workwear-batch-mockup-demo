@@ -384,3 +384,27 @@ WPS 同步完成后，后台逐条预约尚无识别记录和草稿的有效原�
   2. worker 切到 `6ac201e7`（release `df8198db…`），源码哈希一致。
   3. Web 改 14 个文件，新部署 `6ac20386`，release `29eba4a8…`。ready、migration 030；未登录跳登录、接口 401；线上上限 500。
 - 回退：见 `output/listing-bigfolder-release-20261004/rollback.json`。
+
+### 2026-10-04 傍晚：电商主图逐款选版式、我的版式与学新版式；相机照片大款修正
+
+- 背景：
+  - 用户要求把演示页（`output/listing-studio-demo-20260929/电商主图-逐款选版式demo.html`）的功能全部做完一起上线。
+  - 发布前，客户 690407784 新传了一款 322 张（M8#），分析报"一次分析放不下"（未扣费）。原因是 87 张 2:3 相机照片外加一套小图副本被当成详情切片拼长图，长图超过 50 张。
+- 改动：
+  - `02fcdeb` 逐款选版式：去掉顶部全局"出图方案"。拖入后弹出"各用什么版式"，每款单独选版式和张数，可一键全部用同一个；列表显示每款的版式。
+  - `cdb257b` 我的版式与学新版式：
+    - 上传 3–10 张参考图，冻结 100 积分，worker 用 gpt-6.1-sol 按内置版式字段写出 style/roles/sku；
+    - 再用示例衣服（`lib/listing/sample-product.webp`）出 3 张样图（首图、细节、SKU）。看过后保存、换图重学或不要；没学成退回积分；
+    - 保存后同租户共用，别人看不到；删除后用过它的款照样能出图；
+    - 迁移 031：listing_layouts、listing_layout_files（回收保护）、listing_layout 价格（成本 ¥0.9，用户 100 积分）、两表进备份；并补上 030 清理需要的 listing_assets DELETE 权限（线上应用账号 mockup_app 原来没有）。
+  - `95fec3c` 相机照片按比例分组拼宫格，只有 700–800 宽或特别细长的才当详情切片；放不下时逐级降级（长图更长 → 颜色图也拼 → 全部宫格），不再因张数失败。
+- 测试：
+  - test:listing 21 项、vitest 1567、test:auth 183、test:saas 13、tsc、eslint 都通过。
+  - 本地真实学一次版式：86 秒，约 ¥0.66，风格与参考图一致。
+  - 本地真实页面走查：选版式、学新版式、保存、选到新版式，都正常。
+  - 线上 M8# 只读演算：322 张 → 46 张图（单张 10、宫格 28、长图 8）。
+- 发布：
+  1. 备份数据库（`output/listing-layouts-release-20261004/db-before.json`）→ 执行 031。
+  2. 等客户上传和分析停下后再动 worker：切到 `6ac21002`（release `d8dca4a8…`），源码哈希一致，`/ops/backup` 返回 200。
+  3. Web 改 16 个文件，新部署 `6ac211ae`，release `3692e010…`；ready、migration 031；页面和接口未登录被拦。
+- 回退：见 `output/listing-layouts-release-20261004/rollback.json`。
