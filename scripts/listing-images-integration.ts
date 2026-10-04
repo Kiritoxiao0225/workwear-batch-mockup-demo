@@ -299,7 +299,7 @@ try {
   });
   const bigPlan = await (await call(0, 'projects/' + bigId)).json();
   assert.equal(bigPlan.status, 'review');
-  assert.match(texts, /【拼图：4 张 1:1 素材/); assert.ok((texts.match(/【/g) ?? []).length <= 48);
+  assert.match(texts, /【拼图：4 张素材.*形状都是 1:1/); assert.ok((texts.match(/【/g) ?? []).length <= 48);
   assert.equal(bigPlan.plan.plan.assets.length, 61);
   const twin = bigPlan.plan.plan.assets.find((a: { reason: string }) => a.reason.startsWith('相似图'));
   assert.equal(bigPlan.images.find((i: { label: string }) => i.label === twin.id).path, '模特图/IMG_1_连拍.png'); assert.equal(twin.role, '不用');
