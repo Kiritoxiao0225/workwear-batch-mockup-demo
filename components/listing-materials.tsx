@@ -19,7 +19,6 @@ export type Materials = {
 };
 export type PriceLine = { label: string; count: number; unit: number; credits: number; note: string };
 
-export const BRAND = /爱马仕|香奈儿|迪奥|古驰|普拉达|路易威登|蒂芙尼|始祖鸟|北面|耐克|阿迪达斯|优衣库|[A-Z]{2,}/;
 const WANT: Record<Part, string> = { 正面全身: "衣服完整的正面图", 领口: "领子的特写", 拉链和袖口: "拉链、袖口的特写", 口袋: "口袋的特写", 面料: "面料纹理或功能演示的特写", 背面: "衣服背面（背后有设计时建议补）" };
 const AVOID: Record<Part, string> = { 正面全身: "", 领口: "出图时不特写领口", 拉链和袖口: "出图时不特写拉链和袖口", 口袋: "出图时不特写口袋", 面料: "出图时不做面料特写", 背面: "出图时不会出现背面角度" };
 
@@ -39,9 +38,8 @@ export function checkOf(choice: Choice): { level: "r" | "y" | "g"; text: string 
   if (noImage.length) return { level: "r", text: `${noImage.join("、")} 没有衣服图，必须处理` };
   if (!choice.parts.find(p => p.part === "正面全身")?.pick) return { level: "r", text: "缺正面全身图，必须处理" };
   const open = choice.parts.filter(p => p.part !== "正面全身" && !p.pick && !p.skip).map(p => p.part);
-  const branded = [...choice.colors.map(c => c.name), ...choice.points.filter(p => p.on).map(p => p.text)].filter(t => BRAND.test(t));
   const on = choice.points.filter(p => p.on).length;
-  const notes = [open.length ? `缺${open.join("、")}（可以补，也可以设为不需要）` : "", branded.length ? `可能含品牌名：${branded.join("、")}` : "", on < 3 ? `卖点只选了 ${on} 条` : ""].filter(Boolean);
+  const notes = [open.length ? `缺${open.join("、")}（可以补，也可以设为不需要）` : "", on < 3 ? `卖点只选了 ${on} 条` : ""].filter(Boolean);
   return notes.length ? { level: "y", text: notes.join("；") } : { level: "g", text: "素材齐了，可以直接继续" };
 }
 
@@ -121,7 +119,6 @@ export function MaterialsDialog({ name, materials, paths, choice, onChange, onUp
               <div key={i} className={"lp-mcard" + (c.pick ? "" : " missing")}>
                 {c.pick ? card(c.pick, kindOf(c.pick)) : <div className="pic">缺这个颜色的衣服图<br /><br />素材里没有找到它的衣服图</div>}
                 <div className="row"><span className="dotc" style={{ background: c.hex || "#999" }} /><input value={c.name} maxLength={12} onChange={e => setColor(i, { name: e.target.value })} /></div>
-                {BRAND.test(c.name) && <small className="warn">颜色名里可能有品牌词，会印在 SKU 图上，建议改</small>}
                 <div className="row"><button type="button" className={"lp-btn sm" + (c.pick ? "" : " primary")} onClick={() => { setTab("推荐"); setTarget({ kind: "color", index: i }); }}>{c.pick ? "换一张" : "补传 / 选图"}</button>
                   <button type="button" className="lp-btn link" onClick={() => { if (window.confirm(`去掉颜色「${c.name}」？这个颜色不出 SKU 图，也不出现在主图里。`)) set({ colors: choice.colors.filter((_, k) => k !== i) }); }}>不要这个颜色</button></div>
               </div>))}
@@ -147,7 +144,7 @@ export function MaterialsDialog({ name, materials, paths, choice, onChange, onUp
               <div key={i} className={"lp-pt" + (p.on ? "" : " off")}>
                 <input type="checkbox" checked={p.on} onChange={e => setPoint(i, { on: e.target.checked })} aria-label="用这条" />
                 <span className="ty">{p.type || "自己加"}</span>
-                <input className={"txt" + (BRAND.test(p.text) ? " warn" : "")} value={p.text} maxLength={16} placeholder="写一条卖点" onChange={e => setPoint(i, { text: e.target.value })} title={BRAND.test(p.text) ? "可能含品牌名，建议改成通用说法" : undefined} />
+                <input className="txt" value={p.text} maxLength={16} placeholder="写一条卖点" onChange={e => setPoint(i, { text: e.target.value })} />
                 <span className="ev">{p.from.length ? <>出处{p.from.slice(0, 3).map(l => byLabel.get(l) && <img key={l} src={byLabel.get(l)!.url} title={byLabel.get(l)!.path} alt="" />)}</> : "你加的"}</span>
               </div>))}
             </div>
