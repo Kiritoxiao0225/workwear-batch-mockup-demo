@@ -9,7 +9,8 @@ import { registerFileRef } from './file-authorization';
 import { ASSET_ROLES, countsSchema, layoutById, shapeOf } from '../listing/layouts';
 import type { ListingPlan } from './listing-plan';
 
-export const MAX_SOURCE_IMAGES = 80;
+// Users drop a whole product folder; the page shrinks photos to 2048 px before upload.
+export const MAX_SOURCE_IMAGES = 200;
 export const MAX_SOURCE_BYTES = 25 * 1024 * 1024;
 export const assetUrl = (id: string) => `/api/listing/assets/${id}`;
 

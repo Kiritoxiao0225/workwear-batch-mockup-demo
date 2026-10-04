@@ -30,6 +30,25 @@ const api = async <T,>(path: string, init?: RequestInit): Promise<T> => {
   if (!response.ok) throw new Error(body.error || `请求失败（${response.status}）`);
   return body as T;
 };
+/**
+ * Photos go up at most 2048 px on the long side as JPEG: the model never needs more, and an
+ * 8 MB camera original becomes well under 1 MB. A small file, or one the browser cannot decode,
+ * goes up unchanged.
+ */
+async function shrink(file: File): Promise<Blob> {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, 2048 / Math.max(bitmap.width, bitmap.height));
+    if (scale === 1 && file.size <= 1_500_000) { bitmap.close(); return file; }
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bitmap.width * scale); canvas.height = Math.round(bitmap.height * scale);
+    const ctx = canvas.getContext("2d")!;
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height); bitmap.close();
+    const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, "image/jpeg", 0.9));
+    return blob && blob.size < file.size ? blob : file;
+  } catch { return file; }
+}
 const post = <T,>(path: string, body: unknown = {}) => api<T>(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
 /** Every image under each dropped folder; loose files become one product. */
@@ -95,7 +114,7 @@ export function ListingImagesClient() {
   const [reviewing, setReviewing] = useState<string | null>(null);
   const [toast, setToast] = useState("");
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const say = useCallback((text: string) => { setToast(text); clearTimeout(toastTimer.current); toastTimer.current = setTimeout(() => setToast(""), 3200); }, []);
+  const say = useCallback((text: string, ms = 3200) => { setToast(text); clearTimeout(toastTimer.current); toastTimer.current = setTimeout(() => setToast(""), ms); }, []);
 
   /* eslint-disable react-hooks/set-state-in-effect -- localStorage and the server list exist only after mount. */
   useEffect(() => {
@@ -129,18 +148,21 @@ export function ListingImagesClient() {
       setUploads(u => ({ ...u, [id]: { done: 0, total: group.files.length, failed: 0 } }));
       await refresh();
       let next = 0, failed = 0;
+      const why = new Map<string, number>();
       const worker = async () => {
         while (next < group.files.length) {
           const { file, path } = group.files[next++];
           try {
-            await api(`projects/${id}/images`, { method: "POST", body: file, headers: { "Content-Type": "application/octet-stream", "x-file-name": encodeURIComponent(file.name), "x-file-path": encodeURIComponent(path) } });
-          } catch { failed++; }
+            await api(`projects/${id}/images`, { method: "POST", body: await shrink(file), headers: { "Content-Type": "application/octet-stream", "x-file-name": encodeURIComponent(file.name), "x-file-path": encodeURIComponent(path) } });
+          } catch (error) { failed++; const reason = (error as Error).message.replace(/：.*$/, ""); why.set(reason, (why.get(reason) ?? 0) + 1); }
           setUploads(u => ({ ...u, [id]: { done: (u[id]?.done ?? 0) + 1, total: group.files.length, failed } }));
         }
       };
       await Promise.all([worker(), worker(), worker(), worker()]);
       setUploads(u => { const rest = { ...u }; delete rest[id]; return rest; });
-      if (failed === group.files.length) { say(`「${group.name}」一张都没传上`); await refresh(); continue; }
+      const reasons = [...why].map(([reason, n]) => `${reason}（${n} 张）`).join("；");
+      if (failed === group.files.length) { say(`「${group.name}」一张都没传上：${reasons}`, 12000); await refresh(); continue; }
+      if (failed) say(`「${group.name}」有 ${failed} 张没传上：${reasons}。其余 ${group.files.length - failed} 张照常分析`, 12000);
       await startPlan(id);
     }
   };
