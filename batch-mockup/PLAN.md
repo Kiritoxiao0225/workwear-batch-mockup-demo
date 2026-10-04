@@ -289,3 +289,26 @@ WPS 同步完成后，后台逐条预约尚无识别记录和草稿的有效原�
 - 发布：只读快照 3 个租户上限均为 2000（`output/no-daily-cap-release-20261003/caps-before.json`）→ Web 以 `d-6ac087c0`（ecbb7d4 / e57b1e6）为基线打补丁 2 个文件（app、db），新部署 `6ac09723`，指纹 `a3d9a73e…`，2/2 一致；新 Web 在 025 上 ready → `catalog:migrate` 应用 026（输出里的两条 NOTICE 是 schema / schema_migrations 已存在）。不动 worker（`holdCredits` 本来就把 NULL 当不限）。
 - 验证：test:saas（13）、test:auth（180）从空库跑完 001–026；发布后 Web ready、migration 026、release `a3d9a73e`；3 个租户上限均为不限，列默认值 NULL。
 - 回退：先把上限按 `caps-before.json` 写回（都是 2000）并 `ALTER … SET DEFAULT 2000`；旧 Web 健康检查要求恰好 025，迁移后不要回退 Web 镜像（Web 回退见 `rollback-web.json`，只适用于 026 之前）。
+
+### 2026-10-04 上午：电商主图第 1、2 期上线（真实出图）
+
+- 背景：「电商主图」从流程预览改为真正可用。上传素材 → AI 读商品分类与策划（180 积分）→ 用户确认素材和卖点 → 提取白底产品图 → 按选定版式出 1:1 / 3:4 主图、2:3 海报和每色 SKU 图（单色图 44 积分，多色图 72 积分）。支持单张重做和打包下载。
+- 改动（`4e5373f`、`27ce52e`、`91a2f73`）：
+  - 迁移 027/028：listing_projects、listing_assets、listing_jobs、listing_attempts、listing_workers 和三条价格。
+  - 页面 `/listing-images`，接口 `/api/listing/*`。
+  - 主图任务在两个 worker 里与 artwork worker 一起运行（`startListingWorker`，并发 6）。
+  - 删除静态预览路由和 38 个旧预览文件。
+  - `91a2f73` 把 4 张主图表加入数据库备份，listing_workers 加入排除名单。异地备份要求每张表要么备份、要么排除，否则拒绝执行。第一次切 worker 后备份报 `backup_failed`，就是这个原因。
+- 发布：
+  1. 备份数据库（`output/listing-v1-release-20261004/db-before.json`），在旧 Web 上执行 027/028；health 接受 ≥025，没有空档。
+  2. Web 以 `d-6ac09723`（95b0219）为基线打补丁：27 个文件改动，38 个删除（Dockerfile 里先 `rm -f` 再 build）。新部署 `6ac1b16d`，指纹 `8fb75e72…`，27/27 一致。
+  3. worker：补丁包含 artwork-worker 依赖闭包里的全部 146 个文件（含迁移），统一取自同一提交。发布前探针确认线上只有新增和改动的 12 个文件不同，所需 npm 包都在。worker 空闲时暂停，打补丁，两台同时切换：第一次 `6ac1b4af`（27ce52e）；修好备份后第二次 `6ac1b7dc`（91a2f73，release `3d12a4c1…`）。
+- 验证：
+  - vitest、test:listing（14）、test:saas、test:auth、test:garment、tsc、eslint 都通过。
+  - 本地端到端：36 张素材分类全对，一整套 23 张 257 秒，¥4.60，颜色全对。
+  - 发布后：Web ready、migration 028、release `8fb75e72`；未登录访问 `/listing-images` 跳登录，`/api/listing/config` 返回 401。
+  - 两台 worker 源码哈希全部一致，`/ops/backup` 返回 200，主 worker 异地备份 02:26 成功；listing_workers 有 2 个在线心跳（`final-verification.json`）。
+- 回退：见 `output/listing-v1-release-20261004/rollback.json`。
+  - Web 回 `d-6ac09723`。
+  - worker 回 `d-6abf375a`。旧 worker 不认主图表，异地备份会再次拒绝执行，回退时要一并处理。
+  - 027/028 保留。
