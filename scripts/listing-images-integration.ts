@@ -305,6 +305,66 @@ try {
   assert.equal(bigPlan.images.find((i: { label: string }) => i.label === twin.id).path, '模特图/IMG_1_连拍.png'); assert.equal(twin.role, '不用');
   pass('大款：61 张中颜色相近的照片都保留，按需拼成宫格不超过 50 张图，每张都有分类；完全相同的副本只看一次，标为相似图可手动改回');
 
+  // ---- 学新版式：参考图 3–10 张，冻结 100 积分，学好出样图，保存后团队共用 ----
+  const lay = randomUUID();
+  await call(0, 'layouts', { id: lay, name: '细节特写格' });
+  await call(1, `layouts/${lay}`, undefined, 404);
+  const refImg = (r: number) => sharp({ create: { width: 500, height: 500, channels: 3, background: { r, g: 120, b: 60 } } }).jpeg().toBuffer();
+  const addRef = (index: number, id: string, bytes: Buffer, expected = 200) => call(index, `layouts/${id}/refs`, bytes, expected, 'POST', { 'content-type': 'application/octet-stream', 'x-file-name': 'ref.jpg' });
+  await addRef(0, lay, await refImg(10)); await addRef(0, lay, await refImg(40));
+  await call(0, `layouts/${lay}/learn`, {}, 400);
+  await addRef(0, lay, await refImg(80)); await addRef(1, lay, await refImg(90), 404);
+  const beforeLearn = await balance(tenants[0]);
+  assert.equal((await (await call(0, `layouts/${lay}/learn`, {})).json()).status, 'queued');
+  assert.equal(beforeLearn - await balance(tenants[0]), 100);
+  const layoutHold = async (id: string) => (await db().query("SELECT state,amount_cents,settled_cents FROM credit_holds WHERE id=$1", ['listing:layout:' + id])).rows[0];
+  assert.deepEqual([(await layoutHold(lay)).state, Number((await layoutHold(lay)).amount_cents)], ['held', 100]);
+  await addRef(0, lay, await refImg(120), 409);
+  const spec = { description: '大字标题在上、三格细节', style: '顶部超大白色粗体标题，暖色侧逆光，背景虚化', roles: Object.fromEntries(['首图', '功能', '细节', '实用', '收口', '海报'].map(r => [r, `${r}：标题在上方，主体居中，下方一行副标题`])), sku: '左上角颜色名，左下角面料小图，双人并排' };
+  const learnPrompts: string[] = [];
+  const learnWorker = await startListingWorker({ concurrency: 2, learn: {
+    plan: async () => ({ content: JSON.stringify(spec), model: 'm', requestId: 'r', usage: null, durationMs: 1 }),
+    image: async input => { learnPrompts.push(input.prompt); return { bytes: await sharp({ create: { width: 64, height: 64, channels: 3, background: '#c88d2e' } }).png().toBuffer(), taskId: 't', credits: 1, durationMs: 1 }; },
+  } });
+  for (let i = 0; i < 80 && (await (await call(0, `layouts/${lay}`)).json()).status !== 'draft'; i++) await new Promise(r => setTimeout(r, 250));
+  await learnWorker.close();
+  const learned = await (await call(0, `layouts/${lay}`)).json();
+  assert.equal(learned.status, 'draft'); assert.equal(learned.samples.length, 3); assert.equal(learned.refs.length, 3);
+  assert.equal(learnPrompts.length, 3); assert.ok(learnPrompts.every(p => p.includes('标题在上方') || p.includes('左上角颜色名')));
+  assert.deepEqual([(await layoutHold(lay)).state, Number((await layoutHold(lay)).settled_cents)], ['settled', 100]);
+  assert.ok(!(await (await call(0, 'config')).json()).layouts.some((l: { id: string }) => l.id === lay));
+  await call(1, `layouts/${lay}/save`, {}, 409);
+  await call(0, `layouts/${lay}/save`, {});
+  const cfg = await (await call(0, 'config')).json();
+  assert.equal(cfg.layoutCredits, 100);
+  assert.ok(cfg.layouts.find((l: { id: string; own: boolean }) => l.id === lay && l.own));
+  assert.ok(!(await (await call(1, 'config')).json()).layouts.some((l: { id: string }) => l.id === lay));
+  assert.equal((await call(0, `layouts/${lay}/files/sample/0`)).status, 200);
+  await call(1, `layouts/${lay}/files/sample/0`, undefined, 404);
+  const usesLayout = randomUUID();
+  await call(1, 'projects', { id: randomUUID(), name: '别人的版式', layout: lay, counts: { square: 1, portrait: 0, poster: 0 } }, 400);
+  await call(0, 'projects', { id: usesLayout, name: '用学来的版式', layout: lay, counts: { square: 1, portrait: 0, poster: 0 } });
+  await call(0, `layouts/${lay}`, undefined, 200, 'DELETE');
+  assert.ok(!(await (await call(0, 'config')).json()).layouts.some((l: { id: string }) => l.id === lay));
+  await call(0, 'projects', { id: randomUUID(), name: '删了的版式', layout: lay, counts: { square: 1, portrait: 0, poster: 0 } }, 400);
+  await upload(0, usesLayout, main, 'a.jpg');
+  await call(0, `projects/${usesLayout}/plan`, {});
+  const layoutJob = (await db().query("SELECT id,tenant_id,project_id,step FROM listing_jobs WHERE project_id=$1", [usesLayout])).rows[0] as Job;
+  let planTask = '';
+  await executePlan(layoutJob, async (request, hooks) => { planTask = ((request as { messages: { content: { text?: string }[] }[] }).messages[1].content[0].text ?? ''); await hooks.beforeSubmit(); throw Object.assign(new Error('分析接口 HTTP 400'), { definite: true }); });
+  assert.match(planTask, /这一款用「细节特写格」版式：顶部超大白色粗体标题/);
+  pass('学新版式：至少 3 张参考图，冻结并扣 100 积分，出 3 张样图；保存后团队可选、别人看不到用不了；删除后用过它的款照样能用');
+  const bad = randomUUID();
+  await call(0, 'layouts', { id: bad, name: '学不成' });
+  for (const r of [150, 170, 190]) await addRef(0, bad, await refImg(r));
+  await call(0, `layouts/${bad}/learn`, {});
+  const badWorker = await startListingWorker({ concurrency: 1, learn: { plan: async () => ({ content: '{"description":"x"}', model: 'm', requestId: 'r', usage: null, durationMs: 1 }) } });
+  for (let i = 0; i < 80 && (await (await call(0, `layouts/${bad}`)).json()).status !== 'failed'; i++) await new Promise(r => setTimeout(r, 250));
+  await badWorker.close();
+  const failed = await (await call(0, `layouts/${bad}`)).json();
+  assert.equal(failed.status, 'failed'); assert.match(failed.error, /没有扣积分/); assert.equal((await layoutHold(bad)).state, 'released');
+  pass('学版式失败：AI 总结不完整时标为没学成，冻结的积分全部退回');
+
   // ---- 存储：出图 30 天后清掉原始素材；删除一款退还空间（别的款还在用的文件照样计入） ----
   const usage = async () => Number((await db().query('SELECT bytes_used FROM tenant_usage WHERE tenant_id=$1', [tenants[0]])).rows[0].bytes_used);
   const refs = async (fileId: string) => (await db().query("SELECT 1 FROM tenant_file_refs WHERE tenant_id=$1 AND file_id=$2", [tenants[0], fileId])).rowCount;

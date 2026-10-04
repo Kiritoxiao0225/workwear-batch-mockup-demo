@@ -8,7 +8,8 @@ import { catalogDatabase, catalogTransaction } from './catalog-database';
 import { CatalogHttpError } from './catalog-auth';
 import { readCatalogFile } from './catalog-files';
 import { currentPrices, holdCredits, microToCents, priceOf, releaseHold, settleHold } from './credits';
-import { layoutById, countsSchema } from '../listing/layouts';
+import { countsSchema } from '../listing/layouts';
+import { claimLayout, executeLayout, renewLayoutLease, resolveLayout } from './listing-layouts';
 import { addDuplicates, parsePlan, planRequest } from './listing-plan';
 import { planViews, type PlanSource } from './listing-plan-views';
 import { assertListingProviderConfigured, callPlanModel, LISTING_PLAN_MODEL, type PlanCall } from './listing-provider';
@@ -19,10 +20,11 @@ import type { Tenant } from './tenant-scope';
 const holdId = (jobId: string) => 'listing:' + jobId;
 const db = () => catalogDatabase();
 
-/** Credits for one image and one multi-colour image, for the redo buttons. */
+/** Credits for one image, one multi-colour image and learning a layout, for the page's buttons. */
 export async function imagePrices() {
   const prices = await currentPrices();
-  return { imageCredits: microToCents(priceOf(prices, 'listing_image').userMicroCents), multiCredits: microToCents(priceOf(prices, 'listing_image_multi').userMicroCents) };
+  return { imageCredits: microToCents(priceOf(prices, 'listing_image').userMicroCents), multiCredits: microToCents(priceOf(prices, 'listing_image_multi').userMicroCents),
+    layoutCredits: microToCents(priceOf(prices, 'listing_layout').userMicroCents) };
 }
 
 /** Credits the planning step will hold, for the page to show before the user starts. */
@@ -78,7 +80,7 @@ export async function executePlan(job: JobRow, provider: Provider = (request, ho
     const hold = (await db().query('SELECT state FROM credit_holds WHERE id=$1 AND tenant_id=$2', [holdId(job.id), job.tenant_id])).rows[0];
     if (hold?.state !== 'held') throw new Error('缺少有效积分冻结');
     const project = (await db().query('SELECT layout,counts FROM listing_projects WHERE id=$1', [job.project_id])).rows[0];
-    const layout = layoutById(project.layout);
+    const layout = await resolveLayout(job.tenant_id, project.layout);
     if (!layout) throw new Error('版式不存在');
     const { sources, map } = await planSources(job.project_id);
     const { views, duplicates } = await planViews(sources);
@@ -128,7 +130,7 @@ export async function executePlan(job: JobRow, provider: Provider = (request, ho
  * image job starts only when the images it builds on exist; if one of them failed, it is
  * skipped and costs nothing.
  */
-export async function startListingWorker({ canAccept = () => true, concurrency = Number(process.env.LISTING_WORKER_CONCURRENCY || 6), generate, upscale }: { canAccept?: () => boolean; concurrency?: number; generate?: Parameters<typeof executeImage>[1]; upscale?: Upscale } = {}) {
+export async function startListingWorker({ canAccept = () => true, concurrency = Number(process.env.LISTING_WORKER_CONCURRENCY || 6), generate, upscale, learn }: { canAccept?: () => boolean; concurrency?: number; generate?: Parameters<typeof executeImage>[1]; upscale?: Upscale; learn?: Parameters<typeof executeLayout>[1] } = {}) {
   let closed = false, ticking = false;
   const running = new Set<Promise<void>>(), owner = randomUUID();
   const heartbeat = () => db().query('INSERT INTO listing_workers(id) VALUES($1) ON CONFLICT(id) DO UPDATE SET heartbeat_at=now()', [owner]);
@@ -186,6 +188,16 @@ export async function startListingWorker({ canAccept = () => true, concurrency =
         if (!next) break;
         if ('blocked' in next && next.blocked) { await failBlocked(next.blocked, next.reason!); continue; }
         if ('job' in next && next.job) run(next.job);
+      }
+      // A layout to learn: one call to read the references, then three sample images.
+      if (!closed && running.size < concurrency) {
+        const layout = await claimLayout(owner);
+        if (layout) {
+          const beat = setInterval(() => { void renewLayoutLease(layout.id, owner).catch(() => {}); }, 15000);
+          const task = executeLayout(layout, learn).catch(error => console.error('[listing-worker] layout', error instanceof Error ? error.message : 'error'))
+            .finally(() => { clearInterval(beat); running.delete(task); });
+          running.add(task);
+        }
       }
     } catch (error) { console.error('[listing-worker]', error instanceof Error ? error.name : 'error'); } finally { ticking = false; }
   };

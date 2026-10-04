@@ -19,6 +19,10 @@ type Plan = {
 type Words = { title: string; subtitle: string; bullets: string[]; scene?: string };
 type Review = { roles: Record<string, AssetRole>; colors: { sku: string; name: string }[]; slots: Record<string, Words> };
 type SlotState = { slot: string; status: string; error: string | null; image: string | null; versions: number; history: { id: string; words: Words | null }[]; words: Words | null; input: { kind: string; skus?: string[]; slot?: { role: string; title: string } } };
+/** A layout as the page shows it: built-in, or learned by someone in this tenant. */
+type LayoutCard = { id: string; name: string; description: string; samples: string[]; own: boolean; by?: string; createdAt?: string };
+type Config = { layouts: LayoutCard[]; learning: { id: string; name: string; status: string }[]; planCredits: number; imageCredits: number; multiCredits: number; layoutCredits: number; exempt: boolean };
+const BUILT_IN: LayoutCard[] = LISTING_LAYOUTS.map(l => ({ id: l.id, name: l.name, description: l.description, samples: l.samples, own: false }));
 type Detail = Summary & { images: { id: string; label: string; name: string; path: string; shape: string; url: string }[]; plan: Plan | null; review: Review | null; estimate: { images: number; credits: number } | null; slots: SlotState[] };
 /** One dropped folder = one product; the upload dialog fills in its layout and counts. */
 type Group = { name: string; files: { file: File; path: string }[]; layout?: string; counts?: ListingCounts };
@@ -104,7 +108,9 @@ const statusOf = (p: Summary, upload?: { done: number; total: number; failed: nu
 };
 
 export function ListingImagesClient() {
-  const [config, setConfig] = useState<{ planCredits: number; imageCredits: number; multiCredits: number; exempt: boolean } | null>(null);
+  const [config, setConfig] = useState<Config | null>(null);
+  const [mine, setMine] = useState(false);
+  const [learning, setLearning] = useState<{ resume?: string; apply?: (id: string) => void } | null>(null);
   const [editing, setEditing] = useState<{ project: string; slot: string } | null>(null);
   const [projects, setProjects] = useState<Summary[]>([]);
   const [details, setDetails] = useState<Record<string, Detail>>({});
@@ -121,7 +127,7 @@ export function ListingImagesClient() {
   /* eslint-disable react-hooks/set-state-in-effect -- localStorage and the server list exist only after mount. */
   useEffect(() => {
     try { const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null"); if (saved?.layout && saved?.counts) setSettings(saved); } catch { /* first visit */ }
-    api<{ planCredits: number; imageCredits: number; multiCredits: number; exempt: boolean }>("config").then(setConfig).catch(error => say(error.message));
+    api<Config>("config").then(setConfig).catch(error => say(error.message));
   }, [say]);
   const saveSettings = (next: typeof settings) => { setSettings(next); try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(next)); } catch { /* optional */ } };
 
@@ -194,6 +200,10 @@ export function ListingImagesClient() {
     try { await api("projects/" + p.id, { method: "DELETE" }); await refresh(); } catch (error) { say((error as Error).message); }
   };
 
+  const loadConfig = () => api<Config>("config").then(setConfig).catch(error => say((error as Error).message));
+  const layouts = config?.layouts ?? BUILT_IN;
+  const defaults = { ...settings, layout: layouts.some(l => l.id === settings.layout) ? settings.layout : layouts[0].id };
+  const waiting = (config?.learning ?? []).filter(l => l.status === "draft").length, busyLearning = (config?.learning ?? []).filter(l => ["queued", "learning"].includes(l.status)).length;
   const editDetail = editing ? details[editing.project] : undefined, editSlot = editDetail?.slots.find(x => x.slot === editing?.slot);
 
   return (
@@ -201,12 +211,21 @@ export function ListingImagesClient() {
       <AppHeader />
       <main className="listing-page">
 
+        <div className="lp-head">
         <button type="button" className={"lp-drop" + (over ? " over" : "")}
           onDragOver={e => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={onDrop} onClick={() => pick.current?.click()}>
           <b>拖入商品文件夹，放进来先选版式</b>
           可以一次拖多个 · 每个文件夹一个款 · 每款可以用不同的版式 · 里面的图随便放，AI 会自己分类
           {config && !config.exempt && <> · 每款分析 {config.planCredits} 积分</>}
         </button>
+        <div className="lp-mine">
+          <b>我的版式</b>
+          <div className="thumbs">{layouts.slice(0, 5).map(l => <img key={l.id} src={l.samples[0]} alt="" title={l.name} />)}</div>
+          <small>自带 {layouts.filter(l => !l.own).length} 个 · 团队学的 {layouts.filter(l => l.own).length} 个
+            {busyLearning > 0 && <><br />{busyLearning} 个正在学</>}{waiting > 0 && <><br /><span className="lp-hint">{waiting} 个学好了，等你看样图</span></>}</small>
+          <div><button type="button" className="lp-btn sm" onClick={() => { void loadConfig(); setMine(true); }}>管理 / 学新版式</button></div>
+        </div>
+        </div>
         <input ref={pick} type="file" multiple hidden {...{ webkitdirectory: "" }} accept="image/*"
           onChange={e => { const g = groupsFromInput(e.target.files!); e.target.value = ""; choose(g); }} />
 
@@ -220,7 +239,7 @@ export function ListingImagesClient() {
                   <span className="chev">▶</span><span className={"lp-dot " + s.c} />
                   {p.cover ? <img className="th" src={p.cover} alt="" /> : <div className="th">{p.name.slice(0, 1)}</div>}
                   <div className="nm" title={p.name}>{p.name}</div>
-                  <div className="tp"><b>{LISTING_LAYOUTS.find(l => l.id === p.layout)?.name ?? p.layout}</b>{countsText(p.counts)}</div>
+                  <div className="tp"><b>{layouts.find(l => l.id === p.layout)?.name ?? "已删除的版式"}</b>{countsText(p.counts)}</div>
                   <div className={"ss " + s.c}>{s.text}</div>
                   <div className="acts" onClick={e => e.stopPropagation()}>
                     {p.status === "review" && <button type="button" className="lp-btn sm primary" onClick={() => setReviewing(p.id)}>确认内容</button>}
@@ -255,8 +274,13 @@ export function ListingImagesClient() {
         <ReviewDialog detail={details[reviewing]} readOnly={details[reviewing].status !== "review"} exempt={!!config?.exempt} onClose={() => setReviewing(null)}
           onDone={async message => { setReviewing(null); say(message); await refresh(); }} onError={say} />
       )}
-      {pending && <UploadDialog groups={pending} defaults={settings} planCredits={config?.exempt ? 0 : config?.planCredits ?? 0}
+      {pending && <UploadDialog groups={pending} layouts={layouts} defaults={defaults} onLearn={apply => setLearning({ apply })} planCredits={config?.exempt ? 0 : config?.planCredits ?? 0}
         onCancel={() => setPending(null)} onStart={groups => { setPending(null); saveSettings({ layout: groups.at(-1)!.layout!, counts: groups.at(-1)!.counts! }); void startGroups(groups); }} />}
+      {mine && <MyLayouts layouts={layouts} learning={config?.learning ?? []} onClose={() => setMine(false)} onLearn={resume => setLearning({ resume })} onError={say}
+        onDeleted={async name => { say(`已删除「${name}」，用它出过的图不受影响`); await loadConfig(); }} />}
+      {learning && <LearnDialog resume={learning.resume} price={config?.exempt ? 0 : config?.layoutCredits ?? 0} onError={say}
+        onClose={() => { setLearning(null); void loadConfig(); }}
+        onSaved={async (id, name) => { await loadConfig(); learning.apply?.(id); setLearning(null); say(learning.apply ? `已保存「${name}」，并给这一款用上了` : `已保存「${name}」，团队里的人上传时都能选`); }} />}
       {editDetail && editSlot && <EditDialog key={editSlot.slot} detail={editDetail} slot={editSlot} prices={{ image: config?.imageCredits ?? 0, multi: config?.multiCredits ?? 0 }} exempt={!!config?.exempt || !config}
         onClose={() => setEditing(null)} onDone={async message => { setEditing(null); say(message); await refresh(); }} onError={say} />}
       {toast && <div className="lp-toast" role="status">{toast}</div>}
@@ -268,18 +292,19 @@ const countsText = (c: ListingCounts) => `1:1×${c.square} · 3:4×${c.portrait}
 const COUNT_KEYS = [["square", "1:1", 5], ["portrait", "3:4", 5], ["poster", "海报", 1]] as const;
 
 /** Pick one layout from the cards; the samples show the style only. */
-function LayoutPicker({ title, current, onPick, onClose }: { title: string; current: string; onPick: (id: string) => void; onClose: () => void }) {
+function LayoutPicker({ title, layouts, current, onPick, onLearn, onClose }: { title: string; layouts: LayoutCard[]; current: string; onPick: (id: string) => void; onLearn: () => void; onClose: () => void }) {
   return (
     <div className="lp-modal top" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="lp-box" role="dialog" aria-modal="true" aria-label="选一个版式">
         <div className="lp-box-head"><div><h3>{title}</h3><p className="lp-sub">样图是用别的衣服出的，只看风格和排法。</p></div><div className="grow" /><button type="button" className="lp-btn sm ghost" onClick={onClose}>关闭</button></div>
         <div className="lp-box-body">
-          <div className="lp-layouts">{LISTING_LAYOUTS.map(l => (
+          <div className="lp-layouts">{layouts.map(l => (
             <button type="button" key={l.id} className={"lp-layout" + (l.id === current ? " on" : "")} onClick={() => onPick(l.id)}>
-              <span className="ok">✓</span>
+              <span className="ok">✓</span><span className={"lp-tag" + (l.own ? " team" : "")}>{l.own ? "团队学的" : "自带"}</span>
               <div className="pics">{l.samples.map(src => <img key={src} src={src} alt="" />)}</div>
               <b>{l.name}</b><p>{l.description}</p>
             </button>))}
+            <button type="button" className="lp-layout add" onClick={onLearn}><b>＋ 学一个新版式</b><p>上传几张喜欢的主图，AI 学它的风格和排法</p></button>
           </div>
         </div>
       </div>
@@ -288,11 +313,12 @@ function LayoutPicker({ title, current, onPick, onClose }: { title: string; curr
 }
 
 /** After a drop: each product gets its own layout and image counts before anything is uploaded or charged. */
-function UploadDialog({ groups, defaults, planCredits, onCancel, onStart }: { groups: Group[]; defaults: { layout: string; counts: ListingCounts }; planCredits: number; onCancel: () => void; onStart: (groups: Group[]) => void }) {
+function UploadDialog({ groups, layouts, defaults, planCredits, onLearn, onCancel, onStart }: { groups: Group[]; layouts: LayoutCard[]; defaults: { layout: string; counts: ListingCounts }; planCredits: number; onLearn: (apply: (id: string) => void) => void; onCancel: () => void; onStart: (groups: Group[]) => void }) {
   const [rows, setRows] = useState(groups.map(g => ({ ...g, layout: defaults.layout, counts: { ...defaults.counts } })));
   const [all, setAll] = useState(defaults.layout);
   const [picking, setPicking] = useState<number | "all" | null>(null);
-  const layoutOf = (id: string) => LISTING_LAYOUTS.find(l => l.id === id) ?? LISTING_LAYOUTS[0];
+  const layoutOf = (id: string) => layouts.find(l => l.id === id) ?? layouts[0];
+  const apply = (target: number | "all", id: string) => { if (target === "all") setAll(id); else setRows(r => r.map((row, k) => k === target ? { ...row, layout: id } : row)); };
   const pickButton = (id: string, onClick: () => void, wide = true) => {
     const l = layoutOf(id);
     return <button type="button" className="lp-pick" style={wide ? undefined : { width: "auto", minWidth: 220 }} onClick={onClick}>
@@ -322,8 +348,134 @@ function UploadDialog({ groups, defaults, planCredits, onCancel, onStart }: { gr
           <button type="button" className="lp-btn primary" disabled={empty} onClick={() => onStart(rows)}>开始上传并分析</button>
         </div>
       </div>
-      {picking !== null && <LayoutPicker title={picking === "all" ? "全部用哪个版式" : `给「${rows[picking].name}」选版式`} current={picking === "all" ? all : rows[picking].layout}
-        onClose={() => setPicking(null)} onPick={id => { if (picking === "all") setAll(id); else setRows(r => r.map((row, k) => k === picking ? { ...row, layout: id } : row)); setPicking(null); }} />}
+      {picking !== null && <LayoutPicker title={picking === "all" ? "全部用哪个版式" : `给「${rows[picking].name}」选版式`} layouts={layouts} current={picking === "all" ? all : rows[picking].layout}
+        onClose={() => setPicking(null)} onPick={id => { apply(picking, id); setPicking(null); }}
+        onLearn={() => { const target = picking; setPicking(null); onLearn(id => apply(target, id)); }} />}
+    </div>
+  );
+}
+
+const STATUS_TEXT: Record<string, string> = { uploading: "还没开始学", queued: "排队中", learning: "正在学，约 2 分钟", draft: "学好了，等你看样图", failed: "没学成" };
+
+/** Built-in layouts and the ones the team learned; learned ones can be deleted, unfinished ones reopened. */
+function MyLayouts({ layouts, learning, onClose, onLearn, onDeleted, onError }: { layouts: LayoutCard[]; learning: Config["learning"]; onClose: () => void; onLearn: (resume?: string) => void; onDeleted: (name: string) => Promise<void>; onError: (message: string) => void }) {
+  const remove = async (l: LayoutCard) => {
+    if (!window.confirm(`删除「${l.name}」？团队里的人就选不到它了；已经用它出过的图不受影响。`)) return;
+    try { await api("layouts/" + l.id, { method: "DELETE" }); await onDeleted(l.name); } catch (error) { onError((error as Error).message); }
+  };
+  return (
+    <div className="lp-modal" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="lp-box" role="dialog" aria-modal="true" aria-label="我的版式">
+        <div className="lp-box-head"><div><h3>我的版式</h3><p className="lp-sub">系统自带的，加上你们团队学的；团队里的人都能用。</p></div><div className="grow" /><button type="button" className="lp-btn sm ghost" onClick={onClose}>关闭</button></div>
+        <div className="lp-box-body">
+          {learning.length > 0 && <div className="lp-learning">{learning.map(l => (
+            <button type="button" key={l.id} className="lp-btn sm" onClick={() => onLearn(l.id)}>「{l.name}」{STATUS_TEXT[l.status] ?? l.status}</button>))}</div>}
+          <div className="lp-layouts">{layouts.map(l => (
+            <div key={l.id} className="lp-layout">
+              <span className={"lp-tag" + (l.own ? " team" : "")}>{l.own ? "团队学的" : "自带"}</span>
+              <div className="pics">{l.samples.map(src => <img key={src} src={src} alt="" />)}</div>
+              <b>{l.name}</b><p>{l.description}</p>
+              {l.own && <p className="by">{l.by}{l.createdAt ? ` · ${dayOf(l.createdAt)}` : ""} · <button type="button" className="lp-btn link" onClick={() => void remove(l)}>删除</button></p>}
+            </div>))}
+            <button type="button" className="lp-layout add" onClick={() => onLearn()}><b>＋ 学一个新版式</b><p>上传 3–10 张喜欢的主图，AI 学它的风格和排法</p></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type LearnState = { id: string; name: string; status: string; error: string | null; spec: { description: string; style: string; roles: Record<string, string>; sku: string } | null; refs: string[]; samples: string[] };
+/**
+ * Learn a layout: upload 3–10 reference images and a name, the workers learn it (about two
+ * minutes, the dialog may be closed), then look at three samples and save, relearn or drop it.
+ */
+function LearnDialog({ resume, price, onClose, onSaved, onError }: { resume?: string; price: number; onClose: () => void; onSaved: (id: string, name: string) => Promise<void>; onError: (message: string) => void }) {
+  const [id, setId] = useState(resume ?? "");
+  const [step, setStep] = useState<"upload" | "wait" | "view">(resume ? "wait" : "upload");
+  const [state, setState] = useState<LearnState | null>(null);
+  const [files, setFiles] = useState<{ file: File; url: string }[]>([]);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState("");
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (step !== "wait" || !id) return;
+    let stop = false;
+    const tick = async () => {
+      try {
+        const s = await api<LearnState>("layouts/" + id);
+        if (stop) return;
+        setState(s);
+        if (!["queued", "learning", "uploading"].includes(s.status)) setStep("view");
+      } catch (error) { if (!stop) onError((error as Error).message); }
+    };
+    void tick();
+    const timer = setInterval(() => void tick(), 3000);
+    return () => { stop = true; clearInterval(timer); };
+  }, [step, id, onError]);
+  const add = (list: FileList | File[]) => {
+    const images = [...list].filter(f => IMAGE.test(f.name)).slice(0, 10 - files.length);
+    setFiles(f => [...f, ...images.map(file => ({ file, url: URL.createObjectURL(file) }))]);
+  };
+  const start = async () => {
+    const layoutId = crypto.randomUUID();
+    try {
+      setBusy("正在上传参考图…");
+      await post("layouts", { id: layoutId, name: name.trim() });
+      for (const [i, f] of files.entries()) {
+        setBusy(`正在上传参考图 ${i + 1}/${files.length}…`);
+        await api(`layouts/${layoutId}/refs`, { method: "POST", body: await shrink(f.file), headers: { "Content-Type": "application/octet-stream", "x-file-name": encodeURIComponent(f.file.name) } });
+      }
+      await post(`layouts/${layoutId}/learn`);
+      setId(layoutId); setStep("wait");
+    } catch (error) {
+      onError((error as Error).message);
+      await api("layouts/" + layoutId, { method: "DELETE" }).catch(() => {});
+    } finally { setBusy(""); }
+  };
+  const drop = async () => { try { await api("layouts/" + id, { method: "DELETE" }); } catch { /* already gone */ } };
+  const relearn = async () => { await drop(); setName(state?.name ?? name); setId(""); setState(null); setStep("upload"); };
+  const save = async () => { try { setBusy("正在保存…"); await post(`layouts/${id}/save`); await onSaved(id, state!.name); } catch (error) { onError((error as Error).message); } finally { setBusy(""); } };
+  const done = state?.status === "draft" && state.spec;
+  return (
+    <div className="lp-modal top" onClick={e => { if (e.target === e.currentTarget && !busy) onClose(); }}>
+      <div className="lp-box" role="dialog" aria-modal="true" aria-label="学一个新版式">
+        <div className="lp-box-head"><div><h3>学一个新版式{state?.name ? ` · ${state.name}` : ""}</h3>
+          <p className="lp-sub">{step === "upload" ? "上传 3–10 张你喜欢的主图，AI 学它们的风格和排法。" : step === "wait" ? "大约 2 分钟，可以先关掉，学好了在「我的版式」里能看到。" : done ? "学好了，看看样图满不满意。" : "这次没学成。"}</p></div>
+          <div className="grow" /><button type="button" className="lp-btn sm ghost" disabled={!!busy} onClick={onClose}>关闭</button></div>
+        <div className="lp-box-body">
+          {step === "upload" && (<>
+            <div className="lp-refs">
+              {files.map((f, i) => <div key={f.url} className="ref"><img src={f.url} alt="" /><button type="button" aria-label="去掉" onClick={() => setFiles(list => list.filter((_, k) => k !== i))}>✕</button></div>)}
+              {files.length < 10 && <button type="button" className="refadd" onClick={() => input.current?.click()} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); add(e.dataTransfer.files); }}>＋ 选图片<br />或拖进来<br /><small>{files.length}/10</small></button>}
+            </div>
+            <input ref={input} type="file" accept="image/*" multiple hidden onChange={e => { add(e.target.files!); e.target.value = ""; }} />
+            <label className="lp-field"><span>版式名字</span><input maxLength={12} placeholder="比如：细节特写格" value={name} onChange={e => setName(e.target.value)} /></label>
+            <div className="lp-say">只学风格和排法：标题放哪、字体感觉、光线色调、卖点标签的样子、怎么分格。不会照搬对方的文字、logo、人物和衣服。最好是同一种风格的几张图。</div>
+          </>)}
+          {step === "wait" && <div className="lp-say">{state?.status === "learning" ? "正在学：先看参考图总结风格，再用示例衣服出 3 张样图……" : "排队中，马上开始……"}</div>}
+          {step === "view" && done && (
+            <div className="lp-learned">
+              <div><b>AI 总结的风格和排法</b>
+                <p>{state.spec!.description}</p><p className="lp-muted">{state.spec!.style}</p>
+                <details><summary>每类图怎么排</summary><ul>{Object.entries(state.spec!.roles).map(([role, text]) => <li key={role}><b>{role}</b>：{text}</li>)}<li><b>SKU 图</b>：{state.spec!.sku}</li></ul></details>
+              </div>
+              <div><b>样图（用示例衣服出的）</b><div className="lp-samples">{state.samples.map(src => <img key={src} src={src} alt="" />)}</div></div>
+            </div>)}
+          {step === "view" && !done && <div className="lp-alert y">{state?.error ?? "没学成"}</div>}
+        </div>
+        <div className="lp-box-foot">
+          {step === "upload" && <><div className="grow">{busy || (price ? <>学一次 <b>{price}</b> 积分，学完会用示例衣服出 3 张样图给你看；没学成不扣</> : "学完会用示例衣服出 3 张样图给你看")}</div>
+            <button type="button" className="lp-btn" disabled={!!busy} onClick={onClose}>取消</button>
+            <button type="button" className="lp-btn primary" disabled={!!busy || files.length < 3 || !name.trim()} onClick={() => void start()}>{files.length < 3 ? `至少 3 张图（还差 ${3 - files.length} 张）` : `开始学${price ? ` · ${price} 积分` : ""}`}</button></>}
+          {step === "wait" && <><div className="grow">{price ? `已冻结 ${price} 积分；没学成会退回` : ""}</div><button type="button" className="lp-btn" onClick={onClose}>先关掉</button></>}
+          {step === "view" && done && <><div className="grow">满意就保存，团队里的人上传时都能选它。</div>
+            <button type="button" className="lp-btn" disabled={!!busy} onClick={() => void drop().then(onClose)}>不要了</button>
+            <button type="button" className="lp-btn" disabled={!!busy} onClick={() => void relearn()}>换图重学{price ? ` · ${price} 积分` : ""}</button>
+            <button type="button" className="lp-btn primary" disabled={!!busy} onClick={() => void save()}>保存到我的版式</button></>}
+          {step === "view" && !done && <><div className="grow" /><button type="button" className="lp-btn" onClick={() => void drop().then(onClose)}>关闭</button><button type="button" className="lp-btn primary" onClick={() => void relearn()}>换图重学</button></>}
+        </div>
+      </div>
     </div>
   );
 }

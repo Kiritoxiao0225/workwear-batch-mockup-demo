@@ -6,7 +6,8 @@ import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './
 import { CatalogHttpError } from './catalog-auth';
 import { saveCatalogFile, readCatalogFile } from './catalog-files';
 import { registerFileRef } from './file-authorization';
-import { ASSET_ROLES, countsSchema, layoutById, shapeOf } from '../listing/layouts';
+import { ASSET_ROLES, countsSchema, shapeOf } from '../listing/layouts';
+import { resolveLayout } from './listing-layouts';
 import type { ListingPlan } from './listing-plan';
 
 // Users drop a whole product folder; the page shrinks photos to 2048 px before upload, and the
@@ -19,7 +20,7 @@ export const assetUrl = (id: string) => `/api/listing/assets/${id}`;
 
 export async function createProject(tenant: string, user: string, input: unknown) {
   const b = z.object({ id: z.uuid(), name: z.string().trim().min(1).max(120), layout: z.string(), counts: countsSchema }).parse(input);
-  if (!layoutById(b.layout)) throw new CatalogHttpError(400, '没有这个版式');
+  if (!(await resolveLayout(tenant, b.layout, { forNewProject: true }))) throw new CatalogHttpError(400, '没有这个版式');
   await catalogDatabase().query(
     `INSERT INTO listing_projects(id,tenant_id,created_by,name,layout,counts) VALUES($1,$2,$3,$4,$5,$6)
      ON CONFLICT (id) DO NOTHING`, [b.id, tenant, user, b.name, b.layout, b.counts]);

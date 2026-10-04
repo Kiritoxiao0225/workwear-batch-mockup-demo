@@ -12,7 +12,8 @@ import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './
 import { CatalogHttpError } from './catalog-auth';
 import { readCatalogFile } from './catalog-files';
 import { currentPrices, holdCredits, microToCents, priceOf, settleHold, type AttemptOutcome, type PriceSnapshot } from './credits';
-import { countsSchema, layoutById, rolesFor, type MainRole } from '../listing/layouts';
+import { countsSchema, rolesFor, type MainRole } from '../listing/layouts';
+import { resolveLayout } from './listing-layouts';
 import { mainPrompt, productPrompt, skuPrompt, textEditPrompt, type Color, type MainSlot } from './listing-prompts';
 import { generateListingImage, LISTING_IMAGE_MODEL, type ImageCall } from './listing-provider';
 import { latestOutputs, slotWordsSchema, storeOutput, type Review, type StoredPlan } from './listing-store';
@@ -169,7 +170,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
   let submitted = false;
   try {
     const p = (await db().query('SELECT layout,plan,review FROM listing_projects WHERE id=$1', [job.project_id])).rows[0];
-    const stored = p.plan as Stored, review = p.review as Partial<Review> | null, layout = layoutById(p.layout);
+    const stored = p.plan as Stored, review = p.review as Partial<Review> | null, layout = await resolveLayout(job.tenant_id, p.layout);
     if (!layout) throw new Error('版式不存在');
     const colors = colorsOf(stored, review), outputs = await latestOutputs(job.project_id), garment = stored.plan.product.garment;
     const output = async (slot: string) => { const o = outputs.get(slot); if (!o) throw new Error(`缺少前一步的图：${slot}`); return fileOf(o.file_id); };

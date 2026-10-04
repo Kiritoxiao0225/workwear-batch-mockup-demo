@@ -6,7 +6,7 @@ import { assertPageAccess } from '@/lib/server/page-access';
 import { addSourceImage, chooseVersion, confirmProject, createProject, deleteProject, listProjects, MAX_SOURCE_BYTES, projectDetail, readListingAsset, saveReview } from '@/lib/server/listing-store';
 import { imagePrices, planPrice, requestPlan } from '@/lib/server/listing-jobs';
 import { downloadZip, estimate, redoSlot, slotStates, startGeneration } from '@/lib/server/listing-generation';
-import { LISTING_LAYOUTS } from '@/lib/listing/layouts';
+import { addLayoutRef, createLayout, deleteLayout, layoutCards, layoutFile, layoutState, openLayouts, saveLayout, startLearning } from '@/lib/server/listing-layouts';
 
 export const dynamic = 'force-dynamic';
 type Context = { params: Promise<{ path: string[] }> };
@@ -17,7 +17,12 @@ export async function GET(request: NextRequest, context: Context) {
   try {
     const { tenant, user } = await tenantScope(request), { path } = await context.params;
     await assertPageAccess(user.id, ['/listing-images']);
-    if (path[0] === 'config') return json({ layouts: LISTING_LAYOUTS, planCredits: await planPrice(), ...await imagePrices(), exempt: tenant.billingMode === 'exempt' });
+    if (path[0] === 'config') return json({ layouts: await layoutCards(tenant.id), learning: await openLayouts(tenant.id, user.id), planCredits: await planPrice(), ...await imagePrices(), exempt: tenant.billingMode === 'exempt' });
+    if (path[0] === 'layouts' && path[1] && path[2] === 'files' && path[3] && path[4]) {
+      const file = await layoutFile(tenant.id, path[1], path[3], Number(path[4]));
+      return new NextResponse(new Uint8Array(file.bytes), { headers: { 'Content-Type': file.file.mime_type, 'Cache-Control': 'private, max-age=3600', 'X-Content-Type-Options': 'nosniff' } });
+    }
+    if (path[0] === 'layouts' && path[1]) return json(await layoutState(tenant.id, path[1]));
     if (path[0] === 'projects' && path[1] && path[2] === 'download') {
       await projectDetail(tenant.id, path[1]);
       const zip = await downloadZip(path[1]);
@@ -43,12 +48,19 @@ export async function POST(request: NextRequest, context: Context) {
   try {
     const { tenant, user } = await tenantScope(request, true), { path } = await context.params;
     await assertPageAccess(user.id, ['/listing-images']);
+    if (path[0] === 'layouts' && path[1] && path[2] === 'refs') {
+      const bytes = await catalogBody(request, MAX_SOURCE_BYTES);
+      return json(await addLayoutRef(tenant.id, path[1], bytes, header(request, 'x-file-name') || '参考图'));
+    }
     if (path[0] === 'projects' && path[1] && path[2] === 'images') {
       const bytes = await catalogBody(request, MAX_SOURCE_BYTES);
       return json(await addSourceImage(tenant.id, path[1], bytes, header(request, 'x-file-name') || '图片', header(request, 'x-file-path')));
     }
     const body = JSON.parse((await catalogBody(request, 256 * 1024)).toString('utf8') || '{}');
     if (path[0] === 'projects' && !path[1]) return json(await createProject(tenant.id, user.id, body));
+    if (path[0] === 'layouts' && !path[1]) return json(await createLayout(tenant.id, user.id, body));
+    if (path[0] === 'layouts' && path[2] === 'learn') return json(await startLearning(tenant, path[1]));
+    if (path[0] === 'layouts' && path[2] === 'save') return json(await saveLayout(tenant.id, path[1]));
     if (path[0] === 'projects' && path[2] === 'plan') return json(await requestPlan(tenant, user.id, path[1]));
     if (path[0] === 'projects' && path[2] === 'review') return json(await saveReview(tenant.id, path[1], body));
     if (path[0] === 'projects' && path[2] === 'confirm') return json(await confirmProject(tenant.id, path[1]));
@@ -69,6 +81,7 @@ export async function DELETE(request: NextRequest, context: Context) {
   try {
     const { tenant, user } = await tenantScope(request, true), { path } = await context.params;
     await assertPageAccess(user.id, ['/listing-images']);
+    if (path[0] === 'layouts' && path[1]) return json(await deleteLayout(tenant.id, path[1]));
     if (path[0] !== 'projects' || !path[1]) throw new CatalogHttpError(404, '接口不存在');
     return json(await deleteProject(tenant.id, path[1]));
   } catch (error) { return catalogError(error); }

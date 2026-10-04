@@ -158,3 +158,28 @@
 .lp-mini > span { display: inline-flex; align-items: center; gap: 4px; }
 .lp-stepper.sm button { width: 22px; height: 26px; } .lp-stepper.sm b { min-width: 18px; font-size: 12.5px; }
 @media (max-width: 900px) { .lp-uprow { grid-template-columns: 1fr; } }
+
+/* My layouts and learning a layout. */
+.lp-head { display: flex; gap: 12px; align-items: stretch; margin-bottom: 22px; flex-wrap: wrap; }
+.lp-head .lp-drop { flex: 1; min-width: 260px; margin-bottom: 0; }
+.lp-mine { width: 260px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; display: grid; gap: 6px; align-content: start; }
+.lp-mine b { font-size: 14px; }
+.lp-mine .thumbs { display: flex; gap: 4px; } .lp-mine .thumbs img { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; }
+.lp-mine small { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.lp-hint { color: var(--brand); font-weight: 600; }
+.lp-layout .lp-tag { position: absolute; left: 14px; top: 14px; font-size: 11px; padding: 1px 7px; border-radius: 999px; background: #ffffffe8; color: #17211c; font-weight: 600; z-index: 1; }
+.lp-layout .lp-tag.team { background: var(--brand); color: var(--brand-ink); }
+.lp-layout.add { border-style: dashed; display: grid; place-items: center; text-align: center; min-height: 150px; color: var(--muted); }
+.lp-layout.add b { color: var(--brand); }
+.lp-layout .by { margin-top: 4px; }
+.lp-learning { display: flex; gap: 8px; flex-wrap: wrap; }
+.lp-refs { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+.lp-refs .ref { position: relative; } .lp-refs .ref img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; display: block; }
+.lp-refs .ref button { position: absolute; right: 4px; top: 4px; width: 22px; height: 22px; border-radius: 50%; border: 0; background: #000a; color: #fff; font-size: 12px; }
+.lp-refs .refadd { border: 1.5px dashed var(--line); border-radius: 10px; aspect-ratio: 1; color: var(--muted); font-size: 12.5px; background: var(--panel-muted); }
+.lp-learned { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 16px; font-size: 13px; }
+.lp-learned p { margin: 6px 0 0; } .lp-learned ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+.lp-learned details { margin-top: 8px; } .lp-learned summary { cursor: pointer; color: var(--brand); }
+.lp-samples { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 6px; }
+.lp-samples img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; display: block; }
+@media (max-width: 900px) { .lp-mine { width: 100%; } .lp-learned { grid-template-columns: 1fr; } }

@@ -459,7 +459,8 @@ try {
 
   // ---- 第 5 步：积分 ----
   const prices = await currentPrices();
-  check(prices.prices.length === 10, '单价表含十个计费动作（抠图拆成美图与火山，背面参考、电商主图策划与出图单独计价）');
+  check(prices.prices.length === 11, '单价表含十一个计费动作（抠图拆成美图与火山，背面参考、电商主图策划、出图与学版式单独计价）');
+  check(prices.prices.find(p => p.action === 'listing_layout')?.userMicroCents === 99_990, '电商主图学一个新版式 100 积分');
   check(prices.prices.find(p => p.action === 'listing_image')?.userMicroCents === 44_000 && prices.prices.find(p => p.action === 'listing_image_multi')?.userMicroCents === 72_000, '电商主图单张 44 积分、多色图 72 积分（成本 × 2）');
   check(prices.prices.find(p => p.action === 'listing_plan')?.userMicroCents === 180_000, '电商主图读商品与策划按成本 ¥0.90 × 2 = 180 积分');
   const gen = prices.prices.find(p => p.action === 'generate')!;

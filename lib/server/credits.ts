@@ -6,7 +6,7 @@ type Client = { query: (text: string, values?: unknown[]) => Promise<{ rowCount:
 
 // 'cutout' is the Meitu fine cut; 'cutout_standard' the Volcengine saliency cut; 'back_reference'
 // the garment back view (Seedream). Split so each supplier is charged at its own cost.
-export type BillableAction = 'analyze' | 'generate' | 'enhance' | 'cutout' | 'cutout_standard' | 'back_reference' | 'recognize' | 'listing_plan' | 'listing_image' | 'listing_image_multi';
+export type BillableAction = 'analyze' | 'generate' | 'enhance' | 'cutout' | 'cutout_standard' | 'back_reference' | 'recognize' | 'listing_plan' | 'listing_image' | 'listing_image_multi' | 'listing_layout';
 
 /** Background-removal action for the engine that actually ran. */
 export const cutoutAction = (engine: string): BillableAction => (engine === 'meitu' ? 'cutout' : 'cutout_standard');
