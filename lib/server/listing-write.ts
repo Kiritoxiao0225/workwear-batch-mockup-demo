@@ -14,7 +14,7 @@ import { PARTS, type Organized } from './listing-organize';
 export const choiceSchema = z.object({
   colors: z.array(z.object({ name: z.string().trim().min(1, '颜色名不能空').max(12), hex: z.string().max(16).default(''), pick: z.string().min(1, '每个颜色都要有一张衣服图') })).min(1, '至少要有一个颜色'),
   parts: z.array(z.object({ part: z.enum(PARTS), pick: z.string().nullable().default(null), skip: z.boolean().default(false) })).default([]),
-  points: z.array(z.object({ type: z.string().max(10).default(''), text: z.string().trim().min(1).max(16), from: z.array(z.string()).default([]), why: z.string().max(80).default(''), on: z.boolean().default(true) })).default([]),
+  points: z.array(z.object({ type: z.string().max(10).default(''), text: z.string().trim().min(1).max(20), from: z.array(z.string()).default([]), why: z.string().max(80).default(''), on: z.boolean().default(true) })).default([]),
 });
 export type Choice = z.infer<typeof choiceSchema>;
 

@@ -144,7 +144,7 @@ export function MaterialsDialog({ name, materials, paths, choice, onChange, onUp
               <div key={i} className={"lp-pt" + (p.on ? "" : " off")}>
                 <input type="checkbox" checked={p.on} onChange={e => setPoint(i, { on: e.target.checked })} aria-label="用这条" />
                 <span className="ty">{p.type || "自己加"}</span>
-                <input className="txt" value={p.text} maxLength={16} placeholder="写一条卖点" onChange={e => setPoint(i, { text: e.target.value })} />
+                <input className="txt" value={p.text} maxLength={20} placeholder="写一条卖点" onChange={e => setPoint(i, { text: e.target.value })} />
                 <span className="ev">{i > 0 && <button type="button" className="up" title="往前挪一位" onClick={() => set({ points: [...choice.points.slice(0, i - 1), p, choice.points[i - 1], ...choice.points.slice(i + 1)] })}>↑</button>}{p.from.length ? <>出处{p.from.slice(0, 3).map(l => byLabel.get(l) && <img key={l} src={byLabel.get(l)!.url} title={byLabel.get(l)!.path} alt="" />)}</> : "你加的"}</span>
                 {p.why && <small className="why">第 {i + 1} · {p.why}</small>}
               </div>))}
