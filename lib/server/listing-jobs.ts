@@ -8,15 +8,15 @@ import { catalogDatabase, catalogTransaction } from './catalog-database';
 import { CatalogHttpError } from './catalog-auth';
 import { readCatalogFile } from './catalog-files';
 import { currentPrices, holdCredits, microToCents, priceOf, releaseHold, settleHold } from './credits';
-import { countsSchema } from '../listing/layouts';
+import { draftImages, draftSchema, RATIOS, slotsFor, usableAsIs, type SubmittedDraft } from '../listing/plan';
 import { claimLayout, executeLayout, renewLayoutLease, resolveLayout } from './listing-layouts';
-import { chooseMaterials, organizeRequest, parseOrganized, usableAsIs, type Organized } from './listing-organize';
-import { buildPlan, choiceSchema, writeRequest, type Choice } from './listing-write';
+import { chooseMaterials, organizeRequest, parseOrganized, type Organized } from './listing-organize';
+import { buildPlan, writeRequest } from './listing-write';
 import { planViews, type PlanSource } from './listing-plan-views';
 import { assertListingProviderConfigured, callPlanModel, LISTING_PLAN_MODEL, type PlanCall } from './listing-provider';
-import { addSourceImage, clearOldSources, sourceImages, type StoredPlan } from './listing-store';
+import { addSourceImage, clearOldSources, sourceImages } from './listing-store';
 import sharp from 'sharp';
-import { executeImage, failBlocked, finishRun, type JobInput, type Upscale } from './listing-generation';
+import { executeImage, failBlocked, finishRun, holdRun, insertJobs, planJobs, runHold, type JobInput, type Upscale } from './listing-generation';
 import type { Tenant } from './tenant-scope';
 
 const holdId = (jobId: string) => 'listing:' + jobId;
@@ -103,7 +103,7 @@ export async function executePlan(job: JobRow, provider: Provider = (request, ho
       return;
     }
     const materials: Materials = { sorted, chosen: chooseMaterials(sorted, kept), duplicates: [...duplicates], model: call.model, images: map };
-    await db().query(`UPDATE listing_projects SET status='materials',materials=$2,plan=NULL,review=NULL,error=NULL,updated_at=now() WHERE id=$1`, [job.project_id, materials]);
+    await db().query(`UPDATE listing_projects SET status='materials',materials=$2,plan=NULL,error=NULL,updated_at=now() WHERE id=$1`, [job.project_id, materials]);
     await db().query(`UPDATE listing_jobs SET status='succeeded',lease_until=NULL,updated_at=now() WHERE id=$1`, [job.id]);
   } catch (error) {
     const message = error instanceof Error ? error.message : '分析失败';
@@ -126,37 +126,53 @@ export async function executePlan(job: JobRow, provider: Provider = (request, ho
   }
 }
 
-/** The sorted material of a product, the program's picks, and what the user confirmed. */
-export type Materials = { sorted: Organized; chosen: ReturnType<typeof chooseMaterials>; duplicates: [string, string][]; model: string; images: { label: string; assetId: string }[]; choice?: Choice };
+/** The sorted material of a product and the program's picks; `draft`: the plan the user started generating from. */
+export type Materials = { sorted: Organized; chosen: ReturnType<typeof chooseMaterials>; duplicates: [string, string][]; model: string; images: { label: string; assetId: string }[]; draft?: SubmittedDraft & { runId: string } };
 
 /**
- * The user confirmed the material: keep the choice and queue the writing (free: it is part of
- * the analysis already paid). A colour without an image or a missing front view is refused.
+ * The user started generating from the plan page: check the plan against the material, hold the
+ * whole set's credits and queue the writing (free: part of the analysis). Generation follows it.
  */
-export async function confirmMaterials(tenant: string, user: string, projectId: string, input: unknown) {
-  const choice = choiceSchema.parse(input);
+export async function submitDraft(tenant: Tenant, user: string, projectId: string, input: unknown) {
+  const draft = draftSchema.parse(input);
+  const prices = await currentPrices();
   return catalogTransaction(async c => {
-    const p = (await c.query(`SELECT status,materials FROM listing_projects WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL FOR UPDATE`, [projectId, tenant])).rows[0];
+    const p = (await c.query(`SELECT status,layout,materials FROM listing_projects WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL FOR UPDATE`, [projectId, tenant.id])).rows[0];
     if (!p) throw new CatalogHttpError(404, '商品不存在');
-    if (p.status === 'writing') return { status: 'writing' };
-    if (p.status !== 'materials' || !p.materials) throw new CatalogHttpError(409, '素材还没整理好，或者已经确认过了');
-    const labels = new Set((p.materials as Materials).images.map(i => i.label));
-    const unknown = [...choice.colors.map(x => x.pick), ...choice.parts.map(x => x.pick)].filter((x): x is string => !!x && !labels.has(x));
-    if (unknown.length) throw new CatalogHttpError(400, `图片不存在：${unknown.join('、')}`);
-    if (!choice.parts.find(x => x.part === '正面全身')?.pick) throw new CatalogHttpError(400, '缺正面全身图，补上后才能继续');
-    if (!(await c.query("SELECT 1 FROM listing_workers WHERE heartbeat_at>now()-interval '45 seconds' LIMIT 1")).rowCount) {
-      throw new CatalogHttpError(503, '电商主图后台未连接，请稍后再试');
+    // The product's own layout still works after the team deleted it; any other must still exist.
+    for (const id of new Set([draft.layout, ...draft.extra.map(e => e.layout).filter(Boolean)])) {
+      if (!(await resolveLayout(tenant.id, id, { forNewProject: id !== p.layout }))) throw new CatalogHttpError(400, '没有这个版式');
     }
-    await c.query(`UPDATE listing_projects SET status='writing',materials=materials || $2::jsonb,error=NULL,updated_at=now() WHERE id=$1`, [projectId, { choice }]);
-    await c.query(`INSERT INTO listing_jobs(id,tenant_id,project_id,created_by,step) VALUES($1,$2,$3,$4,'write')`, [randomUUID(), tenant, projectId, user]);
+    if (['writing', 'generating'].includes(p.status)) return { status: p.status };
+    if (p.status !== 'materials' || !p.materials) throw new CatalogHttpError(409, '素材还没整理好，或者已经开始出图了');
+    const m = p.materials as Materials, labels = new Set(m.images.map(i => i.label)), names = draft.colors.map(x => x.name);
+    const unknown = [...draft.colors.map(x => x.pick), ...draft.parts.map(x => x.pick)].filter((x): x is string => !!x && !labels.has(x));
+    if (unknown.length) throw new CatalogHttpError(400, `图片不存在：${unknown.join('、')}`);
+    if (new Set(names).size !== names.length) throw new CatalogHttpError(400, '有两个颜色名一样');
+    if (!names.includes(draft.main)) throw new CatalogHttpError(400, '主推色不在颜色里');
+    if (!draft.parts.find(x => x.part === '正面全身')?.pick) throw new CatalogHttpError(400, '缺正面全身图，补上后才能出图');
+    const used = new Set(RATIOS.flatMap(r => r === 'poster' ? [] : slotsFor(draft.counts[r])));
+    for (const i of used) {
+      const s = draft.slots[i];
+      if (!s.title) throw new CatalogHttpError(400, `第 ${i + 1} 张还没有大标题`);
+      if (!s.colors.length || s.colors.some(x => !names.includes(x))) throw new CatalogHttpError(400, `第 ${i + 1} 张的颜色不对`);
+    }
+    if (draft.counts.poster && !draft.poster.title) throw new CatalogHttpError(400, '海报还没有大标题');
+    if (draft.extra.some(e => !names.includes(e.color) || e.color === draft.main) || new Set(draft.extra.map(e => e.color)).size !== draft.extra.length) throw new CatalogHttpError(400, '加的那套首图颜色不对');
+    const sorted = new Map(m.sorted.images.map(i => [i.id, i]));
+    const direct = new Set(draft.colors.filter(x => usableAsIs(sorted.get(x.pick))).map(x => x.pick));
+    const runId = await holdRun(c, tenant, projectId, draftImages(draft, direct), prices);
+    await c.query(`UPDATE listing_projects SET status='writing',layout=$2,counts=$3,materials=materials || $4::jsonb,error=NULL,updated_at=now() WHERE id=$1`,
+      [projectId, draft.layout, draft.counts, { draft: { ...draft, runId } }]);
+    await c.query(`INSERT INTO listing_jobs(id,tenant_id,project_id,created_by,step) VALUES($1,$2,$3,$4,'write')`, [randomUUID(), tenant.id, projectId, user]);
     return { status: 'writing' };
   });
 }
 
 /**
- * An image added on the materials page (a colour or a detail the folder lacked). It gets its own
- * label (X1, X2, …) so the labels the model saw do not move; it is extracted by the model like a
- * colour image, never used as the product image directly.
+ * An image added on the plan page (a colour or a detail the folder lacked). It gets its own label
+ * (X1, X2, …) so the labels the model saw do not move; it is extracted by the model like a colour
+ * image, never used as the product image directly.
  */
 export async function addExtraImage(tenant: string, projectId: string, bytes: Buffer, name: string) {
   const added = await addSourceImage(tenant, projectId, bytes, name, `补传/${name}`, ['materials']);
@@ -172,52 +188,63 @@ export async function addExtraImage(tenant: string, projectId: string, bytes: Bu
   });
 }
 
-/** The pictures the writing step reads: one per colour, the structure references, the sources of the chosen points. */
-async function writeViews(projectId: string, m: Materials, choice: Choice) {
+/** The pictures the writing step reads: one per colour, the structure references, the sources of the points on the images. */
+async function writeViews(projectId: string, m: Materials, draft: SubmittedDraft) {
   // Labels come from the materials (fixed when sorted), not from the current file order.
   const assets = (await db().query(`SELECT id,file_id FROM listing_assets WHERE project_id=$1 AND kind='source'`, [projectId])).rows as { id: string; file_id: string }[];
   const fileOf = new Map(assets.map(a => [a.id, a.file_id]));
-  const rows = new Map(m.images.filter(i => fileOf.has(i.assetId)).map(i => [i.label, { file_id: fileOf.get(i.assetId)! }]));
+  const rows = new Map(m.images.filter(i => fileOf.has(i.assetId)).map(i => [i.label, fileOf.get(i.assetId)!]));
   const wanted = new Map<string, { text: string; side: number }>();
-  for (const c of choice.colors) wanted.set(c.pick, { text: `【${c.pick}】颜色「${c.name}」的衣服图（这个颜色以它为准）`, side: 768 });
-  for (const part of choice.parts) if (part.pick && !part.skip && !wanted.has(part.pick)) wanted.set(part.pick, { text: `【${part.pick}】结构参考：${part.part}`, side: 768 });
-  const sources = [...new Set(choice.points.filter(x => x.on).flatMap(x => x.from))].filter(id => !wanted.has(id)).slice(0, 12);
+  for (const c of draft.colors) wanted.set(c.pick, { text: `【${c.pick}】颜色「${c.name}」的衣服图（这个颜色以它为准）`, side: 768 });
+  for (const part of draft.parts) if (part.pick && !wanted.has(part.pick)) wanted.set(part.pick, { text: `【${part.pick}】结构参考：${part.part}`, side: 768 });
+  const said = new Set(draft.slots.flatMap(s => [s.title, ...s.tags]));
+  const sources = [...new Set(m.sorted.points.filter(x => said.has(x.text)).flatMap(x => x.from))].filter(id => !wanted.has(id)).slice(0, 12);
   for (const id of sources) wanted.set(id, { text: `【${id}】卖点出处`, side: 1024 });
   return Promise.all([...wanted].filter(([label]) => rows.has(label)).map(async ([label, v]) => {
-    const jpeg = await sharp((await readCatalogFile(rows.get(label)!.file_id)).bytes, { limitInputPixels: 60_000_000 }).rotate().resize(v.side, v.side, { fit: 'inside' }).jpeg({ quality: 82 }).toBuffer();
+    const jpeg = await sharp((await readCatalogFile(rows.get(label)!)).bytes, { limitInputPixels: 60_000_000 }).rotate().resize(v.side, v.side, { fit: 'inside' }).jpeg({ quality: 82 }).toBuffer();
     return { text: v.text, dataUrl: `data:image/jpeg;base64,${jpeg.toString('base64')}` };
   }));
 }
 
+/** Writing did not finish: the held credits go back and the product returns to the plan page. */
+async function backToPlan(projectId: string, tenantId: string, runId: string | undefined, error: string) {
+  if (runId) await releaseHold(runHold(runId), tenantId, '写画面没完成').catch(() => {});
+  await db().query(`UPDATE listing_projects SET status='materials',error=$2,updated_at=now() WHERE id=$1 AND status='writing'`, [projectId, error]);
+}
+
 /**
- * Write the garment description and each image's words from the confirmed material. Free; a
- * failure sends the product back to the materials step to confirm again.
+ * Describe the garment and write each image's picture, then queue every image under the credits
+ * held when the user started. Free; a failure returns the credits and the product to the plan page.
  */
 export async function executeWrite(job: JobRow, provider: Provider = (request, hooks) => callPlanModel(request, hooks)) {
   const attemptId = randomUUID(), model = LISTING_PLAN_MODEL();
+  const p = (await db().query('SELECT name,materials FROM listing_projects WHERE id=$1', [job.project_id])).rows[0];
+  const m = p.materials as Materials, draft = m?.draft;
   try {
-    const p = (await db().query('SELECT name,layout,counts,materials FROM listing_projects WHERE id=$1', [job.project_id])).rows[0];
-    const layout = await resolveLayout(job.tenant_id, p.layout);
+    if (!draft) throw new Error('还没有定方案');
+    const layout = await resolveLayout(job.tenant_id, draft.layout);
     if (!layout) throw new Error('版式不存在');
-    const m = p.materials as Materials, choice = m?.choice;
-    if (!choice) throw new Error('还没有确认素材');
-    const views = await writeViews(job.project_id, m, choice);
-    const call = await provider(writeRequest({ views, choice, counts: countsSchema.parse(p.counts), layout, model, product: p.name }), {
+    const views = await writeViews(job.project_id, m, draft);
+    const call = await provider(writeRequest({ views, draft, layout, model, product: p.name }), {
       beforeSubmit: async () => { await db().query(`INSERT INTO listing_attempts(id,job_id,provider,model,status) VALUES($1,$2,'evolink',$3,'submitted')`, [attemptId, job.id, model]); },
       receipt: async id => { await db().query('UPDATE listing_attempts SET provider_request_id=$2 WHERE id=$1', [attemptId, id]); },
     });
     await db().query(`UPDATE listing_attempts SET status='succeeded',receipt=$2,finished_at=now() WHERE id=$1`, [attemptId, { model: call.model, usage: call.usage, durationMs: call.durationMs }]);
-    const built = buildPlan(call.content, { choice, sorted: m.sorted, product: p.name });
-    // Clean still lifes are used as the white-background product image directly (no paid extraction).
-    const direct = choice.colors.filter(c => usableAsIs(m.sorted.images.find(i => i.id === c.pick))).map(c => c.pick);
-    const stored: StoredPlan & { images: Materials['images'] } = { ...built, model: call.model, images: m.images, direct };
-    await db().query(`UPDATE listing_projects SET status='review',plan=$2,review=NULL,error=NULL,updated_at=now() WHERE id=$1`, [job.project_id, stored]);
-    await db().query(`UPDATE listing_jobs SET status='succeeded',lease_until=NULL,updated_at=now() WHERE id=$1`, [job.id]);
+    const sorted = new Map(m.sorted.images.map(i => [i.id, i]));
+    const stored = buildPlan(call.content, { draft, images: m.images, direct: draft.colors.filter(c => usableAsIs(sorted.get(c.pick))).map(c => c.pick), model: call.model });
+    await catalogTransaction(async c => {
+      const hold = (await c.query('SELECT state FROM credit_holds WHERE id=$1 AND tenant_id=$2 FOR UPDATE', [runHold(draft.runId), job.tenant_id])).rows[0];
+      if (hold?.state !== 'held') throw new Error('出图的积分冻结已失效');
+      const user = (await c.query('SELECT created_by FROM listing_jobs WHERE id=$1', [job.id])).rows[0].created_by;
+      await c.query(`UPDATE listing_projects SET plan=$2 WHERE id=$1`, [job.project_id, stored]);
+      await insertJobs(c, job.tenant_id, user, job.project_id, draft.runId, planJobs(stored));
+      await c.query(`UPDATE listing_jobs SET status='succeeded',lease_until=NULL,updated_at=now() WHERE id=$1`, [job.id]);
+    });
   } catch (error) {
-    const message = (error instanceof Error ? error.message : '写内容失败').slice(0, 300);
+    const message = (error instanceof Error ? error.message : '写画面失败').slice(0, 300);
     await db().query(`UPDATE listing_attempts SET status=CASE WHEN status='succeeded' THEN status ELSE 'failed' END,finished_at=now() WHERE id=$1`, [attemptId]).catch(() => {});
     await db().query(`UPDATE listing_jobs SET status='failed',error=$2,lease_until=NULL,updated_at=now() WHERE id=$1`, [job.id, message]);
-    await db().query(`UPDATE listing_projects SET status='materials',error=$2,updated_at=now() WHERE id=$1 AND status='writing'`, [job.project_id, `写内容没成功：${message}。没有扣费，可以再点一次确认`]);
+    await backToPlan(job.project_id, job.tenant_id, draft?.runId, `写画面没成功：${message}。冻结的积分已退回，可以再点一次开始出图`);
   }
 }
 
@@ -237,7 +264,10 @@ export async function startListingWorker({ canAccept = () => true, concurrency =
     const expired = (await db().query(`UPDATE listing_jobs SET status='unknown',error='后台中断，未重复调用模型；可能已产生费用，由管理员核对',lease_until=NULL
       WHERE status='running' AND lease_until<now() RETURNING id,tenant_id,project_id,step,run_id`)).rows;
     for (const j of expired) {
-      if (j.step === 'write') { await db().query(`UPDATE listing_projects SET status='materials',error='写内容时后台中断，没有扣费，可以再点一次确认',updated_at=now() WHERE id=$1 AND status='writing'`, [j.project_id]); continue; }
+      if (j.step === 'write') {
+        const runId = (await db().query(`SELECT materials->'draft'->>'runId' run FROM listing_projects WHERE id=$1`, [j.project_id])).rows[0]?.run;
+        await backToPlan(j.project_id, j.tenant_id, runId, '写画面时后台中断，冻结的积分已退回，可以再点一次开始出图'); continue;
+      }
       if (j.step !== 'plan') { await finishRun(j.run_id, j.tenant_id, j.project_id); continue; }
       const attempts = (await db().query('SELECT id,status FROM listing_attempts WHERE job_id=$1', [j.id])).rows;
       if (attempts.length) await settleHold(holdId(j.id), j.tenant_id, attempts.map(a => ({ action: 'listing_plan' as const, billable: true, certain: a.status === 'succeeded', attemptId: a.id }))).catch(() => {});

@@ -13,13 +13,6 @@ export const MAIN_ROLES = {
 } as const;
 export type MainRole = keyof typeof MAIN_ROLES;
 
-/** Roles in buying-decision order: the first is always the cover, the last always the closer. */
-export function rolesFor(count: number): MainRole[] {
-  const all = Object.keys(MAIN_ROLES) as MainRole[];
-  const picks: Record<number, MainRole[]> = { 0: [], 1: ['首图'], 2: ['首图', '收口'], 3: ['首图', '功能', '收口'], 4: ['首图', '功能', '细节', '收口'] };
-  return picks[count] ?? all.slice(0, count);
-}
-
 export const countsSchema = z.object({
   square: z.number().int().min(0).max(5),
   portrait: z.number().int().min(0).max(5),
@@ -62,9 +55,6 @@ export const LISTING_LAYOUTS: ListingLayout[] = [
   },
 ];
 export const layoutById = (id: string) => LISTING_LAYOUTS.find(layout => layout.id === id);
-
-export const ASSET_ROLES = ['主图', 'SKU', '详情', '尺码表', '不用'] as const;
-export type AssetRole = (typeof ASSET_ROLES)[number];
 
 /** Taobao main images are 1:1 or 3:4 only, so the shape is measured, never guessed. */
 export function shapeOf(width: number, height: number): '1:1' | '3:4' | '其他' {

@@ -1,134 +1,119 @@
 /**
- * 电商主图 stage 2: turn a confirmed plan into image jobs, run them in dependency order and settle
+ * 电商主图 stage 2: turn the written plan into image jobs, run them in dependency order and settle
  * each run's credits once all of its jobs have finished.
  *
- *   product:<sku>  white-background product image of one colour (from its SKU image)
- *   sku:<sku>      SKU image; colours after the first copy the first colour's SKU image
+ *   product:<sku>  white-background product image of one colour (from its garment image)
+ *   sku:<sku>      SKU image; colours after the main one copy the main colour's SKU image
  *   square:<n> / portrait:<n> / poster:1   main images; multi-colour ones use the colours' SKU images
+ *   square:1+<sku> / portrait:1+<sku> / poster:1+<sku>   the covers of an extra set in that colour
  */
 import { randomUUID } from 'node:crypto';
 import JSZip from 'jszip';
 import sharp from 'sharp';
+import { z } from 'zod';
 import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './catalog-database';
 import { CatalogHttpError } from './catalog-auth';
 import { readCatalogFile } from './catalog-files';
 import { currentPrices, holdCredits, microToCents, priceOf, settleHold, type AttemptOutcome, type PriceSnapshot } from './credits';
-import { countsSchema, rolesFor, type MainRole } from '../listing/layouts';
+import { imagesOf } from '../listing/plan';
 import { resolveLayout } from './listing-layouts';
-import { mainPrompt, productPrompt, skuPrompt, textEditPrompt, type Color, type MainSlot } from './listing-prompts';
+import { mainPrompt, productPrompt, skuPrompt, textEditPrompt, type MainSlot } from './listing-prompts';
 import { generateListingImage, LISTING_IMAGE_MODEL, type ImageCall } from './listing-provider';
-import { latestOutputs, slotWordsSchema, storeOutput, type Review, type StoredPlan } from './listing-store';
+import { latestOutputs, slotWordsSchema, storeOutput, type StoredPlan } from './listing-store';
 import { upscaleListingImage } from './listing-upscale';
 import type { Tenant } from './tenant-scope';
 
-type Stored = StoredPlan & { images: { label: string; assetId: string }[] };
 /**
  * `note` is the user's extra instruction on a redo. `edit` changes only the words of an existing
- * image (`base`, a listing asset), which is then the only reference.
+ * image (`base`, a listing asset), which is then the only reference. `layout`: an extra set's own.
  */
 type Words = { title: string; subtitle: string; bullets: string[] };
 export type JobInput = (
   | { kind: 'product'; sku: string; direct?: boolean }
   | { kind: 'sku'; sku: string; anchor?: string }
-  | { kind: 'main'; slot: MainSlot; skus: string[]; edit?: { base: string; from: Words } }
+  | { kind: 'main'; slot: MainSlot; skus: string[]; layout?: string; edit?: { base: string; from: Words } }
 ) & { note?: string };
 type PlannedJob = { slot: string; step: 'product' | 'image'; input: JobInput; depends: string[]; multi: boolean; free?: boolean };
 const db = () => catalogDatabase();
-const runHold = (runId: string) => 'listing:run:' + runId;
+export const runHold = (runId: string) => 'listing:run:' + runId;
 const action = (input: JobInput) => input.kind === 'main' && input.skus.length > 1 && !input.edit ? 'listing_image_multi' as const : 'listing_image' as const;
+const mainDepends = (skus: string[]) => skus.length > 1 ? skus.map(s => `sku:${s}`) : [`product:${skus[0]}`];
 
-/** The colours after the user's renames, in the plan's order; the first is the main colour. */
-function colorsOf(stored: Stored, review: Partial<Review> | null): (Color & { sku: string })[] {
-  const names = new Map((review?.colors ?? []).map(c => [c.sku, c.name]));
-  return stored.plan.product.colors.map(c => ({ sku: c.sku, name: names.get(c.sku) ?? c.name, hex: c.hex }));
-}
-
-/** Every image of one confirmed project, with the order it has to be made in. */
-export function planJobs(stored: Stored, review: Partial<Review> | null, counts: unknown): PlannedJob[] {
-  const colors = colorsOf(stored, review), parsedCounts = countsSchema.parse(counts);
-  if (!colors.length) throw new CatalogHttpError(409, '没有认出颜色，出不了图');
-  const byName = new Map(stored.plan.product.colors.map((c, i) => [c.name, colors[i]]));
-  const jobs: PlannedJob[] = [];
-  const [first] = colors;
-  // A clean still life of the colour is the product image itself: copied, not generated, not charged.
-  const direct = new Set(stored.direct ?? []);
-  for (const c of colors) jobs.push({ slot: `product:${c.sku}`, step: 'product', input: { kind: 'product', sku: c.sku, ...(direct.has(c.sku) ? { direct: true } : {}) }, depends: [], multi: false, free: direct.has(c.sku) });
-  for (const c of colors) {
-    const anchor = c.sku === first.sku ? undefined : first.sku;
-    jobs.push({ slot: `sku:${c.sku}`, step: 'image', input: { kind: 'sku', sku: c.sku, anchor }, depends: [`product:${c.sku}`, ...(anchor ? [`sku:${anchor}`] : [])], multi: false });
-  }
-  for (const kind of ['square', 'portrait', 'poster'] as const) {
-    const wanted = parsedCounts[kind], planned = stored.plan.main[kind].slice(0, wanted);
-    const roles: (MainRole | '海报')[] = kind === 'poster' ? ['海报'] : rolesFor(wanted);
-    planned.forEach((p, i) => {
-      const words = review?.slots?.[`${kind}:${i + 1}`];
-      // At most four colours, all known; anything else falls back to the main colour.
-      const skus = [...new Set(p.colors.map(name => byName.get(name)?.sku).filter((s): s is string => !!s))].slice(0, 4);
-      const used = skus.length ? skus : [first.sku];
-      const slot: MainSlot = { kind, n: i + 1, total: planned.length, role: roles[i] ?? '首图', title: words?.title ?? p.title, subtitle: words?.subtitle ?? p.subtitle,
-        bullets: (words?.bullets ?? p.bullets).filter(Boolean).slice(0, 3), scene: words?.scene ?? p.scene, colors: used.map(s => colors.find(c => c.sku === s)!.name) };
-      const multi = used.length > 1;
-      jobs.push({ slot: `${kind}:${i + 1}`, step: 'image', input: { kind: 'main', slot, skus: used }, depends: multi ? used.map(s => `sku:${s}`) : [`product:${used[0]}`], multi });
-    });
-  }
-  return jobs;
-}
-
-const priceFor = (prices: PriceSnapshot, jobs: Pick<PlannedJob, 'multi' | 'free'>[]) =>
-  jobs.reduce((sum, job) => sum + (job.free ? 0 : priceOf(prices, job.multi ? 'listing_image_multi' : 'listing_image').userMicroCents), 0);
-
-/** The set's price with its lines, for the page's price detail. */
-export async function estimate(stored: Stored, review: Partial<Review> | null, counts: unknown) {
-  const jobs = planJobs(stored, review, counts), prices = await currentPrices();
-  const unit = microToCents(priceOf(prices, 'listing_image').userMicroCents), multiUnit = microToCents(priceOf(prices, 'listing_image_multi').userMicroCents);
-  const of = (label: string, list: PlannedJob[], note = '') => {
-    const multi = list.filter(j => j.multi && !j.free).length, free = list.filter(j => j.free).length, plain = list.length - multi - free;
-    return [plain ? { label, count: plain, unit, credits: plain * unit, note } : null, multi ? { label: `${label}（多色同框）`, count: multi, unit: multiUnit, credits: multi * multiUnit, note: '' } : null,
-      free ? { label, count: free, unit: 0, credits: 0, note: '直接用你的静物图，不收费' } : null].filter(Boolean);
-  };
-  const lines = [...of('白底产品图', jobs.filter(j => j.step === 'product'), '从原图提取'), ...of('SKU 图', jobs.filter(j => j.slot.startsWith('sku:'))),
-    ...of('1:1 主图', jobs.filter(j => j.slot.startsWith('square:'))), ...of('3:4 主图', jobs.filter(j => j.slot.startsWith('portrait:'))), ...of('2:3 海报', jobs.filter(j => j.slot.startsWith('poster:')))];
-  return { images: jobs.length, credits: microToCents(priceFor(prices, jobs)), lines };
-}
-
-async function queueRun(c: CatalogQueryClient, tenant: Tenant, user: string, projectId: string, jobs: PlannedJob[], prices: PriceSnapshot) {
-  if (!(await c.query("SELECT 1 FROM listing_workers WHERE heartbeat_at>now()-interval '45 seconds' LIMIT 1")).rowCount) {
-    throw new CatalogHttpError(503, '电商主图后台未连接，未冻结积分，请稍后再试');
-  }
-  const runId = randomUUID();
-  await holdCredits(c, { id: runHold(runId), tenantId: tenant.id, kind: 'production', jobRef: `listing:run:${projectId}:${runId}`,
-    billingMode: tenant.billingMode, amountCents: microToCents(priceFor(prices, jobs)), snapshot: prices });
-  for (const job of jobs) {
-    // clock_timestamp, not now(): jobs of one run keep their dependency order in the queue.
-    await c.query(`INSERT INTO listing_jobs(id,tenant_id,project_id,created_by,step,run_id,slot,input,depends,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,clock_timestamp())`,
-      [randomUUID(), tenant.id, projectId, user, job.step, runId, job.slot, job.input, job.depends]);
-  }
-  await c.query(`UPDATE listing_projects SET status='generating', error=NULL, updated_at=now() WHERE id=$1`, [projectId]);
-  return runId;
-}
-
-/** Hold the whole set's credits and queue every image. */
-export async function startGeneration(tenant: Tenant, user: string, projectId: string) {
-  const prices = await currentPrices();
-  return catalogTransaction(async c => {
-    const p = (await c.query(`SELECT status,plan,review,counts FROM listing_projects WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL FOR UPDATE`, [projectId, tenant.id])).rows[0];
-    if (!p) throw new CatalogHttpError(404, '商品不存在');
-    if (p.status === 'generating') return { status: 'generating' };
-    if (p.status !== 'confirmed') throw new CatalogHttpError(409, p.status === 'done' ? '这一款已经出过图，可以单张重做' : '请先确认素材和卖点');
-    await queueRun(c, tenant, user, projectId, planJobs(p.plan, p.review, p.counts), prices);
-    return { status: 'generating' };
+/** Every image of a written plan in the order it has to be made; `only` keeps one extra set (its colour's label). */
+export function planJobs(stored: StoredPlan, only?: string): PlannedJob[] {
+  if (!stored.colors.length) throw new CatalogHttpError(409, '没有颜色，出不了图');
+  const main = stored.colors[0].sku, skuOf = new Map(stored.colors.map(c => [c.name, c.sku]));
+  const items = imagesOf({ colors: stored.colors.map(c => ({ name: c.name, pick: c.sku })), main: stored.colors[0].name, words: stored.main, extra: stored.extra }, new Set(stored.direct));
+  return items.filter(it => !only || it.slot.endsWith('+' + only)).map((it): PlannedJob => {
+    if (it.kind === 'product') return { slot: it.slot, step: 'product', input: { kind: 'product', sku: it.sku, ...(it.free ? { direct: true } : {}) }, depends: [], multi: false, free: it.free };
+    if (it.kind === 'sku') {
+      const anchor = it.sku === main ? undefined : main;
+      return { slot: it.slot, step: 'image', input: { kind: 'sku', sku: it.sku, anchor }, depends: [`product:${it.sku}`, ...(anchor ? [`sku:${anchor}`] : [])], multi: false };
+    }
+    const ratio = it.ratio!, w = stored.main[ratio][it.index!], skus = it.colors!.map(n => skuOf.get(n)!);
+    const slot: MainSlot = { kind: ratio, n: it.index! + 1, total: stored.main[ratio].length, role: w.role, title: w.title, subtitle: w.subtitle, bullets: w.bullets, scene: w.scene, colors: it.colors! };
+    return { slot: it.slot, step: 'image', input: { kind: 'main', slot, skus, ...(it.layout ? { layout: it.layout } : {}) }, depends: mainDepends(skus), multi: it.multi };
   });
 }
 
-export type RedoChange = { mode?: 'redraw' | 'text'; words?: unknown; base?: string };
+export const priceFor = (prices: PriceSnapshot, jobs: { multi: boolean; free?: boolean }[]) =>
+  jobs.reduce((sum, job) => sum + (job.free ? 0 : priceOf(prices, job.multi ? 'listing_image_multi' : 'listing_image').userMicroCents), 0);
+
+/** Hold a run's credits before any of its jobs exists. */
+export async function holdRun(c: CatalogQueryClient, tenant: Tenant, projectId: string, jobs: { multi: boolean; free?: boolean }[], prices: PriceSnapshot, runId = randomUUID()) {
+  if (!(await c.query("SELECT 1 FROM listing_workers WHERE heartbeat_at>now()-interval '45 seconds' LIMIT 1")).rowCount) {
+    throw new CatalogHttpError(503, '电商主图后台未连接，未冻结积分，请稍后再试');
+  }
+  await holdCredits(c, { id: runHold(runId), tenantId: tenant.id, kind: 'production', jobRef: `listing:run:${projectId}:${runId}`,
+    billingMode: tenant.billingMode, amountCents: microToCents(priceFor(prices, jobs)), snapshot: prices });
+  return runId;
+}
+
+/** Queue a run's jobs under its held credits. */
+export async function insertJobs(c: CatalogQueryClient, tenantId: string, user: string, projectId: string, runId: string, jobs: PlannedJob[]) {
+  for (const job of jobs) {
+    // clock_timestamp, not now(): jobs of one run keep their dependency order in the queue.
+    await c.query(`INSERT INTO listing_jobs(id,tenant_id,project_id,created_by,step,run_id,slot,input,depends,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,clock_timestamp())`,
+      [randomUUID(), tenantId, projectId, user, job.step, runId, job.slot, job.input, job.depends]);
+  }
+  await c.query(`UPDATE listing_projects SET status='generating', error=NULL, updated_at=now() WHERE id=$1`, [projectId]);
+}
+
+async function queueRun(c: CatalogQueryClient, tenant: Tenant, user: string, projectId: string, jobs: PlannedJob[], prices: PriceSnapshot) {
+  const runId = await holdRun(c, tenant, projectId, jobs, prices);
+  await insertJobs(c, tenant.id, user, projectId, runId, jobs);
+  return runId;
+}
+
+/** One more cover set (1:1, 3:4 and poster covers) in another colour; everything else is shared. */
+export async function addSet(tenant: Tenant, user: string, projectId: string, input: unknown) {
+  const b = z.object({ color: z.string().min(1), layout: z.string().default('') }).parse(input);
+  if (b.layout && !(await resolveLayout(tenant.id, b.layout, { forNewProject: true }))) throw new CatalogHttpError(400, '没有这个版式');
+  const prices = await currentPrices();
+  return catalogTransaction(async c => {
+    const p = (await c.query(`SELECT status,plan FROM listing_projects WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL FOR UPDATE`, [projectId, tenant.id])).rows[0];
+    if (!p) throw new CatalogHttpError(404, '商品不存在');
+    if (!['done', 'generating'].includes(p.status) || !p.plan) throw new CatalogHttpError(409, '出过图之后才能再加一套');
+    const stored = p.plan as StoredPlan, color = stored.colors.find(x => x.name === b.color);
+    if (!color) throw new CatalogHttpError(400, '没有这个颜色');
+    if (color === stored.colors[0] || stored.extra.some(e => e.color === b.color)) throw new CatalogHttpError(409, `「${b.color}」已经有首图了`);
+    stored.extra.push({ color: b.color, layout: b.layout });
+    const jobs = planJobs(stored, color.sku);
+    await queueRun(c, tenant, user, projectId, jobs, prices);
+    await c.query('UPDATE listing_projects SET plan=$2 WHERE id=$1', [projectId, stored]);
+    return { status: 'generating', images: jobs.length };
+  });
+}
+
+export type RedoChange = { mode?: 'redraw' | 'text'; words?: unknown; base?: string; colors?: unknown };
 /**
- * Make one image again; earlier versions are kept. For a main image the user may give new words
- * and picture (`redraw`), or new words only on the image they are looking at (`text`).
+ * Make one image again; earlier versions are kept. For a main image the user may give new words,
+ * picture and colours (`redraw`), or new words only on the image they are looking at (`text`).
  */
 export async function redoSlot(tenant: Tenant, user: string, projectId: string, slot: string, note: string, change: RedoChange = {}) {
   const prices = await currentPrices();
   return catalogTransaction(async c => {
-    const p = (await c.query(`SELECT status FROM listing_projects WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL FOR UPDATE`, [projectId, tenant.id])).rows[0];
+    const p = (await c.query(`SELECT status,plan FROM listing_projects WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL FOR UPDATE`, [projectId, tenant.id])).rows[0];
     if (!p) throw new CatalogHttpError(404, '商品不存在');
     if (!['done', 'generating'].includes(p.status)) throw new CatalogHttpError(409, '出过图之后才能单张重做');
     const last = (await c.query(`SELECT step,input,depends FROM listing_jobs WHERE project_id=$1 AND slot=$2 ORDER BY created_at DESC LIMIT 1`, [projectId, slot])).rows[0];
@@ -137,11 +122,19 @@ export async function redoSlot(tenant: Tenant, user: string, projectId: string, 
       throw new CatalogHttpError(409, '这张图正在出，等它出完再重做');
     }
     let input = { ...last.input, note: note.trim().slice(0, 200) || undefined } as JobInput;
+    let depends = last.depends as string[];
     if (input.kind === 'main') delete input.edit;
+    if (change.colors !== undefined) {
+      if (input.kind !== 'main') throw new CatalogHttpError(400, '只有主图和海报能换颜色');
+      const stored = p.plan as StoredPlan, names = z.array(z.string()).min(1).max(4).parse(change.colors);
+      const skus = names.map(n => stored.colors.find(x => x.name === n)?.sku ?? (() => { throw new CatalogHttpError(400, `没有这个颜色：${n}`); })());
+      input = { ...input, skus, slot: { ...input.slot, colors: names } };
+      depends = mainDepends(skus);
+    }
     if (change.words !== undefined || change.mode === 'text') {
       if (input.kind !== 'main') throw new CatalogHttpError(400, '只有主图和海报能改内容');
       const words = slotWordsSchema.parse(change.words);
-      if (change.mode === 'text') {
+      if (change.mode === 'text' && change.colors === undefined) {
         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(change.base ?? '')) throw new CatalogHttpError(404, '没有这个版本');
         const base = (await c.query(`SELECT a.id,j.input FROM listing_assets a LEFT JOIN listing_jobs j ON j.id=a.job_id WHERE a.id=$1 AND a.project_id=$2 AND a.slot=$3`, [change.base, projectId, slot])).rows[0];
         if (!base?.input?.slot) throw new CatalogHttpError(404, '没有这个版本');
@@ -149,13 +142,9 @@ export async function redoSlot(tenant: Tenant, user: string, projectId: string, 
         // Only the words change; the picture is the base image's.
         input = { ...input, slot: { ...from, title: words.title, subtitle: words.subtitle, bullets: words.bullets }, edit: { base: base.id, from: { title: from.title, subtitle: from.subtitle, bullets: from.bullets } }, note: undefined };
       } else input = { ...input, slot: { ...input.slot, title: words.title, subtitle: words.subtitle, bullets: words.bullets, scene: words.scene ?? input.slot.scene } };
-      // The confirm dialog shows what the image now says.
-      const review = ((await c.query('SELECT review FROM listing_projects WHERE id=$1', [projectId])).rows[0].review ?? {}) as Partial<Review>;
-      const { title, subtitle, bullets, scene } = input.slot;
-      await c.query('UPDATE listing_projects SET review=$2 WHERE id=$1', [projectId, { ...review, slots: { ...review.slots, [slot]: { title, subtitle, bullets, scene } } }]);
     }
     const free = (x: JobInput) => x.kind === 'product' && !!x.direct;
-    const jobs: PlannedJob[] = [{ slot, step: last.step, input, depends: last.depends, multi: action(input) === 'listing_image_multi', free: free(input) }];
+    const jobs: PlannedJob[] = [{ slot, step: last.step, input, depends, multi: action(input) === 'listing_image_multi', free: free(input) }];
     // Images that were skipped because this one (or one of them) was missing come along.
     const skipped = (await c.query(`SELECT DISTINCT ON (slot) slot,step,input,depends,status,error FROM listing_jobs
       WHERE project_id=$1 AND slot IS NOT NULL AND slot<>$2 ORDER BY slot, created_at DESC`, [projectId, slot])).rows
@@ -182,13 +171,13 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
   const attemptId = randomUUID();
   let submitted = false;
   try {
-    const p = (await db().query('SELECT layout,plan,review FROM listing_projects WHERE id=$1', [job.project_id])).rows[0];
-    const stored = p.plan as Stored, review = p.review as Partial<Review> | null, layout = await resolveLayout(job.tenant_id, p.layout);
+    const p = (await db().query('SELECT layout,plan FROM listing_projects WHERE id=$1', [job.project_id])).rows[0];
+    const stored = p.plan as StoredPlan, input = job.input;
+    const layout = await resolveLayout(job.tenant_id, (input.kind === 'main' && input.layout) || p.layout);
     if (!layout) throw new Error('版式不存在');
-    const colors = colorsOf(stored, review), outputs = await latestOutputs(job.project_id), garment = stored.plan.product.garment;
+    const colors = stored.colors, outputs = await latestOutputs(job.project_id), garment = stored.garment;
     const output = async (slot: string) => { const o = outputs.get(slot); if (!o) throw new Error(`缺少前一步的图：${slot}`); return fileOf(o.file_id); };
     const colorOf = (sku: string) => colors.find(c => c.sku === sku) ?? (() => { throw new Error(`颜色不存在：${sku}`); })();
-    const input = job.input;
     let prompt: string, references: Buffer[], ratio: 'square' | 'portrait' | 'poster' = 'square';
     if (input.kind === 'product' && input.direct) {
       // The colour's own clean still life, on a white square: no model call, nothing charged.
@@ -204,11 +193,11 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
     if (input.kind === 'product') {
       const assetId = stored.images.find(i => i.label === input.sku)?.assetId;
       const source = assetId && (await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [assetId])).rows[0];
-      if (!source) throw new Error('找不到这个颜色的 SKU 原图（原始素材可能已在最后一次出图 30 天后清理）');
+      if (!source) throw new Error('找不到这个颜色的衣服图（原始素材可能已在最后一次出图 30 天后清理）');
       prompt = productPrompt({ color: colorOf(input.sku).name, garment });
       references = [await fileOf(source.file_id)];
     } else if (input.kind === 'sku') {
-      prompt = skuPrompt({ layout, color: colorOf(input.sku).name, anchor: input.anchor && colorOf(input.anchor).name, tag: stored.plan.sku.tag, fabric: stored.plan.sku.fabric, garment });
+      prompt = skuPrompt({ layout, color: colorOf(input.sku).name, anchor: input.anchor && colorOf(input.anchor).name, tag: stored.sku.tag, fabric: stored.sku.fabric, garment });
       references = [await output(`product:${input.sku}`), ...(input.anchor ? [await output(`sku:${input.anchor}`)] : [])];
     } else if (input.edit) {
       const base = (await db().query('SELECT file_id FROM listing_assets WHERE id=$1 AND project_id=$2', [input.edit.base, job.project_id])).rows[0];
@@ -288,18 +277,17 @@ export async function slotStates(projectId: string) {
 }
 
 const ROLE_FILE: Record<string, string> = { square: '1比1主图', portrait: '3比4主图', poster: '2比3海报' };
-/** Current images named in Taobao order, plus the product images in their own folder. */
+/** Current images named in Taobao order; product images and each extra colour's covers in their own folder. */
 export async function downloadZip(projectId: string) {
-  const p = (await db().query('SELECT name,plan,review FROM listing_projects WHERE id=$1', [projectId])).rows[0];
-  const colors = colorsOf(p.plan as Stored, p.review as Partial<Review> | null);
+  const p = (await db().query('SELECT name,plan FROM listing_projects WHERE id=$1', [projectId])).rows[0];
+  const colors = (p.plan as StoredPlan | null)?.colors ?? [], nameOf = (sku: string) => colors.find(c => c.sku === sku)?.name ?? sku;
   const states = await slotStates(projectId), outputs = await latestOutputs(projectId), zip = new JSZip();
   for (const s of states) {
     const o = outputs.get(s.slot); if (!o) continue;
-    const [kind, key] = s.slot.split(':');
-    const color = colors.find(c => c.sku === key)?.name ?? key;
+    const [kind, key] = s.slot.split(':'), [n, set] = key.split('+');
     const ext = o.name.split('.').pop() === 'jpeg' ? 'jpg' : 'png';
-    const name = kind === 'product' ? `白底产品图/${color}.${ext}` : kind === 'sku' ? `SKU-${color}.${ext}`
-      : kind === 'poster' ? `${ROLE_FILE.poster}.${ext}` : `${ROLE_FILE[kind]}-${key.padStart(2, '0')}-${s.input.kind === 'main' ? s.input.slot.role : ''}.${ext}`;
+    const main = kind === 'poster' ? `${ROLE_FILE.poster}.${ext}` : `${ROLE_FILE[kind]}-${n.padStart(2, '0')}-${s.input.kind === 'main' ? s.input.slot.role : ''}.${ext}`;
+    const name = kind === 'product' ? `白底产品图/${nameOf(key)}.${ext}` : kind === 'sku' ? `SKU-${nameOf(key)}.${ext}` : set ? `换色首图-${nameOf(set)}/${main}` : main;
     zip.file(name, await fileOf(o.file_id));
   }
   if (!Object.keys(zip.files).length) throw new CatalogHttpError(409, '还没有出好的图');

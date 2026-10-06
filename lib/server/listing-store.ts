@@ -6,9 +6,8 @@ import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './
 import { CatalogHttpError } from './catalog-auth';
 import { saveCatalogFile, readCatalogFile } from './catalog-files';
 import { registerFileRef } from './file-authorization';
-import { ASSET_ROLES, countsSchema, shapeOf } from '../listing/layouts';
+import { countsSchema, shapeOf, type MainRole } from '../listing/layouts';
 import { resolveLayout } from './listing-layouts';
-import type { ListingPlan } from './listing-plan';
 
 // Users drop a whole product folder; the page shrinks photos to 2048 px before upload, and the
 // planning call packs large folders (listing-plan-views), so the limit is only a safety net.
@@ -19,11 +18,11 @@ export const MAX_SOURCE_BYTES = 25 * 1024 * 1024;
 export const assetUrl = (id: string) => `/api/listing/assets/${id}`;
 
 export async function createProject(tenant: string, user: string, input: unknown) {
-  const b = z.object({ id: z.uuid(), name: z.string().trim().min(1).max(120), layout: z.string(), counts: countsSchema, batchId: z.uuid().optional() }).parse(input);
+  const b = z.object({ id: z.uuid(), name: z.string().trim().min(1).max(120), layout: z.string(), counts: countsSchema }).parse(input);
   if (!(await resolveLayout(tenant, b.layout, { forNewProject: true }))) throw new CatalogHttpError(400, '没有这个版式');
   await catalogDatabase().query(
-    `INSERT INTO listing_projects(id,tenant_id,created_by,name,layout,counts,batch_id) VALUES($1,$2,$3,$4,$5,$6,$7)
-     ON CONFLICT (id) DO NOTHING`, [b.id, tenant, user, b.name, b.layout, b.counts, b.batchId ?? null]);
+    `INSERT INTO listing_projects(id,tenant_id,created_by,name,layout,counts) VALUES($1,$2,$3,$4,$5,$6)
+     ON CONFLICT (id) DO NOTHING`, [b.id, tenant, user, b.name, b.layout, b.counts]);
   const row = (await catalogDatabase().query('SELECT tenant_id FROM listing_projects WHERE id=$1', [b.id])).rows[0];
   if (row?.tenant_id !== tenant) throw new CatalogHttpError(409, '商品编号冲突');
   return { id: b.id };
@@ -81,13 +80,22 @@ export async function sourceImages(projectId: string) {
   return rows.map((row, i) => ({ ...row, label: `M${i + 1}`, shape: shapeOf(row.width, row.height) }));
 }
 
-type ProjectRow = { id: string; name: string; layout: string; counts: unknown; status: string; plan: StoredPlan | null; review: Review | null; error: string | null; created_at: string; updated_at: string; confirmed_at: string | null };
-/** `direct`: colours whose own image is used as the white-background product image (no paid extraction). */
-export type StoredPlan = { plan: ListingPlan; corrected: string[]; problems: string[]; model: string; direct?: string[] };
+type ProjectRow = { id: string; name: string; layout: string; counts: unknown; status: string; plan: StoredPlan | null; error: string | null; created_at: string; updated_at: string };
+/** One main image as it is made: the user's words and colours, the model's picture. */
+export type MainWords = { role: MainRole | '海报'; title: string; subtitle: string; bullets: string[]; scene: string; colors: string[] };
+/**
+ * What a product is generated from. `colors` start with the main colour; `sku` is the label of the
+ * colour's garment image. `direct`: colours whose own image is the product image (no paid
+ * extraction). `extra`: cover-only sets in another colour. `images`: the labels the material used.
+ */
+export type StoredPlan = {
+  garment: string[]; colors: { name: string; hex: string; sku: string }[]; main: Record<'square' | 'portrait' | 'poster', MainWords[]>;
+  sku: { tag: string; fabric: string }; extra: { color: string; layout: string }[]; direct: string[]; images: { label: string; assetId: string }[]; model: string;
+};
 
 export async function listProjects(tenant: string) {
   const rows = (await catalogDatabase().query(
-    `SELECT p.id,p.name,p.layout,p.counts,p.status,p.error,p.updated_at,p.created_at,p.sources_cleared_at,p.batch_id,
+    `SELECT p.id,p.name,p.layout,p.counts,p.status,p.error,p.updated_at,p.created_at,p.sources_cleared_at,
             (SELECT count(*)::int FROM listing_assets a WHERE a.project_id=p.id AND a.kind='source') AS images,
             COALESCE((SELECT a.id FROM listing_assets a WHERE a.project_id=p.id AND a.slot='square:1' ORDER BY a.created_at DESC LIMIT 1),
                      (SELECT a.id FROM listing_assets a WHERE a.project_id=p.id AND a.kind='source' ORDER BY a.rel_path LIMIT 1)) AS cover,
@@ -103,7 +111,7 @@ export async function listProjects(tenant: string) {
 export async function projectDetail(tenant: string, id: string) {
   z.uuid().parse(id);
   const p = (await catalogDatabase().query(
-    `SELECT id,name,layout,counts,status,plan,review,materials,error,created_at,updated_at,confirmed_at FROM listing_projects
+    `SELECT id,name,layout,counts,status,plan,materials,error,created_at,updated_at FROM listing_projects
       WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL`, [id, tenant])).rows[0] as ProjectRow | undefined;
   if (!p) throw new CatalogHttpError(404, '商品不存在');
   const images = (await sourceImages(id)).map(({ id: assetId, label, name, rel_path, width, height, shape }) =>
@@ -111,46 +119,15 @@ export async function projectDetail(tenant: string, id: string) {
   return { ...p, images };
 }
 
-/** What one main image says and shows; the user can change all of it. No scene: keep the AI's. */
+/** What one main image says and shows, when the user changes it after generation. No scene: keep the AI's. */
 export const slotWordsSchema = z.object({
   title: z.string().trim().min(1, '大标题不能空').max(20), subtitle: z.string().trim().max(30).default(''),
   bullets: z.array(z.string().trim().max(16)).max(3).default([]).transform(b => b.filter(Boolean)),
   scene: z.string().trim().max(400).optional(),
 });
 export type SlotWords = z.infer<typeof slotWordsSchema>;
-const reviewSchema = z.object({
-  roles: z.record(z.string(), z.enum(ASSET_ROLES)).default({}),
-  colors: z.array(z.object({ sku: z.string(), name: z.string().trim().min(1).max(20) })).default([]),
-  // Each main image's words and picture, keyed by slot ("square:1", "portrait:2", "poster:1").
-  slots: z.record(z.string().regex(/^(square|portrait|poster):\d$/), slotWordsSchema).default({}),
-});
-export type Review = z.infer<typeof reviewSchema>;
-
-/** The user's corrections to the sorting, colour names and image words; nothing is paid here. */
-export async function saveReview(tenant: string, id: string, input: unknown) {
-  const review = reviewSchema.parse(input);
-  const updated = await catalogDatabase().query(
-    `UPDATE listing_projects SET review=$3, updated_at=now() WHERE id=$1 AND tenant_id=$2 AND status='review' AND deleted_at IS NULL RETURNING id`,
-    [id, tenant, review]);
-  if (!updated.rowCount) throw new CatalogHttpError(409, '只有等你确认的商品可以修改');
-  return { ok: true };
-}
-
-export async function confirmProject(tenant: string, id: string) {
-  return catalogTransaction(async c => {
-    const p = (await c.query(`SELECT status,plan,review FROM listing_projects WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL FOR UPDATE`, [id, tenant])).rows[0];
-    if (!p) throw new CatalogHttpError(404, '商品不存在');
-    if (p.status === 'confirmed') return { ok: true };
-    if (p.status !== 'review') throw new CatalogHttpError(409, '还没有分析完，不能确认');
-    const stored = p.plan as StoredPlan;
-    const review = (p.review ?? {}) as Partial<Review>;
-    const roles = new Map(stored.plan.assets.map(a => [a.id, review.roles?.[a.id] ?? a.role]));
-    const missing = stored.plan.product.colors.filter(color => roles.get(color.sku) !== 'SKU');
-    if (missing.length) throw new CatalogHttpError(409, `颜色「${missing.map(c => c.name).join('、')}」对应的图被改成了非 SKU，请改回或换一张`);
-    await c.query(`UPDATE listing_projects SET status='confirmed', confirmed_at=now(), updated_at=now() WHERE id=$1`, [id]);
-    return { ok: true };
-  });
-}
+/** A main image's slot: `square:2`, `poster:1`, or a cover of an extra colour set, `square:1+M23`. */
+export const MAIN_SLOT = /^(square|portrait|poster):\d(\+\w+)?$/;
 
 /**
  * Give back the storage of files this tenant no longer uses: a file still shown by another of its
@@ -234,7 +211,7 @@ export async function latestOutputs(projectId: string) {
 /** Go back to an earlier version of a main image; downloads and the page use it from now on. */
 export async function chooseVersion(tenant: string, projectId: string, slot: string, assetId: string) {
   z.uuid().parse(assetId);
-  if (!/^(square|portrait|poster):\d$/.test(slot)) throw new CatalogHttpError(400, '只有主图和海报能换版本');
+  if (!MAIN_SLOT.test(slot)) throw new CatalogHttpError(400, '只有主图和海报能换版本');
   const updated = await catalogDatabase().query(`UPDATE listing_assets SET chosen_at=clock_timestamp() WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND slot=$4 RETURNING id`, [assetId, tenant, projectId, slot]);
   if (!updated.rowCount) throw new CatalogHttpError(404, '没有这个版本');
   return { ok: true };

@@ -7,7 +7,7 @@ import type { ListingLayout, MainRole } from '../listing/layouts';
 
 export type Color = { name: string; hex: string };
 const lines = (items: string[]) => items.filter(Boolean).map(item => `- ${item}`).join('\n');
-const NO_EXTRA = '不要出现：任何品牌 logo、店铺名、水印、道具上的文字，以及上面引号以外的任何文字。版式里没有分到文字的位置只放图形或留空，不要自己补充文案、卖点或说明。所有中文逐字正确、笔画清晰，文字不挡住领口、拉链和口袋。';
+const NO_EXTRA = '不要出现：任何品牌 logo、店铺名、水印、道具上的文字，以及上面引号以外的任何文字。版式里没有分到文字的位置直接去掉，不要画空的标签、色块或文字框，也不要自己补充文案、卖点或说明。所有中文逐字正确、笔画清晰，文字不挡住领口、拉链和口袋。';
 
 export function productPrompt(input: { color: string; garment: string[] }) {
   return `从参考图里把这件衣服单独提取出来，做成一张电商白底产品图，正方形 1:1。
@@ -47,7 +47,7 @@ export function mainPrompt(input: { layout: ListingLayout; slot: MainSlot; used:
   const { slot, used, all } = input;
   const colorRule = used.length > 1
     ? `- 参考图是这款衣服各颜色的${input.fromSku ? ' SKU 图' : '白底产品图'}：${used.map((c, i) => `图${i + 1}=${c.name}`).join('，')}。画面里每件衣服的颜色必须和对应参考图一致，款式都一样；${input.fromSku ? '模特沿用参考图里的人，姿势、场景、构图按下面重新做，不照搬参考图的版式和文字；' : ''}只能出现这 ${used.length} 种颜色。\n- 本商品共 ${all.length} 色：${all.map(c => `「${c.name}」`).join('')}。画面里写颜色名只能用这些名字，逐字；色块颜色分别是 ${all.map(c => `${c.name} ${c.hex}`).join('、')}。`
-    : `- 颜色：${used[0]?.name ?? all[0]?.name}，和参考图一致，不偏色。`;
+    : `- 颜色：${used[0]?.name ?? all[0]?.name}，和参考图一致，不偏色；画面描述里如果提到别的衣服颜色，一律以这里为准。`;
   const words = [`主标题「${slot.title}」`, slot.subtitle && `副标题「${slot.subtitle}」`, ...slot.bullets.filter(Boolean).map(b => `要点「${b}」`)].filter(Boolean);
   const total = slot.kind === 'poster' ? '' : `整套 ${slot.total} 张中的第 ${slot.n} 张：${slot.role}。`;
   return `为淘宝制作一张服装商品主图，${RATIO_NAME[slot.kind]}。${total}
@@ -60,7 +60,7 @@ ${colorRule}
 这张图的内容：
 ${slot.scene ? `- 画面（要用画面直观演示卖点）：${slot.scene}\n` : ''}- 版式：${input.layout.roles[slot.role]}
 - 风格：${input.layout.style}
-- 画面上的文字只有这几句：${words.join('，')}。
+- 画面上的文字只有这几句：${words.join('，')}。${slot.bullets.length ? '' : '这张没有标签：版式里说的标签、胶囊、飘带一律不画。'}
 
 ${NO_EXTRA}`;
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { chooseMaterials, parseOrganized, usableAsIs, type SortedImage } from './listing-organize';
+import { chooseMaterials, parseOrganized, type SortedImage } from './listing-organize';
+import { usableAsIs } from '../listing/plan';
 
 const img = (id: string, over: Partial<SortedImage>): SortedImage => ({ id, kind: '模特实拍', color: '', front: false, detail: '', text: false, logo: false, same: '', ...over });
 
@@ -21,7 +22,7 @@ describe('chooseMaterials', () => {
     expect(chosen.colors.map(c => [c.name, c.pick])).toEqual([['黑色', 'M3'], ['藏青', null]]);
     expect(chosen.parts[0].pick).toBe('M3');
     expect(chosen.parts.find(p => p.part === '领口')?.pick).toBe('M5');
-    expect(chosen.checks).toMatchObject({ missingColors: ['藏青'], front: true, missingParts: ['拉链和袖口', '口袋', '面料', '背面'] });
+    expect(chosen.parts.filter(p => !p.pick).map(p => p.part)).toEqual(['拉链和袖口', '口袋', '面料', '背面']);
   });
 
   it('uses only a clean front still life or render as the product image', () => {

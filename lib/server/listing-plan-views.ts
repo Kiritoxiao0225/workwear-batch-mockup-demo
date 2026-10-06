@@ -5,10 +5,9 @@
  * folder or name says they are colour images stay single so the colour is read at full detail.
  */
 import sharp from 'sharp';
-import type { PlanImage } from './listing-plan';
-
 export const PLAN_FULL_SIZE_IMAGES = 40;
-export type PlanSource = Omit<PlanImage, 'dataUrl'> & { bytes: Buffer };
+/** One uploaded image: its label (M1, M2, …), where it was in the folder, its measured shape and bytes. */
+export type PlanSource = { id: string; name: string; folder: string; shape: '1:1' | '3:4' | '其他'; width: number; height: number; bytes: Buffer };
 /** One picture sent to the model and the line that tells it which images it holds. */
 export type PlanView = { text: string; dataUrl: string; ids: string[] };
 
