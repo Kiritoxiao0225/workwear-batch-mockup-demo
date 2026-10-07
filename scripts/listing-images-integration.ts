@@ -141,7 +141,7 @@ try {
   assert.deepEqual(planned.plan.colors, [{ name: '经典黑', hex: '#1f1f1f', sku: SKU }]);
   assert.deepEqual(planned.plan.main.square.map((s: { role: string; title: string }) => [s.role, s.title]), [['首图', '轻盈抗造工作服'], ['收口', '第5张标题']]);
   assert.deepEqual(planned.plan.direct, []); assert.equal(planned.plan.images.length, 3);
-  assert.match(writeRequest, /素材里没有这些部位的图：背面/); assert.match(writeRequest, /颜色「经典黑」的衣服图/); assert.match(writeRequest, /大标题「轻盈抗造工作服」；标签「三防面料」/);
+  assert.match(writeRequest, /素材里没有背面图，画面不要出现背面角度/); assert.match(writeRequest, /颜色「经典黑」的衣服图/); assert.match(writeRequest, /大标题「轻盈抗造工作服」；标签「三防面料」/);
   assert.equal(beforeRun - await balance(tenants[0]), 4 * 44);
   pass('定方案：缺颜色图、缺正面全身、不存在的图、没写大标题、加套颜色不对都拦住；开始出图冻结整套积分，写画面不另收费，写完自动排队出图');
 

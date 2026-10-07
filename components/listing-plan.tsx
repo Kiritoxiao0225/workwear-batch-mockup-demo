@@ -43,7 +43,8 @@ function recolor(d: Draft): Draft {
 export function checkDraft(d: Draft) {
   const red = [
     ...d.colors.filter(c => !c.pick).map(c => `「${c.name}」没有衣服图：补传一张，或者不要这个颜色`),
-    ...(d.parts.find(p => p.part === "正面全身")?.pick ? [] : ["缺正面全身图：补传一张"]),
+    ...(d.parts.find(p => p.part === FRONT)?.pick ? [] : ["缺正面全身图：补传一张"]),
+    ...(d.parts.some(p => !p.part.trim()) ? ["有衣服部位没写名字"] : []),
     ...(live(d).length ? [] : ["没有颜色了：至少留一个"]),
   ];
   const used = slotsFor(Math.max(d.counts.square, d.counts.portrait));
@@ -84,7 +85,7 @@ export function PriceInfo({ lines, total, extra }: { lines: PriceLine[]; total: 
 
 const STEPS = ["① 颜色和衣服图", "② 每张图讲什么", "③ 版式、张数、出几套"];
 const ROLE_HINT: Record<string, string> = { 首图: "定位做大标题，标签放最强的两条", 功能: "讲功能和面料", 细节: "做工和实用设计的特写", 实用: "实用设计的演示", 收口: "颜色和适合的人，推动下单" };
-const WANT: Record<string, string> = { 正面全身: "衣服完整的正面图", 领口: "领子的特写", 拉链和袖口: "拉链、袖口的特写", 口袋: "口袋的特写", 面料: "面料纹理或功能演示的特写", 背面: "衣服背面" };
+const FRONT = "正面全身";
 type Target = { kind: "color" | "part"; index: number } | null;
 
 export function PlanDialog({ name, materials, sources, draft, layouts, prices, onChange, onUpload, onLearn, onManage, onClose, onStart }: {
@@ -112,8 +113,8 @@ export function PlanDialog({ name, materials, sources, draft, layouts, prices, o
       const c = draft.colors[t.index], chosen = materials.chosen.colors.find(x => x.name === c.name)?.candidates ?? [];
       return library.filter(i => chosen.includes(i.label) || sorted.get(i.label)?.color === c.name);
     }
-    const part = draft.parts[t.index].part, chosen = materials.chosen.parts.find(x => x.part === part)?.candidates ?? [];
-    return library.filter(i => chosen.includes(i.label) || (part !== "正面全身" && sorted.get(i.label)?.kind === "细节特写"));
+    const part = draft.parts[t.index]?.part ?? "", chosen = materials.chosen.parts.find(x => x.part === part)?.candidates ?? [];
+    return library.filter(i => chosen.includes(i.label) || (part !== FRONT && sorted.get(i.label)?.kind === "细节特写"));
   };
   const assign = (label: string) => {
     if (!target) return;
@@ -151,10 +152,16 @@ export function PlanDialog({ name, materials, sources, draft, layouts, prices, o
         </div>);
     })}</div>
     <p className="lp-say"><b>主推色</b>就是首图和海报用的颜色。想用别的颜色也出首图（比如做不同链接），在第 ③ 步「出几套」里加。</p>
-    <h4 className="lp-h">衣服结构图 <small>AI 照着这些图写衣服的样子，图本身不会出现在成品里。找不到的部位，出图时自动不画。点图可以换。</small></h4>
+    <h4 className="lp-h">衣服结构图 <small>给 AI 看清这件衣服各部位长什么样，保证每张图里衣服画得一样；这些图不会出现在成品里。部位名字照衣服实际的叫法，可以改、加、删；没放进来的部位，出图时不做特写。</small></h4>
     <div className="lp-parts">{draft.parts.map((p, i) => (
-      <button type="button" key={p.part} className={"lp-part" + (!p.pick && p.part === "正面全身" ? " missing" : "")} onClick={() => { setTab("推荐"); setTarget({ kind: "part", index: i }); }}>
-        {p.pick ? pic(p.pick) : <span className="none">{p.part === "正面全身" ? "缺正面全身图，点这里补" : `没找到${p.part}图，出图时不画`}</span>}{p.part}</button>))}
+      <div key={i} className={"lp-part" + (!p.pick && p.part === FRONT ? " missing" : "")}>
+        <button type="button" className="pic" title="换一张" onClick={() => { setTab("推荐"); setTarget({ kind: "part", index: i }); }}>
+          {p.pick ? pic(p.pick) : <span className="none">{p.part === FRONT ? "缺正面全身图，点这里补" : "还没选图，点这里选"}</span>}</button>
+        {p.part === FRONT ? <span className="nm">{FRONT}</span>
+          : <><input value={p.part} maxLength={12} placeholder="部位名" aria-label="部位名" onChange={e => set({ parts: draft.parts.map((x, k) => k === i ? { ...x, part: e.target.value } : x) })} />
+            <button type="button" className="lp-btn link" onClick={() => set({ parts: draft.parts.filter((_, k) => k !== i) })}>删掉</button></>}
+      </div>))}
+      <div className="lp-part"><button type="button" className="pic" onClick={() => { set({ parts: [...draft.parts, { part: "新部位", pick: null }] }); setTab("全部"); setTarget({ kind: "part", index: draft.parts.length }); }}><span className="none add">＋ 加一个部位</span></button></div>
     </div>
     <details className="lp-all">
       <summary>查看全部素材：整理后 {library.length} 张，合并重复 {copies.length} 张</summary>
@@ -245,8 +252,8 @@ export function PlanDialog({ name, materials, sources, draft, layouts, prices, o
       {target && (
         <div className="lp-modal top" onClick={e => { if (e.target === e.currentTarget) setTarget(null); }}>
           <div className="lp-box" role="dialog" aria-modal="true" aria-label="选一张图">
-            <div className="lp-box-head"><div><h3>{target.kind === "color" ? `选「${draft.colors[target.index].name}」的衣服图` : `选结构图「${draft.parts[target.index].part}」`}</h3>
-              <p className="lp-sub">{target.kind === "color" ? "要衣服完整、正面、颜色准。推荐里是 AI 认为是这个颜色的图。" : WANT[draft.parts[target.index].part]}</p></div>
+            <div className="lp-box-head"><div><h3>{target.kind === "color" ? `选「${draft.colors[target.index].name}」的衣服图` : `选结构图「${draft.parts[target.index]?.part ?? ""}」`}</h3>
+              <p className="lp-sub">{target.kind === "color" ? "要衣服完整、正面、颜色准。推荐里是 AI 认为是这个颜色的图。" : draft.parts[target.index]?.part === FRONT ? "衣服完整的正面图" : `「${draft.parts[target.index]?.part ?? ""}」的特写，挑最清楚的一张；名字不对可以在外面改`}</p></div>
               <div className="grow" /><button type="button" className="lp-btn sm ghost" onClick={() => setTarget(null)}>关闭</button></div>
             <div className="lp-box-body">
               <div className="lp-tabs">{["推荐", "全部", ...KINDS].map(k => <button type="button" key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{k}</button>)}</div>
@@ -254,8 +261,8 @@ export function PlanDialog({ name, materials, sources, draft, layouts, prices, o
                 <button type="button" key={i.label} className="it" onClick={() => assign(i.label)}><img src={i.url} alt="" loading="lazy" /><span className="cat">{sorted.get(i.label)?.kind}{sorted.get(i.label)?.color ? "·" + sorted.get(i.label)!.color : ""}</span><small>{i.path}</small></button>))
                 : <span className="lp-muted">素材里没有推荐的图，可以看「全部」或补传一张。</span>}</div>
             </div>
-            <div className="lp-box-foot"><div className="grow">{target.kind === "part" && draft.parts[target.index].pick && draft.parts[target.index].part !== "正面全身"
-              ? <button type="button" className="lp-btn link" onClick={() => { set({ parts: draft.parts.map((p, k) => k === target.index ? { ...p, pick: null } : p) }); setTarget(null); }}>不用这个部位（出图时不画）</button> : "素材里没有合适的？"}</div>
+            <div className="lp-box-foot"><div className="grow">{target.kind === "part" && draft.parts[target.index]?.part !== FRONT
+              ? <button type="button" className="lp-btn link" onClick={() => { set({ parts: draft.parts.filter((_, k) => k !== target.index) }); setTarget(null); }}>不要这个部位（出图时不做特写）</button> : "素材里没有合适的？"}</div>
               <button type="button" className="lp-btn" disabled={busy} onClick={() => upload.current?.click()}>{busy ? "正在上传…" : "补传一张"}</button>
               <input ref={upload} type="file" accept="image/*" hidden onChange={async e => {
                 const file = e.target.files?.[0]; e.target.value = ""; if (!file) return;

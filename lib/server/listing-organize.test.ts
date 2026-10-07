@@ -21,8 +21,7 @@ describe('chooseMaterials', () => {
     const chosen = chooseMaterials(sorted, [{ id: 'M4', width: 3000, height: 3000 }, { id: 'M3', width: 800, height: 800 }]);
     expect(chosen.colors.map(c => [c.name, c.pick])).toEqual([['黑色', 'M3'], ['藏青', null]]);
     expect(chosen.parts[0].pick).toBe('M3');
-    expect(chosen.parts.find(p => p.part === '领口')?.pick).toBe('M5');
-    expect(chosen.parts.filter(p => !p.pick).map(p => p.part)).toEqual(['拉链和袖口', '口袋', '面料', '背面']);
+    expect(chosen.parts.map(p => [p.part, p.pick])).toEqual([['正面全身', 'M3'], ['领口', 'M5']]);
   });
 
   it('uses only a clean front still life or render as the product image', () => {
@@ -30,6 +29,19 @@ describe('chooseMaterials', () => {
     expect(usableAsIs(img('B', { kind: '3D渲染', front: true, logo: true }))).toBe(false);
     expect(usableAsIs(img('C', { kind: '模特实拍', front: true }))).toBe(false);
     expect(usableAsIs(img('D', { kind: '静物' }))).toBe(false);
+  });
+});
+
+describe('structure parts', () => {
+  it('names the parts after what the garment has, most close-ups first and the back last', () => {
+    const sorted = {
+      images: [img('M1', { kind: '静物', color: '黑色', front: true }), img('M2', { kind: '细节特写', detail: '连帽' }), img('M3', { kind: '细节特写', detail: '连帽' }),
+        img('M4', { kind: '静物', detail: '背面' }), img('M5', { kind: '细节特写', detail: '下摆抽绳' }), img('M6', { kind: '模特实拍', detail: '连帽' })],
+      colors: [{ name: '黑色', hex: '#111', from: [] }], points: [], notes: [],
+    };
+    const chosen = chooseMaterials(sorted, []);
+    expect(chosen.parts.map(p => [p.part, p.pick])).toEqual([['正面全身', 'M1'], ['连帽', 'M2'], ['下摆抽绳', 'M5'], ['背面', 'M4']]);
+    expect(parseOrganized(JSON.stringify({ images: [{ id: 'M1', kind: '细节特写', detail: '帽檐调节扣' }], colors: [] }), ['M1']).images[0].detail).toBe('帽檐调节扣');
   });
 });
 

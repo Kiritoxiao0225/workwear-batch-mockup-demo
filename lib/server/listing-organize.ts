@@ -11,9 +11,10 @@ import type { PlanView } from './listing-plan-views';
 
 export const MATERIAL_KINDS = ['颜色款图', '静物', '3D渲染', '模特实拍', '细节特写', '卖点图', '详情页', '海报', '尺码表', '无关'] as const;
 export type MaterialKind = (typeof MATERIAL_KINDS)[number];
-export const PARTS = ['正面全身', '领口', '拉链和袖口', '口袋', '面料', '背面'] as const;
-export type Part = (typeof PARTS)[number];
-const DETAILS = ['领口', '拉链', '袖口', '口袋', '面料', '背面', '下摆', '其他', ''] as const;
+/** The whole garment seen from the front; the other structure parts are named after what the garment has. */
+export const FRONT = '正面全身';
+/** At most this many close-up parts are offered, plus the back view; the user may add more. */
+const MAX_PARTS = 8;
 
 const SYSTEM = `你是淘宝服装店的素材整理员。你会收到同一款衣服的一大批原始素材（实拍、静物、3D 图、做好的主图和详情页、海报、颜色图等，可能很乱），每张都标了编号。
 任务：逐张整理，并读出颜色和卖点。颜色和卖点只做提炼，素材里写了什么就用什么，不做任何调整。只输出 JSON。
@@ -22,7 +23,7 @@ const SYSTEM = `你是淘宝服装店的素材整理员。你会收到同一款�
 - kind：颜色款图（用来区分颜色款的图，通常一个颜色一张、带颜色名）/ 静物（平铺、挂拍、人台、白底产品图）/ 3D渲染 / 模特实拍（没有加文字的模特照片）/ 细节特写（局部近拍）/ 卖点图（做好的主图或营销图，上面有卖点文字）/ 详情页（详情页切片，长图或图文排版）/ 海报 / 尺码表 / 无关（二维码、聊天截图、价格说明、空白图、别的商品等）。
 - color：画面里这件衣服的颜色名，和 colors 里的名字一致；图上写了颜色名就一字不改地照抄，没写就按你看到的起一个常见颜色名；一张图里有多种颜色或看不出时留空。
 - front：衣服是否完整、正面朝前地出现（领口到下摆都在画面里，没被手、包、文字挡住主体）。
-- detail：如果是局部特写，拍的是哪里：领口 / 拉链 / 袖口 / 口袋 / 面料 / 背面 / 下摆 / 其他；不是特写留空。整件衣服的背面照片 detail 也写“背面”。
+- detail：如果是局部特写，拍的是这件衣服的哪个部位，用这件衣服实际有的东西来叫，2–6 个字（如 连帽、帽檐调节、立领、门襟拉链、袖口、下摆抽绳、口袋、腋下透气拉链、内胆、面料、背面）；看清楚再叫，帽子就写帽子相关的名字，不要叫成领口。同一个部位在不同图里用同一个叫法。不是特写留空。整件衣服的背面照片 detail 也写“背面”。
 - text：画面上有没有能读出的卖点文字（面料、功能、工艺、服务等）。
 - logo：衣服本身上有没有 logo、品牌标、印字或图案（只看衣服，不看背景和图上加的字）。
 - same：如果这张和另一张是同一张照片（裁剪、缩放、调色、加字前后的版本），写那一张的编号，否则留空。
@@ -48,7 +49,7 @@ export function organizeRequest(input: { views: PlanView[]; model: string; produ
 
 const imageSchema = z.object({
   id: z.string(), kind: z.enum(MATERIAL_KINDS).catch('无关'), color: z.string().default(''), front: z.boolean().default(false),
-  detail: z.enum(DETAILS).catch('其他'), text: z.boolean().default(false), logo: z.boolean().default(false), same: z.string().default(''),
+  detail: z.string().trim().max(12).catch(''), text: z.boolean().default(false), logo: z.boolean().default(false), same: z.string().default(''),
 });
 const organizeSchema = z.object({
   images: z.array(imageSchema),
@@ -79,7 +80,8 @@ type Size = { id: string; width: number; height: number };
 
 /**
  * The program's pick from the sorted images: per colour the best whole-front image (a clean still
- * life first), and the structure references. `sizes` breaks ties by resolution.
+ * life first), a whole front view, and the parts with the most close-ups, under the names the model
+ * gave them (the back view last). `sizes` breaks ties by resolution.
  */
 export function chooseMaterials(sorted: Organized, sizes: Size[]) {
   const px = new Map(sizes.map(s => [s.id, s.width * s.height]));
@@ -89,14 +91,15 @@ export function chooseMaterials(sorted: Organized, sizes: Size[]) {
     const candidates = usable.filter(i => i.color === c.name || c.from.includes(i.id)).filter(i => i.front && colourRank[i.kind]);
     return { name: c.name, hex: c.hex, pick: best(candidates, i => (colourRank[i.kind] ?? 0) * 2 + (i.logo ? 0 : 1)), candidates: candidates.map(i => i.id) };
   });
-  const parts = PARTS.map(part => {
-    // A full front view shows one garment: an image with one colour, ideally a colour's own pick.
-    const list = part === '正面全身' ? usable.filter(i => i.front && i.color && colourRank[i.kind])
-      : part === '拉链和袖口' ? usable.filter(i => i.detail === '拉链' || i.detail === '袖口')
-      : usable.filter(i => i.detail === part);
-    const picked = new Set(colors.map(c => c.pick));
-    const rank = (i: SortedImage) => part === '正面全身' ? (picked.has(i.id) ? 10 : 0) + (colourRank[i.kind] ?? 0) : i.kind === '细节特写' ? 2 : 1;
-    return { part, pick: best(list, rank), candidates: list.map(i => i.id) };
-  });
-  return { colors, parts };
+  // A full front view shows one garment: an image with one colour, ideally a colour's own pick.
+  const picked = new Set(colors.map(c => c.pick));
+  const fronts = usable.filter(i => i.front && i.color && colourRank[i.kind]);
+  const front = { part: FRONT, pick: best(fronts, i => (picked.has(i.id) ? 10 : 0) + (colourRank[i.kind] ?? 0)), candidates: fronts.map(i => i.id) };
+  const named = new Map<string, SortedImage[]>();
+  for (const i of usable) if (i.detail && i.detail !== '其他') named.set(i.detail, [...(named.get(i.detail) ?? []), i]);
+  const back = named.get('背面');
+  named.delete('背面');
+  const parts = [...[...named].sort(([, x], [, y]) => y.length - x.length).slice(0, MAX_PARTS), ...(back ? [['背面', back] as const] : [])]
+    .map(([part, list]) => ({ part, pick: best(list, i => i.kind === '细节特写' ? 2 : 1), candidates: list.map(i => i.id) }));
+  return { colors, parts: [front, ...parts] };
 }

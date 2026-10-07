@@ -44,9 +44,10 @@ ${poster ? `2:3 海报：${say({ ...draft.poster, tags: [], colors: [draft.main]
 下面是用户挑出的素材图。`;
   const content: Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }> = [{ type: 'text', text: task }];
   for (const view of input.views) content.push({ type: 'text', text: view.text }, { type: 'image_url', image_url: { url: view.dataUrl } });
-  // Parts the material has no picture of are kept out of every image, e.g. no back view at all.
-  const missing = draft.parts.filter(p => !p.pick && p.part !== '正面全身').map(p => p.part);
-  const system = SYSTEM.replace('{SKIP}', missing.length ? `6. 素材里没有这些部位的图：${missing.join('、')}。画面里不要出现${missing.includes('背面') ? '背面角度和' : ''}这些部位的特写。\n` : '');
+  // Close-ups show only the parts there is a picture of; without a back view no image shows the back.
+  const shown = draft.parts.filter(p => p.pick && p.part !== '正面全身').map(p => p.part);
+  const back = shown.includes('背面');
+  const system = SYSTEM.replace('{SKIP}', `6. 局部特写只拍结构参考里有图的部位${shown.length ? `（${shown.join('、')}）` : ''}，用参考图里的叫法；${back ? '' : '素材里没有背面图，画面不要出现背面角度。'}\n`);
   return { model: input.model, reasoning_effort: 'low', max_completion_tokens: 12000, response_format: { type: 'json_object' }, stream: false,
     messages: [{ role: 'system', content: system }, { role: 'user', content }] };
 }
