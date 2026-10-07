@@ -44,8 +44,11 @@
 .product-header__logout { color: var(--danger) !important; }
 .product-header__error { position: absolute; top: calc(100% + 8px); right: 16px; z-index: 50; max-width: min(420px, calc(100vw - 32px)); padding: 8px 12px; border: 1px solid #f0c9c0; border-radius: 9px; background: #fff5f2; color: var(--danger); font-size: 12px; box-shadow: 0 10px 24px -12px rgba(40, 20, 10, .3); }
 .product-header__error button { margin-left: 8px; cursor: pointer; }
+.product-header__entered { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; padding: 4px 6px 4px 12px; border: 1px solid #ecd38a; border-radius: 999px; background: #fff8e1; color: #7a5600; font-size: 12px; white-space: nowrap; }
+.product-header__entered button { padding: 3px 10px; border: 0; border-radius: 999px; background: #7a5600; color: #fff; font-size: 12px; cursor: pointer; }
+.product-header__entered button:disabled { opacity: .6; cursor: default; }
 .product-header :where(a, button):focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
 
 @media (max-width: 900px) {
-  .product-header__brand strong, .product-header__muted, .product-header__held, .product-header__name { display: none; }
+  .product-header__brand strong, .product-header__muted, .product-header__held, .product-header__name, .product-header__entered span { display: none; }
 }

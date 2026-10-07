@@ -140,6 +140,22 @@ export function AdminClient() {
     }
   };
 
+  // The browser becomes that account until "返回管理员" in the header; a full load drops admin state.
+  // Not through run(): reloading the admin lists after the switch would already be refused.
+  const enter = async (account: Account) => {
+    setBusy(true);
+    try {
+      await postJson(`/api/admin/accounts/${account.id}/enter`, {});
+      window.location.assign(account.pages[0] ?? '/account');
+    } catch (enterError) {
+      setError(enterError instanceof Error ? enterError.message : String(enterError));
+      setBusy(false);
+    }
+  };
+  const enterButton = (account: Account) => account.id !== self && !account.disabled && (
+    <button className="button" disabled={busy} title="以这个账号的身份打开工作台，看它生成过什么；页头可随时返回管理员" onClick={() => void enter(account)}>进入账号</button>
+  );
+
   const togglePage = (account: Account, href: string) => {
     const next = account.pages.includes(href) ? account.pages.filter(page => page !== href) : [...account.pages, href];
     void update(account, { allowedPages: next });
@@ -208,6 +224,7 @@ export function AdminClient() {
                     <td className="nowrap">
                       {!account.tenant.exempt && <button className="button" disabled={busy} onClick={() => setSetting(account)}>设置积分</button>}
                       <button className="button" onClick={() => void openDetail(account)}>明细</button>
+                      {enterButton(account)}
                     </td>
                   </tr>
                 ))}
@@ -283,6 +300,7 @@ export function AdminClient() {
                         onBlur={event => { if (event.target.value.trim() !== account.note) void update(account, { note: event.target.value }); }} />
                     </td>
                     <td className="nowrap">
+                      {enterButton(account)}
                       {account.id !== self && (
                         <button className="button" disabled={busy} onClick={() => {
                           if (account.disabled || window.confirm(`确定停用「${account.displayName}」？对方会立即被退出登录。`)) void update(account, { disabled: !account.disabled });

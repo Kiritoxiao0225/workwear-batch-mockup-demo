@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { CatalogUser } from '@/lib/catalog';
 import { CATALOG_COOKIE, SESSION_SECONDS } from './catalog-auth';
+import { clearAdminReturn } from './impersonation';
 
 /**
  * Session cookies are read by page-level guards as well as by `/api`, so the cookie lives at
@@ -23,6 +24,7 @@ export function sessionResponse(body: Record<string, unknown>, token: string) {
 export function clearedSessionResponse(body: Record<string, unknown> = { ok: true }, status = 200) {
   const response = NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
   response.cookies.set(CATALOG_COOKIE, '', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/', maxAge: 0 });
+  clearAdminReturn(response);
   clearLegacyCookiePaths(response);
   return response;
 }

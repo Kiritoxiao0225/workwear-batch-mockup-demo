@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { assertSameOrigin, catalogUser, CatalogHttpError, CATALOG_COOKIE, loginWorkspace, logoutCatalog, renewCatalogSession, workspaceOpenAccess } from '@/lib/server/catalog-auth';
 import type { CatalogUser } from '@/lib/catalog';
 import { catalogError, catalogJson } from '@/lib/server/catalog-http';
+import { revokeAdminBehind } from '@/lib/server/impersonation';
 import { limitPasswordLogin } from '@/lib/server/password-login-limit';
 import { clearedSessionResponse, requestIp, sessionResponse as authenticatedResponse } from '@/lib/server/auth-session';
 export const dynamic = 'force-dynamic';
@@ -34,6 +35,6 @@ export async function PATCH(request: NextRequest) {
   catch (error) { return sessionError(error); }
 }
 export async function DELETE(request: NextRequest) {
-  try { await logoutCatalog(request); return clearedSessionResponse(); }
+  try { await revokeAdminBehind(request); await logoutCatalog(request); return clearedSessionResponse(); }
   catch (error) { return catalogError(error); }
 }

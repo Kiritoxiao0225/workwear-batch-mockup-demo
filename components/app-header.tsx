@@ -40,7 +40,23 @@ export function AppHeader({ beforeLogout }: { beforeLogout?: () => Promise<boole
     balance: { balanceCents: number; heldCents: number };
     tenant: { internal: boolean };
     pages: string[];
+    enteredBy: { displayName: string } | null;
   } | null>(null);
+  const [returning, setReturning] = useState(false);
+  const returnToAdmin = async () => {
+    if (returning) return;
+    setReturning(true); setLogoutError("");
+    try {
+      if (beforeLogout && !(await beforeLogout())) throw new Error("作品尚未保存成功，暂未返回。请先重试保存。");
+      const response = await fetch("/api/auth/return-admin", { method: "POST" });
+      if (!response.ok) throw new Error(((await response.json().catch(() => ({}))) as { error?: string }).error ?? "返回管理员账号失败，请重试。");
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- Reload every account-scoped client state as the administrator.
+      window.location.assign("/admin");
+    } catch (error) {
+      setLogoutError(error instanceof Error ? error.message : "返回管理员账号失败，请重试。");
+      setReturning(false);
+    }
+  };
   useEffect(() => {
     let alive = true;
     const read = () =>
@@ -85,6 +101,12 @@ export function AppHeader({ beforeLogout }: { beforeLogout?: () => Promise<boole
             </Link>
           ))}
         </nav>
+        {account?.enteredBy && (
+          <div className="product-header__entered" role="status">
+            <span>正在以「{account.user.displayName}」的身份操作</span>
+            <button type="button" disabled={returning} onClick={() => void returnToAdmin()}>{returning ? "正在返回…" : "返回管理员"}</button>
+          </div>
+        )}
         <div className="product-header__credit">
           <span className="product-header__muted">积分</span>
           <b>
@@ -110,6 +132,7 @@ export function AppHeader({ beforeLogout }: { beforeLogout?: () => Promise<boole
             <div className="product-header__menu" role="menu">
               {account?.user.email && <span className="product-header__menu-email">{account.user.email}</span>}
               <Link role="menuitem" href="/account" onClick={() => setMenuOpen(false)}>我的账户</Link>
+              {account?.enteredBy && <button type="button" role="menuitem" disabled={returning} onClick={() => void returnToAdmin()}>返回管理员账号（{account.enteredBy.displayName}）</button>}
               <button type="button" role="menuitem" className="product-header__logout" disabled={loggingOut} onClick={() => void logout()}>{loggingOut ? "正在退出…" : "退出登录"}</button>
             </div>
           )}
