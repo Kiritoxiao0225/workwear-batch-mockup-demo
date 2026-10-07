@@ -124,6 +124,8 @@ try {
   await call(0, `projects/${id}/start`, { ...plan, colors: [{ name: '经典黑', hex: '', pick: 'M99' }] }, 400);
   await call(0, `projects/${id}/start`, { ...plan, slots: plan.slots.map((s, i) => i === 4 ? { ...s, title: '' } : s) }, 400);
   await call(0, `projects/${id}/start`, { ...plan, extra: [{ color: '经典黑', layout: '' }] }, 400);
+  const tooLong = await (await call(0, `projects/${id}/start`, { ...plan, slots: plan.slots.map((s, i) => i === 4 ? { ...s, sub: '落霞橙 北欧蓝 空间灰 黑色 希望绿 爱马仕橙 石苔灰 云朵白 浅蓝色 蓝色' } : s) }, 400)).json();
+  assert.equal(tooLong.error, '第 5 张图的小字太长了，请删短一点');
   await call(1, `projects/${id}/start`, plan, 404);
   const beforeRun = await balance(tenants[0]);
   assert.equal((await (await call(0, `projects/${id}/start`, plan)).json()).status, 'writing');

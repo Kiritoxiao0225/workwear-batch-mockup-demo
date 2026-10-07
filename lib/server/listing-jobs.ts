@@ -134,7 +134,15 @@ export type Materials = { sorted: Organized; chosen: ReturnType<typeof chooseMat
  * whole set's credits and queue the writing (free: part of the analysis). Generation follows it.
  */
 export async function submitDraft(tenant: Tenant, user: string, projectId: string, input: unknown) {
-  const draft = draftSchema.parse(input);
+  const parsed = draftSchema.safeParse(input);
+  if (!parsed.success) {
+    // Said the way the page says it: which image, which words.
+    const FIELD: Record<string, string> = { title: '大标题', sub: '小字', tags: '标签', colors: '颜色', name: '颜色名', pick: '衣服图' };
+    const where = (path: PropertyKey[]) => path[0] === 'slots' ? `第 ${Number(path[1]) + 1} 张图的${FIELD[String(path[2])] ?? '内容'}` : path[0] === 'poster' ? `海报的${FIELD[String(path[1])] ?? '内容'}` : path[0] === 'colors' ? `第 ${Number(path[1]) + 1} 个颜色的${FIELD[String(path[2])] ?? '内容'}` : '方案';
+    const issue = parsed.error.issues[0];
+    throw new CatalogHttpError(400, issue.code === 'too_big' ? `${where(issue.path)}太长了，请删短一点` : `${where(issue.path)}不对：${issue.message}`);
+  }
+  const draft = parsed.data;
   const prices = await currentPrices();
   return catalogTransaction(async c => {
     const p = (await c.query(`SELECT status,layout,materials FROM listing_projects WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL FOR UPDATE`, [projectId, tenant.id])).rows[0];

@@ -57,17 +57,17 @@ export function planSlots(points: Point[], colorNames: string[]): { slots: Slot[
   const coverTags = (body.length ? body : points.filter(p => p !== cover)).slice(0, 2).map(p => p.text);
   const many = colorNames.length > 1;
   const last: Slot = many
-    ? { role: '收口', title: `${colorNames.length}色可选`, sub: colorNames.join(' '), tags: closer.slice(0, 2).map(p => p.text), colors: [] }
+    ? { role: '收口', title: `${colorNames.length}色可选`, sub: '', tags: closer.slice(0, 2).map(p => p.text), colors: [] }
     : { role: '收口', title: closer[0]?.text ?? '', sub: closer[0]?.note ?? '', tags: closer.slice(1, 3).map(p => p.text), colors: [] };
   return {
     slots: [{ role: '首图', title: cover?.text ?? '', sub: cover?.note ?? '', tags: coverTags, colors: [] }, ...middle, last],
-    poster: { title: cover?.text ?? '', sub: coverTags.join(' · ') },
+    poster: { title: cover?.text ?? '', sub: [...coverTags.join(' · ')].length <= LIMITS.sub ? coverTags.join(' · ') : coverTags[0] ?? '' },
   };
 }
 
-/** After colours were added or dropped, the closer still says how many there are. */
+/** After colours were added or dropped, the closer still says how many there are (the image shows each colour as a swatch). */
 export function syncCloser(slot: Slot, colorNames: string[]): Slot {
-  return /^\d+色可选$/.test(slot.title) && colorNames.length > 1 ? { ...slot, title: `${colorNames.length}色可选`, sub: colorNames.join(' ') } : slot;
+  return /^\d+色可选$/.test(slot.title) && colorNames.length > 1 ? { ...slot, title: `${colorNames.length}色可选` } : slot;
 }
 
 const rgb = (hex: string) => { const n = /^#[0-9a-f]{6}$/i.test(hex) ? parseInt(hex.slice(1), 16) : 0x8a8a8a; return [n >> 16, (n >> 8) & 255, n & 255]; };
@@ -127,13 +127,22 @@ export function assignColors(slots: Slot[], colors: { name: string; hex: string 
   return out;
 }
 
+/** Words longer than the image can hold (and than the server accepts), in plain words. */
+export function overLimit(words: { title: string; sub: string; tags?: string[] }) {
+  const long = [[...words.title.trim()].length > LIMITS.title && `大标题超过 ${LIMITS.title} 个字`, [...words.sub.trim()].length > LIMITS.sub && `小字超过 ${LIMITS.sub} 个字`,
+    (words.tags ?? []).some(t => [...t.trim()].length > LIMITS.tag) && `标签超过 ${LIMITS.tag} 个字`].filter(Boolean);
+  return long.length ? `${long.join('、')}，请删短一点` : '';
+}
+
 /** What is missing from an image's words, in plain words; empty when it has enough. */
 export function thinOf(slot: Slot, index: number) {
   const missing: string[] = [];
   const n = [...slot.title.trim()].length;
   if (!n) return '没有大标题：从「讲什么」里选一条卖点';
+  const long = overLimit(slot);
+  if (long) return long;
   if (n < 4) missing.push(`大标题只有 ${n} 个字`);
-  if (index > 0 && !slot.sub.trim()) missing.push('没有小字');
+  if (index > 0 && !slot.sub.trim() && !/^\d+色可选$/.test(slot.title)) missing.push('没有小字');
   if (!slot.tags.length && !/^\d+色可选$/.test(slot.title)) missing.push('没有标签');
   return missing.length ? `${missing.join('、')}，图会显得空：换一条卖点，或者补上` : '';
 }
@@ -191,14 +200,15 @@ export function priceLines(items: ImageItem[], unit: number, multiUnit: number):
   return lines;
 }
 
+export const LIMITS = { title: 20, sub: 30, tag: 20 } as const;
 const words = (max: number) => z.string().trim().max(max).default('');
 /** What the page sends when the user starts generating; the server checks it against the material. */
 export const draftSchema = z.object({
   colors: z.array(z.object({ name: z.string().trim().min(1, '颜色名不能空').max(12, '颜色名最多 12 个字'), hex: z.string().max(16).default(''), pick: z.string({ error: '每个颜色都要有一张衣服图' }).min(1) })).min(1, '至少要有一个颜色').max(12),
   main: z.string().min(1),
   parts: z.array(z.object({ part: z.string().max(10), pick: z.string().nullable().default(null) })).max(10).default([]),
-  slots: z.array(z.object({ role: z.enum(Object.keys(MAIN_ROLES) as [MainRole, ...MainRole[]]), title: words(20), sub: words(30), tags: z.array(z.string().trim().min(1).max(16)).max(3).default([]), colors: z.array(z.string()).max(4).default([]) })).length(5),
-  poster: z.object({ title: words(20), sub: words(30) }),
+  slots: z.array(z.object({ role: z.enum(Object.keys(MAIN_ROLES) as [MainRole, ...MainRole[]]), title: words(LIMITS.title), sub: words(LIMITS.sub), tags: z.array(z.string().trim().min(1).max(LIMITS.tag)).max(3).default([]), colors: z.array(z.string()).max(4).default([]) })).length(5),
+  poster: z.object({ title: words(LIMITS.title), sub: words(LIMITS.sub) }),
   layout: z.string().min(1), counts: countsSchema,
   extra: z.array(z.object({ color: z.string(), layout: z.string().default('') })).max(11).default([]),
 });

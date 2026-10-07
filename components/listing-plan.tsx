@@ -8,7 +8,7 @@
  */
 import { useRef, useState } from "react";
 import type { ListingCounts } from "@/lib/listing/layouts";
-import { assignColors, draftImages, planSlots, priceLines, slotsFor, syncCloser, thinOf, usableAsIs, type Draft, type Point, type PriceLine, type Slot } from "@/lib/listing/plan";
+import { assignColors, draftImages, overLimit, planSlots, priceLines, slotsFor, syncCloser, thinOf, usableAsIs, type Draft, type Point, type PriceLine, type Slot } from "@/lib/listing/plan";
 
 export const KINDS = ["颜色款图", "静物", "3D渲染", "模特实拍", "细节特写", "卖点图", "详情页", "海报", "尺码表", "无关"] as const;
 export type Sorted = { id: string; kind: string; color: string; front: boolean; detail: string; text: boolean; logo: boolean; same: string };
@@ -47,6 +47,8 @@ export function checkDraft(d: Draft) {
     ...(live(d).length ? [] : ["没有颜色了：至少留一个"]),
   ];
   const used = slotsFor(Math.max(d.counts.square, d.counts.portrait));
+  for (const i of used) { const long = overLimit(d.slots[i]); if (long) red.push(`第 ${used.indexOf(i) + 1} 张${long}`); }
+  if (d.counts.poster && overLimit(d.poster)) red.push(`海报${overLimit(d.poster)}`);
   const thin = used.filter(i => thinOf(d.slots[i], i)).length;
   return { red, thin };
 }

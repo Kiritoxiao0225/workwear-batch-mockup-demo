@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { shapeOf } from './layouts';
-import { assignColors, draftImages, planSlots, priceLines, slotsFor, syncCloser, thinOf, type Draft, type Point } from './plan';
+import { assignColors, draftImages, overLimit, planSlots, priceLines, slotsFor, syncCloser, thinOf, type Draft, type Point } from './plan';
 
 // M12's selling points in the order the model ranked them.
 const p = (type: string, text: string, note = ''): Point => ({ type, text, note, why: '', from: [] });
@@ -19,7 +19,7 @@ describe('planSlots', () => {
       ['收口', '6色可选', '户外露营'],
     ]);
     expect(slots[1].sub).toBe('防水指数三级以上');
-    expect(slots[4].sub).toBe('落霞橙 黑色 北欧蓝 石苔灰 未来白 橙色');
+    expect(slots[4].sub).toBe('');
     expect(poster).toEqual({ title: '轻量化连帽冲锋衣', sub: '防水三级以上 · 透气' });
   });
 
@@ -27,7 +27,7 @@ describe('planSlots', () => {
     const { slots } = planSlots([p('定位', '立领工作服'), p('做工', '双线走线'), p('人群场景', '工厂车间', '耐脏耐磨')], ['藏青']);
     expect(slots.map(s => s.title)).toEqual(['立领工作服', '双线走线', '', '', '工厂车间']);
     expect(thinOf(slots[2], 2)).toMatch('没有大标题');
-    expect(syncCloser({ ...slots[4], title: '6色可选' }, ['藏青', '黑色'])).toMatchObject({ title: '2色可选', sub: '藏青 黑色' });
+    expect(syncCloser({ ...slots[4], title: '6色可选' }, ['藏青', '黑色'])).toMatchObject({ title: '2色可选' });
   });
 });
 
@@ -79,5 +79,16 @@ describe('planSlots with more points of one type than its images hold', () => {
     expect(slots.slice(1, 4).map(s => [s.role, s.title])).toEqual([['功能', '防水三级以上'], ['功能', '防水透气面料'], ['细节', 'YKK品牌拉链']]);
     expect(used).toEqual(expect.arrayContaining(['内里透气保暖', '科技锁温']));
     expect(used).not.toContain('两侧拉链口袋');
+  });
+});
+
+describe('limits', () => {
+  it('never fills the closer or the poster with more words than the server accepts', () => {
+    const many = ['落霞橙', '北欧蓝', '空间灰', '黑色', '希望绿', '爱马仕橙', '石苔灰', '云朵白', '浅蓝色', '蓝色'];
+    const { slots, poster } = planSlots([p('定位', '轻量化连帽单冲'), p('功能', '防水三级以上防风防雨抗皱性强'), p('功能', '舒适透气加倍保暖舒适内里设计')], many);
+    expect(slots[4]).toMatchObject({ title: '10色可选', sub: '' });
+    expect(overLimit(poster)).toBe('');
+    expect(thinOf(slots[4], 4)).not.toMatch('没有小字');
+    expect(overLimit({ title: '大标题', sub: '一'.repeat(31) })).toMatch('小字超过 30 个字');
   });
 });
