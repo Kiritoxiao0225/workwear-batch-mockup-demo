@@ -6,7 +6,8 @@ import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './
 import { CatalogHttpError } from './catalog-auth';
 import { saveCatalogFile, readCatalogFile } from './catalog-files';
 import { registerFileRef } from './file-authorization';
-import { countsSchema, shapeOf, type MainRole } from '../listing/layouts';
+import { shapeOf } from '../listing/templates';
+import { countsSchema, type SubmittedDraft } from '../listing/draft-schema';
 import { resolveLayout } from './listing-layouts';
 
 // Users drop a whole product folder; the page shrinks photos to 2048 px before upload, and the
@@ -80,22 +81,21 @@ export async function sourceImages(projectId: string) {
   return rows.map((row, i) => ({ ...row, label: `M${i + 1}`, shape: shapeOf(row.width, row.height) }));
 }
 
-type ProjectRow = { id: string; name: string; layout: string; counts: unknown; status: string; plan: StoredPlan | null; error: string | null; created_at: string; updated_at: string };
-/** One main image as it is made: the user's words and colours, the model's picture. */
-export type MainWords = { role: MainRole | '海报'; title: string; subtitle: string; bullets: string[]; scene: string; colors: string[] };
+type ProjectRow = { id: string; name: string; layout: string; counts: unknown; status: string; plan: StoredPlan | null; materials: unknown; error: string | null; created_at: string; updated_at: string };
 /**
- * What a product is generated from. `colors` start with the main colour; `sku` is the label of the
- * colour's garment image. `direct`: colours whose own image is the product image (no paid
- * extraction). `extra`: cover-only sets in another colour. `images`: the labels the material used.
+ * What a product is generated from: the plan the user started (`draft`, with the square images'
+ * words as the 画板 left them), the model's garment description and each image's scene. `colors`
+ * start with the main colour; `sku` is the label of the colour's garment image. `direct`: colours
+ * whose own image is the product image. `round`: 1 after 「开始出图」, 2 after 「出竖版」.
  */
 export type StoredPlan = {
-  garment: string[]; colors: { name: string; hex: string; sku: string }[]; main: Record<'square' | 'portrait' | 'poster', MainWords[]>;
-  sku: { tag: string; fabric: string }; extra: { color: string; layout: string }[]; direct: string[]; images: { label: string; assetId: string }[]; model: string;
+  draft: SubmittedDraft; garment: string[]; scenes: Record<string, string>; sku: { tag: string; fabric: string };
+  colors: { name: string; hex: string; sku: string }[]; direct: string[]; images: { label: string; assetId: string }[]; model: string; round: 1 | 2;
 };
 
 export async function listProjects(tenant: string) {
   const rows = (await catalogDatabase().query(
-    `SELECT p.id,p.name,p.layout,p.counts,p.status,p.error,p.updated_at,p.created_at,p.sources_cleared_at,
+    `SELECT p.id,p.name,p.layout,p.counts,p.status,p.error,p.updated_at,p.created_at,p.sources_cleared_at,COALESCE((p.plan->>'round')::int,0) AS round,
             (SELECT count(*)::int FROM listing_assets a WHERE a.project_id=p.id AND a.kind='source') AS images,
             COALESCE((SELECT a.id FROM listing_assets a WHERE a.project_id=p.id AND a.slot='square:1' ORDER BY a.created_at DESC LIMIT 1),
                      (SELECT a.id FROM listing_assets a WHERE a.project_id=p.id AND a.kind='source' ORDER BY a.rel_path LIMIT 1)) AS cover,
@@ -114,20 +114,13 @@ export async function projectDetail(tenant: string, id: string) {
     `SELECT id,name,layout,counts,status,plan,materials,error,created_at,updated_at FROM listing_projects
       WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL`, [id, tenant])).rows[0] as ProjectRow | undefined;
   if (!p) throw new CatalogHttpError(404, '商品不存在');
-  const images = (await sourceImages(id)).map(({ id: assetId, label, name, rel_path, width, height, shape }) =>
-    ({ id: assetId, label, name, path: rel_path, width, height, shape, url: assetUrl(assetId) }));
-  return { ...p, images };
+  const sources = (await sourceImages(id)).map(({ id: assetId, label, name, rel_path, shape }) => ({ id: assetId, label, name, path: rel_path, shape }));
+  // The page reads the plan as the user's draft (with the 画板's changes), and the round it is in.
+  return { ...p, plan: p.plan?.draft ?? null, round: p.plan?.round ?? 0, images: sources.length, sources };
 }
 
-/** What one main image says and shows, when the user changes it after generation. No scene: keep the AI's. */
-export const slotWordsSchema = z.object({
-  title: z.string().trim().min(1, '大标题不能空').max(20), subtitle: z.string().trim().max(30).default(''),
-  bullets: z.array(z.string().trim().max(16)).max(3).default([]).transform(b => b.filter(Boolean)),
-  scene: z.string().trim().max(400).optional(),
-});
-export type SlotWords = z.infer<typeof slotWordsSchema>;
-/** A main image's slot: `square:2`, `poster:1`, or a cover of an extra colour set, `square:1+M23`. */
-export const MAIN_SLOT = /^(square|portrait|poster):\d(\+\w+)?$/;
+/** A main image's slot: `square:2`, `long:1`, or a cover of an extra colour set, `square:1+M23`. */
+export const MAIN_SLOT = /^(square|portrait|long):\d(\+\w+)?$/;
 
 /**
  * Give back the storage of files this tenant no longer uses: a file still shown by another of its
@@ -169,7 +162,7 @@ export async function deleteProject(tenant: string, id: string) {
 export async function clearOldSources(limit = 20) {
   return catalogTransaction(async c => {
     if (!(await c.query("SELECT pg_try_advisory_xact_lock(hashtext('listing-clear-sources')) AS ok")).rows[0].ok) return 0;
-    const due = (await c.query(`SELECT id,tenant_id FROM listing_projects WHERE status='done' AND deleted_at IS NULL AND sources_cleared_at IS NULL
+    const due = (await c.query(`SELECT id,tenant_id FROM listing_projects WHERE status IN ('square','done') AND deleted_at IS NULL AND sources_cleared_at IS NULL
       AND updated_at < now() - make_interval(days => $1) ORDER BY updated_at LIMIT $2`, [SOURCE_KEEP_DAYS, limit])).rows as { id: string; tenant_id: string }[];
     for (const p of due) {
       await c.query('SELECT id FROM tenants WHERE id=$1 FOR UPDATE', [p.tenant_id]);

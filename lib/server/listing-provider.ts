@@ -37,7 +37,7 @@ export async function callPlanModel(request: object, options: Options): Promise<
 
 export const LISTING_IMAGE_MODEL = 'gpt-image-2.5-sunburst';
 const mimeOf = (bytes: Buffer) => bytes[0] === 0xff && bytes[1] === 0xd8 ? 'image/jpeg' : bytes.subarray(8, 12).toString() === 'WEBP' ? 'image/webp' : 'image/png';
-const RATIOS = { square: '1:1', portrait: '3:4', poster: '2:3' } as const;
+const RATIOS = { square: '1:1', portrait: '3:4', long: '2:3' } as const;
 export type ImageCall = { bytes: Buffer; taskId: string; credits: number | null; durationMs: number };
 
 /**
@@ -45,12 +45,14 @@ export type ImageCall = { bytes: Buffer; taskId: string; credits: number | null;
  * A task the provider reports as failed or cancelled is not charged, so it throws with
  * `notCharged`; anything else after submission may have been charged.
  */
-export async function generateListingImage(input: { prompt: string; references: Buffer[]; ratio: keyof typeof RATIOS }, options: Options & { pollMs?: number; timeoutMs?: number }): Promise<ImageCall> {
+export async function generateListingImage(input: { prompt: string; references: Buffer[]; ratio: keyof typeof RATIOS; mask?: Buffer }, options: Options & { pollMs?: number; timeoutMs?: number }): Promise<ImageCall> {
   const env = options.env ?? process.env, transport = options.fetchImplementation ?? fetch;
   const key = env.EVOLINK_API_KEY?.trim();
   if (!key) throw new Error('EVOLINK_API_KEY 未配置');
   const auth = { Authorization: `Bearer ${key}` };
-  const urls = await Promise.all(input.references.map(async (bytes, i) => {
+  // A mask (a PNG the size of the first reference, transparent where to redraw) redraws only that part.
+  const files = input.mask ? [...input.references, input.mask] : input.references;
+  const uploaded = await Promise.all(files.map(async (bytes, i) => {
     const response = await transport('https://files-api.evolink.ai/api/v1/files/upload/base64', {
       method: 'POST', redirect: 'error', signal: AbortSignal.timeout(120_000), headers: { ...auth, 'Content-Type': 'application/json' },
       // Unique names: concurrent uploads under one name overwrote each other, and jobs got
@@ -61,11 +63,12 @@ export async function generateListingImage(input: { prompt: string; references: 
     if (!response.ok || !body?.success || !String(body.data?.file_url).startsWith('https://')) throw new Error(`参考图上传失败（HTTP ${response.status}）`);
     return body.data!.file_url!;
   }));
+  const urls = input.mask ? uploaded.slice(0, -1) : uploaded, maskUrl = input.mask ? uploaded.at(-1) : undefined;
   const started = Date.now();
   await options.beforeSubmit();
   const created = await transport('https://api.evolink.ai/v1/images/generations', {
     method: 'POST', redirect: 'error', signal: AbortSignal.timeout(120_000), headers: { ...auth, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: LISTING_IMAGE_MODEL, prompt: input.prompt, image_urls: urls, size: RATIOS[input.ratio], resolution: '1K', quality: 'medium', background: 'opaque', output_format: 'png', n: 1 }),
+    body: JSON.stringify({ model: LISTING_IMAGE_MODEL, prompt: input.prompt, image_urls: urls, ...(maskUrl ? { mask_url: maskUrl } : {}), size: RATIOS[input.ratio], resolution: '1K', quality: 'medium', background: 'opaque', output_format: 'png', n: 1 }),
   });
   const task = await created.json().catch(() => null) as { id?: string } | null;
   if (!created.ok || !task?.id) throw Object.assign(new Error(`出图提交失败（HTTP ${created.status}）`), { notCharged: created.status >= 400 && created.status < 500 });

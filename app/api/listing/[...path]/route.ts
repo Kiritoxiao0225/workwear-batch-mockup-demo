@@ -5,7 +5,7 @@ import { CatalogHttpError } from '@/lib/server/catalog-auth';
 import { assertPageAccess } from '@/lib/server/page-access';
 import { addSourceImage, chooseVersion, createProject, deleteProject, listProjects, MAX_SOURCE_BYTES, projectDetail, readListingAsset } from '@/lib/server/listing-store';
 import { addExtraImage, imagePrices, planPrice, requestPlan, submitDraft } from '@/lib/server/listing-jobs';
-import { addSet, downloadZip, redoSlot, slotStates } from '@/lib/server/listing-generation';
+import { addSet, downloadZip, editSlot, recast, redoSlot, slotStates, startVerticals } from '@/lib/server/listing-generation';
 import { addLayoutRef, createLayout, deleteLayout, layoutCards, layoutFile, layoutState, openLayouts, saveLayout, startLearning } from '@/lib/server/listing-layouts';
 
 export const dynamic = 'force-dynamic';
@@ -60,14 +60,14 @@ export async function POST(request: NextRequest, context: Context) {
     if (path[0] === 'projects' && !path[1]) return json(await createProject(tenant.id, user.id, body));
     if (path[0] === 'layouts' && !path[1]) return json(await createLayout(tenant.id, user.id, body));
     if (path[0] === 'layouts' && path[2] === 'learn') return json(await startLearning(tenant, path[1]));
-    if (path[0] === 'layouts' && path[2] === 'save') return json(await saveLayout(tenant.id, path[1]));
+    if (path[0] === 'layouts' && path[2] === 'save') return json(await saveLayout(tenant.id, path[1], body));
     if (path[0] === 'projects' && path[2] === 'plan') return json(await requestPlan(tenant, user.id, path[1]));
     if (path[0] === 'projects' && path[2] === 'start') return json(await submitDraft(tenant, user.id, path[1], body));
     if (path[0] === 'projects' && path[2] === 'sets') return json(await addSet(tenant, user.id, path[1], body));
-    if (path[0] === 'projects' && path[2] === 'redo') {
-      return json(await redoSlot(tenant, user.id, path[1], String(body.slot ?? ''), String(body.note ?? ''),
-        { mode: body.mode === 'text' ? 'text' : 'redraw', words: body.words, base: typeof body.base === 'string' ? body.base : undefined, colors: body.colors }));
-    }
+    if (path[0] === 'projects' && path[2] === 'redo') return json(await redoSlot(tenant, user.id, path[1], String(body.slot ?? ''), String(body.note ?? '')));
+    if (path[0] === 'projects' && path[2] === 'verticals') return json(await startVerticals(tenant, user.id, path[1]));
+    if (path[0] === 'projects' && path[2] === 'cast') return json(await recast(tenant, user.id, path[1]));
+    if (path[0] === 'projects' && path[2] === 'edit') return json(await editSlot(tenant, user.id, path[1], body));
     if (path[0] === 'projects' && path[2] === 'current') {
       await projectDetail(tenant.id, path[1]);
       return json(await chooseVersion(tenant.id, path[1], String(body.slot ?? ''), String(body.asset ?? '')));

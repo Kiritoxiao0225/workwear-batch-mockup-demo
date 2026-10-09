@@ -1,0 +1,598 @@
+{
+ "id": "workwear",
+ "name": "团体工作服定制",
+ "items": 181,
+ "images": 865,
+ "builtAt": "2026-10-08",
+ "source": "9 月 28 日淘宝搜「冲锋衣定制」的 181 款工作服",
+ "tasks": [
+  "首图",
+  "服务",
+  "功能",
+  "细节",
+  "场景",
+  "收口"
+ ],
+ "concepts": [
+  {
+   "id": "waterproof",
+   "name": "防水",
+   "type": "功能",
+   "keywords": [
+    "防水",
+    "泼水",
+    "拒水"
+   ],
+   "coverage": 0.8,
+   "share": 0.94,
+   "cover": 98,
+   "wordings": [
+    "防水",
+    "防泼水",
+    "防水面料"
+   ],
+   "proofs": [
+    "water-beads",
+    "water-arm"
+   ],
+   "includes": []
+  },
+  {
+   "id": "logo",
+   "name": "印绣 logo",
+   "type": "服务定制",
+   "keywords": [
+    "logo",
+    "LOGO",
+    "Logo",
+    "印字",
+    "刺绣",
+    "印绣"
+   ],
+   "coverage": 0.8,
+   "share": 0.74,
+   "cover": 115,
+   "wordings": [
+    "LOGO定制",
+    "免费印字",
+    "免费印绣"
+   ],
+   "proofs": [
+    "logo-positions",
+    "logo-closeup"
+   ],
+   "includes": []
+  },
+  {
+   "id": "windproof",
+   "name": "防风",
+   "type": "功能",
+   "keywords": [
+    "防风"
+   ],
+   "coverage": 0.62,
+   "share": 0.8,
+   "cover": 48,
+   "wordings": [
+    "防风",
+    "专业防风",
+    "防风性"
+   ],
+   "proofs": [
+    "wind-arrows"
+   ],
+   "includes": []
+  },
+  {
+   "id": "breathable",
+   "name": "透气",
+   "type": "功能",
+   "keywords": [
+    "透气",
+    "透湿",
+    "排湿"
+   ],
+   "coverage": 0.54,
+   "share": 0.8,
+   "cover": 15,
+   "wordings": [
+    "透气",
+    "高效透湿",
+    "透湿"
+   ],
+   "proofs": [
+    "steam-cup"
+   ],
+   "includes": []
+  },
+  {
+   "id": "cuff",
+   "name": "袖口",
+   "type": "做工",
+   "keywords": [
+    "袖口",
+    "魔术贴"
+   ],
+   "coverage": 0.44,
+   "share": 0.23,
+   "cover": 1,
+   "wordings": [
+    "袖口设计",
+    "松紧袖口",
+    "魔术贴袖口"
+   ],
+   "proofs": [
+    "part"
+   ],
+   "includes": []
+  },
+  {
+   "id": "design",
+   "name": "免费设计",
+   "type": "服务定制",
+   "keywords": [
+    "免费设计",
+    "设计稿",
+    "效果图",
+    "打样",
+    "出样",
+    "样衣"
+   ],
+   "coverage": 0.43,
+   "share": 0.55,
+   "cover": 5,
+   "wordings": [
+    "免费设计",
+    "确认效果图",
+    "#免费设计方案"
+   ],
+   "proofs": [
+    "icon-text"
+   ],
+   "includes": []
+  },
+  {
+   "id": "abrasion",
+   "name": "耐磨抗撕裂",
+   "type": "功能",
+   "keywords": [
+    "耐磨",
+    "防刮",
+    "撕裂",
+    "防划"
+   ],
+   "coverage": 0.41,
+   "share": 0.56,
+   "cover": 14,
+   "wordings": [
+    "耐磨",
+    "防刮",
+    "抗撕裂"
+   ],
+   "proofs": [
+    "scissors"
+   ],
+   "includes": []
+  },
+  {
+   "id": "warm",
+   "name": "保暖锁温",
+   "type": "功能",
+   "keywords": [
+    "保暖",
+    "锁温",
+    "聚热",
+    "加绒",
+    "加厚",
+    "摇粒绒",
+    "羽绒"
+   ],
+   "coverage": 0.41,
+   "share": 0.5,
+   "cover": 20,
+   "wordings": [
+    "保暖",
+    "摇粒绒内胆",
+    "锁温"
+   ],
+   "proofs": [
+    "heat-layers",
+    "lining-open"
+   ],
+   "includes": []
+  },
+  {
+   "id": "quality",
+   "name": "质检售后",
+   "type": "服务定制",
+   "keywords": [
+    "质检",
+    "全检",
+    "售后",
+    "退换",
+    "质保"
+   ],
+   "coverage": 0.34,
+   "share": 0.4,
+   "cover": 2,
+   "wordings": [
+    "品质保障",
+    "无忧售后",
+    "售后无忧"
+   ],
+   "proofs": [
+    "icon-text"
+   ],
+   "includes": []
+  },
+  {
+   "id": "delivery",
+   "name": "发货快",
+   "type": "服务定制",
+   "keywords": [
+    "发货",
+    "出货",
+    "工期",
+    "加急",
+    "急单"
+   ],
+   "coverage": 0.31,
+   "share": 0.71,
+   "cover": 2,
+   "wordings": [
+    "急速发货",
+    "加急发货",
+    "快速发货"
+   ],
+   "proofs": [
+    "icon-text"
+   ],
+   "includes": []
+  },
+  {
+   "id": "invoice",
+   "name": "开票",
+   "type": "服务定制",
+   "keywords": [
+    "开票",
+    "对公",
+    "专票",
+    "发票"
+   ],
+   "coverage": 0.31,
+   "share": 0.72,
+   "cover": 4,
+   "wordings": [
+    "可开发票",
+    "对公转账",
+    "免费开票"
+   ],
+   "proofs": [
+    "icon-text"
+   ],
+   "includes": []
+  },
+  {
+   "id": "stain",
+   "name": "防污耐脏",
+   "type": "功能",
+   "keywords": [
+    "防污",
+    "耐脏",
+    "防油",
+    "油污",
+    "易擦",
+    "易打理"
+   ],
+   "coverage": 0.31,
+   "share": 0.72,
+   "cover": 21,
+   "wordings": [
+    "防污",
+    "防油",
+    "耐脏"
+   ],
+   "proofs": [
+    "wipe-clean",
+    "juice-pour"
+   ],
+   "includes": []
+  },
+  {
+   "id": "collar",
+   "name": "立领",
+   "type": "做工",
+   "keywords": [
+    "立领"
+   ],
+   "coverage": 0.3,
+   "share": 0.49,
+   "cover": 7,
+   "wordings": [
+    "立领设计",
+    "立领夹克",
+    "舒适立领"
+   ],
+   "proofs": [
+    "part"
+   ],
+   "includes": []
+  },
+  {
+   "id": "zipper",
+   "name": "拉链",
+   "type": "做工",
+   "keywords": [
+    "拉链",
+    "YKK"
+   ],
+   "coverage": 0.29,
+   "share": 0.15,
+   "cover": 0,
+   "wordings": [
+    "品质拉链",
+    "拉链设计",
+    "高颜值时尚拉链"
+   ],
+   "proofs": [
+    "part"
+   ],
+   "includes": []
+  },
+  {
+   "id": "triple",
+   "name": "三防面料",
+   "type": "面料",
+   "keywords": [
+    "三防"
+   ],
+   "coverage": 0.28,
+   "share": 0.39,
+   "cover": 30,
+   "wordings": [
+    "三防科技",
+    "三防面料",
+    "三防"
+   ],
+   "proofs": [
+    "water-beads",
+    "water-arm",
+    "juice-pour"
+   ],
+   "includes": [
+    "waterproof",
+    "stain"
+   ]
+  },
+  {
+   "id": "moq",
+   "name": "一件起订",
+   "type": "服务定制",
+   "keywords": [
+    "起订",
+    "一件",
+    "起做"
+   ],
+   "coverage": 0.27,
+   "share": 0.47,
+   "cover": 19,
+   "wordings": [
+    "一件起订",
+    "一件起印"
+   ],
+   "proofs": [
+    "icon-text"
+   ],
+   "includes": []
+  },
+  {
+   "id": "pocket",
+   "name": "口袋收纳",
+   "type": "实用",
+   "keywords": [
+    "口袋",
+    "收纳"
+   ],
+   "coverage": 0.19,
+   "share": 0.1,
+   "cover": 2,
+   "wordings": [
+    "口袋设计",
+    "便携口袋",
+    "送同色收纳袋"
+   ],
+   "proofs": [
+    "pocket-phone",
+    "pocket-open"
+   ],
+   "includes": []
+  },
+  {
+   "id": "detachable",
+   "name": "三合一可拆",
+   "type": "功能",
+   "keywords": [
+    "三合一",
+    "可拆",
+    "两件套"
+   ],
+   "coverage": 0.15,
+   "share": 0.05,
+   "cover": 21,
+   "wordings": [
+    "三合一",
+    "可拆卸两件套",
+    "三合一冲锋衣"
+   ],
+   "proofs": [
+    "detach"
+   ],
+   "includes": []
+  },
+  {
+   "id": "hood",
+   "name": "帽子",
+   "type": "做工",
+   "keywords": [
+    "帽"
+   ],
+   "coverage": 0.13,
+   "share": 0.07,
+   "cover": 4,
+   "wordings": [
+    "连帽挡风",
+    "连帽设计"
+   ],
+   "proofs": [
+    "part"
+   ],
+   "includes": []
+  },
+  {
+   "id": "light",
+   "name": "轻薄",
+   "type": "功能",
+   "keywords": [
+    "轻薄",
+    "轻盈",
+    "轻便",
+    "薄款"
+   ],
+   "coverage": 0.11,
+   "share": 0.04,
+   "cover": 3,
+   "wordings": [
+    "轻薄",
+    "轻薄爽肤",
+    "薄款"
+   ],
+   "proofs": [
+    "feather"
+   ],
+   "includes": []
+  },
+  {
+   "id": "stretch",
+   "name": "活动自如",
+   "type": "功能",
+   "keywords": [
+    "弹力",
+    "伸展",
+    "活动自如",
+    "抬手",
+    "高弹"
+   ],
+   "coverage": 0.1,
+   "share": 0.04,
+   "cover": 0,
+   "wordings": [
+    "活动自如"
+   ],
+   "proofs": [
+    "stretch-arm",
+    "stretch-fabric"
+   ],
+   "includes": []
+  },
+  {
+   "id": "seam",
+   "name": "压胶工艺",
+   "type": "做工",
+   "keywords": [
+    "压胶",
+    "热封",
+    "贴条",
+    "胶条"
+   ],
+   "coverage": 0.09,
+   "share": 0.03,
+   "cover": 4,
+   "wordings": [
+    "三层压胶",
+    "无痕压胶工艺"
+   ],
+   "proofs": [
+    "part"
+   ],
+   "includes": []
+  },
+  {
+   "id": "colors",
+   "name": "多色可选",
+   "type": "颜色款式",
+   "keywords": [
+    "色可选",
+    "颜色可选",
+    "色任选"
+   ],
+   "coverage": 0.07,
+   "share": 0.02,
+   "cover": 5,
+   "wordings": [
+    "多色可选"
+   ],
+   "proofs": [
+    "swatches"
+   ],
+   "includes": []
+  },
+  {
+   "id": "bulk",
+   "name": "量大价优",
+   "type": "服务定制",
+   "keywords": [
+    "量大",
+    "阶梯",
+    "厂家",
+    "源头"
+   ],
+   "coverage": 0.07,
+   "share": 0,
+   "cover": 6,
+   "wordings": [
+    "源头工厂",
+    "厂家直销"
+   ],
+   "proofs": [
+    "icon-text"
+   ],
+   "includes": []
+  },
+  {
+   "id": "antistatic",
+   "name": "防静电",
+   "type": "功能",
+   "keywords": [
+    "静电"
+   ],
+   "coverage": 0.03,
+   "share": 0.01,
+   "cover": 3,
+   "wordings": [
+    "防静电"
+   ],
+   "proofs": [
+    "icon-text"
+   ],
+   "includes": []
+  },
+  {
+   "id": "reflective",
+   "name": "反光条",
+   "type": "做工",
+   "keywords": [
+    "反光"
+   ],
+   "coverage": 0.01,
+   "share": 0,
+   "cover": 0,
+   "wordings": [
+    "反光条"
+   ],
+   "proofs": [
+    "part"
+   ],
+   "includes": []
+  }
+ ]
+}

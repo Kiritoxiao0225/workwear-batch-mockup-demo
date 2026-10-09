@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { chooseMaterials, parseOrganized, type SortedImage } from './listing-organize';
-import { usableAsIs } from '../listing/plan';
+import { usableAsIs } from '../listing/draft';
 
 const img = (id: string, over: Partial<SortedImage>): SortedImage => ({ id, kind: '模特实拍', color: '', front: false, detail: '', text: false, logo: false, same: '', ...over });
 
@@ -46,6 +46,17 @@ describe('structure parts', () => {
 });
 
 describe('parseOrganized', () => {
+  it('keeps only kinds of point, ways of drawing and categories that exist', () => {
+    const data = parseOrganized(JSON.stringify({ images: [], colors: [], category: 'workwear', categoryWhy: '素材写了团体定制',
+      points: [{ type: '功能', text: '三防面料', concept: 'triple', proof: 'water-beads' }, { type: '做工', text: '贴腕袖口', concept: 'made-up', proof: 'nope', part: '袖口' }],
+      checks: [{ concept: 'warm', seen: '不像', why: '单层' }, { concept: 'made-up', seen: '有' }], titles: { 功能: ['三防面料 雨天不怕'], 海报: ['不要'] } }), []);
+    expect(data.category).toBe('workwear');
+    expect(data.points.map(p => [p.concept, p.proof, p.part])).toEqual([['triple', 'water-beads', ''], [null, '', '袖口']]);
+    expect(data.checks).toEqual([{ concept: 'warm', seen: '不像', why: '单层' }]);
+    expect(data.titles).toEqual({ 功能: ['三防面料 雨天不怕'] });
+    expect(parseOrganized(JSON.stringify({ images: [], colors: [], category: '不知道' }), []).category).toBe('generic');
+  });
+
   it('keeps images the model skipped and drops ids it made up', () => {
     const data = parseOrganized(JSON.stringify({ images: [{ id: 'M1', kind: '奇怪的', front: true }, { id: 'M9', kind: '静物' }], colors: [{ name: '黑色', from: ['M1', 'M9'] }] }), ['M1', 'M2']);
     expect(data.images.map(i => [i.id, i.kind])).toEqual([['M1', '无关'], ['M2', '无关']]);
