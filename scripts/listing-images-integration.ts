@@ -1,4 +1,4 @@
-// 电商主图验收：上传、租户隔离、积分冻结/结算/退回、AI 整理素材、卖点上图、写画面、先出方图再出竖版、画板改图、换模特、加一套首图、学版式（模拟供应商）。不调用任何付费接口。
+// 电商主图验收：上传、租户隔离、积分冻结/结算/退回、AI 整理素材、卖点上图、写画面、先出方图再出竖版、画板改图、换模特、加一套首图、店铺服务图、点图修改、学版式（模拟供应商）。不调用任何付费接口。
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -18,7 +18,8 @@ const password = randomBytes(24).toString('hex');
 process.env.CATALOG_DATABASE_URL = `postgresql://listing:${password}@127.0.0.1:${port}/postgres`;
 process.env.CATALOG_DATABASE_CA_CERT = ''; process.env.CATALOG_LOCAL_OBJECT_ROOT = join(root, 'objects');
 process.env.CATALOG_APP_ORIGIN = 'http://localhost:3189'; delete process.env.CATALOG_AUTH_MODE;
-process.env.EVOLINK_API_KEY = 'test-key-never-sent'; delete process.env.MEDIAKIT_API_KEY;
+process.env.EVOLINK_API_KEY = 'test-key-never-sent'; delete process.env.MEDIAKIT_API_KEY; delete process.env.LISTING_IMAGE_PROVIDER;
+process.env.CLIPROXY_API_KEY = 'test-key-never-sent'; process.env.CLIPROXY_API_BASE_URL = 'https://relay.invalid/v1';
 const database = new EmbeddedPostgres({ databaseDir: join(root, 'pg'), user: 'listing', password, port, persistent: true, authMethod: 'scram-sha-256', postgresFlags: ['-h', '127.0.0.1'], onLog: () => {}, onError: () => {} });
 const { catalogDatabase: db, closeCatalogDatabase, migrateCatalog } = await import('../lib/server/catalog-database');
 const { createCatalogUser, loginCatalog } = await import('../lib/server/catalog-auth');
@@ -28,6 +29,7 @@ const { clearOldSources } = await import('../lib/server/listing-store');
 const { executeImage } = await import('../lib/server/listing-generation');
 const { defaultDraft, draftImages, fillParts, usedSlots } = await import('../lib/listing/draft');
 const { BUILT_IN_LAYOUTS } = await import('../lib/listing/templates');
+const { LEGACY_LAYOUTS } = await import('../lib/listing/legacy-layouts');
 const { TASK_LABEL, TASKS } = await import('../lib/listing/category');
 const JSZip = (await import('jszip')).default;
 let checks = 0; const pass = (s: string) => { checks++; console.log('PASS', s); };
@@ -54,20 +56,20 @@ try {
   const detailOf = async (project: string) => (await call(0, 'projects/' + project)).json();
 
   const config = await (await call(0, 'config')).json();
-  assert.equal(config.planCredits, 180); assert.equal(config.layouts.length, 2);
+  assert.equal(config.planCredits, 180); assert.equal(config.layouts.length, 5);
   assert.ok(config.layouts.every((l: Layout) => TASKS.every(t => l.templates[t]?.square.zones.length) && l.long.zones.length && l.sku.zones.length));
   const unit = config.imageCredits as number, multiUnit = config.multiCredits as number;
   const costOf = (items: { multi: boolean; free: boolean }[]) => items.reduce((n, i) => n + (i.free ? 0 : i.multi ? multiUnit : unit), 0);
   const counts = (square: number, portrait = 0, long = 0) => ({ square, portrait, long });
-  const commute = BUILT_IN_LAYOUTS.find(l => l.id === 'commute-split')!, warm = BUILT_IN_LAYOUTS.find(l => l.id === 'warm-impact')!;
-  pass('配置：两套内置版式，每类图都有 1:1、3:4 排法，另有长图和 SKU 图');
+  const commute = BUILT_IN_LAYOUTS.find(l => l.id === 'M3')!;
+  pass('配置：5 套冲锋衣母版，每类图都有 1:1、3:4 排法，另有长图和 SKU 图');
 
   const id = randomUUID();
-  await call(0, 'projects', { id, name: '立领工作外套', layout: 'commute-split', counts: counts(3, 2, 1) });
-  await call(0, 'projects', { id, name: '重复提交', layout: 'commute-split', counts: counts(3, 2, 1) });
-  await call(1, 'projects', { id, name: '别人的编号', layout: 'commute-split', counts: counts(1) }, 409);
-  await call(0, 'projects', { id: randomUUID(), name: '没有图', layout: 'commute-split', counts: counts(0) }, 400);
-  await call(0, 'projects', { id: randomUUID(), name: '竖版比方图多', layout: 'commute-split', counts: counts(1, 2) }, 400);
+  await call(0, 'projects', { id, name: '立领工作外套', layout: 'M3', counts: counts(3, 2, 1) });
+  await call(0, 'projects', { id, name: '重复提交', layout: 'M3', counts: counts(3, 2, 1) });
+  await call(1, 'projects', { id, name: '别人的编号', layout: 'M3', counts: counts(1) }, 409);
+  await call(0, 'projects', { id: randomUUID(), name: '没有图', layout: 'M3', counts: counts(0) }, 400);
+  await call(0, 'projects', { id: randomUUID(), name: '竖版比方图多', layout: 'M3', counts: counts(1, 2) }, 400);
   const main = await image(800, 800, '#d99a2b'), sku = await image(600, 600, '#1f1f1f'), detail = await image(500, 900, '#eeeeee');
   const a1 = await (await upload(0, id, main, '1比1主图/主图_1.jpg')).json();
   assert.equal(a1.shape, '1:1');
@@ -170,7 +172,7 @@ try {
     return reply({ product: { name: '立领工作外套', garment: ['立领', '两侧拉链口袋'] }, scenes: [{ key: 'square:1', scene: '写字楼大堂，暖色侧光' }, { key: 'portrait:1', scene: '写字楼大堂，竖构图' }], sku: { tag: '男女同款', fabric: '' } });
   });
   const planned = await detailOf(id);
-  assert.deepEqual([planned.status, planned.round, planned.plan.layout, planned.plan.slots[used[0]].title], ['generating', 1, 'commute-split', cover.title]);
+  assert.deepEqual([planned.status, planned.round, planned.plan.layout, planned.plan.slots[used[0]].title], ['generating', 1, 'M3', cover.title]);
   assert.match(writeRequest, /素材里没有背面图，画面不要出现背面角度/); assert.match(writeRequest, /颜色「黑色」的衣服图/);
   assert.ok(writeRequest.includes(`square:1：${TASK_LABEL[cover.task]}`) && writeRequest.includes(`大标题「${cover.title}」`) && writeRequest.includes('portrait:2：'));
   assert.equal(beforeRun - await balance(tenants[0]), costOf(first));
@@ -196,12 +198,18 @@ try {
   for (const j of jobs) await make(j, j.slot === 'square:2');
   const prompt = (slot: string) => seen.filter(s => s.slot === slot).at(-1)!;
   assert.match(prompt('cast').prompt, /模特定妆照/); assert.equal(prompt('cast').refs, 1);
-  assert.match(prompt(`sku:${SKU}`).prompt, /颜色名「黑色」/);
+  // SKU images are put together on the template: no model call, nothing charged, a 1200 px JPEG.
+  assert.equal(seen.some(s => s.slot.startsWith('sku:')), false);
+  const skuImage = (await db().query(`SELECT a.width,f.mime_type FROM listing_assets a JOIN files f ON f.id=a.file_id WHERE a.project_id=$1 AND a.slot=$2`, [id, `sku:${SKU}`])).rows[0];
+  assert.deepEqual([skuImage.width, skuImage.mime_type], [1200, 'image/jpeg']);
   const coverHasPeople = commute.templates[cover.task].square.people > 0;
-  assert.ok(prompt('square:1').prompt.includes(`整套 3 张中的第 1 张：${TASK_LABEL[cover.task]}`) && prompt('square:1').prompt.includes(`大标题「${cover.title}」`) && prompt('square:1').prompt.includes('写字楼大堂，暖色侧光'));
-  assert.equal(prompt('square:1').refs, coverHasPeople ? 2 : 1);
-  assert.equal(looked.length, 2); assert.match(looked[0], /设计说明/);
-  assert.equal((await db().query("SELECT count(*)::int n FROM listing_attempts a JOIN listing_jobs j ON j.id=a.job_id WHERE j.project_id=$1 AND j.step NOT IN ('plan','write')", [id])).rows[0].n, jobs.length);
+  // A master's square images follow its spec (listing-specs.ts): its sample image is the last reference.
+  assert.ok(prompt('square:1').prompt.includes(`一套 3 张里的第 1 张：${TASK_LABEL[cover.task]}`) && prompt('square:1').prompt.includes(`「${cover.title}」`) && prompt('square:1').prompt.includes('写字楼大堂，暖色侧光'));
+  assert.match(prompt('square:1').prompt, /这套母版的示例图/);
+  assert.equal(prompt('square:1').refs, (coverHasPeople ? 2 : 1) + 1);
+  // Recognition only serves the 画板, which the page no longer shows: new images are not read.
+  assert.equal(looked.length, 0);
+  assert.equal((await db().query("SELECT count(*)::int n FROM listing_attempts a JOIN listing_jobs j ON j.id=a.job_id WHERE j.project_id=$1 AND j.step NOT IN ('plan','write')", [id])).rows[0].n, jobs.filter(j => !j.slot.startsWith('sku:')).length);
   const paid = first.filter(i => i.slot !== 'square:2');
   const runHold = (await db().query("SELECT state,settled_cents FROM credit_holds WHERE id=$1", ['listing:run:' + jobs[0].run_id])).rows[0];
   assert.deepEqual([runHold.state, Number(runHold.settled_cents)], ['settled', costOf(paid)]);
@@ -212,11 +220,11 @@ try {
   assert.match((await slotOf(id, 'square:2')).error, /没扣费/);
   let s1 = await slotOf(id, 'square:1');
   assert.equal(s1.task, cover.task); assert.deepEqual(s1.colors, ['黑色']);
-  assert.deepEqual(s1.history[0].elements, [{ id: 'title1', kind: 'title', box: [4, 5, 40, 10], text: '图上读到的标题', zone: 'title1' }, { id: 'x2', kind: 'other', box: [85, 85, 10, 10], label: '小图标' }]);
+  assert.match(prompt('square:1').prompt, /胸口左侧印一个小小的白色「LOGO」/);
   const mainFile = (await db().query("SELECT a.width,a.height,f.mime_type FROM listing_assets a JOIN files f ON f.id=a.file_id WHERE a.project_id=$1 AND a.slot='square:1' ORDER BY a.created_at DESC LIMIT 1", [id])).rows[0];
   assert.deepEqual([mainFile.width, mainFile.height, mainFile.mime_type], [1440, 1440, 'image/jpeg']);
-  pass('第一轮：白底图 → 定妆照 → SKU 图 → 方图按依赖出；有人的图带上定妆照；供应商判定失败的那张不收费；出完停在方图，等用户出竖版');
-  pass('认图：每张主图出完认一次图上东西的位置（免费，不记出图次数），模型自己加的东西也列出来，太小的框丢掉；主图放大成 1440 JPG');
+  pass('第一轮：白底图 → 定妆照 → SKU 图（按模板拼，不调模型不收费）→ 方图按依赖出；有人的图带上定妆照；供应商判定失败的那张不收费；出完停在方图，等用户出竖版');
+  pass('主图：胸口按方案印「LOGO」；放大成 1440 JPG；不再逐张认图');
 
   await call(1, `projects/${id}/redo`, { slot: 'square:2', note: '' }, 404);
   await call(0, `projects/${id}/redo`, { slot: 'square:2', note: '背景更亮' });
@@ -246,6 +254,8 @@ try {
   assert.match(e.prompt, /只重画遮罩透明的那一块（区域 左4% 上5% 宽40% 高10%）/); assert.match(e.prompt, /把这里原来的字换成「画板改的标题」/);
   const pasted = (await db().query("SELECT a.width,a.height,t.receipt->>'upscaled' u FROM listing_assets a JOIN listing_attempts t ON t.job_id=a.job_id WHERE a.job_id=$1", [editJob.id])).rows[0];
   assert.deepEqual([pasted.width, pasted.height, pasted.u], [1440, 1440, 'pasted']);
+  assert.equal(looked.length, 1); assert.match(looked[0], /设计说明/);
+  assert.deepEqual((await slotOf(id, 'square:1')).history[1].elements, [{ id: 'title1', kind: 'title', box: [4, 5, 40, 10], text: '图上读到的标题', zone: 'title1' }, { id: 'x2', kind: 'other', box: [85, 85, 10, 10], label: '小图标' }]);
   s1 = await slotOf(id, 'square:1');
   assert.equal(s1.history.length, 2); assert.equal(s1.image, s1.history[1].id); assert.equal(s1.history[1].change, '改字：画板改的标题'); assert.equal(s1.words.title, '画板改的标题');
   const afterEdit = await detailOf(id);
@@ -266,11 +276,14 @@ try {
   const vjobs = await imageJobs(id, true);
   assert.deepEqual(vjobs.map(j => j.slot), ['portrait:1', 'portrait:2', 'long:1']);
   for (const j of vjobs) await make(j);
-  assert.ok(prompt('portrait:1').prompt.includes('大标题「画板改的标题」') && prompt('portrait:1').prompt.includes('竖版 3:4') && prompt('portrait:1').prompt.includes('写字楼大堂，竖构图'));
+  // A 3:4 image is its square one (as the user left it) laid out again; the cover has people, so the white image comes too.
+  assert.ok(prompt('portrait:1').prompt.includes('重新排成竖版 3:4') && prompt('portrait:1').prompt.includes('参考图2是这件衣服的白底产品图'));
+  assert.equal(prompt('portrait:1').refs, 2);
+  assert.equal((await slotOf(id, 'portrait:1')).words.title, '画板改的标题');
   assert.match(prompt('long:1').prompt, /竖版长图（手淘推荐流），竖版 2:3/);
   const done = await detailOf(id);
   assert.deepEqual([done.status, done.round], ['done', 2]);
-  pass('出竖版：方图出完才能出、只能出一次；3:4 用方图在画板上改过的字；2:3 长图按推荐流写；冻结第二轮积分，出完项目完成');
+  pass('出竖版：方图出完才能出、只能出一次；3:4 拿改好的方图重排（有人的图加白底图）；2:3 长图按推荐流写；冻结第二轮积分，出完项目完成');
 
   // ---- 换一组模特：新定妆照，有人的图整张重画（不重复画板改动） ----
   const beforeCast = await balance(tenants[0]);
@@ -279,24 +292,43 @@ try {
   await call(0, `projects/${id}/cast`, {}, 409);
   const cjobs = await imageJobs(id, true);
   assert.equal(cjobs[0].slot, 'cast'); assert.equal(recast.images, cjobs.length);
-  assert.ok(cjobs.every(j => j.slot === 'cast' || j.depends.includes('cast')));
+  // The SKU images are put together again (free) from their models drawn from the new cast.
+  const cards = cjobs.filter(j => j.slot.startsWith('sku:'));
+  // So are the 3:4 images laid out from a square image that is redrawn.
+  const relaid = cjobs.filter(j => (j.input as { kind: string }).kind === 'relayout');
+  assert.ok(cjobs.every(j => j.slot === 'cast' || j.depends.includes('cast') || cards.includes(j) || relaid.includes(j)));
+  assert.ok(relaid.every(j => cjobs.some(q => q.slot === (j.input as { from: string }).from)));
+  assert.ok(cards.length > 0 && cards.every(j => cjobs.some(q => q.slot === `skumodel:${j.slot.slice(4)}`)));
   assert.equal(cjobs.some(j => j.slot === 'square:1'), coverHasPeople);
-  assert.equal(beforeCast - await balance(tenants[0]), cjobs.length * unit);
+  assert.equal(beforeCast - await balance(tenants[0]), (cjobs.length - cards.length) * unit);
   for (const j of cjobs) await make(j);
-  if (coverHasPeople) { assert.ok(!prompt('square:1').mask); assert.match(prompt('square:1').prompt, /大标题「画板改的标题」/); }
+  if (coverHasPeople) { assert.ok(!prompt('square:1').mask); assert.match(prompt('square:1').prompt, /「画板改的标题」/); }
   assert.equal((await detailOf(id)).status, 'done');
-  pass('换模特：先出新定妆照，再把有人的图按现在的字整张重画；出图中不能再换');
+  pass('换模特：先出新定妆照，再把有人的图按现在的字整张重画，竖版跟着重排；出图中不能再换');
+
+  // ---- SKU 图全部重做：没有模特图的颜色重画模特（收费），再按模板重拼（免费） ----
+  const beforeSkus = await balance(tenants[0]);
+  await call(1, `projects/${id}/skus`, {}, 404);
+  const redoneSkus = await (await call(0, `projects/${id}/skus`, {})).json();
+  const skuJobs = await imageJobs(id, true), models = skuJobs.filter(j => j.slot.startsWith('skumodel:'));
+  assert.equal(redoneSkus.images, skuJobs.length);
+  assert.ok(models.length > 0 && skuJobs.every(j => j.slot.startsWith('sku:') || j.slot.startsWith('skumodel:')));
+  assert.ok(skuJobs.filter(j => j.slot.startsWith('sku:')).every(j => j.depends.includes(`skumodel:${j.slot.slice(4)}`)));
+  assert.equal(beforeSkus - await balance(tenants[0]), models.length * unit);
+  for (const j of skuJobs) await make(j);
+  assert.equal((await detailOf(id)).status, 'done');
+  pass('SKU 图全部重做：没有模特图的颜色照定妆照重画模特（每色一张的钱），SKU 图跟着免费重拼');
 
   await call(1, `projects/${id}/download`, undefined, 404);
   const zip = await JSZip.loadAsync(Buffer.from(await (await call(0, `projects/${id}/download`)).arrayBuffer()));
   const names = Object.keys(zip.files).filter(n => !n.endsWith('/'));
-  for (const n of ['模特定妆照.png', 'SKU-黑色.png', '白底产品图/黑色.png', '2比3长图.jpg', `1比1主图-01-${TASK_LABEL[cover.task]}.jpg`]) assert.ok(names.includes(n), n);
+  for (const n of ['模特定妆照.png', 'SKU-黑色.jpg', '白底产品图/黑色.png', '2比3长图.jpg', `1比1主图-01-${TASK_LABEL[cover.task]}.jpg`]) assert.ok(names.includes(n), n);
   assert.deepEqual([names.filter(n => n.startsWith('1比1主图-')).length, names.filter(n => n.startsWith('3比4主图-')).length], [3, 2]);
   pass('下载：按淘宝顺序命名，带定妆照和长图，别人下载不了');
 
   // ---- 后台按依赖领任务：产品图结果不明时，依赖它的图都不做、不收费 ----
   const two = randomUUID();
-  await call(0, 'projects', { id: two, name: '第二款', layout: 'commute-split', counts: counts(1) });
+  await call(0, 'projects', { id: two, name: '第二款', layout: 'M3', counts: counts(1) });
   await upload(0, two, sku, 'SKU图/黑色.jpg'); await upload(0, two, main, '1比1主图/主图_1.jpg');
   await call(0, `projects/${two}/plan`, {});
   const d2 = await detailOf(two);
@@ -335,13 +367,13 @@ try {
   pass('后台：按依赖顺序领任务，只提交了产品图；它结果不明时定妆照、SKU 图、方图都跳过不提交，只有这一张冻结待裁定');
   const redone = await (await call(0, `projects/${two}/redo`, { slot: `product:${M_SKU}`, note: '' })).json();
   assert.equal(redone.images, first2.length);
-  assert.deepEqual((await imageJobs(two, true)).map(j => j.slot), first2.map(i => i.slot));
+  assert.deepEqual((await imageJobs(two, true)).map(j => j.slot).sort(), first2.map(i => i.slot).sort());
   pass('重做产品图时，因为它被跳过的定妆照、SKU 图和方图一起重新排队、一起冻结');
   // 重做的产品图做好之前，后面的图不能拿旧图开工；做好后用的必须是新图。
   const made: { order: string[]; productBytes?: Buffer; skuRef?: Buffer } = { order: [] };
   let shade = 0;
   const worker2 = await startListingWorker({ concurrency: 4, recognize, generate: async (input, hooks) => {
-    const which = input.prompt.startsWith('从参考图') ? 'product' : input.prompt.startsWith('为一套服装商品主图生成一张“模特定妆照”') ? 'cast' : input.prompt.includes('SKU 规格图') ? 'sku' : 'main';
+    const which = input.prompt.startsWith('从参考图') ? 'product' : input.prompt.startsWith('为一套服装商品主图生成一张“模特定妆照”') ? 'cast' : input.prompt.includes('SKU 规格图') ? 'sku' : input.prompt.startsWith('为服装商品的 SKU 图生成一张单人模特图') ? 'skumodel' : 'main';
     made.order.push(which);
     if (which === 'sku') made.skuRef = input.references[0];
     await hooks.beforeSubmit(); await hooks.receipt('task-unified-' + which);
@@ -350,14 +382,17 @@ try {
     return { bytes, taskId: 't', credits: 1, durationMs: 1 };
   } });
   await drain(two); await worker2.close();
-  assert.deepEqual([made.order.slice(0, 2), made.order.slice(2).sort()], [['product', 'cast'], ['main', 'sku']]);
-  assert.ok(made.skuRef && made.productBytes && made.skuRef.equals(made.productBytes));
+  assert.deepEqual([made.order.slice(0, 2), made.order.slice(2).sort()], [['product', 'cast'], ['main', 'skumodel']]);
+  // The SKU image is put together (no model call) only once the new product image is there.
+  const skuAfter = (await db().query(`SELECT (SELECT updated_at FROM listing_jobs WHERE project_id=$1 AND slot=$2 ORDER BY created_at DESC LIMIT 1) >= (SELECT updated_at FROM listing_jobs WHERE project_id=$1 AND slot=$3 ORDER BY created_at DESC LIMIT 1) ok,
+    (SELECT status FROM listing_jobs WHERE project_id=$1 AND slot=$2 ORDER BY created_at DESC LIMIT 1) status`, [two, `sku:${M_SKU}`, `product:${M_SKU}`])).rows[0];
+  assert.deepEqual([skuAfter.ok, skuAfter.status], [true, 'succeeded']);
   assert.equal((await detailOf(two)).status, 'square');
-  pass('连带重做按顺序执行：产品图做好之后才出定妆照，再出 SKU 图和方图，用的是新做的产品图');
+  pass('连带重做按顺序执行：产品图做好之后才出定妆照，再出 SKU 模特图和方图、拼 SKU 图，用的是新做的产品图');
 
   // ---- 加一套首图：换颜色、可换版式；出过竖版后也跟着出 3:4 和长图 ----
   const third = randomUUID();
-  await call(0, 'projects', { id: third, name: '两色款', layout: 'commute-split', counts: counts(1, 1, 1) });
+  await call(0, 'projects', { id: third, name: '两色款', layout: 'M3', counts: counts(1, 1, 1) });
   await upload(0, third, await image(600, 600, '#141414'), 'SKU图/黑色.jpg'); await upload(0, third, await image(600, 600, '#1d2a44'), 'SKU图/藏青.jpg');
   await call(0, `projects/${third}/plan`, {});
   const d3 = await detailOf(third);
@@ -370,12 +405,12 @@ try {
   await call(1, `projects/${third}/sets`, { color: '藏青' }, 404);
   await call(0, `projects/${third}/sets`, { color: '不存在' }, 400);
   await call(0, `projects/${third}/sets`, { color: '藏青', layout: 'no-such-layout' }, 400);
-  assert.equal((await (await call(0, `projects/${third}/sets`, { color: '藏青', layout: 'warm-impact' })).json()).images, 1);
+  assert.equal((await (await call(0, `projects/${third}/sets`, { color: '藏青', layout: 'M4' })).json()).images, 1);
   await call(0, `projects/${third}/sets`, { color: '藏青' }, 409);
   const [setJob] = await imageJobs(third, true);
   assert.equal(setJob.slot, `square:1+${NAVY}`);
   await make(setJob);
-  assert.match(prompt(setJob.slot).prompt, /颜色：藏青/); assert.ok(prompt(setJob.slot).prompt.includes(warm.style.title));
+  assert.match(prompt(setJob.slot).prompt, /颜色：藏青/); assert.ok(prompt(setJob.slot).prompt.includes('绿色圆角胶囊')); // 双人棚拍 M4's own cover
   await call(0, `projects/${third}/verticals`, {});
   assert.deepEqual((await imageJobs(third, true)).map(j => j.slot), ['portrait:1', `portrait:1+${NAVY}`, 'long:1', `long:1+${NAVY}`]);
   for (const j of await imageJobs(third, true)) await make(j);
@@ -383,9 +418,93 @@ try {
   for (const n of ['换色首图-藏青/1比1主图-01-首图.jpg', '换色首图-藏青/3比4主图-01-首图.jpg', '换色首图-藏青/2比3长图.jpg']) assert.ok(Object.keys(zip3.files).includes(n), n);
   pass('加一套首图：只多出这个颜色的首图，可换版式；之后出竖版时这套也出 3:4 和长图；同一个颜色、主推色不能重复加；下载分文件夹');
 
+  // ---- 店铺服务图：设置存在账号上；确认一次出 4 张，改了服务只重画变了的字 ----
+  const octet = { 'content-type': 'application/octet-stream', 'x-file-name': 'logo.png' };
+  const shop0 = await (await call(0, 'shop')).json();
+  assert.equal((await (await call(0, 'shop')).json()).project, shop0.project);
+  assert.equal((await (await call(0, 'shop/make', {}, 400)).json()).error, '至少勾 4 条服务（现在 0 条）');
+  type Item = { title: string; note: string; on: boolean };
+  const ticked = (shop0.shop.items as Item[]).map((x, i) => ({ ...x, on: i < 4 }));
+  await call(0, 'shop', { items: ticked, crafts: shop0.shop.crafts });
+  await call(0, 'shop', { items: [{ ...ticked[0], title: '六个字的服务' }], crafts: [] }, 400);
+  await call(1, `projects/${shop0.project}`, undefined, 404);
+  assert.match((await (await call(0, 'shop/logo', await image(200, 200, '#cc0000'), 200, 'POST', octet)).json()).shop.logo, /^\/api\/listing\/assets\//);
+  const beforeShop = await balance(tenants[0]);
+  assert.equal((await (await call(0, 'shop/make', {})).json()).images, 4);
+  await call(0, 'shop/make', {}, 409);
+  assert.equal(beforeShop - await balance(tenants[0]), 4 * unit);
+  const sjobs = await imageJobs(shop0.project, true);
+  assert.deepEqual(sjobs.map(j => j.slot).sort(), ['service:A-dark', 'service:A-light', 'service:B-light', 'service:D-warm']);
+  for (const j of sjobs) await make(j);
+  assert.equal(prompt('service:D-warm').refs, 2); assert.match(prompt('service:D-warm').prompt, /多种印绣工艺/);
+  assert.ok(prompt('service:A-dark').prompt.includes(`「${ticked[0].title}」「${ticked[0].note}」`));
+  const madeShop = await (await call(0, 'shop')).json();
+  assert.deepEqual([Object.keys(madeShop.shop.made).sort(), madeShop.making], [['A-dark', 'A-light', 'B-light', 'D-warm'], []]);
+  assert.ok(!(await (await call(0, 'projects')).json()).some((p: { id: string }) => p.id === shop0.project));
+  await call(0, 'shop', { items: ticked.map((x, i) => i === 0 ? { ...x, note: '满意再付款' } : x), crafts: shop0.shop.crafts });
+  assert.equal((await (await call(0, 'shop/make', {})).json()).images, 3);
+  for (const j of await imageJobs(shop0.project, true)) await make(j);
+  assert.equal(prompt('service:A-dark').refs, 1);
+  assert.ok(prompt('service:A-dark').prompt.includes(`「${ticked[0].title}」「${ticked[0].note}」 换成 「${ticked[0].title}」「满意再付款」`));
+  const shop2 = await (await call(0, 'shop')).json();
+  assert.deepEqual([shop2.shop.made['A-dark'].words[0], shop2.shop.made['A-dark'].history.length, shop2.shop.made['D-warm'].history.length], [`${ticked[0].title}｜满意再付款`, 1, 0]);
+  pass('店铺服务图：设置存在账号上、不在商品列表里，别的账号看不到；勾满 4 条才能出；确认一次出 4 张（工艺图带样例 LOGO）；改了服务只重画变了字的那几张，只改那几处字');
+
+  // ---- 第 2 张直接用店铺的服务图（免费），竖版照它重排；点图修改出候选，采用才换上 ----
+  const fourth = randomUUID();
+  await call(0, 'projects', { id: fourth, name: '五张款', layout: 'M3', counts: counts(5, 5, 0) });
+  await upload(0, fourth, await image(600, 600, '#e8621d'), 'SKU图/爱马仕橙.jpg');
+  await call(0, `projects/${fourth}/plan`, {});
+  const ORANGE = (await detailOf(fourth)).sources[0].label;
+  const five = await toGenerating(fourth, { images: [{ id: ORANGE, kind: '颜色款图', color: '爱马仕橙', front: true }], colors: [{ name: '爱马仕橙', hex: '#e8621d', from: [ORANGE] }], points: [], category: 'workwear' },
+    m => draftFrom(m, commute, counts(5, 5, 0)), { product: { name: '五张款', garment: ['连帽'] } });
+  const fiveJobs = await imageJobs(fourth, true);
+  const copyJob = fiveJobs.find(j => j.slot === 'square:2')!;
+  assert.deepEqual([(copyJob.input as { kind: string }).kind, copyJob.depends], ['copy', []]);
+  assert.ok(roundOf(five.draft, commute, 1).find(i => i.slot === 'square:2')!.free);
+  for (const j of fiveJobs) await make(j);
+  assert.equal((await db().query('SELECT count(*)::int n FROM listing_attempts WHERE job_id=$1', [copyJob.id])).rows[0].n, 0);
+  const bytesOf = async (asset: string) => Buffer.from(await (await call(0, 'assets/' + asset)).arrayBuffer());
+  assert.ok((await bytesOf((await slotOf(fourth, 'square:2')).image)).equals(await bytesOf(shop2.shop.made['D-warm'].asset)));
+  await call(0, `projects/${fourth}/verticals`, {});
+  const relayout = (await imageJobs(fourth, true)).find(j => j.slot === 'portrait:2')!;
+  assert.deepEqual(relayout.depends, ['square:2']);
+  for (const j of await imageJobs(fourth, true)) await make(j);
+  assert.match(prompt('portrait:2').prompt, /重新排成竖版 3:4/); assert.equal(prompt('portrait:2').refs, 1);
+  pass('第 2 张：直接复制店铺这套母版的服务图，不调模型、不收费；出竖版时照它重排成 3:4');
+
+  const sq1 = await slotOf(fourth, 'square:1');
+  await call(1, `projects/${fourth}/redraw`, { slot: 'square:1', ask: '背景换成工地' }, 404);
+  assert.equal((await (await call(0, `projects/${fourth}/redraw`, { slot: 'square:1', ask: ' ' }, 400)).json()).error, '先写一句想怎么改');
+  await call(0, `projects/${fourth}/redraw`, { slot: 'square:1', ask: '背景换成工地', reference: randomUUID() }, 400);
+  const ref = await (await call(0, `projects/${fourth}/refs`, await image(300, 300, '#33aa66'), 200, 'POST', octet)).json();
+  await call(1, `projects/${fourth}/refs`, await image(300, 300, '#33aa66'), 404, 'POST', octet);
+  const beforeRedraw = await balance(tenants[0]);
+  const { job: redrawJob } = await (await call(0, `projects/${fourth}/redraw`, { slot: 'square:1', ask: '背景换成工地，下雨天', reference: ref.asset })).json();
+  await call(0, `projects/${fourth}/redraw`, { slot: 'square:1', ask: '再来一张' }, 409);
+  assert.equal(beforeRedraw - await balance(tenants[0]), unit);
+  assert.equal((await detailOf(fourth)).status, 'done');
+  assert.equal((await slotOf(fourth, 'square:1')).redraw.status, 'running');
+  const [rj] = await imageJobs(fourth, true);
+  await make(rj);
+  assert.equal(prompt('square:1').refs, 2); assert.match(prompt('square:1').prompt, /要求：背景换成工地，下雨天/); assert.match(prompt('square:1').prompt, /参考图2是用户给的参考/);
+  const afterRedraw = await slotOf(fourth, 'square:1'), candidate = afterRedraw.history.find((v: { job?: string }) => v.job === redrawJob);
+  assert.deepEqual([afterRedraw.image, afterRedraw.redraw.status, candidate.change, (await detailOf(fourth)).status], [sq1.image, 'succeeded', '背景换成工地，下雨天', 'done']);
+  assert.equal((await (await call(0, 'projects')).json()).find((p: { id: string }) => p.id === fourth).cover, `/api/listing/assets/${sq1.image}`);
+  await call(0, `projects/${fourth}/current`, { slot: 'square:1', asset: candidate.id });
+  assert.equal((await slotOf(fourth, 'square:1')).image, candidate.id);
+  const svc = shop2.shop.made['D-warm'];
+  const { job: svcJob } = await (await call(0, `projects/${shop0.project}/redraw`, { slot: 'service:D-warm', ask: '标题改成「多种工艺 任你选」' })).json();
+  for (const j of await imageJobs(shop0.project, true)) await make(j);
+  const svcVersion = (await slotOf(shop0.project, 'service:D-warm')).history.find((v: { job?: string }) => v.job === svcJob);
+  assert.equal((await (await call(0, 'shop')).json()).shop.made['D-warm'].asset, svc.asset);
+  await call(0, `projects/${shop0.project}/current`, { slot: 'service:D-warm', asset: svcVersion.id });
+  assert.equal((await (await call(0, 'shop')).json()).shop.made['D-warm'].asset, svcVersion.id);
+  pass('点图修改：别人改不了、没写要求或参考图不对拦住；按一张收费；底图 + 参考图 + 要求出新图，先当候选不替换、商品状态不变；采用后才换上；店铺服务图同样能改、采用后新商品用新的');
+
   const run = async (provider: Parameters<typeof executePlan>[1]) => {
     const pid = randomUUID();
-    await call(0, 'projects', { id: pid, name: '失败验收', layout: 'commute-split', counts: counts(1, 1, 1) });
+    await call(0, 'projects', { id: pid, name: '失败验收', layout: 'M3', counts: counts(1, 1, 1) });
     await upload(0, pid, main, 'a.jpg');
     await call(0, `projects/${pid}/plan`, {});
     const j = (await db().query("SELECT id,tenant_id,project_id,step FROM listing_jobs WHERE project_id=$1", [pid])).rows[0] as Job;
@@ -411,7 +530,7 @@ try {
 
   // ---- 大款：拼起来给 AI 看，几乎一样的图只看一次 ----
   const bigId = randomUUID();
-  await call(0, 'projects', { id: bigId, name: '大款', layout: 'warm-impact', counts: counts(1) });
+  await call(0, 'projects', { id: bigId, name: '大款', layout: 'M4', counts: counts(1) });
   const solid = (r: number, g: number, b: number) => sharp({ create: { width: 300, height: 300, channels: 3, background: { r, g, b } } }).png().toBuffer();
   for (let i = 0; i < 60; i++) await upload(0, bigId, await solid(i * 4, 100, 240 - i * 3), `模特图/IMG_${i + 1}.png`);
   await upload(0, bigId, await solid(1, 100, 240), '模特图/IMG_1_连拍.png');
@@ -449,8 +568,10 @@ try {
   await addRef(0, lay, await refImg(120), 409);
   const compact = (t: Template) => ({ people: t.people, ...(t.display ? { display: t.display } : {}), zones: t.zones.map(z => [z.kind, ...z.box]) });
   // The model answers with 首图 only in 1:1 cards it cannot fit in 3:4 and leaves 场景 out.
-  const spec = { description: '大字标题在上、三格细节', style: { ...warm.style, title: '顶部超大白色粗体' },
-    templates: Object.fromEntries(TASKS.filter(t => t !== '场景').map(t => [t, { square: compact(warm.templates[t].square), portrait: compact(warm.templates[t].portrait) }])), long: compact(warm.long), sku: compact(warm.sku) };
+  // Learning reads the zone kinds of the layouts before the masters (no badge, band or fabric).
+  const old = LEGACY_LAYOUTS.find(l => l.id === 'warm-impact')!;
+  const spec = { description: '大字标题在上、三格细节', style: { ...old.style, title: '顶部超大白色粗体' },
+    templates: Object.fromEntries(TASKS.filter(t => t !== '场景').map(t => [t, { square: compact(old.templates[t].square), portrait: compact(old.templates[t].portrait) }])), long: compact(old.long), sku: compact(old.sku) };
   spec.templates.细节 = { square: { people: 0, zones: [['title', 5, 4, 90, 10], ['card', 4, 20, 30, 70], ['card', 35, 20, 30, 70], ['card', 66, 20, 30, 70]] }, portrait: { people: 0, zones: [['title', 5, 4, 90, 8], ['card', 5, 16, 90, 38], ['card', 5, 56, 90, 38]] } };
   const learnPrompts: string[] = [];
   const learnWorker = await startListingWorker({ concurrency: 2, learn: {
@@ -462,7 +583,7 @@ try {
   const learned = await (await call(0, `layouts/${lay}`)).json();
   assert.equal(learned.status, 'draft'); assert.equal(learned.samples.length, 3); assert.equal(learned.refs.length, 3);
   assert.equal(learned.layout.templates.细节.square.zones.filter((z: { kind: string }) => z.kind === 'card').length, 2);
-  assert.deepEqual(learned.layout.templates.场景, commute.templates.场景);
+  assert.deepEqual(learned.layout.templates.场景, LEGACY_LAYOUTS[0].templates.场景);
   assert.equal(learnPrompts.length, 3); assert.ok(learnPrompts.every(p => p.includes('标题字顶部超大白色粗体')));
   assert.deepEqual([(await layoutHold(lay)).state, Number((await layoutHold(lay)).settled_cents)], ['settled', 100]);
   assert.ok(!(await (await call(0, 'config')).json()).layouts.some((l: { id: string }) => l.id === lay));
@@ -487,7 +608,7 @@ try {
   const beforeUses = await balance(tenants[0]);
   const written = await toGenerating(usesLayout, { images: [{ id: label, kind: '静物', color: '黑色', front: true }], colors: [{ name: '黑色', hex: '#111', from: [label] }], points: [], category: 'workwear' },
     m => draftFrom(m, mine, counts(1)), { product: { name: '用学来的版式', garment: ['立领'] } });
-  assert.match(written.request, /版式「细节特写格」：大字标题在上、三格细节/);
+  assert.match(written.request, /母版「细节特写格」：大字标题在上、三格细节/);
   assert.match(written.request, /square:1：首图；无人·挂拍/);
   const usesPlan = await detailOf(usesLayout);
   assert.equal(usesPlan.status, 'generating');

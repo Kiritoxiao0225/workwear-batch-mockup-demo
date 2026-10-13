@@ -13,6 +13,7 @@ import { CatalogHttpError } from './catalog-auth';
 import { readCatalogFile, saveCatalogFile } from './catalog-files';
 import { registerFileRef } from './file-authorization';
 import { currentPrices, holdCredits, microToCents, priceOf, releaseHold, settleHold } from './credits';
+import { LEGACY_LAYOUTS } from '../listing/legacy-layouts';
 import { BUILT_IN_LAYOUTS, capacity, fitTemplate, withPeople, type Box, type Display, type Layout, type People, type Template, type ZoneKind } from '../listing/templates';
 import { TASKS, type Task } from '../listing/category';
 import { mainPrompt, skuPrompt, type Content } from './listing-prompts';
@@ -32,6 +33,8 @@ type Row = { id: string; tenant_id: string; name: string; status: string; spec: 
 
 const toLayout = (row: Row): Layout => ({ ...row.spec!, id: row.id, name: row.name, samples: [0, 1, 2].map(n => sampleUrl(row.id, n)) });
 const layoutById = (id: string) => BUILT_IN_LAYOUTS.find(l => l.id === id);
+/** The two layouts before the masters (10-11): products made with them still open and redo; new ones cannot pick them. */
+const legacyById = (id: string) => LEGACY_LAYOUTS.find(l => l.id === id);
 
 /** Built-in layouts plus the tenant's saved ones, for the page. */
 export async function layoutCards(tenantId: string): Promise<LayoutCard[]> {
@@ -45,7 +48,7 @@ export async function layoutCards(tenantId: string): Promise<LayoutCard[]> {
  * project chose it still works for that project.
  */
 export async function resolveLayout(tenantId: string, id: string, { forNewProject = false } = {}): Promise<Layout | undefined> {
-  const builtIn = layoutById(id);
+  const builtIn = layoutById(id) ?? (forNewProject ? undefined : legacyById(id));
   if (builtIn) return builtIn;
   if (!z.uuid().safeParse(id).success) return undefined;
   const row = (await db().query(`SELECT * FROM listing_layouts WHERE id=$1 AND tenant_id=$2 AND spec IS NOT NULL`, [id, tenantId])).rows[0] as Row | undefined;
@@ -183,7 +186,8 @@ export async function deleteLayout(tenant: string, layoutId: string) {
 
 /* ---------- learning, in the worker ---------- */
 
-const example = BUILT_IN_LAYOUTS[0];
+// Learning writes the zone kinds of the layouts before the masters (no badge, band or fabric).
+const example = LEGACY_LAYOUTS[0];
 const compact = (t: Template) => ({ people: t.people, ...(t.display ? { display: t.display } : {}), zones: t.zones.map(z => [z.kind, ...z.box]) });
 const SYSTEM = `你是淘宝服装类目的视觉设计总监。用户给你几张他喜欢的参考图（可能是别家店铺的主图、海报或 SKU 图），请把它们共同的版式和风格总结出来，以后要套到别的服装商品上出图。
 

@@ -9,9 +9,10 @@
  *   say on it), each with as many cards as it has points, and a short heading the AI wrote;
  * - which colour each image shows, who models, and what the two rounds of images cost.
  */
-import { categoryById, groupOf, evidenceOf, type Category, type PointGroup, type PointType, type Task } from './category';
+import { BUILDS, categoryById, groupOf, evidenceOf, type Category, type PointGroup, type PointType, type Task } from './category';
 import { proofById, type Proof } from './proofs';
-import { capacity, fitTemplate, needsCast, type Layout, type Ratio, type Template } from './templates';
+import { MASTER_INFO, SELLS, sellOf } from './scene';
+import { capacity, fitTemplate, mostCells, needsCast, type Layout, type Ratio, type Template } from './templates';
 
 /** A point as the AI read it from the material: `text` and `note` are the material's own words. */
 export type SortedPoint = { text: string; note?: string; type: string; concept?: string | null; proof?: string; part?: string; why?: string; from: string[] };
@@ -31,6 +32,8 @@ export type Point = {
   /** Extra points only: how the garment looks to the AI, and why. Folded: offered under "more". */
   seen?: Seen; seenWhy?: string; folded?: boolean;
   proof: string; part: string; why: string; evidence: string; from: string[]; score: number;
+  /** The user wants it on an image whatever its weight: it takes a card first, squeezing the image up to six cards. */
+  must?: boolean;
 };
 /** One card or icon of an image: a point and the way it is drawn. Its words are the point's. */
 export type Cell = { point: string; proof: string };
@@ -40,23 +43,68 @@ export type Slot = {
   act: string | null; colors: string[]; manual?: boolean; why?: string;
   /** The shop's kept service image used as it is ("A-dark"): nothing to write, nothing to pay for the square one. */
   shopService?: string;
+  /** Left from the trial of 2026-10-12, when images went by the AI's themes of points; no longer used. */
+  theme?: string;
   /** How much the image says: the sum of its points' weight; fewer images keep the heaviest. */
   score: number;
 };
 export type PlanColor = { name: string; hex: string; pick: string | null };
 export type Part = { part: string; pick: string | null };
 export type Counts = { square: number; portrait: number; long: number };
-export type Model = { lead: '男' | '女' };
+/**
+ * Who models. `photos`: the material's own model photos the cast is drawn from (labels, one per
+ * gender); a gender without one is made up. Without photos the AI makes up both.
+ */
+export type Model = { lead: '男' | '女'; photos?: { 男?: string; 女?: string } };
+export type Gender = '男' | '女';
+export const GENDERS: Gender[] = ['男', '女'];
 export type Draft = {
   category: string; categoryWhy: string; titles: Partial<Record<Task, string[]>>; points: Point[]; colors: PlanColor[]; main: string; parts: Part[];
   slots: Slot[]; long: { title: string }; layout: string; counts: Counts; extra: { color: string; layout: string }[]; model: Model;
+  /** Left from the trial of 2026-10-12 (images by the AI's themes of points); no longer used. */
+  themes?: unknown[];
+  /** Masters whose cover is shot on location: where (scene.ts PLACES) and the point the picture acts out (SELLS). */
+  scene?: { place: string; sell: string };
+  /** What the chest shows: nothing, the word 「LOGO」, or the customer's LOGO (an uploaded image's label). */
+  logo?: { mode: '不印' | 'LOGO' | '客户'; label?: string };
 };
 
+/** The closer wears at most this many colours, one person each. */
+export const CLOSER_MAX = 6;
 export const LIMITS = { title: 20, sub: 30, tag: 12, cell: 12 } as const;
 export const DEFAULT_COUNTS: Counts = { square: 5, portrait: 5, long: 1 };
 export const FRONT = '正面全身';
 const len = (s: string) => [...s.trim()].length;
 /** Several points in one ("防水、透气、耐磨"): fine as a tag, breaks into lines as a big title. */
+/** The kinds of the images that say something on every master, in order (its samples' third and fourth). */
+const MASTER_MIDDLE: Task[] = ['功能', '细节'];
+/**
+ * What the garment is, for a cover shot in the studio: its most telling build found in the ticked
+ * points (三合一 from 「可拆卸摇粒内胆」), then the category; else the strongest point, then the category.
+ */
+function builtAs(on: Point[], category: Category): { title: string; from: Point | null } | null {
+  const builds = BUILDS[category.id];
+  if (!builds) return null;
+  for (const [word, re] of builds) { const from = on.find(p => re.test(`${p.text} ${p.note}`)); if (from) return { title: `${word} ${category.name}`, from }; }
+  const strongest = on.find(p => !CLOSER.includes(p.type) && !isList(p.text) && len(p.text) <= 6);
+  return strongest ? { title: `${strongest.text} ${category.name}`, from: strongest } : { title: category.name, from: null };
+}
+/**
+ * The words on an image of fabric: the composition as the tag above the title (「100%聚酯纤维」), then
+ * facts as 「label｜word」 (「面料科技｜德国SUPER-TEX」, 「面料特点｜高防水透气膜」), all from the
+ * material's fabric points and their notes; nothing made up, so fewer facts when it says less.
+ */
+function fabricWords(fabric: Point[], room: number): string[] {
+  const made = /\d+\s*%|纤维|棉|锦纶|涤纶|氨纶|聚酯|尼龙/;
+  const ordered = [...fabric].sort((a, b) => Number(made.test(b.text)) - Number(made.test(a.text)));
+  const [pill, ...rest] = ordered;
+  if (!pill) return [];
+  const facts = [...rest.map(p => `${made.test(p.text) ? '面料成分' : '面料科技'}｜${p.text}`),
+    ...ordered.map(p => p.note.trim()).filter(n => n && len(n) <= 8 && !/[，。,；;]/.test(n)).map(n => `面料特点｜${n}`)];
+  return [pill.text, ...facts].slice(0, room);
+}
+/** Does a heading speak of this point (two characters in a row in common)? */
+const about = (heading: string, text: string) => [...text].some((_, i) => i < text.length - 1 && heading.includes(text.slice(i, i + 2)));
 export const isList = (text: string) => text.split(/[、，,/／]/).filter(t => t.trim()).length >= 3;
 const rank = (points: Point[]) => [...points].sort((a, b) => b.score - a.score);
 /** At most this many extra points are offered at first; the rest fold under "more". */
@@ -114,65 +162,86 @@ export function proofsFor(point: Point, category: Category): Proof[] {
 }
 /** The way a point is drawn on a zone: a person's demonstration only where there are people. */
 export function fitProof(point: Point, template: Template, category: Category): string {
+  // People only where the template has them; an image of fabric only cannot show a part of the garment.
+  const fits = (p: Proof) => (!p.person || template.people > 0) && !(template.fabricOnly && (p.kind === '部位特写' || !!p.part));
   const proof = proofById(point.proof);
-  if (proof && (!proof.person || template.people > 0)) return point.proof;
-  return proofsFor(point, category).find(p => !p.person)?.id ?? 'icon-text';
+  if (proof && fits(proof)) return point.proof;
+  return proofsFor(point, category).find(fits)?.id ?? 'icon-text';
 }
 
 /* ---------- the images ---------- */
 
-const BUCKET: Partial<Record<PointType, Task>> = { 功能: '功能', 面料: '功能', 做工: '细节', 实用: '实用', 服务定制: '服务' };
+/** The shop's services are drawn on the shop's own service image (lib/listing/service.ts), not on this product's. */
+const BUCKET: Partial<Record<PointType, Task>> = { 功能: '功能', 面料: '功能', 做工: '细节', 实用: '实用' };
 /** The image a point of this type belongs on in this category. */
 export const taskFor = (type: PointType, tasks: Task[]): Task | undefined => {
   const t = BUCKET[type];
   return t === '实用' && !tasks.includes('实用') ? '细节' : t && tasks.includes(t) ? t : undefined;
 };
 /** An image of this kind is made only with at least this many points for it. */
-const ENOUGH: Partial<Record<Task, number>> = { 功能: 1, 细节: 2, 服务: 3, 实用: 1 };
-/** Equal amounts: features before close-ups before the service image. */
-const PREFER: Task[] = ['功能', '细节', '服务', '实用'];
+const ENOUGH: Partial<Record<Task, number>> = { 功能: 1, 细节: 2, 实用: 1 };
+/** Equal amounts: features before close-ups. */
+const PREFER: Task[] = ['功能', '细节', '实用'];
 const CLOSER: PointType[] = ['人群场景', '颜色款式'];
 const MIDDLE = 3;
 
 /**
  * The images the ticked points fill. The cover leads with the positioning point and the strongest
- * points as tags (at most one of the product's own). Three middle images go, one at a time, to the
- * kind with the most points still to show that has enough for an image (a second feature image
- * when there are many features; no service image for one or two service points); left over room
- * shows the garment worn at work. Each image takes as many cards as it has points (up to the
+ * points as tags (at most one of the product's own). Where the category has a service image it is
+ * always the second, the shop's kept one (free, nothing to write). The other middle images go, one
+ * at a time, to the kind with the most points still to show that has enough for an image (a second
+ * feature image when there are many features); left over room shows the garment worn at work. Each image takes as many cards as it has points (up to the
  * layout's), its heading from the AI's, its sub-line from the lead point. The closer counts the
  * colours. Shown in the category's order.
  */
 export function planSlots(points: Point[], category: Category, layout: Layout, colorNames: string[], titles: Draft['titles'] = {}): { slots: Slot[]; long: Draft['long'] } {
   const on = rank(points.filter(p => p.on)), tasks = category.tasks;
   const coverT = layout.templates.首图.square;
-  const cover = on.find(p => p.type === '定位') ?? on[0];
-  const coverTags: Point[] = [];
+  // A cover shot in the studio or without people says what the garment is when the material does not.
+  const named = MASTER_INFO[layout.id] && MASTER_INFO[layout.id].cover !== '实景' && !on.some(p => p.type === '定位') ? builtAs(on, category) : null;
+  const cover = named ? undefined : on.find(p => p.type === '定位') ?? on[0];
+  const title = named?.title ?? cover?.text ?? '';
+  // Its tags say something else than the title: custom-made first for the category made to order.
+  const coverTags: string[] = named && category.id === 'workwear' ? ['团体定制'] : [];
   for (const p of on) {
     if (coverTags.length >= capacity(coverT).tags) break;
-    if (p === cover || p.type === '定位' || CLOSER.includes(p.type) || isList(p.text) || len(p.text) > LIMITS.tag) continue;
-    if (p.group === '独有' && coverTags.some(t => t.group === '独有')) continue;
-    coverTags.push(p);
+    if (p === cover || p === named?.from || p.type === '定位' || CLOSER.includes(p.type) || isList(p.text) || len(p.text) > LIMITS.tag || about(title, p.text)) continue;
+    if (p.group === '独有' && on.some(t => t.group === '独有' && coverTags.includes(t.text))) continue;
+    coverTags.push(p.text);
   }
   const left = new Map<Task, Point[]>();
   for (const p of on) { const t = p === cover ? undefined : taskFor(p.type, tasks); if (t) left.set(t, [...(left.get(t) ?? []), p]); }
   const seen = new Map<Task, number>();
-  const heading = (task: Task, fallback: string) => { const k = seen.get(task) ?? 0; seen.set(task, k + 1); return titles[task]?.[k] ?? fallback; };
-  const middle: Slot[] = [];
+  // The AI's headings for the kind of image, in turn; never the cover's own words again. A feature
+  // image's heading says its lead point (the line under it is that point's note), else it is the point.
+  const heading = (task: Task, fallback: string) => {
+    const k = seen.get(task) ?? 0, fresh = (titles[task] ?? []).filter(t => !cover || (t !== cover.text && !t.includes(cover.text)));
+    seen.set(task, k + 1);
+    return (task === '功能' ? fresh.filter(t => about(t, fallback)) : fresh)[task === '功能' ? 0 : k] ?? fallback;
+  };
+  const middle: Slot[] = tasks.includes('服务') ? [{ task: '服务', lead: null, title: '店铺服务图', sub: '', tags: [], cells: [], act: null, colors: [], shopService: 'shop', score: 0.5 }] : [];
   while (middle.length < MIDDLE) {
     // A second image of one kind needs one point more than the first.
-    const ok = PREFER.filter(t => (left.get(t)?.length ?? 0) >= (ENOUGH[t] ?? 1) + (middle.some(m => m.task === t) ? 1 : 0) && !(t === '服务' && middle.some(m => m.task === '服务')));
+    const ok = PREFER.filter(t => (left.get(t)?.length ?? 0) >= (ENOUGH[t] ?? 1) + (middle.some(m => m.task === t) ? 1 : 0));
     if (!ok.length) break;
-    const task = ok.sort((a, b) => left.get(b)!.length - left.get(a)!.length || PREFER.indexOf(a) - PREFER.indexOf(b))[0];
+    // A master's images that say something are a feature image, then a close-up image, as on its samples;
+    // the kind with the most points left takes an image only when the master's own kind has none.
+    const want = MASTER_INFO[layout.id] ? MASTER_MIDDLE.filter(t => tasks.includes(t))[middle.filter(m => !m.shopService).length] : undefined;
+    const task = want && ok.includes(want) ? want : ok.sort((a, b) => left.get(b)!.length - left.get(a)!.length || PREFER.indexOf(a) - PREFER.indexOf(b))[0];
     const t = layout.templates[task].square, room = capacity(t), list = left.get(task)!;
     const lead = list.find(p => !isList(p.text)) ?? list[0];
     const act = room.person ? proofsFor(lead, category).find(p => p.person)?.id ?? null : null;
-    const inCells = act ? list.filter(p => p !== lead) : list;
+    // The fabric is the tag above the title, as on the masters (「90%锦纶 10%氨纶」); the cards take the rest.
+    const fabric = room.tags ? list.filter(p => p !== lead && p.type === '面料').slice(0, t.fabricOnly ? 2 : room.tags) : [];
+    const inCells = (act ? list.filter(p => p !== lead) : list).filter(p => !fabric.includes(p));
     const cells = inCells.slice(0, room.cells).map(p => ({ point: p.id, proof: fitProof(p, t, category) }));
-    const tags = list.filter(p => p !== lead && !cells.some(c => c.point === p.id)).slice(0, room.tags);
-    const used = [lead, ...inCells.slice(0, room.cells), ...tags];
+    const tags = t.fabricOnly ? fabricWords(fabric, room.tags)
+      : [...fabric, ...list.filter(p => p !== lead && !fabric.includes(p) && !cells.some(c => c.point === p.id))].slice(0, room.tags).map(p => p.text);
+    const used = [lead, ...inCells.slice(0, room.cells), ...fabric, ...(t.fabricOnly ? [] : list.filter(p => tags.includes(p.text)))];
     left.set(task, list.filter(p => !used.includes(p)));
-    middle.push({ task, lead: lead.id, title: heading(task, lead.text), sub: lead.note, tags: tags.map(p => p.text), cells, act, colors: [], score: used.reduce((n, p) => n + p.score, 0) });
+    // The line under the title: the lead point's note, else the next point's on the image.
+    const sub = lead.note || inCells.slice(0, room.cells).find(p => p.note)?.note || '';
+    middle.push({ task, lead: lead.id, title: heading(task, lead.text), sub, tags, cells, act, colors: [], score: used.reduce((n, p) => n + p.score, 0) });
   }
   const closer = on.filter(p => CLOSER.includes(p.type));
   // Who wears it (物业、工厂、4S 店) goes on the scene image unless the closer takes it.
@@ -180,10 +249,33 @@ export function planSlots(points: Point[], category: Category, layout: Layout, c
   while (middle.length < MIDDLE) middle.push({ task: '场景', lead: null, title: heading('场景', crowd[0]?.text ?? ''), sub: crowd[0]?.text ?? '', tags: [], cells: [], act: null, colors: [], score: 0 });
   middle.sort((a, b) => tasks.indexOf(a.task) - tasks.indexOf(b.task));
   const last: Slot = colorNames.length > 1
-    ? { task: '收口', lead: null, title: `${colorNames.length}色可选`, sub: closer[0]?.text ?? '', tags: [], cells: [], act: null, colors: [], score: 0 }
+    ? { task: '收口', lead: null, title: closerTitle(colorNames.length), sub: closerSub(on) || (closer[0]?.text ?? ''), tags: [], cells: [], act: null, colors: [], score: 0 }
     : { task: '收口', lead: closer[0]?.id ?? null, title: closer[0]?.text ?? '', sub: closer[0]?.note ?? '', tags: closer.slice(1, 2).map(p => p.text), cells: [], act: null, colors: [], score: 0 };
-  const first: Slot = { task: '首图', lead: cover?.id ?? null, title: cover?.text ?? '', sub: cover?.note ?? '', tags: coverTags.map(p => p.text), cells: [], act: null, colors: [], score: 99 };
-  return { slots: [first, ...middle, last], long: { title: cover?.text ?? '' } };
+  const first: Slot = { task: '首图', lead: named ? named.from?.id ?? null : cover?.id ?? null, title, sub: named ? '' : cover?.note ?? '', tags: coverTags, cells: [], act: null, colors: [], score: 99 };
+  let slots = [first, ...middle, last];
+  for (const p of on.filter(x => x.must)) if (!shownOn(slots, p)) slots = squeezeIn(slots, p, points, category, layout);
+  return { slots, long: { title: cover?.text ?? '' } };
+}
+
+/** Is the point on one of these images (a title, a demonstration, a card, a tag or a sub-line)? */
+const shownOn = (slots: Slot[], p: Point) => slots.some(s => (s.lead === p.id && (s.task === '首图' || !!s.act)) || s.cells.some(c => c.point === p.id) || s.tags.includes(p.text) || s.sub === p.text);
+/**
+ * A point the user must show, put on the images that say something: an image of its kind first, then
+ * any; a new card while the template can take one (squeezed up to six), else in place of the
+ * lightest card the user does not insist on.
+ */
+function squeezeIn(slots: Slot[], p: Point, points: Point[], category: Category, layout: Layout, made?: number[]): Slot[] {
+  const own = taskFor(p.type, category.tasks);
+  const content = slots.map((s, i) => ({ s, i })).filter(({ s, i }) => !['首图', '服务', '场景', '收口'].includes(s.task) && !s.shopService && (!made || made.includes(i)));
+  const order = [...content.filter(({ s }) => s.task === own), ...content];
+  const weight = (id: string) => points.find(x => x.id === id);
+  for (const { s, i } of order) {
+    const t = layout.templates[s.task].square, cell = { point: p.id, proof: fitProof(p, t, category) };
+    if (s.cells.length < mostCells(t)) return slots.map((x, k) => k === i ? { ...x, cells: [...x.cells, cell] } : x);
+    const light = s.cells.map((c, k) => ({ k, w: weight(c.point) })).filter(x => !x.w?.must).sort((a, b) => (a.w?.score ?? 0) - (b.w?.score ?? 0))[0];
+    if (light) return slots.map((x, k) => k === i ? { ...x, cells: x.cells.map((c, m) => m === light.k ? cell : c) } : x);
+  }
+  return slots;
 }
 
 /** Which images n of them use: the cover and the closer always, then the middle ones that say the most. */
@@ -205,7 +297,8 @@ export function usageOf(d: Draft): Map<string, string[]> {
   const byText = (t: string) => d.points.find(p => p.on && p.text === t)?.id;
   usedSlots(d, d.counts.square).forEach((i, k) => {
     const s = d.slots[i], n = `第 ${k + 1} 张`;
-    if (s.task === '首图') add(s.lead, `${n}大标题`);
+    // On location the cover's title is its point's big word, not the positioning.
+    if (s.task === '首图') { if (s.title === d.points.find(p => p.id === s.lead)?.text) add(s.lead, `${n}大标题`); }
     else if (s.act) add(s.lead, `${n}模特演示`);
     s.cells.forEach((c, m) => add(c.point, `${n}格 ${m + 1}`));
     s.tags.forEach(t => add(byText(t), `${n}标签`));
@@ -221,10 +314,12 @@ export function placesFor(d: Draft, pointId: string, layout: Layout): Place[] {
   if (!p) return [];
   const own = taskFor(p.type, category.tasks), places: Place[] = [];
   usedSlots(d, d.counts.square).forEach((i, k) => {
-    const s = d.slots[i], base = layout.templates[s.task].square, room = capacity(base), mine = s.task === own, n = `第 ${k + 1} 张`;
+    const s = d.slots[i], base = layout.templates[s.task].square, room = capacity(base), n = `第 ${k + 1} 张`;
+    const mine = s.task === own;
     const setSlot = (patch: Partial<Slot>) => (x: Draft) => ({ ...x, slots: x.slots.map((y, m) => m === i ? { ...y, ...patch } : y) });
     const cell = { point: p.id, proof: fitProof(p, base, category) };
     if (room.cells > s.cells.length) places.push({ slot: i, label: `${n} · 加一格`, mine, empty: true, apply: setSlot({ cells: [...s.cells, cell] }) });
+    else if (s.cells.length && mostCells(base) > s.cells.length) places.push({ slot: i, label: `${n} · 挤一格（格子变小）`, mine, empty: false, apply: setSlot({ cells: [...s.cells, cell] }) });
     if (room.tags > s.tags.length) places.push({ slot: i, label: `${n} · 加成标签`, mine, empty: true, apply: setSlot({ tags: [...s.tags, p.text] }) });
     s.cells.forEach((c, m) => places.push({ slot: i, label: `${n} · 换掉格 ${m + 1}「${d.points.find(x => x.id === c.point)?.text ?? ''}」`, mine, empty: false, apply: setSlot({ cells: s.cells.map((y, j) => j === m ? cell : y) }) }));
     s.tags.forEach((t, m) => places.push({ slot: i, label: `${n} · 换掉标签「${t}」`, mine, empty: false, apply: setSlot({ tags: s.tags.map((y, j) => j === m ? p.text : y) }) }));
@@ -249,6 +344,16 @@ export function tickPoint(d: Draft, id: string, on: boolean, layout: Layout): Dr
     const cells = s.cells.filter(c => c.point !== id);
     return { ...s, cells, tags: s.tags.filter(t => t !== p.text), lead: s.lead === id ? cells[0]?.point ?? null : s.lead, act: s.lead === id ? null : s.act };
   }) };
+}
+/** 「拿下来」: a point off the images (its cards, tags and demonstration); it stays in the list, and 按新卖点重排 leaves it off. */
+export function takeOff(d: Draft, id: string, layout: Layout): Draft {
+  const next = tickPoint(d, id, false, layout);
+  return { ...next, points: next.points.map(p => p.id === id ? { ...p, must: false } : p) };
+}
+/** 「放上去」: a point onto an image at one of its places (placesFor); 按新卖点重排 keeps it on the images (squeezed in if need be). */
+export function putOn(d: Draft, id: string, place: Place): Draft {
+  const next = place.apply(d);
+  return { ...next, points: next.points.map(p => p.id === id ? { ...p, on: true, must: true } : p) };
 }
 /** A point's words changed: the tags and sub-lines that carried them follow (cards follow by themselves). */
 export function renamePoint(d: Draft, id: string, patch: Partial<Pick<Point, 'text' | 'note'>>): Draft {
@@ -280,24 +385,62 @@ export function staleMentions(slot: Pick<Slot, 'title' | 'sub' | 'tags'>, gone: 
 }
 
 /** The garment part a close-up cell needs a picture of ("袖口" for 贴腕袖口). */
-export const partOf = (p: Pick<Point, 'part' | 'text'>) => p.part || p.text;
-const hasPart = (d: Pick<Draft, 'parts'>, part: string) => d.parts.some(x => x.pick && (x.part === part || part.includes(x.part) || x.part.includes(part)));
+export const partOf = (p: { part?: string; text: string }) => p.part || p.text;
+export const hasPart = (d: Pick<Draft, 'parts'>, part: string) => d.parts.some(x => x.pick && (x.part === part || part.includes(x.part) || x.part.includes(part)));
+/** A sorted image, as far as finding a part on it goes. */
+export type PartSource = { id: string; detail: string; same?: string; kind?: string; parts?: string[] };
+const CLOSE_KINDS = ['细节特写', '卖点图', '详情页'];
+/**
+ * A photo of a part: one sorted as that part, else one the sorting saw it on among others, else
+ * where the point about the part says the material shows it (10-13: a detail page showing the cuff
+ * and the pocket was sorted as 门襟拉链 only, while 「魔术贴防风袖口」 named it as its source).
+ */
+export function partPhoto(points: { text: string; part?: string; from: string[] }[], part: string, images: PartSource[]) {
+  const usable = images.filter(i => !i.same), is = (x?: string) => !!x && (x === part || part.includes(x) || x.includes(part));
+  const cited = points.filter(p => is(partOf(p))).flatMap(p => p.from).map(id => usable.find(i => i.id === id && CLOSE_KINDS.includes(i.kind ?? '')))
+    .filter((i): i is PartSource => !!i).sort((a, b) => CLOSE_KINDS.indexOf(a.kind!) - CLOSE_KINDS.indexOf(b.kind!));
+  return usable.find(i => is(i.detail)) ?? usable.find(i => i.parts?.some(is)) ?? cited[0];
+}
 /**
  * Close-ups of parts the structure images do not have yet, found in the sorted material: a cell
  * showing 袖口 brings the material's own cuff close-up into the structure images.
  */
-export function fillParts(d: Draft, images: { id: string; detail: string; same?: string }[]): Draft {
+export function fillParts(d: Draft, images: PartSource[]): Draft {
   let parts = d.parts;
   for (const s of d.slots) for (const c of s.cells) {
     const p = d.points.find(x => x.id === c.point);
     if (!p || !proofById(c.proof)?.part) continue;
     const part = partOf(p);
     if (hasPart({ parts }, part)) continue;
-    const found = images.find(i => !i.same && i.detail && (i.detail === part || part.includes(i.detail) || i.detail.includes(part)));
+    const found = partPhoto(d.points, part, images);
     if (found) parts = [...parts.filter(x => x.part !== part), { part, pick: found.id }];
   }
-  return parts === d.parts ? d : { ...d, parts };
+  // A close-up of a part the material still has no photo of is drawn another way that needs none: it
+  // used to be only a yellow note, and generating went ahead with a part the model had never seen (10-13).
+  const next = parts === d.parts ? d : { ...d, parts }, category = categoryById(d.category);
+  let changed = false;
+  const slots = next.slots.map(s => {
+    const miss = missingParts(next, s);
+    if (!miss.length) return s;
+    changed = true;
+    return { ...s, cells: s.cells.map((c, n) => { const m = miss.find(x => x.n === n); return m ? { ...c, proof: noPhotoProof(m.p, category).id } : c; }) };
+  });
+  return changed ? { ...next, slots } : next;
 }
+/** How a point is drawn when the material has no photo of its part: its first way that needs neither a photo nor a person. */
+export const noPhotoProof = (p: Point, category: Category): Proof => proofsFor(p, category).find(x => !x.part && !x.person) ?? proofById('icon-text')!;
+/** The material's model photos one person of this gender can be drawn from, clear faces first. */
+export const modelPhotos = (images: { id: string; kind: string; same?: string; person?: string; face?: boolean }[], g: Gender) =>
+  images.filter(i => i.kind === '模特实拍' && !i.same && i.person === g).sort((a, b) => Number(!!b.face) - Number(!!a.face));
+/** Materials with a clear photo of a man or a woman draw the cast from them. */
+export function fillModel(d: Draft, images: Parameters<typeof modelPhotos>[0]): Draft {
+  if (d.model.photos) return d;
+  const photos: NonNullable<Model['photos']> = {};
+  for (const g of GENDERS) { const best = modelPhotos(images, g)[0]; if (best?.face) photos[g] = best.id; }
+  return Object.keys(photos).length ? { ...d, model: { ...d.model, photos } } : d;
+}
+/** The cast is drawn from the material's photos: one person per image, put side by side. */
+export const castFromPhotos = (m: Model) => !!(m.photos?.男 || m.photos?.女);
 /** The close-up cells of an image whose part has no picture: they need another way of drawing or a picture. */
 export const missingParts = (d: Draft, s: Slot) => s.cells.map((c, n) => ({ c, n, p: d.points.find(x => x.id === c.point) }))
   .filter(({ c, p }) => p && proofById(c.proof)?.part && !hasPart(d, partOf(p))) as { c: Cell; n: number; p: Point }[];
@@ -354,18 +497,30 @@ export function assignColors(slots: Slot[], colors: { name: string; hex: string 
     const byL = [...others].sort((a, b) => L(a) - L(b)), picked: string[] = [];
     if (byL.length) picked.push(byL[0]);
     if (byL.length > 1) picked.push(byL[byL.length - 1]);
-    const mid = byL.filter(c => !picked.includes(c)).sort((a, b) => Number(nearMain(a)) - Number(nearMain(b)) || Math.abs(L(a) - 0.3) - Math.abs(L(b) - 0.3))[0];
-    if (mid) picked.push(mid);
-    out[last] = { ...out[last], colors: [main, ...picked].slice(0, 4), why: others.length ? '主推色加深、浅、中间色各一个' : '只有一个颜色' };
+    // Every colour is worn when they fit (「6色可选」 with four people read as wrong, 10-13): the rest after a dark, a light and a mid one.
+    const rest = byL.filter(c => !picked.includes(c)).sort((a, b) => Number(nearMain(a)) - Number(nearMain(b)) || Math.abs(L(a) - 0.3) - Math.abs(L(b) - 0.3));
+    picked.push(...rest);
+    const worn = [main, ...picked].slice(0, CLOSER_MAX);
+    out[last] = { ...out[last], colors: worn, why: !others.length ? '只有一个颜色' : worn.length === names.length ? '每个颜色一人，都穿上' : `颜色多，穿最有代表性的 ${CLOSER_MAX} 个` };
   }
   out.forEach((s, i) => { if (i > 0 && s.manual) s.why = '你选的'; });
   return out;
 }
-export const colorize = (d: Draft, layout: Layout, slots = d.slots) => assignColors(slots, d.colors.filter(c => c.pick), d.main, s => showsGarment(layout, s.task));
+export const colorize = (d: Draft, layout: Layout, slots = d.slots) => assignColors(slots, d.colors.filter(c => c.pick), d.main, s => !s.shopService && showsGarment(layout, s.task));
 
 /** After colours were added or dropped, the closer still says how many there are. */
 export const syncCloser = (slot: Slot, colorNames: string[]): Slot =>
-  /^\d+色可选$/.test(slot.title) && colorNames.length > 1 ? { ...slot, title: `${colorNames.length}色可选` } : slot;
+  /^(团体定制 · )?\d+色可选$/.test(slot.title) && colorNames.length > 1 ? { ...slot, title: slot.title.replace(/\d+色可选$/, `${colorNames.length}色可选`) } : slot;
+/** The closer's title as the masters' samples print it (「团体定制 · 2色可选」), not the bare count. */
+export const closerTitle = (colors: number) => `团体定制 · ${colors}色可选`;
+/**
+ * The closer's line: the product's functions in their short words, 「防水 / 防风 / 耐磨 / 透气」, as on
+ * the samples; empty when fewer than two are found (the closer's own point is used then).
+ */
+export function closerSub(points: Pick<Point, 'text' | 'type'>[]) {
+  const words = [...new Set(points.filter(p => p.type === '功能' || p.type === '面料').map(p => sellOf(p.text)).filter((x): x is NonNullable<typeof x> => !!x).map(x => SELLS[x].big))].slice(0, 4);
+  return words.length >= 2 ? words.join(' / ') : '';
+}
 
 /* ---------- checks ---------- */
 
@@ -383,7 +538,6 @@ export function notesOf(d: Draft, i: number, layout: Layout): string[] {
   for (const c of s.cells) {
     const p = d.points.find(x => x.id === c.point), proof = proofById(c.proof);
     if (!p || !proof) continue;
-    if (proof.part && !hasPart(d, partOf(p))) notes.push(`「${p.text}」要拍${partOf(p)}的特写，可素材里没有${partOf(p)}的照片：换个画法，或者补传一张`);
     if (proof.person && !t.people) notes.push(`「${p.text}」的画法要有人，这张图没有人：换个画法`);
   }
   return notes;
@@ -400,12 +554,19 @@ export function checkDraft(d: Draft, layout: Layout) {
   ];
   const used = usedSlots(d, d.counts.square);
   used.forEach((i, k) => { const s = d.slots[i], long = overLimit({ ...s, cells: cellWords(d, s) }); if (long) red.push(`第 ${k + 1} 张${long}`); });
-  if (d.counts.long && len(d.long.title) > LIMITS.title) red.push(`长图大标题超过 ${LIMITS.title} 个字`);
+  // Normally settled on the way in (fillParts); a draft that still asks for a part with no photo is not generated.
+  used.forEach((i, k) => { for (const m of missingParts(d, d.slots[i])) red.push(`第 ${k + 1} 张「${m.p.text}」要拍${partOf(m.p)}特写，素材里没有${partOf(m.p)}的照片：补一张，或换个画法`); });
+  // The long image writes its own line only with no square images; else it copies the cover's words.
+  if (d.counts.long && !d.counts.square && len(d.long.title) > LIMITS.title) red.push(`长图大标题超过 ${LIMITS.title} 个字`);
   const warn = used.filter(i => notesOf(d, i, layout).length).map(i => used.indexOf(i) + 1);
   return { red, warn };
 }
 
 /* ---------- the two rounds and their price ---------- */
+
+/** Does the set need the cast: an image with people, or a SKU image of a colour the material has no model photo of (`photos`). */
+export const wantsCast = (d: Pick<Draft, 'category' | 'colors'>, layout: Layout, photos: Set<string>) =>
+  needsCast(layout, categoryById(d.category).tasks) || (!!layout.sku.specCard && d.colors.some(c => c.pick && !photos.has(c.pick)));
 
 export type ImageItem = { slot: string; label: string; ratio?: Ratio; round: 1 | 2; multi: boolean; free: boolean; person: boolean };
 /**
@@ -413,14 +574,20 @@ export type ImageItem = { slot: string; label: string; ratio?: Ratio; round: 1 |
  * colour's own clean still life is used as it is), the cast when any image has people, each
  * colour's SKU image and the square images. Round two, at 「出竖版」: the 3:4 images (no more than
  * the square ones: each is written from its square image) and the 2:3 long image. Extra sets add a
- * cover in another colour to each round.
+ * cover in another colour to each round. SKU images on the template show each colour on a model:
+ * the material's own photo (`photos`, by colour image label), else the cast's model drawn in it (paid).
  */
-export function draftImages(d: Draft, layout: Layout, direct: Set<string>): ImageItem[] {
-  const colors = d.colors.filter(c => c.pick), tasks = categoryById(d.category).tasks;
+export function draftImages(d: Draft, layout: Layout, direct: Set<string>, photos: Set<string> = new Set()): ImageItem[] {
+  const colors = d.colors.filter(c => c.pick);
+  const drawn = layout.sku.specCard ? colors.filter(c => !photos.has(c.pick!)) : [];
   const items: ImageItem[] = [];
   for (const c of colors) items.push({ slot: `product:${c.pick}`, label: '白底产品图', round: 1, multi: false, free: direct.has(c.pick!), person: false });
-  if (needsCast(layout, tasks)) items.push({ slot: 'cast', label: '模特定妆照', round: 1, multi: false, free: false, person: false });
-  for (const c of colors) items.push({ slot: `sku:${c.pick}`, label: 'SKU 图', round: 1, multi: false, free: false, person: layout.sku.people > 0 });
+  if (wantsCast(d, layout, photos)) {
+    if (castFromPhotos(d.model)) for (const g of GENDERS) items.push({ slot: `cast:${g}`, label: '模特定妆照', round: 1, multi: false, free: false, person: false });
+    else items.push({ slot: 'cast', label: '模特定妆照', round: 1, multi: false, free: false, person: false });
+  }
+  for (const c of drawn) items.push({ slot: `skumodel:${c.pick}`, label: 'SKU 模特图', round: 1, multi: false, free: false, person: true });
+  for (const c of colors) items.push({ slot: `sku:${c.pick}`, label: 'SKU 图', round: 1, multi: false, free: !!layout.sku.specCard, person: layout.sku.people > 0 || !!layout.sku.specCard });
   const add = (ratio: 'square' | 'portrait', n: number, round: 1 | 2) => usedSlots(d, n).forEach((i, k) => {
     const s = d.slots[i];
     const kept = ratio === 'square' && !!s.shopService;
@@ -445,9 +612,10 @@ export function priceLines(items: ImageItem[], unit: number, multiUnit: number):
     if (line) { line.count++; line.credits += price; } else lines.push({ label, count: 1, unit: price, credits: price, note });
   };
   for (const it of items) {
-    if (it.free) add(it.label, 0, it.label === '店铺服务图（已存）' ? '店铺存好的，直接用' : '直接用你的静物图，不收费');
+    if (it.free) add(it.label, 0, it.label === '店铺服务图（已存）' ? '店铺存好的，直接用' : it.label === 'SKU 图' ? '按模板拼：换颜色、字和模特图，不收费' : '直接用你的静物图，不收费');
     else if (it.multi) add(`${it.label}（多色同框）`, multiUnit, '');
-    else add(it.label, unit, it.slot === 'cast' ? '后面有人的图都照它画，保证是同一个人' : it.slot.startsWith('product') ? '从衣服图提取' : '');
+    else add(it.label, unit, it.slot.startsWith('cast') ? (it.slot === 'cast' ? '后面有人的图都照它画，保证是同一个人' : '照素材里的模特，男女各画一张更像')
+      : it.slot.startsWith('product') ? '从衣服图提取' : it.slot.startsWith('skumodel') ? '素材里没有这个颜色的模特图，照定妆照里的模特穿上这个颜色' : '');
   }
   return lines;
 }
@@ -459,6 +627,15 @@ export const usableAsIs = (image: { kind: string; front: boolean; logo: boolean 
 /* ---------- the starting plan ---------- */
 
 /** The AI's material as the first plan: points ranked and grouped, images filled, colours assigned. */
+/** Mark a point the user must show (ticking it) and put it on an image now; unmarking leaves the images as they are. */
+export function markMust(d: Draft, id: string, must: boolean, layout: Layout): Draft {
+  const next: Draft = { ...d, points: d.points.map(p => p.id === id ? { ...p, must, on: must || p.on } : p) };
+  const p = next.points.find(x => x.id === id);
+  if (!must || !p) return next;
+  const used = usedSlots(next, next.counts.square);
+  if (shownOn(used.map(i => next.slots[i]), p)) return next;
+  return { ...next, slots: squeezeIn(next.slots, p, next.points, categoryById(next.category), layout, used) };
+}
 export function defaultDraft(m: MaterialsForPlan, layout: Layout, counts: Counts = DEFAULT_COUNTS): Draft {
   const category = categoryById(m.category);
   const colors = m.colors.map(c => ({ name: c.name, hex: c.hex, pick: c.pick }));

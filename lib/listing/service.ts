@@ -1,10 +1,10 @@
 /**
- * 电商主图 shop services: what a shop offers (free design, free samples, invoices…) is filled in
- * once per account and drawn on the service images. A service image is made from one of a few
- * service layouts, each learned from a top competitor's service image (logos and shop names wiped):
- * the model copies its layout, tone and finish and writes only the shop's own words. A shop keeps
- * one image per layout and tone and every product reuses it; only 服务-E shows the product itself
- * and is made per product.
+ * 电商主图 shop services: what a shop offers (free design, free samples, invoices…) is written once
+ * per account, and the service images are made from it. Each master (母版) has one service image in
+ * its own tone; masters of the same tone share one, so a shop has four. They are made together when
+ * the shop confirms its services, kept, and every product shows its master's one as the second image
+ * at no cost. Each is learned from a top competitor's service image (logos and shop names wiped): the
+ * model copies its layout, tone and finish and writes only the shop's own words.
  */
 
 /** One service the shop offers: a short title and a line under it. */
@@ -30,44 +30,55 @@ export const CRAFTS = ['刺绣', '高清烫画', '丝印', '数码转印', '反�
 export type Craft = (typeof CRAFTS)[number];
 export const CRAFT_NOTE: Record<Craft, string> = { 刺绣: '立体感强 走线均匀', 高清烫画: '色彩丰富 图案精细', 丝印: '色牢度高 性价比高', 数码转印: '渐变细腻 还原度高', 反光印: '夜间反光 醒目安全' };
 
-export type Tone = 'dark' | 'light';
-export const TONE_LABEL: Record<Tone, string> = { dark: '深色', light: '浅色' };
-export type ServiceCode = 'A' | 'B' | 'C' | 'D' | 'E';
-/** kind: what fills it — the shop's services, its crafts, or the two steps of ordering. */
-export type ServiceLayout = { code: ServiceCode; name: string; what: string; kind: 'items' | 'crafts' | 'steps'; slots: number; perProduct?: boolean; samples: Record<Tone, string> };
-export const SERVICE_LAYOUTS: ServiceLayout[] = [
-  { code: 'A', name: '先看样再决定', what: '一句大口号，下面 4 张权益卡', kind: 'items', slots: 4, samples: { dark: '27-5', light: '24-5' } },
-  { code: 'B', name: '服务保障', what: '工艺实拍做底，上面口号，下面 4 项保障', kind: 'items', slots: 4, samples: { dark: '31-5', light: '28-5' } },
-  { code: 'C', name: '品牌定制服务', what: '托举的手或团队实景，下面一排服务卡', kind: 'items', slots: 6, samples: { dark: '163-5', light: '56-5' } },
-  { code: 'D', name: '印绣工艺', what: '三种工艺的布面特写，各一句说明', kind: 'crafts', slots: 3, samples: { dark: '26-5', light: '13-4' } },
-  { code: 'E', name: '定制两步 + 模特', what: '提供 LOGO、选颜色两步，模特穿这一款', kind: 'steps', slots: 2, perProduct: true, samples: { dark: '30-2', light: '10-2' } },
+/** The masters (母版) the service images are made for, by id; their full definitions come with the masters. */
+export const MASTER_NAMES = { M1: '车展工牌', M2: '暗黑科技', M3: '上岗实拍', M4: '双人棚拍', M5: '产品静物' } as const;
+export type MasterId = keyof typeof MASTER_NAMES;
+
+/**
+ * The shop's service images. kind: what fills it — the shop's ticked services (in order) or its
+ * crafts. sample: the competitor image it is learned from (service-samples/<sample>.png).
+ */
+export type ServiceImageId = 'A-light' | 'A-dark' | 'D-warm' | 'B-light';
+export type ServiceImageDef = { id: ServiceImageId; name: string; what: string; kind: 'items' | 'crafts'; slots: number; sample: string; masters: MasterId[] };
+export const SERVICE_IMAGES: ServiceImageDef[] = [
+  { id: 'A-light', name: '先看样再决定 · 浅色', what: '一句大口号，下面一个框放 4 项服务', kind: 'items', slots: 4, sample: '24-5', masters: ['M1', 'M5'] },
+  { id: 'A-dark', name: '先看样再决定 · 深色', what: '一句大口号，下面 4 张权益卡', kind: 'items', slots: 4, sample: '27-5', masters: ['M2'] },
+  { id: 'D-warm', name: '印绣工艺 · 浅暖色', what: '三种印绣工艺的布面特写，各一句说明', kind: 'crafts', slots: 3, sample: '13-4', masters: ['M3'] },
+  { id: 'B-light', name: '服务保障 · 浅色', what: '一张工艺照片，下面 4 项服务', kind: 'items', slots: 4, sample: '28-5', masters: ['M4'] },
 ];
-export const serviceLayout = (code: ServiceCode) => SERVICE_LAYOUTS.find(l => l.code === code)!;
+export const serviceImageOf = (master: MasterId) => SERVICE_IMAGES.find(s => s.masters.includes(master))!;
 
-/** A service image the shop picked and keeps: the words drawn on it, to tell when it is out of date. */
-export type SavedService = { code: ServiceCode; tone: Tone; image: string; words: string[]; savedAt: string };
-export type ShopService = { items: ServiceItem[]; crafts: Craft[]; logo: string | null; saved: SavedService[] };
+/** One made service image: the picture (and its asset id on the server), the words drawn on it, and the earlier versions. */
+export type MadeService = { image: string; asset?: string; words: string[]; madeAt: string; history: { image: string; asset?: string; madeAt: string }[] };
+export type ShopService = { items: ServiceItem[]; crafts: Craft[]; logo: string | null; made: Partial<Record<ServiceImageId, MadeService>> };
 
-/** A new shop: nothing ticked; what the AI read in the materials comes ticked and marked. */
+/** A new shop: what the AI read in the products already uploaded comes ticked; nothing made yet. */
 export function defaultShop(fromMaterials: string[] = []): ShopService {
-  return { items: SERVICE_LIBRARY.map(x => ({ ...x, on: fromMaterials.includes(x.title), ai: fromMaterials.includes(x.title) })), crafts: [], logo: null, saved: [] };
+  return { items: SERVICE_LIBRARY.map(x => ({ ...x, on: fromMaterials.includes(x.title), ai: fromMaterials.includes(x.title) })), crafts: ['刺绣', '高清烫画', '数码转印'], logo: null, made: {} };
 }
 
-/** What a layout writes, in its slots' order: the first ticked services, the chosen crafts, or the two steps. */
-export function wordsFor(layout: ServiceLayout, shop: ShopService): string[] {
-  if (layout.kind === 'crafts') return shop.crafts.slice(0, layout.slots).map(c => `${c}｜${CRAFT_NOTE[c]}`);
-  if (layout.kind === 'steps') return ['1.提供品牌LOGO', '2.选择产品颜色'];
-  return shop.items.filter(x => x.on && x.title.trim()).slice(0, layout.slots).map(x => `${x.title}｜${x.note}`);
+/** What an image writes, in its slots' order: the first ticked services, or the chosen crafts. */
+export function wordsFor(def: ServiceImageDef, shop: ShopService): string[] {
+  if (def.kind === 'crafts') return shop.crafts.slice(0, def.slots).map(c => `${c}｜${CRAFT_NOTE[c]}`);
+  return shop.items.filter(x => x.on && x.title.trim()).slice(0, def.slots).map(x => `${x.title}｜${x.note}`);
 }
-/** Why a layout cannot be made yet, or null. */
-export function blockedOf(layout: ServiceLayout, shop: ShopService): string | null {
-  const n = wordsFor(layout, shop).length;
-  if (layout.kind === 'crafts') return n < layout.slots ? `要选 ${layout.slots} 种印绣工艺（现在 ${n} 种）` : null;
-  if (layout.kind === 'items') return n < layout.slots ? `要勾 ${layout.slots} 条服务（现在 ${n} 条）` : null;
+/** Why the images cannot be made yet, or null. */
+export function blockedOf(shop: ShopService): string | null {
+  const n = shop.items.filter(x => x.on && x.title.trim()).length;
+  if (n < 4) return `至少勾 4 条服务（现在 ${n} 条）`;
+  if (shop.crafts.length < 3) return `印绣工艺要选 3 种（现在 ${shop.crafts.length} 种）`;
   return null;
 }
-/** The words on a kept image that no longer match the shop's services: those blocks are redrawn. */
-export function staleOf(saved: SavedService, shop: ShopService): number[] {
-  const now = wordsFor(serviceLayout(saved.code), shop);
-  return saved.words.map((w, i) => w === now[i] ? -1 : i).filter(i => i >= 0);
+/** The blocks of a made image whose words no longer match the shop's services. */
+export function staleOf(id: ServiceImageId, shop: ShopService): number[] {
+  const made = shop.made[id], def = SERVICE_IMAGES.find(s => s.id === id)!;
+  if (!made) return [];
+  const now = wordsFor(def, shop);
+  return now.map((w, i) => w === made.words[i] ? -1 : i).filter(i => i >= 0);
+}
+/** What confirming does now: make the images never made, and redraw the changed words of the rest. */
+export function pendingOf(shop: ShopService) {
+  const fresh = SERVICE_IMAGES.filter(s => !shop.made[s.id]);
+  const stale = SERVICE_IMAGES.map(s => ({ def: s, blocks: staleOf(s.id, shop) })).filter(x => x.blocks.length);
+  return { fresh, stale, images: fresh.length + stale.length };
 }

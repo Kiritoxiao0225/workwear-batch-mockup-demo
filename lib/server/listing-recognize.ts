@@ -48,3 +48,29 @@ export function parseRecognized(content: string, expected: Expected[]): Element[
     return [{ id: zone ?? `x${i + 1}`, kind: zone ? e.kind : 'other', box, ...(e.text ? { text: e.text } : {}), ...(zone ? { zone } : { label: e.label || '模型自己加的' }) }];
   });
 }
+
+/** Where the model is on a photo, in fractions: the top of the head, the knees (below 1 when out of the frame), the left and right of the body. */
+export type Frame = { top: number; knee: number; left: number; right: number };
+
+const FRAME_SYSTEM = `你会收到一张服装模特照片。找出照片里的模特（几个人就把所有人当成一个整体），只输出 JSON。
+- top：头顶（含头发和帽子）离画面上沿的距离；knee：膝盖离画面上沿的距离；left、right：人身体（含手臂）最左、最右边离画面左沿的距离。
+- 都是占整张图高或宽的百分比。膝盖在画面外的，按身体比例推算，写大于 100 的数。`;
+
+/** A SKU image shows the material's model photo head to knees; the analysis model finds them. */
+export function frameRequest(input: { image: Buffer; model: string }) {
+  return { model: input.model, reasoning_effort: 'low', max_completion_tokens: 1000, response_format: { type: 'json_object' }, stream: false,
+    messages: [{ role: 'system', content: FRAME_SYSTEM }, { role: 'user', content: [
+      { type: 'text', text: '输出：{ "top": 0, "knee": 0, "left": 0, "right": 0 }' },
+      { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${input.image.toString('base64')}` } },
+    ] }] };
+}
+
+const frameSchema = z.object({ top: z.number().min(0).max(90), knee: z.number().max(250), left: z.number().min(0).max(100), right: z.number().min(0).max(100) });
+/** The frame, or null when it makes no sense (knees above the head, no width). */
+export function parseFrame(content: string): Frame | null {
+  let raw: unknown;
+  try { raw = JSON.parse(content); } catch { return null; }
+  const f = frameSchema.safeParse(raw);
+  if (!f.success || f.data.knee - f.data.top < 10 || f.data.right - f.data.left < 5) return null;
+  return { top: f.data.top / 100, knee: f.data.knee / 100, left: f.data.left / 100, right: f.data.right / 100 };
+}

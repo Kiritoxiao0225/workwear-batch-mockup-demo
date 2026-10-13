@@ -91,20 +91,22 @@ type ProjectRow = { id: string; name: string; layout: string; counts: unknown; s
 export type StoredPlan = {
   draft: SubmittedDraft; garment: string[]; scenes: Record<string, string>; sku: { tag: string; fabric: string };
   colors: { name: string; hex: string; sku: string }[]; direct: string[]; images: { label: string; assetId: string }[]; model: string; round: 1 | 2;
+  /** The material's own model photo of a colour, for its SKU image (colour label → photo label); the other colours' models are drawn. */
+  photos?: Record<string, string>;
 };
 
 export async function listProjects(tenant: string) {
   const rows = (await catalogDatabase().query(
     `SELECT p.id,p.name,p.layout,p.counts,p.status,p.error,p.updated_at,p.created_at,p.sources_cleared_at,COALESCE((p.plan->>'round')::int,0) AS round,
             (SELECT count(*)::int FROM listing_assets a WHERE a.project_id=p.id AND a.kind='source') AS images,
-            COALESCE((SELECT a.id FROM listing_assets a WHERE a.project_id=p.id AND a.slot='square:1' ORDER BY a.created_at DESC LIMIT 1),
+            COALESCE((SELECT a.id FROM listing_assets a WHERE a.project_id=p.id AND a.slot='square:1' AND (NOT a.candidate OR a.chosen_at IS NOT NULL) ORDER BY GREATEST(a.created_at, COALESCE(a.chosen_at, a.created_at)) DESC LIMIT 1),
                      (SELECT a.id FROM listing_assets a WHERE a.project_id=p.id AND a.kind='source' ORDER BY a.rel_path LIMIT 1)) AS cover,
             (SELECT count(DISTINCT j.slot)::int FROM listing_jobs j WHERE j.project_id=p.id AND j.slot IS NOT NULL) AS slots,
             (SELECT count(DISTINCT a.slot)::int FROM listing_assets a WHERE a.project_id=p.id AND a.slot IS NOT NULL) AS made,
             (SELECT count(*)::int FROM (SELECT DISTINCT ON (j.slot) j.status, j.slot FROM listing_jobs j WHERE j.project_id=p.id AND j.slot IS NOT NULL
                ORDER BY j.slot, j.created_at DESC) latest
                WHERE latest.status IN ('failed','unknown') AND NOT EXISTS (SELECT 1 FROM listing_assets a WHERE a.project_id=p.id AND a.slot=latest.slot)) AS broken
-       FROM listing_projects p WHERE p.tenant_id=$1 AND p.deleted_at IS NULL ORDER BY p.created_at DESC LIMIT 200`, [tenant])).rows;
+       FROM listing_projects p WHERE p.tenant_id=$1 AND p.deleted_at IS NULL AND p.kind='product' ORDER BY p.created_at DESC LIMIT 200`, [tenant])).rows;
   return rows.map(r => ({ ...r, cover: r.cover ? assetUrl(r.cover) : null }));
 }
 
@@ -119,8 +121,8 @@ export async function projectDetail(tenant: string, id: string) {
   return { ...p, plan: p.plan?.draft ?? null, round: p.plan?.round ?? 0, images: sources.length, sources };
 }
 
-/** A main image's slot: `square:2`, `long:1`, or a cover of an extra colour set, `square:1+M23`. */
-export const MAIN_SLOT = /^(square|portrait|long):\d(\+\w+)?$/;
+/** A main image's slot: `square:2`, `long:1`, or a cover of an extra colour set, `square:1+M23`; on the shop's row, `service:A-light`. */
+export const MAIN_SLOT = /^((square|portrait|long):\d(\+\w+)?|service:[A-Za-z-]{1,12})$/;
 
 /**
  * Give back the storage of files this tenant no longer uses: a file still shown by another of its
@@ -148,7 +150,7 @@ export async function deleteProject(tenant: string, id: string) {
     await c.query('SELECT id FROM tenants WHERE id=$1 FOR UPDATE', [tenant]);
     const running = await c.query(`SELECT 1 FROM listing_jobs WHERE project_id=$1 AND tenant_id=$2 AND status IN ('queued','running') LIMIT 1`, [id, tenant]);
     if (running.rowCount) throw new CatalogHttpError(409, '正在分析或出图，等完成后再删除');
-    const result = await c.query('UPDATE listing_projects SET deleted_at=now() WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL RETURNING id', [id, tenant]);
+    const result = await c.query(`UPDATE listing_projects SET deleted_at=now() WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL AND kind='product' RETURNING id`, [id, tenant]);
     if (!result.rowCount) throw new CatalogHttpError(404, '商品不存在');
     const files = (await c.query('SELECT file_id FROM listing_assets WHERE project_id=$1', [id])).rows.map(r => r.file_id as string);
     return { ok: true, freedBytes: await releaseFiles(c, tenant, files) };
@@ -174,8 +176,11 @@ export async function clearOldSources(limit = 20) {
   });
 }
 
-/** A generated image: one row per version, the newest per slot is the current one. */
-export async function storeOutput(tenant: string, projectId: string, slot: string, jobId: string, bytes: Buffer) {
+/**
+ * A generated image: one row per version, the newest per slot is the current one. A `candidate`
+ * (from 「点图修改」) is only a version until the user adopts it.
+ */
+export async function storeOutput(tenant: string, projectId: string, slot: string, jobId: string, bytes: Buffer, candidate = false) {
   const meta = await sharp(bytes, { failOn: 'error' }).metadata();
   if (!meta.width || !meta.height) throw new Error('出图结果不是有效图片');
   const kind = slot.startsWith('product:') ? 'product' : 'output', name = `${slot.replace(':', '-')}.${meta.format ?? 'png'}`;
@@ -186,8 +191,8 @@ export async function storeOutput(tenant: string, projectId: string, slot: strin
     // Results are already paid for: they are kept even when the storage quota is exceeded.
     if (!owned.rowCount) await c.query('UPDATE tenant_usage SET bytes_used=bytes_used+$2 WHERE tenant_id=$1', [tenant, bytes.length]);
     asset = randomUUID();
-    await c.query(`INSERT INTO listing_assets(id,tenant_id,project_id,file_id,kind,name,rel_path,width,height,slot,job_id)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [asset, tenant, projectId, fileId, kind, name, `${slot}#${jobId}`, meta.width, meta.height, slot, jobId]);
+    await c.query(`INSERT INTO listing_assets(id,tenant_id,project_id,file_id,kind,name,rel_path,width,height,slot,job_id,candidate)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, [asset, tenant, projectId, fileId, kind, name, `${slot}#${jobId}`, meta.width, meta.height, slot, jobId, candidate]);
     await registerFileRef(fileId, tenant, 'listing-images', name, c);
   });
   return asset;
@@ -197,15 +202,41 @@ export async function storeOutput(tenant: string, projectId: string, slot: strin
 export async function latestOutputs(projectId: string) {
   const rows = (await catalogDatabase().query(
     `SELECT DISTINCT ON (slot) id,slot,file_id,name,width,height,created_at FROM listing_assets
-      WHERE project_id=$1 AND slot IS NOT NULL ORDER BY slot, GREATEST(created_at, COALESCE(chosen_at, created_at)) DESC`, [projectId])).rows as { id: string; slot: string; file_id: string; name: string; width: number; height: number }[];
+      WHERE project_id=$1 AND slot IS NOT NULL AND (NOT candidate OR chosen_at IS NOT NULL) ORDER BY slot, GREATEST(created_at, COALESCE(chosen_at, created_at)) DESC`, [projectId])).rows as { id: string; slot: string; file_id: string; name: string; width: number; height: number }[];
   return new Map(rows.map(row => [row.slot, row]));
 }
 
 /** Go back to an earlier version of a main image; downloads and the page use it from now on. */
 export async function chooseVersion(tenant: string, projectId: string, slot: string, assetId: string) {
   z.uuid().parse(assetId);
-  if (!MAIN_SLOT.test(slot)) throw new CatalogHttpError(400, '只有主图和海报能换版本');
+  if (!MAIN_SLOT.test(slot)) throw new CatalogHttpError(400, '只有主图和服务图能换版本');
   const updated = await catalogDatabase().query(`UPDATE listing_assets SET chosen_at=clock_timestamp() WHERE id=$1 AND tenant_id=$2 AND project_id=$3 AND slot=$4 RETURNING id`, [assetId, tenant, projectId, slot]);
   if (!updated.rowCount) throw new CatalogHttpError(404, '没有这个版本');
   return { ok: true };
+}
+
+/**
+ * An image the user adds to 「点图修改」 to show what they want (a background, a pose). Kept with the
+ * product (kind 'ref') so the job can read it; it is never shown as one of the product's images.
+ */
+export async function addReference(tenant: string, projectId: string, bytes: Buffer, name: string) {
+  z.uuid().parse(projectId);
+  if (bytes.length > MAX_SOURCE_BYTES) throw new CatalogHttpError(413, '单张图片不能超过 25MB');
+  let png: Buffer, width: number, height: number;
+  try {
+    const out = await sharp(bytes, { failOn: 'error', limitInputPixels: 60_000_000 }).rotate().resize(1536, 1536, { fit: 'inside', withoutEnlargement: true }).png().toBuffer({ resolveWithObject: true });
+    png = out.data; width = out.info.width; height = out.info.height;
+  } catch { throw new CatalogHttpError(400, `不是能读取的图片：${name}`); }
+  let asset = '';
+  await saveCatalogFile(png, `参考-${name.slice(0, 100)}.png`, 'production', async (c, fileId) => {
+    await c.query('SELECT id FROM tenants WHERE id=$1 AND NOT disabled FOR UPDATE', [tenant]);
+    if (!(await c.query('SELECT 1 FROM listing_projects WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL', [projectId, tenant])).rowCount) throw new CatalogHttpError(404, '商品不存在');
+    const owned = await c.query('SELECT 1 FROM tenant_file_refs WHERE tenant_id=$1 AND file_id=$2 LIMIT 1', [tenant, fileId]);
+    if (!owned.rowCount) await c.query('UPDATE tenant_usage SET bytes_used=bytes_used+$2 WHERE tenant_id=$1', [tenant, png.length]);
+    asset = randomUUID();
+    await c.query(`INSERT INTO listing_assets(id,tenant_id,project_id,file_id,kind,name,rel_path,width,height) VALUES($1,$2,$3,$4,'ref',$5,$6,$7,$8)`,
+      [asset, tenant, projectId, fileId, name.slice(0, 200), `参考/${asset}`, width, height]);
+    await registerFileRef(fileId, tenant, 'listing-images', name.slice(0, 200), c);
+  });
+  return { asset };
 }

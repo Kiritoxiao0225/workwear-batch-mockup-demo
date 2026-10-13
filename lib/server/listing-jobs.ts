@@ -2,7 +2,7 @@
  * 电商主图 background work. Same lifecycle as the garment AI queue: credits are held before a job
  * exists, a provider call is recorded before it is sent, and a sent call is never repeated.
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { posix } from 'node:path';
 import { catalogDatabase, catalogTransaction } from './catalog-database';
 import { CatalogHttpError } from './catalog-auth';
@@ -10,11 +10,13 @@ import { readCatalogFile } from './catalog-files';
 import { currentPrices, holdCredits, microToCents, priceOf, releaseHold, settleHold } from './credits';
 import { draftImages, usableAsIs, usedSlots } from '../listing/draft';
 import { draftSchema, type SubmittedDraft } from '../listing/draft-schema';
+import { skuPhotos } from '../listing/sku-card';
+import { skuPair } from '../listing/templates';
 import { claimLayout, executeLayout, renewLayoutLease, resolveLayout } from './listing-layouts';
-import { chooseMaterials, organizeRequest, parseOrganized, type Organized } from './listing-organize';
+import { chooseMaterials, parseRead, parseSorted, readRequest, sortRequest, worthReading, type Organized, type SortedImage } from './listing-organize';
 import { buildPlan, writeRequest } from './listing-write';
-import { planViews, type PlanSource } from './listing-plan-views';
-import { assertListingProviderConfigured, callPlanModel, LISTING_PLAN_MODEL, type PlanCall } from './listing-provider';
+import { planViews, type PlanSource, type PlanView } from './listing-plan-views';
+import { assertListingProviderConfigured, callPlanModel, LISTING_PLAN_MODEL, listingWorkerConcurrency, type PlanCall } from './listing-provider';
 import { addSourceImage, clearOldSources, sourceImages } from './listing-store';
 import sharp from 'sharp';
 import { executeImage, failBlocked, finishRun, holdRun, insertJobs, planJobs, runHold, type JobInput, type Upscale } from './listing-generation';
@@ -72,66 +74,127 @@ async function planSources(projectId: string): Promise<{ sources: PlanSource[]; 
   return { sources, map: rows.map(row => ({ label: row.label, assetId: row.id })) };
 }
 
+/** Images sorted per call: short answers that come back well within the time a connection stays open. */
+export const SORT_BATCH = 40;
+/** The views in folder order, cut into batches of about SORT_BATCH images. */
+export function sortBatches(views: PlanView[], max = SORT_BATCH): PlanView[][] {
+  const batches: PlanView[][] = [];
+  for (const v of views) {
+    const last = batches.at(-1);
+    if (last && last.reduce((n, x) => n + x.ids.length, 0) + v.ids.length <= max) last.push(v); else batches.push([v]);
+  }
+  return batches;
+}
+/** What a part of the analysis was asked, so a kept answer is used again only for the same question. */
+const partKey = (request: { model: string; messages: { content: unknown }[] }) =>
+  createHash('sha256').update(JSON.stringify([request.model, request.messages[0].content, request.messages[1].content])).digest('hex').slice(0, 40);
+const idsOf = (views: PlanView[]) => views.flatMap(v => v.ids);
+
+/**
+ * Step one, in parts (10-13): the images are sorted a batch at a time (three at once), then the
+ * whole product is read from the images worth reading. Every part is kept as it comes back
+ * (listing_plan_parts), so after a cut connection 「继续整理」 asks only for what is missing, and
+ * the product is charged once, when the whole analysis is done.
+ */
 export async function executePlan(job: JobRow, provider: Provider = (request, hooks) => callPlanModel(request, hooks)) {
-  const attemptId = randomUUID(), model = LISTING_PLAN_MODEL();
-  let submitted = false;
+  const model = LISTING_PLAN_MODEL();
+  const attempts: { id: string; status: 'succeeded' | 'failed' | 'unknown' }[] = [];
   const fail = async (message: string, status: 'failed' | 'unknown') => {
     await db().query(`UPDATE listing_jobs SET status=$2,error=$3,lease_until=NULL,updated_at=now() WHERE id=$1`, [job.id, status, message.slice(0, 500)]);
     await db().query(`UPDATE listing_projects SET status='failed',error=$2,updated_at=now() WHERE id=$1 AND status='planning'`, [job.project_id, message.slice(0, 500)]);
   };
+  const kept = new Map<string, unknown>();
+  let lastModel = '';
+  /** One part: the kept answer when there is one, else a call whose answer is kept once it reads. */
+  const ask = async <T,>(request: { model: string; messages: { content: unknown }[] }, read: (content: string) => T): Promise<T> => {
+    const key = partKey(request);
+    if (kept.has(key)) return kept.get(key) as T;
+    const attemptId = randomUUID();
+    let submitted = false;
+    try {
+      const call = await provider(request, {
+        beforeSubmit: async () => {
+          await db().query(`INSERT INTO listing_attempts(id,job_id,provider,model,status) VALUES($1,$2,'evolink',$3,'submitted')`, [attemptId, job.id, model]);
+          submitted = true;
+        },
+        receipt: async id => { await db().query('UPDATE listing_attempts SET provider_request_id=$2 WHERE id=$1', [attemptId, id]); },
+      });
+      await db().query(`UPDATE listing_attempts SET status='succeeded',receipt=$2,finished_at=now() WHERE id=$1`, [attemptId, { model: call.model, usage: call.usage, durationMs: call.durationMs }]);
+      attempts.push({ id: attemptId, status: 'succeeded' });
+      lastModel = call.model || lastModel;
+      const result = read(call.content);
+      await db().query('INSERT INTO listing_plan_parts(project_id,key,result) VALUES($1,$2,$3::text::jsonb) ON CONFLICT DO NOTHING', [job.project_id, key, JSON.stringify(result)]);
+      kept.set(key, result);
+      return result;
+    } catch (error) {
+      if (submitted && !attempts.some(a => a.id === attemptId)) {
+        // Refused outright (4xx): nothing was produced or charged. Otherwise it may have been.
+        const status = (error as { definite?: boolean }).definite ? 'failed' : 'unknown';
+        await db().query(`UPDATE listing_attempts SET status=$2,finished_at=now() WHERE id=$1`, [attemptId, status]);
+        attempts.push({ id: attemptId, status });
+      }
+      throw error;
+    }
+  };
   try {
     const hold = (await db().query('SELECT state FROM credit_holds WHERE id=$1 AND tenant_id=$2', [holdId(job.id), job.tenant_id])).rows[0];
     if (hold?.state !== 'held') throw new Error('缺少有效积分冻结');
+    for (const r of (await db().query('SELECT key,result FROM listing_plan_parts WHERE project_id=$1', [job.project_id])).rows) kept.set(r.key, r.result);
     const project = (await db().query('SELECT name FROM listing_projects WHERE id=$1', [job.project_id])).rows[0];
     const { sources, map } = await planSources(job.project_id);
     const { views, duplicates } = await planViews(sources);
-    const request = organizeRequest({ views, model, product: project.name });
-    const call = await provider(request, {
-      beforeSubmit: async () => {
-        await db().query(`INSERT INTO listing_attempts(id,job_id,provider,model,status) VALUES($1,$2,'evolink',$3,'submitted')`, [attemptId, job.id, model]);
-        submitted = true;
-      },
-      receipt: async id => { await db().query('UPDATE listing_attempts SET provider_request_id=$2 WHERE id=$1', [attemptId, id]); },
-    });
-    // The call succeeded and is paid for, whatever the content turns out to be.
-    await db().query(`UPDATE listing_attempts SET status='succeeded',receipt=$2,finished_at=now() WHERE id=$1`,
-      [attemptId, { model: call.model, usage: call.usage, durationMs: call.durationMs }]);
-    await settleHold(holdId(job.id), job.tenant_id, [{ action: 'listing_plan', billable: true, certain: true, attemptId }]);
-    const kept = sources.filter(s => !duplicates.has(s.id));
-    let sorted: Organized;
-    try { sorted = parseOrganized(call.content, kept.map(s => s.id)); } catch (error) {
-      await fail('整理结果不完整：' + (error instanceof Error ? error.message : '格式错误') + '。本次已扣费，可以重新分析', 'failed');
-      return;
+    const batches = sortBatches(views);
+    // Three batches at a time; every batch is tried, so one cut connection loses only its own.
+    const sorted: SortedImage[][] = new Array(batches.length);
+    let next = 0, firstError: unknown = null;
+    await Promise.all(Array.from({ length: Math.min(3, batches.length) }, async () => {
+      while (next < batches.length) {
+        const k = next++, b = batches[k];
+        try { sorted[k] = await ask(sortRequest({ views: b, model, product: project.name }), content => parseSorted(content, idsOf(b))); } catch (error) { firstError ??= error; }
+      }
+    }));
+    if (firstError) throw Object.assign(firstError as Error, { done: sorted.filter(Boolean).length, total: batches.length + 1 });
+    const images = sorted.flat(), readable = new Set(worthReading(images).map(i => i.id));
+    const toRead = sources.filter(s => !duplicates.has(s.id) && readable.has(s.id));
+    const readViews = (await planViews(toRead.length ? toRead : sources.filter(s => !duplicates.has(s.id)))).views;
+    let organized: Organized;
+    try { organized = await ask(readRequest({ views: readViews, model, product: project.name, images }), content => parseRead(content, images)); } catch (error) {
+      throw Object.assign(error as Error, { done: batches.length, total: batches.length + 1 });
     }
-    const materials: Materials = { category: sorted.category, categoryWhy: sorted.categoryWhy, checks: sorted.checks, titles: sorted.titles,
-      sorted, chosen: chooseMaterials(sorted, kept), duplicates: [...duplicates], model: call.model, images: map };
+    const certain = attempts.find(a => a.status === 'succeeded');
+    if (certain) await settleHold(holdId(job.id), job.tenant_id, [{ action: 'listing_plan', billable: true, certain: true, attemptId: certain.id }]);
+    else await releaseHold(holdId(job.id), job.tenant_id, '整理全部用了之前存下的结果').catch(() => {});
+    const { look, ...rest } = organized;
+    const keptSources = sources.filter(s => !duplicates.has(s.id));
+    const materials: Materials = { category: organized.category, categoryWhy: organized.categoryWhy, checks: organized.checks, titles: organized.titles, themes: organized.themes, look,
+      sorted: rest, chosen: chooseMaterials(organized, keptSources), duplicates: [...duplicates], model: lastModel || model, images: map };
     await db().query(`UPDATE listing_projects SET status='materials',materials=$2,plan=NULL,error=NULL,updated_at=now() WHERE id=$1`, [job.project_id, materials]);
     await db().query(`UPDATE listing_jobs SET status='succeeded',lease_until=NULL,updated_at=now() WHERE id=$1`, [job.id]);
   } catch (error) {
-    const message = error instanceof Error ? error.message : '分析失败';
-    const settled = submitted && (await db().query('SELECT status FROM listing_attempts WHERE id=$1', [attemptId])).rows[0]?.status === 'succeeded';
-    if (submitted && !settled && (error as { definite?: boolean }).definite) {
-      // The provider refused the request outright (4xx): nothing was produced or charged.
-      await db().query(`UPDATE listing_attempts SET status='failed',finished_at=now() WHERE id=$1`, [attemptId]);
+    const raw = error instanceof Error ? error.message : '分析失败', where = error as { done?: number; total?: number; definite?: boolean };
+    const progress = kept.size;
+    if (progress > 0) {
+      // Part of the analysis is kept: nothing is charged now; 「继续整理」 does the rest and is charged once, when done.
+      await releaseHold(holdId(job.id), job.tenant_id, '整理到一半中断，已存进度，继续整理做完时再计费').catch(() => {});
+      await fail(`整理到一半中断了（${raw}）：已完成 ${where.done ?? progress}/${where.total ?? '?'} 段，进度已保存。点「继续整理」只做剩下的，这次不扣费`, 'failed');
+    } else if (attempts.some(a => a.status === 'unknown')) {
+      // A request that reached the provider may have been charged; it is never sent again by itself.
+      await settleHold(holdId(job.id), job.tenant_id, attempts.map(a => ({ action: 'listing_plan' as const, billable: a.status !== 'failed', certain: false, attemptId: a.id }))).catch(() => {});
+      await fail(`${raw}。可能已产生费用，由管理员核对`, 'unknown');
+    } else if (attempts.length) {
       await releaseHold(holdId(job.id), job.tenant_id, '分析接口拒绝').catch(() => {});
-      await fail(`${message}（接口拒绝了这次请求）。未扣费，可以重新分析`, 'failed');
-    } else if (submitted) {
-      // A request that reached the provider may have been charged; it is never sent again.
-      await db().query(`UPDATE listing_attempts SET status=CASE WHEN status='succeeded' THEN status ELSE 'unknown' END,finished_at=now() WHERE id=$1`, [attemptId]);
-      const certain = (await db().query('SELECT status FROM listing_attempts WHERE id=$1', [attemptId])).rows[0]?.status === 'succeeded';
-      await settleHold(holdId(job.id), job.tenant_id, [{ action: 'listing_plan', billable: true, certain, attemptId }]).catch(() => {});
-      await fail(`${message}。可能已产生费用，由管理员核对`, 'unknown');
+      await fail(`${raw}（接口拒绝了这次请求）。未扣费，可以重新分析`, 'failed');
     } else {
       await releaseHold(holdId(job.id), job.tenant_id, '未提交模型').catch(() => {});
-      await fail(`${message}。未扣费，可以重新分析`, 'failed');
+      await fail(`${raw}。未扣费，可以重新分析`, 'failed');
     }
   }
 }
 
 /** The sorted material of a product and the program's picks; `draft`: the plan the user started generating from. */
 export type Materials = {
-  category: string; categoryWhy: string; checks: Organized['checks']; titles: Organized['titles'];
-  sorted: Organized; chosen: ReturnType<typeof chooseMaterials>; duplicates: [string, string][]; model: string; images: { label: string; assetId: string }[]; draft?: SubmittedDraft & { runId: string };
+  category: string; categoryWhy: string; checks: Organized['checks']; titles: Organized['titles']; themes?: Organized['themes']; look?: Organized['look'];
+  sorted: Omit<Organized, 'look'>; chosen: ReturnType<typeof chooseMaterials>; duplicates: [string, string][]; model: string; images: { label: string; assetId: string }[]; draft?: SubmittedDraft & { runId: string };
 };
 
 /**
@@ -177,7 +240,8 @@ export async function submitDraft(tenant: Tenant, user: string, projectId: strin
     const sorted = new Map(m.sorted.images.map(i => [i.id, i]));
     const direct = new Set(draft.colors.filter(x => usableAsIs(sorted.get(x.pick!))).map(x => x.pick!));
     // Round one is held now; 「出竖版」 holds round two.
-    const runId = await holdRun(c, tenant, projectId, draftImages(draft, layout, direct).filter(i => i.round === 1), prices);
+    const photos = new Set(Object.keys(skuPhotos(draft, m.sorted.images, skuPair(layout))));
+    const runId = await holdRun(c, tenant, projectId, draftImages(draft, layout, direct, photos).filter(i => i.round === 1), prices);
     await c.query(`UPDATE listing_projects SET status='writing',layout=$2,counts=$3,materials=materials || $4::jsonb,error=NULL,updated_at=now() WHERE id=$1`,
       [projectId, draft.layout, draft.counts, { draft: { ...draft, runId } }]);
     await c.query(`INSERT INTO listing_jobs(id,tenant_id,project_id,created_by,step) VALUES($1,$2,$3,$4,'write')`, [randomUUID(), tenant.id, projectId, user]);
@@ -198,7 +262,7 @@ export async function addExtraImage(tenant: string, projectId: string, bytes: Bu
     if (known) return { label: known.label, url: added.url };
     const label = `X${m.images.filter(i => i.label.startsWith('X')).length + 1}`;
     m.images.push({ label, assetId: added.id });
-    m.sorted.images.push({ id: label, kind: '颜色款图', color: '', front: true, detail: '', text: false, logo: false, same: '' });
+    m.sorted.images.push({ id: label, kind: '颜色款图', color: '', front: true, detail: '', text: false, logo: false, same: '', person: '', face: false });
     await c.query(`UPDATE listing_projects SET materials=$2,updated_at=now() WHERE id=$1`, [projectId, m]);
     return { label, url: added.url };
   });
@@ -248,7 +312,7 @@ export async function executeWrite(job: JobRow, provider: Provider = (request, h
     });
     await db().query(`UPDATE listing_attempts SET status='succeeded',receipt=$2,finished_at=now() WHERE id=$1`, [attemptId, { model: call.model, usage: call.usage, durationMs: call.durationMs }]);
     const sorted = new Map(m.sorted.images.map(i => [i.id, i]));
-    const stored = buildPlan(call.content, { draft, images: m.images, direct: draft.colors.filter(c => usableAsIs(sorted.get(c.pick!))).map(c => c.pick!), model: call.model });
+    const stored = buildPlan(call.content, { draft, images: m.images, direct: draft.colors.filter(c => usableAsIs(sorted.get(c.pick!))).map(c => c.pick!), photos: skuPhotos(draft, m.sorted.images, skuPair(layout)), model: call.model });
     const jobs = planJobs(stored, layout, 1);
     await catalogTransaction(async c => {
       const hold = (await c.query('SELECT state FROM credit_holds WHERE id=$1 AND tenant_id=$2 FOR UPDATE', [runHold(draft.runId), job.tenant_id])).rows[0];
@@ -267,11 +331,24 @@ export async function executeWrite(job: JobRow, provider: Provider = (request, h
 }
 
 /**
- * Runs up to `LISTING_WORKER_CONCURRENCY` jobs at once (images mostly wait on the provider). An
+ * Runs up to `LISTING_WORKER_CONCURRENCY` jobs at once (images mostly wait on the provider; 4 on
+ * the Codex relay, which rate-limits more). An
  * image job starts only when the images it builds on exist; if one of them failed, it is
  * skipped and costs nothing.
  */
-export async function startListingWorker({ canAccept = () => true, concurrency = Number(process.env.LISTING_WORKER_CONCURRENCY || 6), generate, upscale, recognize, learn }: { canAccept?: () => boolean; concurrency?: number; generate?: Parameters<typeof executeImage>[1]; upscale?: Upscale; recognize?: Parameters<typeof executeImage>[3]; learn?: Parameters<typeof executeLayout>[1] } = {}) {
+/** How long one round of the worker loop may take before it is left behind; a round is normally well under a second. */
+const ROUND_LIMIT_MS = 120_000;
+/**
+ * Run one round of the worker loop, waiting at most `limitMs`: a round that hangs (a call that never
+ * answers) is left behind and `onStuck` says so, so the loop is not stopped for good by it.
+ */
+export async function roundWithin(round: () => Promise<void>, limitMs: number, onStuck: () => void) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const stuck = new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(true), limitMs); });
+  try { if (await Promise.race([round().then(() => false), stuck])) onStuck(); } finally { clearTimeout(timer); }
+}
+
+export async function startListingWorker({ canAccept = () => true, concurrency = listingWorkerConcurrency(), generate, upscale, recognize, learn }: { canAccept?: () => boolean; concurrency?: number; generate?: Parameters<typeof executeImage>[1]; upscale?: Upscale; recognize?: Parameters<typeof executeImage>[3]; learn?: Parameters<typeof executeLayout>[1] } = {}) {
   let closed = false, ticking = false;
   const running = new Set<Promise<void>>(), owner = randomUUID();
   const heartbeat = () => db().query('INSERT INTO listing_workers(id) VALUES($1) ON CONFLICT(id) DO UPDATE SET heartbeat_at=now()', [owner]);
@@ -288,9 +365,11 @@ export async function startListingWorker({ canAccept = () => true, concurrency =
       }
       if (j.step !== 'plan') { await finishRun(j.run_id, j.tenant_id, j.project_id); continue; }
       const attempts = (await db().query('SELECT id,status FROM listing_attempts WHERE job_id=$1', [j.id])).rows;
-      if (attempts.length) await settleHold(holdId(j.id), j.tenant_id, attempts.map(a => ({ action: 'listing_plan' as const, billable: true, certain: a.status === 'succeeded', attemptId: a.id }))).catch(() => {});
+      const progress = (await db().query('SELECT 1 FROM listing_plan_parts WHERE project_id=$1 LIMIT 1', [j.project_id])).rowCount;
+      if (progress) await releaseHold(holdId(j.id), j.tenant_id, '后台中断，已存进度，继续整理做完时再计费').catch(() => {});
+      else if (attempts.length) await settleHold(holdId(j.id), j.tenant_id, attempts.map(a => ({ action: 'listing_plan' as const, billable: true, certain: a.status === 'succeeded', attemptId: a.id }))).catch(() => {});
       else await releaseHold(holdId(j.id), j.tenant_id, '后台在提交前中断').catch(() => {});
-      await db().query(`UPDATE listing_projects SET status='failed',error='后台中断，请重新分析',updated_at=now() WHERE id=$1 AND status='planning'`, [j.project_id]);
+      await db().query(`UPDATE listing_projects SET status='failed',error=$2,updated_at=now() WHERE id=$1 AND status='planning'`, [j.project_id, progress ? '整理到一半后台中断了，进度已保存。点「继续整理」只做剩下的，这次不扣费' : '后台中断，请重新分析']);
     }
   };
   type Claimed = { id: string; tenant_id: string; project_id: string; step: string; run_id: string; slot: string; input: JobInput; depends: string[] };
@@ -321,30 +400,40 @@ export async function startListingWorker({ canAccept = () => true, concurrency =
     running.add(task);
   };
   let clearedAt = 0;
+  let rounds = 0;
   const tick = async () => {
     if (closed || ticking || !canAccept()) return;
     ticking = true;
+    // A round left behind as stuck takes no more jobs; one it already claimed still runs.
+    const round = ++rounds, live = () => !closed && round === rounds;
+    let stage = '收回中断的任务';
     try {
-      await sweep();
-      // Old products' source images: checked hourly; an advisory lock keeps the workers apart.
-      if (Date.now() - clearedAt > 3600_000) { clearedAt = Date.now(); await clearOldSources().catch(error => console.error('[listing-worker] clear', error instanceof Error ? error.message : 'error')); }
-      while (!closed && running.size < concurrency) {
-        const next = await claim();
-        if (!next) break;
-        if ('blocked' in next && next.blocked) { await failBlocked(next.blocked, next.reason!); continue; }
-        if ('job' in next && next.job) run(next.job);
-      }
-      // A layout to learn: one call to read the references, then three sample images.
-      if (!closed && running.size < concurrency) {
-        const layout = await claimLayout(owner);
-        if (layout) {
-          const beat = setInterval(() => { void renewLayoutLease(layout.id, owner).catch(() => {}); }, 15000);
-          const task = executeLayout(layout, learn).catch(error => console.error('[listing-worker] layout', error instanceof Error ? error.message : 'error'))
-            .finally(() => { clearInterval(beat); running.delete(task); });
-          running.add(task);
-        }
-      }
-    } catch (error) { console.error('[listing-worker]', error instanceof Error ? error.name : 'error'); } finally { ticking = false; }
+      await roundWithin(async () => {
+        try {
+          await sweep();
+          // Old products' source images: checked hourly; an advisory lock keeps the workers apart.
+          if (Date.now() - clearedAt > 3600_000) { clearedAt = Date.now(); stage = '清理旧素材'; await clearOldSources().catch(error => console.error('[listing-worker] clear', error instanceof Error ? error.message : 'error')); }
+          while (live() && running.size < concurrency) {
+            stage = '领任务';
+            const next = await claim();
+            if (!next) break;
+            if ('blocked' in next && next.blocked) { stage = '标记前一步没做出来'; await failBlocked(next.blocked, next.reason!); continue; }
+            if ('job' in next && next.job) run(next.job);
+          }
+          // A layout to learn: one call to read the references, then three sample images.
+          if (live() && running.size < concurrency) {
+            stage = '领版式学习';
+            const layout = await claimLayout(owner);
+            if (layout) {
+              const beat = setInterval(() => { void renewLayoutLease(layout.id, owner).catch(() => {}); }, 15000);
+              const task = executeLayout(layout, learn).catch(error => console.error('[listing-worker] layout', error instanceof Error ? error.message : 'error'))
+                .finally(() => { clearInterval(beat); running.delete(task); });
+              running.add(task);
+            }
+          }
+        } catch (error) { console.error('[listing-worker]', error instanceof Error ? error.name : 'error'); }
+      }, ROUND_LIMIT_MS, () => console.error(`[listing-worker] 这一轮卡在「${stage}」超过 ${ROUND_LIMIT_MS / 1000} 秒，先放下，下一轮照常领任务`));
+    } finally { ticking = false; }
   };
   const timer = setInterval(() => void tick(), 2000);
   void tick();

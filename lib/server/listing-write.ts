@@ -17,7 +17,7 @@ const SYSTEM = `你是淘宝服装类目的资深电商视觉策划。用户已�
 
 规则：
 1. garment（衣服结构）逐条写到生图模型能照做的程度：领型、门襟与拉链、分割线、口袋（数量、位置、开口方式）、袖口、下摆、衣长版型、面料质感。以衣服图和结构参考图为准，看不清的不要猜。它会原样写进每一张图的提示词，用来锁死衣服不变。生图时看不到这些素材图，所以不要写图片编号（如“参照 M2”），把形状直接写出来。
-2. scene（场景）：一两句话，只写版式和格子没定的东西——背景是什么地方、光线、人物大致姿态（没人的图写衣服怎么摆、台面什么样）。团体工作服的场景用办公室、写字楼大堂、工厂、4S 店、物业前台这类工作场所。不要写字、颜色名、卡片里的内容和图片编号；不要再写一遍格子里的演示。
+2. scene（场景）：一两句话，只写版式和格子没定的东西——光线、人物大致姿态、背景的细节（没人的图写衣服怎么摆、台面什么样）。背景的类型和色调必须守住下面给的「母版背景」：母版是棚拍或纯色底的，就写棚拍或纯色底，不要改成户外或街景。不要写字、颜色名、卡片里的内容和图片编号；不要再写一遍格子里的演示。首图的地点和天气已经由用户定了，首图只写光线和构图。
 3. 3:4 和同一序号的 1:1 讲同一件事，场景可以一样，构图按竖版；2:3 长图是手淘推荐流的竖版长图，画面干净、人物完整。
 4. SKU 图：tag 写颜色名旁的短标签（如“男女同款”），fabric 写面料小图下方的小字（不超过 6 个字），都只能照抄素材里的说法，没有就留空。
 输出：
@@ -33,15 +33,17 @@ export function sceneKeys(draft: SubmittedDraft, layout: Layout) {
     const act = s.act ? proofById(s.act)?.recipe : '';
     return `${TASK_LABEL[s.task as keyof typeof TASK_LABEL]}；${PEOPLE_LABEL(t)}；大标题「${s.title}」${s.cells.length ? `；格子：${s.cells.map(c => words(c.point)).join('、')}` : ''}${act ? `；模特演示：${act}` : ''}`;
   };
-  const keys = usedSlots(draft, draft.counts.square).map((i, k) => ({ key: `square:${k + 1}`, about: say(i, 'square') }));
-  keys.push(...usedSlots(draft, draft.counts.portrait).map((i, k) => ({ key: `portrait:${k + 1}`, about: say(i, 'portrait') })));
+  // The shop's service image is copied from the shop: nothing to write.
+  const keys = usedSlots(draft, draft.counts.square).flatMap((i, k) => draft.slots[i].shopService ? [] : [{ key: `square:${k + 1}`, about: say(i, 'square') }]);
+  keys.push(...usedSlots(draft, Math.min(draft.counts.portrait, draft.counts.square)).flatMap((i, k) => draft.slots[i].shopService ? [] : [{ key: `portrait:${k + 1}`, about: say(i, 'portrait') }]));
   if (draft.counts.long) keys.push({ key: 'long:1', about: `长图；${PEOPLE_LABEL(layout.long)}；一行字「${draft.long.title}」` });
   return keys;
 }
 
 export function writeRequest(input: { views: View[]; draft: SubmittedDraft; layout: Layout; model: string; product: string }) {
   const { draft, layout } = input;
-  const task = `商品：${input.product}。版式「${layout.name}」：${layout.description}。
+  const task = `商品：${input.product}。母版「${layout.name}」：${layout.description}。
+母版背景：${layout.style.background}；光线：${layout.style.light}。
 要写场景的图：
 ${sceneKeys(draft, layout).map(k => `${k.key}：${k.about}`).join('\n')}
 
@@ -61,7 +63,7 @@ const writeSchema = z.object({
 });
 
 /** The user's plan with the model's garment and scenes: what generation reads. */
-export function buildPlan(content: string, input: { draft: SubmittedDraft; images: StoredPlan['images']; direct: string[]; model: string }): StoredPlan {
+export function buildPlan(content: string, input: { draft: SubmittedDraft; images: StoredPlan['images']; direct: string[]; photos?: Record<string, string>; model: string }): StoredPlan {
   let raw: unknown;
   try { raw = JSON.parse(content); } catch { throw new Error('写出的内容不是完整的 JSON'); }
   const checked = writeSchema.safeParse(raw);
@@ -70,6 +72,6 @@ export function buildPlan(content: string, input: { draft: SubmittedDraft; image
   return {
     draft, garment: w.product.garment, scenes: Object.fromEntries(w.scenes.map(s => [s.key, s.scene.slice(0, 300)])), sku: w.sku,
     colors: [...draft.colors].sort((a, b) => Number(b.name === draft.main) - Number(a.name === draft.main)).map(c => ({ name: c.name, hex: c.hex, sku: c.pick! })),
-    direct: input.direct, images: input.images, model: input.model, round: 1,
+    direct: input.direct, photos: input.photos ?? {}, images: input.images, model: input.model, round: 1,
   };
 }

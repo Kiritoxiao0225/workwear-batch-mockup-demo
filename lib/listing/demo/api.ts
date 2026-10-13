@@ -9,6 +9,7 @@ import { categoryById } from '../category';
 import { defaultDraft, usedSlots, type Draft } from '../draft';
 import type { Task } from '../category';
 import { BUILT_IN_LAYOUTS, FLAT_EXAMPLE, withPeople, type Layout, type People, type Display } from '../templates';
+import { defaultShop, pendingOf, SERVICE_IMAGES, wordsFor, type ServiceImageId, type ShopService } from '../service';
 import { DEMO_MATERIAL } from './material';
 
 const COLORS = DEMO_MATERIAL.colors.map(c => c.name);
@@ -29,6 +30,8 @@ const MATERIALS: Materials = {
       ...COLORS.map((c, i) => img(`M3${i}`, '静物', c, { front: true })),
       img('M40', '细节特写', '落霞橙', { detail: '立领' }), img('M41', '细节特写', '落霞橙', { detail: '门襟拉链' }), img('M42', '细节特写', '落霞橙', { detail: '口袋' }),
       img('M43', '细节特写', '落霞橙', { detail: '袖口' }), img('M44', '细节特写', '落霞橙', { detail: '面料' }),
+      img('M50', '模特实拍', '', { person: '男', face: true }), img('M51', '模特实拍', '爱马仕橙', { person: '女', face: true }),
+      img('M52', '模特实拍', '', { person: '男女', face: true }), img('M53', '模特实拍', '', { person: '女', face: false }),
     ],
     colors: DEMO_MATERIAL.colors.map((c, i) => ({ name: c.name, hex: c.hex, from: [`M2${i}`, `M3${i}`] })),
     points: DEMO_MATERIAL.points,
@@ -39,7 +42,7 @@ const MATERIALS: Materials = {
     parts: DEMO_MATERIAL.parts.map(p => ({ ...p, candidates: p.part === '正面全身' ? ['M30', 'M20', 'M1'] : [p.pick!] })),
   },
   duplicates: [['M8', 'M3']],
-  images: [...[1, 2, 3, 4, 5, 6, 7, 8], ...[20, 21, 22, 23, 24, 25], ...[30, 31, 32, 33, 34, 35], ...[40, 41, 42, 43, 44]].map(n => ({ label: `M${n}`, assetId: `M${n}.jpg` })),
+  images: [...[1, 2, 3, 4, 5, 6, 7, 8], ...[20, 21, 22, 23, 24, 25], ...[30, 31, 32, 33, 34, 35], ...[40, 41, 42, 43, 44], ...[50, 51, 52, 53]].map(n => ({ label: `M${n}`, assetId: `M${n}.jpg` })),
 };
 const SOURCES: Source[] = MATERIALS.images.map(i => ({ id: i.assetId, label: i.label, name: i.assetId, path: `素材/${i.label}.jpg`, shape: Number(i.label.slice(1)) >= 6 && Number(i.label.slice(1)) <= 8 ? '3:4' : '1:1' }));
 
@@ -58,6 +61,9 @@ const FILES: Record<'square' | 'portrait' | 'flat', Partial<Record<Task, string>
   portrait: { 首图: 'pt1.jpg', 服务: 'pt2.jpg', 功能: 'pt3.jpg', 细节: 'pt4.jpg', 实用: 'pt6.jpg', 场景: 'pt6.jpg', 收口: 'pt5.jpg' },
   flat: { 首图: 'flat1.jpg', 功能: 'flat2.jpg', 细节: 'flat3.jpg', 服务: 'sq2.jpg' },
 };
+const MASTER_FILE: Partial<Record<Task, number>> = { 首图: 1, 服务: 2, 功能: 3, 细节: 4, 收口: 5 };
+/** What 「点图修改」 gives back in the demo: another real image where we have one, else the same one again. */
+const REDRAWN: Record<string, string> = { '/listing-demo/service/A-light.jpg': 'service/A-light-1.jpg', '/listing-demo/service/A-dark.jpg': 'service/A-dark-1.jpg', '/listing-images/masters/M3-1.jpg': 'm/M3-1b.jpg', '/listing-images/masters/M3-3.jpg': 'm/M3-3b.jpg', '/listing-images/masters/M3-4.jpg': 'm/M3-4b.jpg', '/listing-images/masters/M3-5.jpg': 'm/M3-5b.jpg' };
 /** The file each made image is shown with; versions add "#vN" so each is its own image. */
 function fileOf(d: Draft, slot: string, layout: string) {
   const [kind, key] = slot.split(':');
@@ -66,6 +72,8 @@ function fileOf(d: Draft, slot: string, layout: string) {
   if (kind === 'cast') return 'cast.jpg';
   if (kind === 'long') return 'long1.jpg';
   const task = slotOf(d, slot)?.task ?? '首图', shape = kind === 'portrait' ? 'portrait' : 'square';
+  // The masters' square images are the samples we made with the same orange jacket.
+  if (/^M\d$/.test(layout) && shape === 'square' && MASTER_FILE[task]) return `/listing-images/masters/${layout}-${MASTER_FILE[task]}.jpg`;
   return (layout === 'flat-demo' && shape === 'square' ? FILES.flat[task] ?? 'flat2.jpg' : FILES[shape][task]) ?? 'sq6.jpg';
 }
 const wordsOf = (d: Draft, slot: string): Words | null => {
@@ -103,13 +111,13 @@ ELEMENTS['sq4-edit.jpg'] = ELEMENTS['sq4.jpg'].map(e => e.id === 'c3' ? { ...e, 
 const elementsOf = (file: string) => ELEMENTS[file.split('#')[0]];
 const made = (d: Draft, slot: string, layout: string): SlotState => {
   const id = fileOf(d, slot, layout), task = slot.startsWith('square') || slot.startsWith('portrait') ? slotOf(d, slot)?.task : undefined;
-  const words = layout === 'commute-split' && task && SHOWN[task] ? SHOWN[task]! : wordsOf(d, slot);
+  const words = layout === 'M3' && task && SHOWN[task] ? SHOWN[task]! : wordsOf(d, slot);
   return { slot, status: 'succeeded', error: null, image: id, history: [{ id, words, elements: elementsOf(id) }], words, task };
 };
-function project(id: string, name: string, status: Project['status'], minAgo: number, round: Project['round'], layout = 'commute-split'): Project {
+function project(id: string, name: string, status: Project['status'], minAgo: number, round: Project['round'], layout = 'M3'): Project {
   const first = round ? defaultDraft(DEMO_MATERIAL, layoutOf(layout)) : null;
   // The plan says what the ready-made images show, so the 3:4 images follow them.
-  const plan = first && layout === 'commute-split' ? { ...first, slots: first.slots.map(x => { const w = SHOWN[x.task]; return w ? { ...x, title: w.title, sub: w.sub, tags: w.tags, cells: w.cells.map(c => ({ point: c.point!, proof: c.proof })) } : x; }) } : first;
+  const plan = first && layout === 'M3' ? { ...first, slots: first.slots.map(x => { const w = SHOWN[x.task]; return w ? { ...x, title: w.title, sub: w.sub, tags: w.tags, cells: w.cells.map(c => ({ point: c.point!, proof: c.proof })) } : x; }) } : first;
   const slots = plan ? [...slotsOf(plan, 1), ...(round === 2 ? slotsOf(plan, 2) : [])].map(s => made(plan, s, layout)) : [];
   return { id, name, layout, status, error: null, images: 37, cover: '/listing-demo/M30.jpg', slots, made: slots.length, broken: 0, created_at: iso(minAgo), updated_at: iso(minAgo),
     plan, materials: status === 'planning' || status === 'uploading' ? null : MATERIALS, sources: SOURCES, round };
@@ -122,6 +130,43 @@ const projects: Project[] = [
   project('demo-planning', 'M22#冲锋衣工装马甲', 'planning', 1, 0),
 ];
 setTimeout(() => { const p = projects.find(x => x.id === 'demo-planning'); if (p?.status === 'planning') Object.assign(p, { status: 'materials', materials: MATERIALS }); }, 25_000);
+
+/* ---------- the shop ---------- */
+
+/** The shop's row, as on the server: its service images are the versions of its service:<id> slots. */
+const SHOP_ID = 'demo-shop';
+const start = defaultShop(['免费设计', '免费印绣', '一件起订', '现货速发']);
+const shopSettings: Omit<ShopService, 'made'> = { items: start.items, crafts: start.crafts, logo: null };
+projects.push({ ...project(SHOP_ID, '店铺服务图', 'done', 0, 0), slots: [] });
+const madeAt = new Map<string, string>();
+function shopState() {
+  const shop = find(SHOP_ID), made: ShopService['made'] = {}, making: ServiceImageId[] = [];
+  for (const def of SERVICE_IMAGES) {
+    const s = shop.slots.find(x => x.slot === `service:${def.id}`);
+    if (!s) continue;
+    if (s.status === 'queued' || s.status === 'running') making.push(def.id);
+    if (!s.image) continue;
+    made[def.id] = { image: s.image, asset: s.image, words: s.words?.tags ?? [], madeAt: madeAt.get(s.image) ?? '',
+      history: s.history.filter(v => v.id !== s.image && !v.job).reverse().map(v => ({ image: v.id, asset: v.id, madeAt: madeAt.get(v.id) ?? '' })) };
+  }
+  return { project: SHOP_ID, shop: { ...shopSettings, made }, making, failed: {} };
+}
+/** 「确认」: the images never made come out one by one; the others get their changed words redrawn (the same picture in the demo). */
+function makeShop() {
+  const shop = find(SHOP_ID), state = shopState(), pending = pendingOf(state.shop);
+  const ids = [...pending.fresh.map(d => d.id), ...pending.stale.map(x => x.def.id)];
+  ids.forEach((id, k) => {
+    const slot = `service:${id}`, old = shop.slots.find(x => x.slot === slot);
+    if (old) old.status = 'queued'; else shop.slots.push({ slot, status: 'queued', error: null, image: null, history: [], words: null });
+    setTimeout(() => {
+      const s = shop.slots.find(x => x.slot === slot)!, base = `/listing-demo/service/${id}.jpg`;
+      const image = s.history.length ? `${base}#v${s.history.length + 1}` : base, words = { title: '', sub: '', tags: wordsFor(SERVICE_IMAGES.find(d => d.id === id)!, state.shop), cells: [] };
+      madeAt.set(image, new Date().toISOString());
+      Object.assign(s, { status: 'succeeded', image, words, history: [...s.history, { id: image, words }] });
+    }, 1500 + k * 900);
+  });
+  return { images: ids.length };
+}
 
 const summary = (p: Project): Summary => {
   const slots = p.slots.length, ok = p.slots.filter(s => s.image).length, broken = p.slots.filter(s => s.status === 'failed').length;
@@ -162,10 +207,16 @@ export async function demoApi(path: string, init?: RequestInit): Promise<unknown
   const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
   const [a, id, action] = path.split('/');
   if (path === 'config') return { layouts, learning: [...learning.values()].filter(l => l.status !== 'saved').map(l => ({ id: l.id, name: l.name, status: l.status })), planCredits: 180, imageCredits: 22, multiCredits: 36, layoutCredits: 100, exempt: false } satisfies Config;
+  if (a === 'shop') {
+    if (!id && method === 'POST') Object.assign(shopSettings, { items: body.items, crafts: body.crafts });
+    if (id === 'logo') shopSettings.logo = URL.createObjectURL(init!.body as Blob);
+    if (id === 'make') { await wait(400); return makeShop(); }
+    return shopState();
+  }
   if (a === 'projects') {
     if (!id) {
       if (method === 'POST') { projects.unshift({ ...project(body.id, body.name, 'uploading', 0, 0, body.layout), images: 0, materials: null }); return { id: body.id }; }
-      return projects.map(summary);
+      return projects.filter(p => p.id !== SHOP_ID).map(summary);
     }
     const p = find(id);
     if (!action && method === 'DELETE') { projects.splice(projects.indexOf(p), 1); return {}; }
@@ -191,6 +242,20 @@ export async function demoApi(path: string, init?: RequestInit): Promise<unknown
       return { images: people.length };
     }
     if (action === 'redo') { const back = p.status; run(p, [body.slot], () => { p.status = back; }); return { images: 1 }; }
+    if (action === 'refs') return { asset: 'ref' };
+    if (action === 'redraw') {
+      const s = p.slots.find(x => x.slot === body.slot);
+      if (!s?.image) throw new Error('这张还没出好');
+      const job = crypto.randomUUID(), base = s.image.split('#')[0];
+      s.redraw = { job, status: 'running', error: null };
+      setTimeout(() => {
+        const tried = s.history.filter(v => v.job).length, alt = REDRAWN[base];
+        const id = `${alt && tried % 2 === 0 ? alt : base}#v${s.history.length + 1}`;
+        s.history.push({ id, words: s.words, change: String(body.ask ?? ''), job, elements: elementsOf(id) });
+        s.redraw = { job, status: 'succeeded', error: null };
+      }, 3000);
+      return { job };
+    }
     if (action === 'current') { const s = p.slots.find(x => x.slot === body.slot)!; s.image = body.asset; s.words = s.history.find(v => v.id === body.asset)?.words ?? s.words; return {}; }
     if (action === 'sets') {
       p.plan = { ...p.plan!, extra: [...p.plan!.extra, { color: body.color, layout: body.layout }] };

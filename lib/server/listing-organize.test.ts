@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { chooseMaterials, parseOrganized, type SortedImage } from './listing-organize';
+import { chooseMaterials, mergeSameColors, parseOrganized, parseRead, parseSorted, worthReading, type SortedImage } from './listing-organize';
 import { usableAsIs } from '../listing/draft';
 
-const img = (id: string, over: Partial<SortedImage>): SortedImage => ({ id, kind: '模特实拍', color: '', front: false, detail: '', text: false, logo: false, same: '', ...over });
+const img = (id: string, over: Partial<SortedImage>): SortedImage => ({ id, kind: '模特实拍', color: '', front: false, detail: '', text: false, logo: false, same: '', person: '', face: false, ...over });
 
 describe('chooseMaterials', () => {
   it('picks a clean still life per colour and never a rack of several garments as the full front view', () => {
@@ -57,9 +57,41 @@ describe('parseOrganized', () => {
     expect(parseOrganized(JSON.stringify({ images: [], colors: [], category: '不知道' }), []).category).toBe('generic');
   });
 
+  it('keeps the AI pick of master and cover only where the master can use it', () => {
+    const look = (l: object) => parseOrganized(JSON.stringify({ images: [], colors: [], look: l }), []).look;
+    expect(look({ master: 'M2', place: '物业', sell: '防水', why: '三防多' })).toEqual({ master: 'M2', place: '物业', sell: '防水', why: '三防多' });
+    expect(look({ master: 'M1', place: '登山', sell: '防水', why: '' })).toEqual({ master: 'M1', why: '' });
+    expect(look({ master: 'M4', place: '工地', sell: '耐磨', why: '' })).toEqual({ master: 'M4', why: '' });
+    expect(look({ master: 'M3', place: '工地', sell: '好看', why: '' })).toEqual({ master: 'M3', place: '工地', why: '' });
+    expect(look({ master: 'M9', place: '工地' })).toBeNull();
+    expect(parseOrganized(JSON.stringify({ images: [], colors: [] }), []).look).toBeNull();
+  });
+
   it('keeps images the model skipped and drops ids it made up', () => {
     const data = parseOrganized(JSON.stringify({ images: [{ id: 'M1', kind: '奇怪的', front: true }, { id: 'M9', kind: '静物' }], colors: [{ name: '黑色', from: ['M1', 'M9'] }] }), ['M1', 'M2']);
     expect(data.images.map(i => [i.id, i.kind])).toEqual([['M1', '无关'], ['M2', '无关']]);
     expect(data.colors[0].from).toEqual(['M1']);
+  });
+});
+
+describe('the analysis in parts', () => {
+  it('keeps an image a batch skipped as unsorted, and forgets a copy of an image outside the batch', () => {
+    const images = parseSorted(JSON.stringify({ images: [{ id: 'M1', kind: '静物', same: 'M9' }, { id: 'M2', kind: '细节特写', detail: '袖口', same: 'M1' }, { id: 'M7', kind: '静物' }] }), ['M1', 'M2', 'M3']);
+    expect(images.map(i => [i.id, i.kind, i.same])).toEqual([['M1', '静物', ''], ['M2', '细节特写', 'M1'], ['M3', '无关', '']]);
+  });
+  it('puts the batches and the whole product together as one analysis', () => {
+    const images = [img('M1', { kind: '静物', color: '黑色', front: true }), img('M2', { kind: '卖点图', text: true })];
+    const o = parseRead(JSON.stringify({ colors: [{ name: '黑色', hex: '#111', from: ['M1', 'M9'] }], points: [{ type: '功能', text: '三级防水', from: ['M2'] }], category: 'workwear' }), images);
+    expect(o.images).toHaveLength(2);
+    expect(o.colors[0].from).toEqual(['M1']);
+    expect(o.category).toBe('workwear');
+    expect(worthReading([...images, img('M3', { kind: '无关' }), img('M4', { same: 'M1' })]).map(i => i.id)).toEqual(['M1', 'M2']);
+  });
+});
+
+describe('colours written two ways', () => {
+  it('drops a colour with no image that reads the same as one with an image, and keeps one only named in text', () => {
+    const colors = [{ name: '黑拼白', hex: '', from: ['M47'] }, { name: '黑白拼', hex: '', from: [] }, { name: '藏青色', hex: '', from: [] }, { name: '卡其', hex: '', from: ['M3'] }, { name: '卡其色', hex: '', from: [] }];
+    expect(mergeSameColors(colors).map(c => c.name)).toEqual(['黑拼白', '藏青色', '卡其']);
   });
 });

@@ -1,5 +1,50 @@
 # 工作服批量效果图 Demo
 
+## 当前项目汇总（2026-10-13）
+
+这是围绕工作服定制的素材、图稿、成衣效果图与电商图片制作工作台。下面按本地源码整理；功能有代码实现不代表已完成生产验收。本文后面的早期说明、数据量和部署记录保留追溯，当前业务入口以 [页面定义](lib/app-pages.ts)、对应源码和当次发布回执为准。
+
+| 模块 | 当前源码中的能力 | 入口与主要代码 |
+| --- | --- | --- |
+| 商品素材库 | 款式、颜色、底图版本、印花位置和结构点；历史版本与同款颜色复用 | `/products`；`lib/server/catalog-*` |
+| 图稿生成 | 按文字与参考图生成、修补、保存和下载；新增可选的“AI 拆成多张”，多张清单可编辑，结果逐张选择 | `/artwork-studio`；[页面组件](components/artwork-studio-client.tsx)、[拆图规划](batch-mockup/application/studio-plan.mjs) |
+| 成衣效果图 | 选款选色、添加图稿、调整位置与尺寸、正反面编辑和导出 | `/garment-mockup`；[成衣编辑器](components/garment-editor/Workspace.tsx) |
+| 批量生成 | 需求理解、图稿制作与修补、上衣合成、持久任务与结果 | `/batch`；[业务核心](batch-mockup/application)、[进度记录](batch-mockup/PLAN.md) |
+| WPS 批量生成 | 同步原始需求与附件、后台接续制作、显示逐条进度；入口限内部工作区 | `/wps-production`；[页面权限](lib/app-pages.ts)、`batch-mockup/application/wps-*` |
+| 电商主图 | 整理素材 → 定方案 → 出方图 → 改图和竖版；五套母版、店铺服务图、SKU 图、换模特、改图候选与历史、下载 | `/listing-images`；[页面组件](components/listing-images-client.tsx)、[接口](app/api/listing/[...path]/route.ts)、`lib/listing`、`lib/server/listing-*` |
+| 账号与后台 | 登录、租户和页面权限、积分、存储额度、管理员进入账号 | `/login`、`/account`、`/admin`；[账号接口](app/api) |
+
+基础结构：Next.js / React 提供网页和接口，PostgreSQL 保存业务状态，文件存储适配层保存图片，独立 worker 执行长任务。具体云端版本和存储提供方需要另行回读，不能从本地环境或历史文档推定。
+
+### 这次同步包含什么
+
+- 纳入本地尚未推送的两个提交：`0867354`（图稿生成“AI 拆成多张”）与 `2751e63`（相关进度记录）。记录里的发布结论来自原开发记录，本轮未重新验证线上状态。
+- 保存当前电商主图源码及所依赖的字体、母版、场景和服务图参考素材；正式页面已接线至 `/api/listing`。
+- 店铺设置已通过 [后端模块](lib/server/listing-shop.ts) 写入数据库；商品服务方图已存在直接复用图片和免模型计费的执行分支。这两项是当前代码事实，端到端验收状态见下方。
+- 纳入迁移 [034](db/migrations/034_listing_rounds.sql)、[035](db/migrations/035_listing_shop.sql)、[036](db/migrations/036_listing_plan_parts.sql)：分轮状态、店铺服务图及改图候选、素材整理分段结果。本轮只在临时测试库执行迁移。
+- `/listing-demo` 是本地模拟入口，生产模式返回 404；模拟数据不代表真实业务记录。[早期界面设计稿](docs/prototypes/listing-ui-20261009.html) 仅保留历史参考。
+- 保留原工作目录和未提交状态；不纳入环境凭据、运行数据、`output/`、本地生成的 `next-env.d.ts` 改动，以及未被代码引用的七张根目录 `undefined-*.jpg`。
+
+### 本轮验证与待完成事项
+
+验证在独立工作目录、锁定依赖安装后进行。数据库集成测试使用本机临时 PostgreSQL，供应商使用模拟实现，没有调用真实付费生图，也没有修改生产数据库。
+
+| 检查 | 本轮结果 |
+| --- | --- |
+| `npm run lint` | 通过 |
+| `npm test` | 185 个测试文件、1,646 项通过 |
+| `npm run test:requirements`、`npm run test:mockups` | 通过 |
+| `test:batch-cloud`、`test:production-storage`、`test:shared-artwork`、`test:reliability` | 通过 |
+| `npm run typecheck`、`npm run build` | 未通过：`components/listing-images-client.tsx:115` 比较了类型定义中不存在的 `writing` 状态（TS2367）；构建在类型检查阶段停止 |
+| `npm run test:listing` | 前 3 组通过，随后在 `scripts/listing-images-integration.ts:136` 失败：模拟供应商调用次数实际 2，预期 1；后续分组未执行 |
+| `npm run test:artwork-jobs` | 未通过：`scripts/artwork-jobs-integration.ts:322` 期望 `finished`，实际 `queued`；进程提示旧 worker 已停用 |
+
+当前快照忠实保留开发状态，未为通过检查而修改业务逻辑或测试断言。服务图复用等较后段的集成用例尚未跑到，不能把单元测试通过当作整条链路通过。
+
+同步目标为已有的 [开发草稿 PR #5](https://github.com/Kiritoxiao0225/workwear-batch-mockup-demo/pull/5)，用于保存完整开发进度；本轮不合并 `main`，不执行生产部署。后续发布仍需解决验证失败，并单独核对旧项目计划兼容性、迁移、Web/worker 版本和真实业务结果。
+
+## 历史说明
+
 2026-09-14 新版入口 `/wps-production`：需求理解 → 图稿制作/修补 → 上衣效果图。正式状态由 PostgreSQL 与 R2 保存，WPS 读取待领取/未领取，长任务在 Zeabur worker 执行。旧工作台及历史保留在 `/wps-production/legacy`。当前规则以 [新版 PRD](batch-mockup/PRD.md) 与 [进度表](batch-mockup/PLAN.md) 为准；下文旧生产台说明仅适用于 legacy。
 
 基于 Next.js 的批量效果图项目。商品素材库使用 PostgreSQL 保存款式、颜色、底图版本和位置标准，使用 OSS 保存文件；本地验收可显式使用独立 PostgreSQL 与本地对象目录。WPS 的同步、AI 理解、素材处理、方案确认、效果图制作和导出集中在一张生产表中，云模式将任务状态保存到 PostgreSQL、图片保存到私有 OSS。工作台界面固定浅色，避免系统暗夜模式影响文字和预览可读性。

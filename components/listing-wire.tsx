@@ -6,7 +6,7 @@
  */
 import type { Template, ZoneKind } from "@/lib/listing/templates";
 
-const NAME: Record<ZoneKind, string> = { title: "标题", sub: "小字", tag: "标签", card: "格", icon: "图标", person: "人", garment: "衣服", swatch: "色块" };
+const NAME: Record<ZoneKind, string> = { title: "标题", sub: "小字", tag: "标签", card: "格", icon: "图标", person: "人", garment: "衣服", swatch: "色块", badge: "工牌", band: "横条", fabric: "面料铺底" };
 
 export function Wire({ template, ratio = 1, labels, active, width = 92 }: { template: Template; ratio?: number; labels?: Record<string, string>; active?: string; width?: number }) {
   return (

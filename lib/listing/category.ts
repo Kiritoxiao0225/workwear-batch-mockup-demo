@@ -35,6 +35,14 @@ export const CATEGORIES: Category[] = [
   { ...(workwear as Omit<Category, 'tasks' | 'concepts'> & { tasks: string[]; concepts: Concept[] }), tasks: workwear.tasks as Task[] },
   { id: 'generic', name: '通用', items: 0, source: '', tasks: ['首图', '功能', '细节', '实用', '场景', '收口'], concepts: [] },
 ];
+/**
+ * The words that say which kind of garment it is, most telling first, with what in the points shows
+ * it: a cover shot in the studio says 「三合一 / 冲锋衣」 like the masters' 「轻量化 / 连帽单冲」.
+ * Functions (防风防水) are not here: nearly every garment of the category has them.
+ */
+export const BUILDS: Record<string, [string, RegExp][]> = {
+  workwear: [['三合一', /三合一|可拆卸?.{0,6}内胆|一衣[两三]穿/], ['软壳', /软壳/], ['硬壳', /硬壳/], ['单层', /单层|单冲/], ['轻量化', /轻量|轻薄|超轻/], ['加绒', /加绒|加厚/]],
+};
 export const categoryById = (id: string) => CATEGORIES.find(c => c.id === id) ?? CATEGORIES[CATEGORIES.length - 1];
 
 /** How a point stands among competitors: most show it, many do, few do, or none (the product's own). */
