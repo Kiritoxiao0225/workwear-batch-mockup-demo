@@ -58,6 +58,9 @@ export type Case = {
     status: string;
     error?: string;
     proposedDraft?: Draft;
+    /** 图稿生成: how many pictures the request asks for, decided before any is made. */
+    mode?: "plan";
+    plan?: { name: string; text: string }[] | null;
   } | null;
   productions: Job[];
   cost?: CaseCost | null;

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import sharp from 'sharp';
 import { readRequirementState, validateRequirementDraft } from './requirements.mjs';
+import { STUDIO_PLAN_MAX } from './studio-plan.mjs';
 import { jsonFile, saveJSON, atomicFile, assetPath, hash, fail } from '../adapters/a-files.mjs';
 
 /**
@@ -206,7 +207,7 @@ export async function prepareStudio(root,body){
  if(body.revision!==state.revision)throw fail('制作要求已变化，请刷新后重试',409);
  const images=c.images.map(i=>({id:i.imageId,index:i.index}));
  const draft=validateRequirementDraft(body.draft,images);
- if(draft.artworks.length!==1||draft.artworks[0].applications.length)throw fail('独立图稿只允许一份图稿，不绑定衣服');
+ if(!draft.artworks.length||draft.artworks.length>STUDIO_PLAN_MAX||draft.artworks.some(a=>a.applications.length))throw fail(`独立图稿一次最多${STUDIO_PLAN_MAX}张，不绑定衣服`);
  state.draft=draft;state.draftOrigin='designer';state.draftAnalysisId=null;
  state.draftSupplementRevision=0;state.revision++;
  c.needsReanalysis=false;
