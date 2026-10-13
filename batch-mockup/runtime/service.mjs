@@ -10,7 +10,7 @@ import { createCase, updateCase, removeCase, stageCaseImage, prepareStudio } fro
 import { releaseCredits, settleCredits, attempt, assertCreditReservation } from '../../lib/server/billing-bridge.ts';
 import { readMockupState,saveMockupSelection,renderMockups,markMockupsPending,keepMockupColors } from '../application/mockups.mjs';
 import { currentPrices, ceilingMicroCents, microToCents } from '../../lib/server/credits.ts';
-import { configuredAnalyzer } from '../adapters/a-analysis.mjs';
+import { configuredAnalyzer, configuredPlanAnalyzer } from '../adapters/a-analysis.mjs';
 import { configuredProduction } from '../adapters/production-images.mjs';
 
 // Only untouched inputs enter automatically. Re-sync must not restart failed calls or designer edits.
@@ -93,9 +93,11 @@ export async function service(root,path,method,body={},options={}){
   if(path==='/api/studio/results'){
    const manifest=await jsonFile(resolve(root,'manifest.json'),{run:{},cases:[]}),jobs=await readProductionJobs(root);
    const studio=manifest.cases.filter(c=>c.entry==='studio'&&c.active!==false).slice(-24).reverse();
-   return {items:studio.flatMap(c=>{const job=jobs.filter(j=>j.caseId===c.caseId).at(-1);if(!job)return [];const file=job.repair?.file||job.final||job.raw;
-    return [{caseId:c.caseId,text:String(c.sourceText||'').slice(0,80),status:job.status,error:job.error||null,createdAt:job.createdAt,transparent:job.transparentBackground??null,
-     asset:file?.asset||null,width:file?.width??null,height:file?.height??null}];})};
+   // One 开始制作 can make several pictures: list every one of the latest round.
+   return {items:studio.flatMap(c=>{const own=jobs.filter(j=>j.caseId===c.caseId),last=own.at(-1);if(!last)return [];
+    return own.filter(j=>j.revision===last.revision).map(job=>{const file=job.repair?.file||job.final||job.raw;
+    return {id:job.id,caseId:c.caseId,text:String(c.sourceText||'').slice(0,80),status:job.status,error:job.error||null,createdAt:job.createdAt,transparent:job.transparentBackground??null,
+     asset:file?.asset||null,width:file?.width??null,height:file?.height??null};});})};
   }
   if(path==='/api/garments')return {styles:await (await (await import('../adapters/garments.mjs')).garmentCatalogForWorkspace(options.workspace||'main')).styles()};
   if(path==='/api/production/edit')return readProductionEdit(root,body.jobId);
@@ -178,7 +180,9 @@ export async function executeTask(root,task,enqueue,dependencies={}){
   a.autoProduce=!!task.payload.autoProduce;
   await saveJSON(resolve(root,'requirements-state',caseId+'.json'),state);
   await checkpoint();
-  let result,error;try{result=await (await (dependencies.analyzerFactory||configuredAnalyzer)())(request);}catch(e){error=e;}
+  // A picture count (图稿生成「AI 拆成多张」) goes to the model it was reserved for.
+  const factory=a.mode==='plan'?dependencies.planAnalyzerFactory||configuredPlanAnalyzer:dependencies.analyzerFactory||configuredAnalyzer;
+  let result,error;try{result=await (await factory())(request);}catch(e){error=e;}
   await finishRequirementAnalysis(root,manifest,caseId,analysisId,result,error);
   // A returned model call is charged even when its output failed validation: the call happened.
   const analysisState=await readRequirementState(root,caseId),done=analysisState.analyses.find(x=>x.id===analysisId);

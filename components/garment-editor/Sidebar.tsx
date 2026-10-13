@@ -60,6 +60,7 @@ import { garmentLabel, imageKey, type ArtworkHandoff } from '@/lib/garment-edito
 
 /** One studio result as the garment editor's "my artworks" strip lists it. */
 interface StudioArtwork {
+  id?: string;
   caseId: string;
   text: string;
   status: string;
@@ -1320,14 +1321,14 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
     const tag = artwork.transparent === false ? '有底色' : artwork.transparent ? '透明' : '';
     if (artwork.status === 'queued' || artwork.status === 'running') {
       return (
-        <li key={artwork.caseId} className="gme-art is-running" title={artwork.text}>
+        <li key={artwork.id ?? artwork.caseId} className="gme-art is-running" title={artwork.text}>
           <i className="gme-spin" aria-hidden="true" /><small>{artwork.status === 'queued' ? '排队中' : `制作中 ${elapsed(artwork.createdAt)}`}</small>
         </li>
       );
     }
     if (!artwork.asset) {
       return (
-        <li key={artwork.caseId} className="gme-art is-failed" title={artwork.error || artwork.text}>
+        <li key={artwork.id ?? artwork.caseId} className="gme-art is-failed" title={artwork.error || artwork.text}>
           <small>未完成</small>
         </li>
       );
@@ -1336,7 +1337,7 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
     const image = <><img src={url} alt="" loading="lazy" />{tag && <i className="gme-art-tag">{tag}</i>}</>;
     // With a logo selected, a tile can replace it or be added beside it.
     return selectedLogoForImageEdit ? (
-      <li key={artwork.caseId} className="gme-art gme-checker" title={artwork.text}>
+      <li key={artwork.id ?? artwork.caseId} className="gme-art gme-checker" title={artwork.text}>
         {image}
         <span className="gme-art-actions">
           <button type="button" disabled={!isLoggedIn || canvasImageOperationPending} aria-label={`用这张图稿替换${selectedLogoLabel}`}
@@ -1346,7 +1347,7 @@ export default function Sidebar({ state, stateGeneration, getStateGeneration, ge
         </span>
       </li>
     ) : (
-      <li key={artwork.caseId}>
+      <li key={artwork.id ?? artwork.caseId}>
         <button type="button" className="gme-art gme-checker" title={artwork.text} aria-label={`放到衣服上：${artwork.text}`}
           disabled={!isLoggedIn || canvasImageOperationPending} onClick={() => void placeArtwork(url, { mode: 'add' })}>
           {image}

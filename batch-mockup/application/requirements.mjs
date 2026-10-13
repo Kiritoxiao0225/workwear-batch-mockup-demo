@@ -1,8 +1,9 @@
 import { resolve, extname } from 'node:path';
 import { z } from 'zod';
 import { hash, jsonFile, saveJSON, atomicFile, assetPath, fail, readBytes } from '../adapters/a-files.mjs';
-import { configuredAnalyzer } from '../adapters/a-analysis.mjs';
+import { configuredAnalyzer, configuredPlanAnalyzer } from '../adapters/a-analysis.mjs';
 import { configuredTextReader, textReference } from '../adapters/ocr.mjs';
+import { STUDIO_PLAN_PROMPT, validateStudioPlan } from './studio-plan.mjs';
 
 const line = z.string().max(500);
 const artworkSchema = z.object({
@@ -99,32 +100,37 @@ async function imageText(root, images, readText) {
   }
   return Object.fromEntries(images.map((image, n) => [image.label, cached[n].lines]));
 }
-export async function reserveRequirementAnalysis(root, manifest, body, factory = configuredAnalyzer, readText = configuredTextReader()) {
+export async function reserveRequirementAnalysis(root, manifest, body, factory = configuredAnalyzer, readText = configuredTextReader(), planFactory = configuredPlanAnalyzer) {
   requestId(body?.requestId); findCase(manifest, body.caseId);
   const previous = (await readRequirementState(root, body.caseId)).analyses.find(a => a.id === body.requestId);
   if (previous) return { analysis: previous };
   const { c, state, supplement, images } = await context(root, manifest, body);
   if (state.analyses.some(a => a.status === 'running')) throw fail('本条正在识别，请等待返回', 409);
   if (state.analyses.some(a => a.status === 'unknown' && a.revision === state.revision && a.supplementRevision === supplement.revision)) throw fail('该输入已有结果未知的请求，请先核实原请求；未重复付费', 409);
-  const analyze = await factory(), prompt = (await readBytes(resolve(root, 'prompt.txt'))).toString('utf8');
-  if (hash(prompt) !== manifest.run.promptSHA256) throw fail('提示词与本批定稿版本不一致', 409);
+  // 图稿生成 only: decide how many pictures the request asks for. The draft is left alone.
+  const plan = body.mode === 'plan';
+  if (plan && c.entry !== 'studio') throw fail('只有图稿生成可以按要求拆张数');
+  const analyze = await (plan ? planFactory : factory)(), prompt = plan ? STUDIO_PLAN_PROMPT : (await readBytes(resolve(root, 'prompt.txt'))).toString('utf8');
+  if (!plan && hash(prompt) !== manifest.run.promptSHA256) throw fail('提示词与本批定稿版本不一致', 409);
   const fixed = await freezeImages(root, images);
-  const input = { 原始需求: c.sourceText, 图片: fixed.map(i => ({ id: i.id, 图号: i.label, 用途: i.target || '结合原文与全部图片理解' })) };
-  if (state.draftOrigin === 'designer') input.设计师已保存修改 = state.draft;
+  const input = plan ? { 用户原话: c.sourceText, 参考图: fixed.map(i => i.label) }
+    : { 原始需求: c.sourceText, 图片: fixed.map(i => ({ id: i.id, 图号: i.label, 用途: i.target || '结合原文与全部图片理解' })) };
+  if (!plan && state.draftOrigin === 'designer') input.设计师已保存修改 = state.draft;
   const content = [{ type: 'text', text: JSON.stringify(input) }];
   for (const img of fixed) {
     const mime = /\.jpe?g$/iu.test(img.asset) ? 'image/jpeg' : `image/${extname(img.asset).slice(1)}`;
     content.push({ type: 'text', text: `${img.label} · id=${img.id} · ${img.width}×${img.height}` },
-      { type: 'image_url', image_url: { url: `data:${mime};base64,${(await readBytes(assetPath(root, img.asset))).toString('base64')}`, detail: 'high' } });
+      { type: 'image_url', image_url: { url: `data:${mime};base64,${(await readBytes(assetPath(root, img.asset))).toString('base64')}`, detail: plan ? 'low' : 'high' } });
   }
-  const text = await imageText(root, fixed, readText);
+  // Counting pictures needs to know what each image shows, not to read its small print.
+  const text = plan ? null : await imageText(root, fixed, readText);
   if (text) content.push({ type: 'text', text: textReference(text) });
-  const request = { model: analyze.model || 'gpt-5.6-sol', reasoning_effort: analyze.effort || 'low', max_completion_tokens: 16000,
+  const request = { model: analyze.model || 'gpt-5.6-sol', reasoning_effort: analyze.effort || 'low', max_completion_tokens: plan ? 6000 : 16000,
     response_format: { type: 'json_object' }, stream: false,
     messages: [{ role: 'system', content: prompt }, { role: 'user', content }] };
   const analysis = { id: body.requestId, status: 'running', startedAt: stamp(), revision: state.revision,
     supplementRevision: supplement.revision, promptSHA256: hash(prompt), requestSHA256: hash(JSON.stringify(request)),
-    sourceTextSHA256: hash(c.sourceText), images: fixed, model: request.model, effort: request.reasoning_effort, ...(text ? { imageText: text } : {}) };
+    sourceTextSHA256: hash(c.sourceText), images: fixed, model: request.model, effort: request.reasoning_effort, ...(text ? { imageText: text } : {}), ...(plan ? { mode: 'plan' } : {}) };
   await saveJSON(resolve(root, 'analysis-evidence', c.caseId, `${analysis.id}-request.json`), request);
   state.analyses.push(analysis); await writeState(root, c.caseId, state);
   return { analysis, execute: () => analyze(request) };
@@ -137,6 +143,11 @@ export async function finishRequirementAnalysis(root, manifest, caseId, id, resu
   else {
     await saveJSON(resolve(root, 'analysis-evidence', caseId, `${id}-response.json`), result);
     Object.assign(a, result);
+    if (a.mode === 'plan') {
+      try { a.plan = validateStudioPlan(JSON.parse(result.rawContent), a.images); a.status = 'returned'; }
+      catch (e) { a.status = 'invalid_output'; a.error = e.status ? e.message : 'AI 返回的清单不完整；原始返回已保留'; }
+      return writeState(root, caseId, state);
+    }
     try { a.parsed = validateRequirementDraft(JSON.parse(result.rawContent), a.images); a.status = 'returned'; }
     catch (e) { a.status = 'invalid_output'; a.error = e.status ? e.message : '返回不是完整JSON；原始返回已保留'; }
     const sup = (await jsonFile(resolve(root, 'supplements.json'), {}))[caseId]?.revision || 0;
@@ -217,6 +228,7 @@ export async function requirementWorkbench(root, manifest) {
       reminderAcks: state.reminderAcks || [],
       needsReanalysis: !!c.needsReanalysis || (!!state.draft && state.draftSupplementRevision !== supplement.revision),
       analysis: last ? { id: last.id, status: last.status, error: last.error, elapsedMs: last.elapsedMs,
+        ...(last.mode === 'plan' ? { mode: 'plan', plan: last.status === 'returned' && last.revision === state.revision ? last.plan : null } : {}),
         proposedDraft: last.status === 'returned' && last.id !== state.draftAnalysisId && last.revision === state.revision && last.supplementRevision === supplement.revision ? last.parsed : null } : null,
       confirmation: confirmed ? { id: confirmed.id, by: confirmed.confirmedBy, at: confirmed.confirmedAt } : null,
       notes: notes[c.caseId] || [] });

@@ -10,8 +10,17 @@ const ROUTES = {
   cliproxy: { model: 'gpt-5.6-sol', effort: 'low' },
   evolink: { model: 'gpt-6-sol', effort: 'low', endpoint: 'https://direct.evolink.ai/v1/chat/completions' },
 };
+// 图稿生成「AI 拆成多张」only counts pictures, so it takes the cheap EvoLink model whatever
+// the requirement reading uses; it still sees the images.
+const PLAN_ROUTE = { model: 'gpt-6-luna', effort: 'low', endpoint: ROUTES.evolink.endpoint };
+const analysisEnv = async () => process.env.A_ANALYSIS_ENV_FILE ? { ...parseEnv(await readFile(resolve(process.env.A_ANALYSIS_ENV_FILE), 'utf8')), ...process.env } : process.env;
+export async function configuredPlanAnalyzer() {
+  const env = await analysisEnv(), key = env.EVOLINK_API_KEY?.trim();
+  if (!key) throw fail('拆张数用的 EvoLink 未配置', 503);
+  return Object.assign(caller('evolink', PLAN_ROUTE.endpoint, key, PLAN_ROUTE.model, env), { model: PLAN_ROUTE.model, effort: PLAN_ROUTE.effort });
+}
 export async function configuredAnalyzer() {
-  const env = process.env.A_ANALYSIS_ENV_FILE ? { ...parseEnv(await readFile(resolve(process.env.A_ANALYSIS_ENV_FILE), 'utf8')), ...process.env } : process.env;
+  const env = await analysisEnv();
   const provider = env.WPS_ANALYSIS_PROVIDER, route = ROUTES[provider];
   if (!route) throw fail('已选识图API配置不可用', 503);
   if (env.WPS_ANALYSIS_MODEL?.trim() !== route.model || env.WPS_ANALYSIS_REASONING_EFFORT?.trim() !== route.effort) throw fail(`当前识图配置与已确认的${route.model} / ${route.effort}不一致`, 503);
@@ -26,7 +35,10 @@ export async function configuredAnalyzer() {
     if (!key) throw fail('已选识图API配置不可用', 503);
     endpoint = route.endpoint;
   }
-  const analyze = async request => {
+  return Object.assign(caller(provider, endpoint, key, route.model, env), { model: route.model, effort: route.effort });
+}
+function caller(provider, endpoint, key, model, env) {
+  return async request => {
     const response = await fetch(endpoint, {
       method: 'POST', redirect: 'error', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(request), signal: AbortSignal.timeout(240000),
@@ -36,8 +48,7 @@ export async function configuredAnalyzer() {
     if (raw.includes(key)) throw fail('响应含敏感配置，未保存', 502);
     const body = JSON.parse(raw), choice = body.choices?.[0];
     if (!choice?.message || choice.finish_reason !== 'stop' || choice.message.refusal) throw fail('识图输出未完整完成；未自动重试', 502);
-    const cost = provider === 'evolink' ? tokenCost(route.model, body.usage, env) : { provider: 'codex', cny: 0, method: 'subscription' };
+    const cost = provider === 'evolink' ? tokenCost(model, body.usage, env) : { provider: 'codex', cny: 0, method: 'subscription' };
     return { rawContent: choice.message.content, responseId: body.id, reportedModel: body.model, usage: body.usage, httpStatus: response.status, ...(cost ? { cost } : {}) };
   };
-  return Object.assign(analyze, { model: route.model, effort: route.effort });
 }

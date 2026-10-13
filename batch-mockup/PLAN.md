@@ -517,3 +517,19 @@ WPS 同步完成后，后台逐条预约尚无识别记录和草稿的有效原�
   - 干净工作树里 tsc、eslint、test:auth 183 项都通过。
 - 发布：只发 Web，没有数据库变更，worker 不动。补丁固定在 `312c024`，之后另一个会话的 `1df8729` 不在里面。新部署 `6ac6617b`，release `a8d616f2…`。
 - 回退：`output/admin-enter-release-20261007/rollback-web.json`。
+
+### 2026-10-13 下午：图稿生成「AI 拆成多张」，一次出多张
+
+- 背景：用户想像 GPT 一样一次出多张图，张数按要求的意思定、多张先确认；后来嫌每次多 1 毛，改成点按钮才拆，并让拆张数用便宜模型。
+- 改动（`0867354`，发布分支 `release-studio-multi-20261013` = `312c024` + 摘取为 `be48a45`）：
+  - 「开始制作」照旧出 1 张、不调 AI；新增「AI 拆成多张」（只在整段写 + 生图可点）。AI 读要求和参考图定张数（EvoLink `gpt-6-luna`，每次约 ¥0.002；原 `gpt-6-sol` 约 ¥0.11），多张列清单可改名、改要求、删掉，确认后一条需求多份图稿同时制作（最多 8 张）；只出 1 张直接用原话出。
+  - 结果区右侧小图切换；下载、修补、放到成衣针对选中那张；「再来一张」按选中那张的要求和参考图另建一条重出。「我的图稿」一次一条，成衣页图稿栏每张单列。
+  - 后台：`analyze` 加 `mode:'plan'`（只限图稿生成，不改草稿，图片 low detail、不跑 OCR）；`prepareStudio` 放开到 1–8 份；`/api/studio/results` 返回整轮每张。
+  - 外部客户点一次「AI 拆成多张」照现有理解价扣 20 积分，出图按张扣。
+- 测试：干净工作树 tsc、eslint、vitest 1574、batch 63、intake/requirements/automatic-flow 28、test:saas 13 通过。本地网站实测：2 张清单确认后同时出、1 张直接出、「再来一张」补失败那张，均成功；luna 与原模型对 3 句要求拆出张数一致。
+- 发布：
+  1. 发现 10-08 15:18–15:31 Web 和 worker 都被重新部署过（Web `d-6ac74599`，worker `d-6ac746d7`），没有发布记录。逐个核对：Web 939 个清单文件里代码全部与 a8d616f2 发布一致，worker 文件与 3f35498 发布一致、稳定版哈希未变，确认是同内容重建，以它们为基线（`web-base-check.json`、`workers-before.json`）。
+  2. worker 先发：暂停（无运行任务）→ 新镜像 `6acdd0a2`（release `72fadb6d…`，158 个文件，其中变化 7 个：本次 5 个 + b12c278 的 `lib/listing/plan.ts`、`lib/server/listing-jobs.ts`，与线上 Web 对齐）→ 两个 worker 切换并核对哈希、健康。
+  3. Web 改 9 个文件，新部署 `6acdd1b5`，release `162ee366…`；ready、migration 033。另一个会话的 `1df8729` 不在里面。
+- 回退：`output/studio-multi-release-20261013/rollback.json`（先回 Web 再回 worker，无迁移）。
+

@@ -39,6 +39,9 @@ type Reference = {
   file?: File;
 };
 type Stage = "checker" | "white" | "dark";
+// What AI read from the request: one entry per picture, waiting for the author to confirm.
+type Plan = { caseId: string; items: { key: string; name: string; text: string }[] };
+type Submit = { name: string; prompt: string; route: Artwork["route"]; transparentBackground: boolean };
 const ROUTES = [
   ["generate", "生图", "按要求生成或修改图片。"],
   ["enhance", "无损放大", "已有清晰原图，只提高清晰度。"],
@@ -59,6 +62,12 @@ const caseTitle = (c: Case) =>
     ? splitPrompt(c.sourceText).parts.find((p) => p.label === "主体")?.value.trim() || c.sourceText
     : c.sourceText
   ).slice(0, 40);
+// One 开始制作 can make several pictures; they share the revision they were made from.
+const roundOf = (c?: Case) => {
+  const last = c?.productions.at(-1);
+  return last ? c!.productions.filter((j) => j.revision === last.revision) : [];
+};
+const pending = (j: Job) => ["queued", "running"].includes(j.status);
 const when = (value?: string) =>
   value
     ? new Date(value).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
@@ -93,6 +102,9 @@ export function ArtworkStudioClient() {
     [notice, setNotice] = useState(""),
     [busy, setBusy] = useState(false),
     [organizing, setOrganizing] = useState(false),
+    [planning, setPlanning] = useState(false),
+    [plan, setPlan] = useState<Plan | null>(null),
+    [pick, setPick] = useState<string | null>(null),
     [target, setTarget] = useState<{ type: "artwork"; id: string } | null>(
       null,
     ),
@@ -112,7 +124,8 @@ export function ArtworkStudioClient() {
       .slice()
       .reverse(),
     active = cases.find((c) => c.caseId === selected),
-    job = active?.productions.at(-1),
+    round = roundOf(active),
+    job = round.find((j) => j.id === pick) || round[0],
     file = resultFile(job);
   // Arriving from the garment editor: show where the result will land, default to a
   // transparent logo, and start from the logo being replaced.
@@ -169,7 +182,9 @@ export function ArtworkStudioClient() {
   }
   function selectCase(c: Case) {
     const art = c.draft?.artworks[0],
-      prompt = art?.prompt || c.sourceText,
+      // A request AI split into several pictures is shown as it was written.
+      split = c.analysis?.mode === "plan",
+      prompt = (split ? c.sourceText : art?.prompt) || c.sourceText,
       next = c.images.map((i) => ({
         key: i.id,
         index: i.index,
@@ -180,10 +195,14 @@ export function ArtworkStudioClient() {
     setText(prompt);
     setMode(sevenFields(prompt) ? "seven" : "text");
     setRoute(art?.route || "generate");
-    setTransparentBackground(art?.transparentBackground ?? true);
+    // A request still waiting for its pictures to be confirmed starts like a new one.
+    setTransparentBackground(art?.transparentBackground ?? (split ? !!handoff : true));
     setRefs(next);
     request.current = null;
     organized.current = c.productions.length ? null : { caseId: c.caseId, refs: refsKey(next) };
+    const items = !c.productions.length && c.analysis?.status === "returned" ? c.analysis.plan : null;
+    setPlan(items && items.length > 1 ? { caseId: c.caseId, items: items.map((i) => ({ key: crypto.randomUUID(), ...i })) } : null);
+    setPick(null);
     setNotice("");
   }
   function startBlank() {
@@ -193,6 +212,8 @@ export function ArtworkStudioClient() {
     setRoute("generate");
     setTransparentBackground(!!handoff);
     setMode("text");
+    setPlan(null);
+    setPick(null);
     request.current = null;
     organized.current = null;
     setNotice("已新建空白制作要求");
@@ -222,24 +243,8 @@ export function ArtworkStudioClient() {
         });
       let c = await readCase(created.caseId);
       setSelected(c.caseId);
-      const started = await batchAPI<{ id: string; status: string }>(
-        "/api/requirements/analyze",
-        {
-          caseId: c.caseId,
-          revision: c.revision,
-          supplementRevision: c.supplement.revision,
-          requestId: crypto.randomUUID(),
-        },
-      );
-      await reload();
-      // About three minutes of polling, one read every 1.5 seconds.
-      for (let tries = 0; c.analysis?.id !== started.id || c.analysis.status === "running"; tries++) {
-        if (tries >= 120)
-          throw new Error("AI 整理还没返回。结果会留在右侧「我的图稿」里，稍后点开这条即可，不会重复扣费。");
-        await sleep(1500);
-        c = await readCase(c.caseId);
-      }
-      await reload();
+      setPlan(null);
+      c = await analyze(c, "AI 整理还没返回。结果会留在右侧「我的图稿」里，稍后点开这条即可，不会重复扣费。");
       const art = c.draft?.artworks[0];
       if (c.analysis?.status !== "returned" || !art)
         throw new Error(c.analysis?.error || "AI 没有整理出图稿，请补充要求后重试");
@@ -259,11 +264,71 @@ export function ArtworkStudioClient() {
       running.current = false;
     }
   }
-  async function begin(fresh = false) {
+  async function analyze(c: Case, slow: string, mode?: "plan") {
+    const started = await batchAPI<{ id: string; status: string }>(
+      "/api/requirements/analyze",
+      {
+        caseId: c.caseId,
+        revision: c.revision,
+        supplementRevision: c.supplement.revision,
+        requestId: crypto.randomUUID(),
+        ...(mode ? { mode } : {}),
+      },
+    );
+    await reload();
+    // About three minutes of polling, one read every 1.5 seconds.
+    for (let tries = 0; c.analysis?.id !== started.id || c.analysis.status === "running"; tries++) {
+      if (tries >= 120) throw new Error(slow);
+      await sleep(1500);
+      c = await readCase(c.caseId);
+    }
+    await reload();
+    return c;
+  }
+  // Every picture of one confirmation goes in as one draft, so they are made side by side.
+  async function submit(c: Case, list: Submit[]) {
+    const draft = {
+      artworks: list.map((a, n) => ({
+        id: list.length > 1 ? `a${n + 1}` : "artwork",
+        name: a.name,
+        route: a.route,
+        transparentBackground: a.transparentBackground,
+        prompt: a.prompt,
+        imageIds: c.images.map((i) => i.id),
+        applications: [],
+      })),
+      readingIssues: [],
+    };
+    const prepared = await batchAPI<{ revision: number }>(
+      "/api/studio/prepare",
+      { caseId: c.caseId, revision: c.revision, draft },
+    );
+    const result = await batchAPI<{ jobs: Job[] }>("/api/production", {
+      requests: [
+        {
+          caseId: c.caseId,
+          revision: prepared.revision,
+          supplementRevision: c.supplement.revision,
+        },
+      ],
+    });
+    organized.current = null;
+    setPlan(null);
+    setPick(null);
+    setNotice(
+      result.jobs.some((j) => j.status === "blocked")
+        ? result.jobs.map((j) => j.error).filter(Boolean).join("；")
+        : (list.length > 1 ? `已提交 ${list.length} 张，同时制作；` : "已提交，") + "关闭页面后后台继续制作。",
+    );
+    await reload();
+  }
+  // multiple: only when asked, AI first reads how many pictures the request wants (a paid reading).
+  async function begin(multiple = false) {
     if (running.current) return;
     running.current = true;
     setBusy(true);
     setNotice("");
+    setPlan(null);
     try {
       checkInput();
       if (route !== "generate" && refs.length !== 1)
@@ -274,30 +339,30 @@ export function ArtworkStudioClient() {
           route,
           transparentBackground,
           refs: refs.map((r) => r.key),
-        });
-      // 再来一张 is a new request on purpose; any other repeat reads the earlier one back.
-      if (fresh) {
-        request.current = null;
-        organized.current = null;
-      }
+        }),
+        split = multiple && route === "generate" && mode === "text";
       if (request.current?.snapshot !== snapshot)
         request.current = { snapshot, id: crypto.randomUUID() };
       const reuse =
         organized.current?.refs === refsKey(refs) ? organized.current.caseId : null;
-      let caseId = reuse;
-      if (!caseId) {
+      let c = reuse ? await readCase(reuse) : null;
+      // The count is read from the record's own text, so edited text needs a new record.
+      if (c && split && c.sourceText !== text) c = null;
+      if (!c) {
         const images = await uploadImages(await refFiles(refs));
-        caseId = (
-          await batchAPI<{ caseId: string }>("/api/cases", {
-            text,
-            images,
-            entry: "studio",
-            requestId: request.current.id,
-          })
-        ).caseId;
+        c = await readCase(
+          (
+            await batchAPI<{ caseId: string }>("/api/cases", {
+              text,
+              images,
+              entry: "studio",
+              requestId: request.current.id,
+            })
+          ).caseId,
+        );
       }
-      setSelected(caseId);
-      const c = await readCase(caseId);
+      setSelected(c.caseId);
+      setPick(null);
       // An uncertain submit is read back, never turned into a second paid request.
       const prior = c.productions.at(-1);
       if (prior) {
@@ -305,40 +370,85 @@ export function ArtworkStudioClient() {
         await reload();
         return;
       }
-      const draft = {
-        artworks: [
-          {
-            id: "artwork",
-            name: "独立图稿",
-            route,
-            transparentBackground,
-            prompt,
-            imageIds: c.images.map((i) => i.id),
-            applications: [],
-          },
-        ],
-        readingIssues: [],
-      };
-      const prepared = await batchAPI<{ revision: number }>(
-        "/api/studio/prepare",
-        { caseId: c.caseId, revision: c.revision, draft },
+      const single = { name: "独立图稿", prompt, route, transparentBackground };
+      if (!split) return await submit(c, [single]);
+      organized.current = { caseId: c.caseId, refs: refsKey(refs) };
+      if (!(c.analysis?.mode === "plan" && c.analysis.status === "returned")) {
+        setPlanning(true);
+        c = await analyze(c, "AI 还在看要求。结果会留在右侧「我的图稿」里，稍后点开这条确认即可，不会重复扣费。", "plan");
+      }
+      const items = c.analysis?.status === "returned" ? c.analysis.plan : null;
+      if (!items?.length)
+        throw new Error(c.analysis?.error || "AI 没看出要出几张，请把要求写具体些再试");
+      // One picture: send the author's own words, not AI's restatement.
+      if (items.length === 1) return await submit(c, [single]);
+      setPlan({ caseId: c.caseId, items: items.map((i) => ({ key: crypto.randomUUID(), ...i })) });
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+      setPlanning(false);
+      running.current = false;
+    }
+  }
+  async function confirmPlan() {
+    if (!plan || running.current) return;
+    running.current = true;
+    setBusy(true);
+    setNotice("");
+    try {
+      const items = plan.items.filter((i) => i.text.trim());
+      if (!items.length) throw new Error("至少留一张");
+      const c = await readCase(plan.caseId);
+      const prior = c.productions.at(-1);
+      if (prior) {
+        setPlan(null);
+        setNotice("已回读此前提交的任务：" + statusText(prior.status));
+        await reload();
+        return;
+      }
+      await submit(
+        c,
+        items.map((i) => ({
+          name: i.name.trim() || "独立图稿",
+          prompt: authoredPrompt(i.text.trim(), transparentBackground),
+          route: "generate",
+          transparentBackground,
+        })),
       );
-      const result = await batchAPI<{ jobs: Job[] }>("/api/production", {
-        requests: [
-          {
-            caseId: c.caseId,
-            revision: prepared.revision,
-            supplementRevision: c.supplement.revision,
-          },
-        ],
-      });
-      organized.current = null;
-      setNotice(
-        result.jobs.some((j) => j.status === "blocked")
-          ? result.jobs.map((j) => j.error).join("；")
-          : "已提交，关闭页面后后台继续制作。",
-      );
-      await reload();
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+      running.current = false;
+    }
+  }
+  // 再来一张: the picture on screen once more, as its own record and charge.
+  async function again() {
+    const art = active?.draft?.artworks.find((a) => a.id === job?.artworkId);
+    if (!active || !art || running.current) return;
+    running.current = true;
+    setBusy(true);
+    setNotice("");
+    try {
+      const files = await refFiles(
+          active.images.map((i) => ({ key: i.id, index: i.index, name: i.label, url: assetURL(i.asset) })),
+        ),
+        body = splitPrompt(art.prompt).parts.find((p) => p.label === "主体")?.value.trim(),
+        c = await readCase(
+          (
+            await batchAPI<{ caseId: string }>("/api/cases", {
+              text: body || art.prompt,
+              images: await uploadImages(files),
+              entry: "studio",
+              requestId: crypto.randomUUID(),
+            })
+          ).caseId,
+        );
+      setSelected(c.caseId);
+      await submit(c, [
+        { name: art.name, prompt: art.prompt, route: art.route, transparentBackground: !!art.transparentBackground },
+      ]);
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e));
     } finally {
@@ -417,10 +527,15 @@ export function ArtworkStudioClient() {
     visible = allHistory ? shown : shown.slice(0, 30);
   const working = busy || organizing;
   const historyStatus = (c: Case) => {
-    const j = c.productions.at(-1);
-    if (j) return statusText(j.status);
-    if (c.analysis?.status === "running") return "AI 整理中";
-    if (c.analysis?.status === "returned") return "已整理，待制作";
+    const r = roundOf(c),
+      done = r.filter((j) => j.status === "returned").length;
+    if (r.length > 1)
+      return r.some(pending) ? `制作中 ${done}/${r.length}` : `已出 ${done}/${r.length} 张`;
+    if (r[0]) return statusText(r[0].status);
+    const split = c.analysis?.mode === "plan";
+    if (c.analysis?.status === "running") return split ? "AI 看要求中" : "AI 整理中";
+    if (c.analysis?.status === "returned")
+      return split ? `待确认 ${c.analysis.plan?.length || 0} 张` : "已整理，待制作";
     if (c.analysis) return "整理未完成";
     return "草稿";
   };
@@ -672,14 +787,26 @@ export function ArtworkStudioClient() {
                 <span>预计冻结</span>
                 <b>{chargeLabel(prices, route)}</b>
               </div>
-              <button
-                className="button primary full"
-                disabled={working || !text.trim() || !prices}
-                onClick={() => void begin()}
-              >
-                {busy ? "正在提交…" : "开始制作"}
-              </button>
-              <p className="tiny muted">按上限冻结，跑完按实际结算，多余退回。</p>
+              <div className="start-row">
+                <button
+                  className="button primary"
+                  disabled={working || !text.trim() || !prices}
+                  onClick={() => void begin()}
+                >
+                  {busy && !planning ? "正在提交…" : "开始制作"}
+                </button>
+                <button
+                  className="button"
+                  title={`AI 看要求拆成几张，列出来给你确认后一起出。${chargeLabel(prices, "analyze")}`}
+                  disabled={working || !text.trim() || !prices || route !== "generate" || mode !== "text"}
+                  onClick={() => void begin(true)}
+                >
+                  {planning ? "AI 正在拆…" : "AI 拆成多张"}
+                </button>
+              </div>
+              <p className="tiny muted">
+                「开始制作」出 1 张；要求里有好几样要分别出图时点「AI 拆成多张」。按上限冻结，跑完按实际结算，多余退回。
+              </p>
             </div>
           </section>
           <section className="col col-mid" aria-label="结果">
@@ -689,8 +816,13 @@ export function ArtworkStudioClient() {
                 <span
                   className={"tag " + (job?.status === "returned" ? "ok" : "")}
                 >
-                  {job ? statusText(job.status) : active ? historyStatus(active) : "待制作"}
+                  {plan ? "待确认" : job ? statusText(job.status) : active ? historyStatus(active) : "待制作"}
                 </span>
+                {round.length > 1 && job && (
+                  <span className="tiny muted">
+                    第 {round.indexOf(job) + 1} / {round.length} 张 · {job.name}
+                  </span>
+                )}
                 <span className="tiny muted">
                   {file?.width && file?.height
                     ? `${file.width} × ${file.height}${job?.transparentBackground ? " · 透明 PNG" : ""}`
@@ -714,22 +846,109 @@ export function ArtworkStudioClient() {
                 ))}
               </div>
             </div>
-            <div className="preview">
-              <div className={"thumb stage-" + stage}>
-                {file ? (
-                  <img src={assetURL(file.asset)} alt="制作结果" />
-                ) : (
-                  <div className="empty">
-                    <h3>{job ? statusText(job.status) : "图稿将在这里显示"}</h3>
-                    <p>
-                      {job?.error ||
-                        "添加参考图、写好要求，点左下「开始制作」。"}
-                    </p>
+            {plan ? (
+              <div className="plan" aria-label="确认要出的图">
+                <p className="plan-head">
+                  AI 看了要求，这次出 <b>{plan.items.length}</b> 张。每张的要求可以改，不要的删掉，确认后一起出。
+                </p>
+                <ol className="plan-list">
+                  {plan.items.map((item, n) => {
+                    const edit = (patch: Partial<typeof item>) =>
+                      setPlan((p) => p && { ...p, items: p.items.map((x) => (x.key === item.key ? { ...x, ...patch } : x)) });
+                    return (
+                      <li key={item.key}>
+                        <div className="plan-row">
+                          <span className="plan-no">{n + 1}</span>
+                          <input
+                            aria-label={`第 ${n + 1} 张的名字`}
+                            value={item.name}
+                            maxLength={20}
+                            disabled={busy}
+                            onChange={(e) => edit({ name: e.target.value })}
+                          />
+                          <button
+                            className="button sm"
+                            disabled={busy || plan.items.length === 1}
+                            onClick={() =>
+                              setPlan((p) => p && { ...p, items: p.items.filter((x) => x.key !== item.key) })
+                            }
+                          >
+                            删掉
+                          </button>
+                        </div>
+                        <textarea
+                          aria-label={`第 ${n + 1} 张的要求`}
+                          rows={3}
+                          value={item.text}
+                          disabled={busy}
+                          onChange={(e) => edit({ text: e.target.value })}
+                        />
+                      </li>
+                    );
+                  })}
+                </ol>
+              </div>
+            ) : (
+              <div className={"preview" + (round.length > 1 ? " has-strip" : "")}>
+                <div className={"thumb stage-" + stage}>
+                  {file ? (
+                    <img src={assetURL(file.asset)} alt="制作结果" />
+                  ) : (
+                    <div className="empty">
+                      <h3>{job ? statusText(job.status) : "图稿将在这里显示"}</h3>
+                      <p>
+                        {job?.error ||
+                          "添加参考图、写好要求，点左下「开始制作」。"}
+                      </p>
+                    </div>
+                  )}
+                </div>
+                {round.length > 1 && (
+                  <div className="strip" role="group" aria-label="这次出的图">
+                    {round.map((j, n) => {
+                      const f = resultFile(j);
+                      return (
+                        <button
+                          key={j.id}
+                          className={"thumb stage-" + stage}
+                          aria-pressed={j.id === job?.id}
+                          title={`${n + 1}. ${j.name} · ${statusText(j.status)}`}
+                          onClick={() => setPick(j.id)}
+                        >
+                          {f ? (
+                            <img src={assetURL(f.asset)} alt={`第 ${n + 1} 张`} />
+                          ) : pending(j) ? (
+                            <i className="spin" aria-hidden="true" />
+                          ) : (
+                            <span className="tiny">未出</span>
+                          )}
+                          <span className="idx">{n + 1}</span>
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
-            </div>
-            {job?.error && <p className="notice warn tiny">{job.error}</p>}
+            )}
+            {!plan && job?.error && <p className="notice warn tiny">{job.error}</p>}
+            {plan ? (
+              <div className="col-foot result-tools">
+                <button
+                  className="button sm primary"
+                  disabled={busy || !prices}
+                  onClick={() => void confirmPlan()}
+                >
+                  {busy ? "正在提交…" : `出这 ${plan.items.length} 张`}
+                </button>
+                <button className="button sm" disabled={busy} onClick={() => setPlan(null)}>
+                  先不出
+                </button>
+                <span className="grow" />
+                <span className="tiny muted">
+                  {prices?.exempt ? "内部免计费" : prices ? `最多 ${prices.generate * plan.items.length} 积分` : ""}
+                </span>
+              </div>
+            ) : (
             <div className="col-foot result-tools">
               {file ? (
                 <a
@@ -760,9 +979,9 @@ export function ArtworkStudioClient() {
               </button>
               <button
                 className="button sm"
-                title="同样的要求再做一张，另算一次制作"
+                title="这张的要求再做一张，另算一次制作"
                 disabled={!active || !job || working || !prices}
-                onClick={() => void begin(true)}
+                onClick={() => void again()}
               >
                 再来一张
               </button>
@@ -782,7 +1001,7 @@ export function ArtworkStudioClient() {
                 <a
                   className="button sm"
                   href={assetURL(file.asset)}
-                  download="独立图稿.png"
+                  download={round.length > 1 ? `独立图稿-${round.indexOf(job!) + 1}.png` : "独立图稿.png"}
                 >
                   下载 PNG
                 </a>
@@ -811,6 +1030,7 @@ export function ArtworkStudioClient() {
                 )}
               </div>
             </div>
+            )}
           </section>
           <section className="col col-right" aria-label="我的图稿">
             <div className="col-head">
@@ -826,9 +1046,10 @@ export function ArtworkStudioClient() {
             </div>
             <div className="col-body hist-list">
               {visible.map((c) => {
-                const j = c.productions.at(-1),
-                  f = resultFile(j),
-                  pending = j ? ["queued", "running"].includes(j.status) : c.analysis?.status === "running";
+                const r = roundOf(c),
+                  j = r[0],
+                  f = resultFile(r.find((x) => resultFile(x))),
+                  busyCase = j ? r.some(pending) : c.analysis?.status === "running";
                 return (
                   <button
                     className={
@@ -841,7 +1062,7 @@ export function ArtworkStudioClient() {
                     <div className="thumb">
                       {f ? (
                         <img src={assetURL(f.asset)} alt="" loading="lazy" />
-                      ) : pending ? (
+                      ) : busyCase ? (
                         <i className="spin" aria-hidden="true" />
                       ) : (
                         "—"
@@ -850,7 +1071,7 @@ export function ArtworkStudioClient() {
                     <div>
                       <div className="t">{caseTitle(c)}</div>
                       <div className="s">
-                        <span className={"state " + (j?.status === "returned" ? "ok" : pending ? "run" : "")}>
+                        <span className={"state " + (busyCase ? "run" : j?.status === "returned" ? "ok" : "")}>
                           {historyStatus(c)}
                         </span>
                         {j?.transparentBackground && <span>透明</span>}
