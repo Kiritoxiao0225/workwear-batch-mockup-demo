@@ -14,7 +14,6 @@ import { checkDraft, DEFAULT_COUNTS, fillParts, type Counts, type Draft, type Pr
 import { BUILT_IN_LAYOUTS } from "@/lib/listing/templates";
 import { draftPrice, layoutOf, lookMaster, PlanDialog, PriceInfo, startDraft, type Prices } from "./listing-plan";
 import { ResultsPanel } from "./listing-results";
-import { MasterLibrary } from "./listing-library";
 import { ServiceTip, ShopPage } from "./listing-service";
 import "./listing-images.css";
 
@@ -115,20 +114,19 @@ function stageOf(p: Summary, upload: Upload | undefined, draft: Draft | null, la
   }
   if (p.status === "writing") return { step: 3, c: "b", text: "AI 正在写每张图的画面，约 1 分钟，写完自动开始出图" };
   if (p.status === "generating") return p.round === 2 ? { step: 4, c: "b", text: `竖版出图中 ${p.made}/${p.slots}，做好的会陆续出现` } : { step: 3, c: "b", text: `出图中 ${p.made}/${p.slots}：先出定妆照和 1:1 方图` };
-  if (p.status === "square") return { step: 4, c: "y", text: p.broken ? `方图做好了，${p.broken} 张没成功，可以重做；改满意后出竖版` : "方图出好了：哪张不满意点开改，满意了再出竖版" };
-  return p.broken ? { step: 4, c: "y", text: `做好 ${p.made}/${p.slots} 张，${p.broken} 张没成功，可以重做` } : { step: 5, c: "g", text: `全部做好了，共 ${p.made} 张` };
+  if (p.status === "square") return { step: 4, c: "y", text: p.broken ? `方图做好了，${p.broken} 张没成功，可以重新生成；改满意后出竖版` : "方图出好了：哪张不满意点开改，满意了再出竖版" };
+  return p.broken ? { step: 4, c: "y", text: `做好 ${p.made}/${p.slots} 张，${p.broken} 张没成功，可以重新生成` } : { step: 5, c: "g", text: `全部做好了，共 ${p.made} 张` };
 }
 
-const VIEWS = [["home", "工作台"], ["lib", "母版库"], ["shop", "店铺设置"]] as const;
+const VIEWS = [["home", "工作台"], ["shop", "店铺设置"]] as const;
 const VIEW_INTRO: Record<(typeof VIEWS)[number][0], string> = {
   home: "拖入商品文件夹，AI 整理素材、排好方案，你确认后出图。",
-  lib: "每套母版定好了风格、字体和每张图的排法。下面是同一款冲锋衣用不同母版出的效果。",
   shop: "这里只放店铺的服务：写一次，每款出图都会用到。",
 };
 
 export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
   const [config, setConfig] = useState<Config | null>(null);
-  const [view, setView] = useState<"home" | "lib" | "shop">("home");
+  const [view, setView] = useState<(typeof VIEWS)[number][0]>("home");
   const [projects, setProjects] = useState<Summary[]>([]);
   const [details, setDetails] = useState<Record<string, Detail>>({});
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
@@ -220,15 +218,44 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
     return ok;
   };
   const redo = async (id: string, slot: string, label: string) => {
-    const note = window.prompt(`重做「${label}」。有补充要求可以写在这里（可不填）`, "");
+    const note = window.prompt(`重新生成「${label}」。有补充要求可以写在这里（可不填）`, "");
     if (note === null) return;
     try {
       const r = await post<{ images: number }>(`projects/${id}/redo`, { slot, note });
       say(r.images > 1 ? `已重新排队 ${r.images} 张：这张和因为它没做出来的图` : "已重新排队"); await refresh();
     } catch (error) { say((error as Error).message); }
   };
-  const verticals = async (id: string) => {
-    try { await post(`projects/${id}/verticals`); say("竖版开始出了，做好的会陆续出现"); await refresh(); } catch (error) { say((error as Error).message); }
+  /**
+   * 「全部下载」: one zip with a folder per product, packed in the browser from each product's own
+   * download so the server never holds several products' images at once.
+   */
+  const [zipping, setZipping] = useState(false);
+  const downloadAll = async (list: Summary[]) => {
+    if (isDemo()) { say("演示页不能下载"); return; }
+    setZipping(true);
+    try {
+      const { default: JSZip } = await import("jszip");
+      const all = new JSZip(), used = new Set<string>();
+      let failed = 0;
+      for (const [i, p] of list.entries()) {
+        say(`正在打包第 ${i + 1} / ${list.length} 款…`, 120000);
+        const response = await fetch(downloadUrl(p.id), { cache: "no-store" });
+        if (!response.ok) { failed++; continue; }
+        const one = await JSZip.loadAsync(await response.arrayBuffer());
+        const base = p.name.replace(/[\\/:*?"<>|]/g, "_") || "未命名";
+        let folder = base;
+        for (let n = 2; used.has(folder); n++) folder = `${base} (${n})`;
+        used.add(folder);
+        for (const [path, entry] of Object.entries(one.files)) if (!entry.dir) all.file(`${folder}/${path}`, await entry.async("blob"));
+      }
+      if (!used.size) throw new Error("没有能下载的图");
+      const url = URL.createObjectURL(await all.generateAsync({ type: "blob" }));
+      const a = document.createElement("a");
+      a.href = url; a.download = `电商主图-${used.size}款.zip`; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      say(failed ? `已打包 ${used.size} 款；${failed} 款没取到，可以单独下载` : `已打包 ${used.size} 款`);
+    } catch (error) { say((error as Error).message); }
+    finally { setZipping(false); }
   };
   const remove = async (p: Summary) => {
     if (!window.confirm(`删除「${p.name}」？上传的图片和出好的图都会删掉。`)) return;
@@ -256,9 +283,7 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
         <PageHeader title="电商主图" description={VIEW_INTRO[view]}>
           <PageTabs label="电商主图" tabs={VIEWS} value={view} onChange={setView} />
         </PageHeader>
-        {view === "shop" ? <ShopPage unit={prices.image} exempt={prices.exempt} onSay={say} />
-        : view === "lib" ? <MasterLibrary layouts={layouts} /> : <>
-        <ServiceTip onOpen={() => setView("shop")} />
+        {view === "shop" ? <ShopPage unit={prices.image} exempt={prices.exempt} onSay={say} /> : <>
         <div className="lp-dropwrap">
           <button type="button" className={"lp-drop" + (over ? " over" : "")}
             onDragOver={e => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={onDrop} onClick={() => pick.current?.click()}>
@@ -273,8 +298,9 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
         </div>
         <input ref={pick} type="file" multiple hidden {...{ webkitdirectory: "" }} accept="image/*"
           onChange={e => { const g = groupsFromInput(e.target.files!); e.target.value = ""; choose(g); }} />
+        <ServiceTip onOpen={() => setView("shop")} />
 
-        <div className="lp-filters"><div className="lp-seg">{(Object.keys(TABS) as Tab[]).map(t => {
+        {projects.length > 0 && <div className="lp-filters"><div className="lp-seg">{(Object.keys(TABS) as Tab[]).map(t => {
           const n = projects.filter(TABS[t]).length;
           return <button type="button" key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t}<b className={t === "待我处理" && n ? "hot" : ""}>{n}</b></button>;
         })}</div>
@@ -282,9 +308,8 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
           {tab === "待我处理" && ready.length > 0 && <>
             <button type="button" className="lp-btn sm primary" onClick={() => void start(ready.map(p => p.id)).then(n => say(`${n} 款开始出图，做好的会陆续出现`))}>按 AI 方案全部开始出图（{ready.length} 款{prices.exempt ? "" : `，约 ${readyTotal} 积分`}）</button>
             {!prices.exempt && <PriceInfo lines={readyLines} total={readyTotal} extra={`${ready.length} 款合计，有红色问题的不算在内`} />}</>}
-          {tab === "已完成" && done.length > 0 && <button type="button" className="lp-btn sm" onClick={() => isDemo() ? say("演示页不能下载") : done.forEach((p, i) => setTimeout(() => { const a = document.createElement("a"); a.href = downloadUrl(p.id); a.click(); }, i * 1200))}>全部下载（{done.length} 款）</button>}
-        </div>
-        {!projects.length && <div className="lp-card lp-empty">还没有商品。把一个商品的主图、SKU 图、详情图放进同一个文件夹，拖到上面。</div>}
+          {tab === "已完成" && done.length > 0 && <button type="button" className="lp-btn sm" disabled={zipping} onClick={() => void downloadAll(done)}>{zipping ? "正在打包…" : `全部下载（${done.length} 款，一个压缩包）`}</button>}
+        </div>}
         <div className="lp-list">{projects.filter(TABS[tab]).map(p => {
           const draft = p.status === "materials" ? draftOf(p.id) : null, s = stageOf(p, uploads[p.id], draft, layouts);
           const cost = draft && details[p.id]?.materials && !prices.exempt ? draftPrice(draft, details[p.id].materials!, plain(draft.layout), prices).now : null;
@@ -304,7 +329,7 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
                 {cost && <><span className="lp-muted lp-small">先出方图约 {cost.credits} 积分</span><PriceInfo lines={cost.lines} total={cost.credits} extra="分析费已在整理时扣过；竖版以后出、以后扣" /></>}
                 {(p.status === "failed" || (p.status === "uploading" && !uploads[p.id] && p.images > 0)) && <button type="button" className="lp-btn sm primary" onClick={() => void startPlan(p.id)}>{p.status === "failed" ? (p.error?.includes("继续整理") ? "继续整理" : "重新整理") : "开始整理"}</button>}
                 {p.status === "generating" && <button type="button" className="lp-btn sm" onClick={() => void open(p.id)}>看进度</button>}
-                {p.status === "square" && <><button type="button" className="lp-btn sm primary" onClick={() => void open(p.id)}>看图、改图</button><button type="button" className="lp-btn sm" onClick={() => void verticals(p.id)}>出竖版</button></>}
+                {p.status === "square" && <button type="button" className="lp-btn sm primary" onClick={() => void open(p.id)}>看图</button>}
                 {p.status === "done" && <><button type="button" className="lp-btn sm primary" onClick={() => void open(p.id)}>看图</button><a className="lp-btn sm" href={downloadUrl(p.id)} onClick={e => { if (isDemo()) { e.preventDefault(); say("演示页不能下载"); } }}>下载</a></>}
                 {!running(p) && <button type="button" className="lp-btn sm ghost" onClick={() => void remove(p)}>删除</button>}
               </div>

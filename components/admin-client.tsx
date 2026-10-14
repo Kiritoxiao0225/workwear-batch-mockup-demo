@@ -28,6 +28,8 @@ type Range = (typeof RANGES)[number][0];
 const ROLES: [Role, string][] = [['admin', '管理员'], ['editor', '普通'], ['viewer', '只看']];
 // Pages that can carry a charge; the rest never spend credits.
 const SPEND_PAGES = [['/artwork-studio', '图稿生成'], ['/listing-images', '电商主图'], ['/garment-mockup', '成衣效果图（已下线）'], ['/batch', '批量生成（已下线）'], ['other', '其他']] as const;
+// Columns for retired pages only show while the chosen period still has charges from them.
+const RETIRED_SPEND = new Set<string>(['/garment-mockup', '/batch']);
 const PAGE_LABEL: Record<string, string> = Object.fromEntries([...APP_PAGES.map(page => [page.href, page.label]), ['other', '其他']]);
 // What each billed action is, where it happens and who supplies it.
 const ACTIONS: { action: string; label: string; where: string; supplier: string; free?: boolean }[] = [
@@ -154,7 +156,7 @@ export function AdminClient() {
     }
   };
   const enterButton = (account: Account) => account.id !== self && !account.disabled && (
-    <button className="button" disabled={busy} title="以这个账号的身份打开工作台，看它生成过什么；页头可随时返回管理员" onClick={() => void enter(account)}>进入账号</button>
+    <button className="button admin-enter" disabled={busy} title="以这个账号的身份打开工作台，看它生成过什么；页头可随时返回管理员" onClick={() => void enter(account)}>进入账号</button>
   );
 
   const togglePage = (account: Account, href: string) => {
@@ -163,6 +165,7 @@ export function AdminClient() {
   };
 
   const total = shown.reduce((sum, account) => sum + account.spentCents, 0);
+  const spendColumns = SPEND_PAGES.filter(([key]) => !RETIRED_SPEND.has(key) || shown.some(account => account.spendByPage[key]));
 
   return (
     <main>
@@ -200,7 +203,7 @@ export function AdminClient() {
               <thead>
                 <tr>
                   <th>账号</th><th className="right">余额</th><th className="right">冻结</th><th className="right">花费</th>
-                  {SPEND_PAGES.map(([key, label]) => <th key={key} className="right">{label}</th>)}
+                  {spendColumns.map(([key, label]) => <th key={key} className="right">{label}</th>)}
                   <th>操作</th>
                 </tr>
               </thead>
@@ -216,7 +219,7 @@ export function AdminClient() {
                     </td>
                     <td className="right held">{account.heldCents ? credits(account.heldCents) : '—'}</td>
                     <td className="right"><b>{credits(account.spentCents)}</b><small>{yuan(account.spentCents)}</small></td>
-                    {SPEND_PAGES.map(([key]) => <td key={key} className="right">{account.spendByPage[key] ? credits(account.spendByPage[key]) : '—'}</td>)}
+                    {spendColumns.map(([key]) => <td key={key} className="right">{account.spendByPage[key] ? credits(account.spendByPage[key]) : '—'}</td>)}
                     <td className="nowrap">
                       {!account.tenant.exempt && <button className="button" disabled={busy} onClick={() => setSetting(account)}>设置积分</button>}
                       <button className="button" onClick={() => void openDetail(account)}>明细</button>

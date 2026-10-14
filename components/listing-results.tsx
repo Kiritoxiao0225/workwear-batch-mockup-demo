@@ -3,7 +3,7 @@
 /**
  * 电商主图 results, in two rounds. Round one: the cast (the models every image with people is
  * drawn from), the 1:1 images, the SKU and white-background images. Clicking a main image opens
- * 「点图修改」: say what to change (and add a reference image if wanted), the model redraws the
+ * 「按要求修改」: say what to change (and add a reference image if wanted), the model redraws the
  * image from itself, and 「采用」 puts the result in its place; the old one stays in the history.
  * When the square images are right, 「出竖版」 makes the 3:4 images and the 2:3 long image from
  * the plan as the user left it. The cast can be redone, which redraws every image with people.
@@ -50,7 +50,7 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
       <div key={s.slot} className={"lp-out" + (bad ? " bad" : "") + (kind === "cast" ? " cast" : "")}>
         <div className="lp-out-img" style={{ aspectRatio: SHAPE[kind] }}>
           {s.image && (editable && !wait
-            ? <button type="button" className="lp-out-open" title="点图修改" onClick={() => edit(s.slot)}><img src={assetUrl(s.image)} alt={label} loading="lazy" /><span className="lp-out-tag">点图修改</span></button>
+            ? <button type="button" className="lp-out-open" title="按要求修改" onClick={() => edit(s.slot)}><img src={assetUrl(s.image)} alt={label} loading="lazy" /><span className="lp-out-tag">按要求修改</span></button>
             : <a href={assetUrl(s.image)} target="_blank" rel="noreferrer"><img src={assetUrl(s.image)} alt={label} loading="lazy" /></a>)}
           {s.history.length > 1 && version > 0 && <span className="lp-out-ver">第 {version} 版</span>}
           {wait && <span className="lp-out-wait">{s.status === "running" ? "出图中…" : "排队中"}</span>}
@@ -59,7 +59,7 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
         <b title={label}>{label}</b>
         {bad && s.error && <small className="lp-out-why">{s.error}</small>}
         {s.redraw?.status === "running" && <small className="lp-muted">正在按你说的改…</small>}
-        {!wait && !editable && (kind !== "cast" || bad) && <button type="button" className="lp-btn sm" onClick={() => onRedo(s.slot, label)}>重做</button>}
+        {!wait && !editable && (kind !== "cast" || bad) && <button type="button" className="lp-btn sm" onClick={() => onRedo(s.slot, label)}>重新生成</button>}
       </div>);
   };
   const lane = (title: string, pick: (s: SlotState) => boolean, note = "", action?: React.ReactNode) => {
@@ -82,7 +82,7 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
   const redoSkus = () => {
     const own = plan && detail.materials ? Object.keys(skuPhotos({ colors, model: plan.model }, detail.materials.sorted.images, skuPair(layout))).length : 0;
     const n = colors.length - own, who = skuPair(layout) ? "定妆照里的男女两位" : "主模特";
-    if (window.confirm(`SKU 图全部重做：素材里有这个颜色模特图的直接用${n ? `，没有的 ${n} 个颜色照${who}重画（共 ${n} 张${prices.exempt ? "" : `，约 ${n * prices.image} 积分`}）` : ""}，再按模板重新拼，所有颜色的人一样大。旧版本都留着。`)) void act("skus", {}, "SKU 图开始重做，做好的会陆续换上");
+    if (window.confirm(`SKU 图全部重新生成：素材里有这个颜色模特图的直接用${n ? `，没有的 ${n} 个颜色照${who}重画（共 ${n} 张${prices.exempt ? "" : `，约 ${n * prices.image} 积分`}）` : ""}，再按模板重新拼，所有颜色的人一样大。旧版本都留着。`)) void act("skus", {}, "SKU 图开始重做，做好的会陆续换上");
   };
   /** One redraw, waited for; the new version shows as new until the dialog closes. */
   const redraw = async (slot: string, ask: string, file: File | null) => {
@@ -92,6 +92,10 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
     return made.url;
   };
   const edited = editing ? detail.slots.find(s => s.slot === editing && s.image) : undefined;
+  const heavy: [string, () => void][] = generating ? [] : [
+    ...(castSlot?.image ? [[halves ? "重画模特（有人的图全部重画）" : "换一组模特（有人的图全部重画）", recast] as [string, () => void]] : []),
+    ...(layout.sku.specCard && detail.slots.some(s => s.slot.startsWith("sku:")) ? [["SKU 图全部重新生成", redoSkus] as [string, () => void]] : []),
+  ];
   return (
     <div className="lp-modal" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="lp-box lp-plan" role="dialog" aria-modal="true" aria-label="出好的图">
@@ -107,15 +111,13 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
               {!prices.exempt && <PriceInfo lines={later.lines} total={later.credits} />}
             </div>)}
           {lane("模特定妆照", s => halves ? s.slot.startsWith("cast:") || (s.slot === "cast" && !s.image && s.status !== "queued" && s.status !== "running") : s.slot === "cast",
-            halves ? "照素材里的模特画，后面有人的图都照这两位画" : "后面有人的图都照它画，是同一个人",
-            !generating && castSlot?.image ? <button type="button" className="lp-btn sm" style={{ marginLeft: 10 }} onClick={recast}>{halves ? "重画模特" : "换一组模特"}</button> : null)}
-          {lane(`主推套 · ${main} · 1:1 主图`, s => s.slot.startsWith("square:") && !s.slot.includes("+"), "点图修改")}
+            halves ? "照素材里的模特画，后面有人的图都照这两位画" : "后面有人的图都照它画，是同一个人")}
+          {lane(`主推套 · ${main} · 1:1 主图`, s => s.slot.startsWith("square:") && !s.slot.includes("+"), "点图可以按要求修改")}
           {lane(`主推套 · ${main} · 3:4 主图`, s => s.slot.startsWith("portrait:") && !s.slot.includes("+"), "讲的和 1:1 一样，按竖图重新排")}
           {lane("2:3 长图", s => s.slot.startsWith("long:") && !s.slot.includes("+"), "手淘推荐流用")}
           {sets.map(c => lane(`加的一套 · ${c}`, s => s.slot.endsWith("+" + c), "只换了首图，其余图和主推套共用"))}
-          {lane("SKU 图", s => s.slot.startsWith("sku:"), "",
-            !generating && layout.sku.specCard ? <button type="button" className="lp-btn sm" style={{ marginLeft: 10 }} onClick={redoSkus}>全部重做</button> : null)}
-          {lane("SKU 模特图", s => s.slot.startsWith("skumodel:"), "素材里没有这个颜色的模特图，照主模特画的；重做后 SKU 图跟着重拼")}
+          {lane("SKU 图", s => s.slot.startsWith("sku:"))}
+          {lane("SKU 模特图", s => s.slot.startsWith("skumodel:"), "素材里没有这个颜色的模特图，照主模特画的；重新生成后 SKU 图跟着重拼")}
           {lane("白底产品图", s => s.slot.startsWith("product:"))}
         </div>
         {edited && <EditDialog title={`修改${numOf(edited.slot)} · ${taskOf(edited)}${edited.slot.startsWith("portrait") ? "（3:4）" : edited.slot.startsWith("long") ? "（2:3）" : ""}`}
@@ -133,9 +135,16 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
             <button type="button" className="lp-btn" onClick={() => setAdding(null)}>取消</button>
             <button type="button" className="lp-btn primary" disabled={busy} onClick={() => void act("sets", adding, `「${adding.color}」的首图开始出了`).then(() => setAdding(null))}>开始出这一套</button>
           </> : <>
+            {heavy.length > 0 && (
+              <details className="lp-more">
+                <summary className="lp-btn">更多操作</summary>
+                <div className="lp-more-menu" role="menu">
+                  {heavy.map(([name, run]) => <button type="button" role="menuitem" key={name} onClick={e => { (e.currentTarget.closest("details") as HTMLDetailsElement).open = false; run(); }}>{name}</button>)}
+                </div>
+              </details>)}
             <div className="grow" />
             {free.length > 0 && !generating && <button type="button" className="lp-btn" onClick={() => setAdding({ color: free[0].name, layout: "" })}>＋ 再加一套首图（换颜色）</button>}
-            {made > 0 && <a className="lp-btn primary" href={downloadUrl(detail.id)} onClick={e => { if (downloadUrl(detail.id).startsWith("#")) { e.preventDefault(); onError("演示页不能下载，上线后这里下载全部图"); } }}>全部下载</a>}
+            {made > 0 && <a className="lp-btn primary" href={downloadUrl(detail.id)} onClick={e => { if (downloadUrl(detail.id).startsWith("#")) { e.preventDefault(); onError("演示页不能下载，上线后这里下载全部图"); } }}>下载这一款</a>}
           </>}
         </div>
       </div>

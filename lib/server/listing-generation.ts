@@ -291,10 +291,10 @@ export async function addSet(tenant: Tenant, user: string, projectId: string, in
 export async function redoSkus(tenant: Tenant, user: string, projectId: string, only?: string) {
   const prices = await currentPrices();
   return catalogTransaction(async c => {
-    const { stored, layout } = await lockProject(c, tenant, projectId, ['square', 'done', 'generating'], '出过图之后才能重做 SKU 图');
-    if (!layout.sku.specCard) throw new CatalogHttpError(409, '这个版式的 SKU 图不是按模板拼的，请单张重做');
+    const { stored, layout } = await lockProject(c, tenant, projectId, ['square', 'done', 'generating'], '出过图之后才能重新生成 SKU 图');
+    if (!layout.sku.specCard) throw new CatalogHttpError(409, '这个版式的 SKU 图不是按模板拼的，请单张重新生成');
     const latest = await latestJobs(c, projectId), busy = (j: { status: string }) => j.status === 'queued' || j.status === 'running';
-    if (latest.some(j => (j.slot.startsWith('sku') || j.slot.startsWith('cast')) && busy(j))) throw new CatalogHttpError(409, 'SKU 图或定妆照还在出，等出完再重做');
+    if (latest.some(j => (j.slot.startsWith('sku') || j.slot.startsWith('cast')) && busy(j))) throw new CatalogHttpError(409, 'SKU 图或定妆照还在出，等出完再重新生成');
     const m = (await c.query('SELECT materials FROM listing_projects WHERE id=$1', [projectId])).rows[0].materials;
     const next: StoredPlan = { ...stored, photos: skuPhotos(stored.draft, m?.sorted?.images ?? [], skuPair(layout)) };
     const planned = planJobs(next, layout, 1), mine = (slot: string) => !only || slot.endsWith(`:${only}`);
@@ -317,10 +317,10 @@ export async function redoSlot(tenant: Tenant, user: string, projectId: string, 
   }
   const prices = await currentPrices();
   return catalogTransaction(async c => {
-    await lockProject(c, tenant, projectId, ['square', 'done', 'generating'], '出过图之后才能单张重做');
+    await lockProject(c, tenant, projectId, ['square', 'done', 'generating'], '出过图之后才能单张重新生成');
     const latest = await latestJobs(c, projectId), last = latest.find(j => j.slot === slot);
     if (!last) throw new CatalogHttpError(404, '没有这张图');
-    if (last.status === 'queued' || last.status === 'running') throw new CatalogHttpError(409, '这张图正在出，等它出完再重做');
+    if (last.status === 'queued' || last.status === 'running') throw new CatalogHttpError(409, '这张图正在出，等它出完再重新生成');
     const input = { ...last.input, ...(last.input.kind === 'main' ? { edit: undefined } : {}), note: note.trim().slice(0, 200) || undefined } as JobInput;
     const jobs: PlannedJob[] = [{ slot, step: last.step, input, depends: last.depends, multi: action(input) === 'listing_image_multi', free: freeJob(input) }];
     // Images that were skipped because this one (or one of them) was missing come along, and the free ones put together from it.
@@ -533,7 +533,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
     if (input.kind === 'copy') {
       // The shop's service image for this master: copied, no model call, nothing charged.
       const bytes = await shopServiceImage(job.tenant_id, input.image);
-      if (!bytes) throw new Error('店铺还没出这套母版的服务图：去「店铺设置」确认生成后，再点重做');
+      if (!bytes) throw new Error('店铺还没出这套母版的服务图：去「店铺设置」确认生成后，再点重新生成');
       await succeed(bytes);
       return;
     }

@@ -228,7 +228,7 @@ export function PlanDialog({ name, materials, sources, draft, layouts, prices, o
           {p.pick ? pic(p.pick) : <span className="none">{p.part === FRONT ? "缺正面全身图，点这里补" : "还没选图，点这里选"}</span>}</button>
         {p.part === FRONT ? <span className="nm">{FRONT}</span>
           : <><input value={p.part} maxLength={12} placeholder="部位名" aria-label="部位名" onChange={e => set({ parts: draft.parts.map((x, k) => k === i ? { ...x, part: e.target.value } : x) })} />
-            <button type="button" className="lp-btn link" onClick={() => set({ parts: draft.parts.filter((_, k) => k !== i) })}>删掉</button></>}
+            <button type="button" className="lp-btn link" onClick={() => set({ parts: draft.parts.filter((_, k) => k !== i) })}>移除</button></>}
       </div>))}
       <div className="lp-part"><button type="button" className="pic" onClick={() => { set({ parts: [...draft.parts, { part: "新部位", pick: null }] }); setTab("全部"); setTarget({ kind: "part", index: draft.parts.length }); }}><span className="none add">＋ 加一个部位</span></button></div>
     </div>
@@ -326,7 +326,7 @@ export function PlanDialog({ name, materials, sources, draft, layouts, prices, o
         <div key={k} className="lp-set"><b>加一套首图</b>
           颜色 <select value={e.color} onChange={x => set({ extra: draft.extra.map((y, m) => m === k ? { ...y, color: x.target.value } : y) })}>{ok.filter(c => c.name === e.color || free.includes(c)).map(c => <option key={c.name}>{c.name}</option>)}</select>
           版式 <select value={e.layout} onChange={x => set({ extra: draft.extra.map((y, m) => m === k ? { ...y, layout: x.target.value } : y) })}><option value="">跟主推套一样</option>{layouts.filter(l => l.id !== draft.layout).map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select>
-          <span className="grow">1:1 首图先出，3:4 首图和长图跟竖版一起出</span><button type="button" className="lp-btn link" onClick={() => set({ extra: draft.extra.filter((_, m) => m !== k) })}>不要了</button></div>))}
+          <span className="grow">1:1 首图先出，3:4 首图和长图跟竖版一起出</span><button type="button" className="lp-btn link" onClick={() => set({ extra: draft.extra.filter((_, m) => m !== k) })}>移除</button></div>))}
       {free.length > 0 && <div><button type="button" className="lp-btn sm" onClick={() => set({ extra: [...draft.extra, { color: free[0].name, layout: "" }] })}>＋ 再加一套首图（换个颜色）</button></div>}
     </div>
   </>);
@@ -457,13 +457,13 @@ export function PlanDialog({ name, materials, sources, draft, layouts, prices, o
               <div className="lp-cell" {...hl([cellZones(t)[n]?.id ?? ""])}>
                 <select value={c.point} onChange={e => setCell(n, e.target.value)}>{[p, ...choices].filter((x): x is Point => !!x).map(x => <option key={x.id} value={x.id}>{x.text}</option>)}</select>
                 <select value={c.proof} onChange={e => setSlot(i, { cells: s.cells.map((x, m) => m === n ? { ...x, proof: e.target.value } : x) })}>{proofs.map(x => { const no = !!x.part && !!p && !hasPart(draft, partOf(p)); return <option key={x.id} value={x.id} disabled={no}>{x.name}{no ? `（缺${partOf(p!)}照片）` : ""}</option>; })}</select>
-                <button type="button" className="lp-btn sm ghost" aria-label="去掉这格" title="去掉这格，其余的格子会变大" onClick={() => setSlot(i, { cells: s.cells.filter((_, m) => m !== n) })}>✕</button>
+                <button type="button" className="lp-btn sm ghost" aria-label="移除这格" title="移除这格，其余的格子会变大" onClick={() => setSlot(i, { cells: s.cells.filter((_, m) => m !== n) })}>✕</button>
                 {proof && <small className="lp-muted" title={proof.recipe}>画面：{proof.recipe.replace("{part}", p?.part || p?.text || "")}</small>}
               </div></div>);
           })}
           {s.task !== "首图" && s.cells.length > 0 && mostCells(base) > s.cells.length && choices.length > 0 && <><span /><select className="lp-add" value="" onChange={e => { const p = pointOf(e.target.value); if (p) setSlot(i, { cells: [...s.cells, { point: p.id, proof: fitProof(p, base, category) }] }); }}>
             <option value="">{room.cells > s.cells.length ? `＋ 加一格（还能加 ${room.cells - s.cells.length} 格）` : `＋ 挤一格（格子会变小，最多 ${mostCells(base)} 格）`}</option>{choices.map(p => <option key={p.id} value={p.id}>{p.text}</option>)}</select></>}
-          {room.tags > 0 && <><label>标签<small>小胶囊字</small></label><div className="lp-chips" {...hl(zoneIds("tag"))}>{s.tags.map((tg, n) => <span key={n} className="lp-tagx">{tg}<button type="button" aria-label="去掉" onClick={() => setSlot(i, { tags: s.tags.filter((_, m) => m !== n) })}>×</button></span>)}
+          {room.tags > 0 && <><label>标签<small>小胶囊字</small></label><div className="lp-chips" {...hl(zoneIds("tag"))}>{s.tags.map((tg, n) => <span key={n} className="lp-tagx">{tg}<button type="button" aria-label="移除" title="移除" onClick={() => setSlot(i, { tags: s.tags.filter((_, m) => m !== n) })}>×</button></span>)}
             {s.tags.length < room.tags && <select value="" onChange={e => e.target.value && setSlot(i, { tags: [...s.tags, e.target.value] })}><option value="">＋ 加标签</option>{choices.map(p => <option key={p.id} value={p.text}>{p.text}</option>)}</select>}
             <small className="lp-muted">图上的小胶囊字（预览里绿色的小块），补一句卖点，不配画面；最多 {room.tags} 个</small></div></>}
           {showsGarment(layout, s.task) && <><label>颜色<small>衣服穿哪个色</small></label><div className="lp-chips" {...hl([...zoneIds("person"), ...zoneIds("garment")])}>{ok.map(c => (
@@ -475,7 +475,7 @@ export function PlanDialog({ name, materials, sources, draft, layouts, prices, o
             return (<div key={"m" + n} className="lp-fix"><b>格 {n + 1}「{p.text}」要拍{partOf(p)}特写，可素材里没有{partOf(p)}的照片</b>（AI 在全部素材里找过了）。
               <span><button type="button" className="lp-btn sm" onClick={() => setSlot(i, { cells: s.cells.map((x, m) => m === n ? { ...x, proof: alt.id } : x) })}>改成「{alt.name}」</button>
                 <button type="button" className="lp-btn sm" onClick={() => addPartPhoto(partOf(p))}>补一张{partOf(p)}的照片</button>
-                <button type="button" className="lp-btn sm ghost" onClick={() => setSlot(i, { cells: s.cells.filter((_, m) => m !== n) })}>这格不要了</button></span></div>);
+                <button type="button" className="lp-btn sm ghost" onClick={() => setSlot(i, { cells: s.cells.filter((_, m) => m !== n) })}>移除这格</button></span></div>);
           })}
           {notes.filter(x => !missing.some(m => x.includes(`「${m.p.text}」要拍`))).map(x => <p key={x} className="lp-warn lp-note">! {x}</p>)}
         </div>
@@ -556,7 +556,7 @@ export function PlanDialog({ name, materials, sources, draft, layouts, prices, o
                 : <span className="lp-muted">素材里没有推荐的图，可以看「全部」或补传一张。</span>}</div>
             </div>
             <div className="lp-box-foot"><div className="grow">{target.kind === "part" && draft.parts[target.index]?.part !== FRONT
-              ? <button type="button" className="lp-btn link" onClick={() => { set({ parts: draft.parts.filter((_, k) => k !== target.index) }); setTarget(null); }}>不要这个部位（出图时不做特写）</button> : "素材里没有合适的？"}</div>
+              ? <button type="button" className="lp-btn link" onClick={() => { set({ parts: draft.parts.filter((_, k) => k !== target.index) }); setTarget(null); }}>移除这个部位（出图时不做特写）</button> : "素材里没有合适的？"}</div>
               <button type="button" className="lp-btn" disabled={busy} onClick={() => upload.current?.click()}>{busy ? "正在上传…" : "补传一张"}</button>
               <input ref={upload} type="file" accept="image/*" hidden onChange={async e => {
                 const file = e.target.files?.[0]; e.target.value = ""; if (!file) return;

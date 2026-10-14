@@ -45,7 +45,7 @@ type Submit = { name: string; prompt: string; route: Artwork["route"]; transpare
 const ROUTES = [
   ["generate", "生图", "按要求生成或修改图片。"],
   ["enhance", "无损放大", "已有清晰原图，只提高清晰度。"],
-  ["reuse", "直接复用", "直接使用原图，可勾选透明背景去掉底色。"],
+  ["reuse", "用原图", "不重画，直接用参考图；勾上透明背景就只去掉底色。"],
 ] as const;
 const PHRASES = [
   ["保留参考图形", "保留参考图中的主要图形"],
@@ -109,7 +109,7 @@ export function ArtworkStudioClient() {
       null,
     ),
     [allHistory, setAllHistory] = useState(false),
-    [filter, setFilter] = useState<"all" | "transparent">("all"),
+    [split, setSplit] = useState(false),
     [stage, setStage] = useState<Stage>("checker"),
     [handoff, setHandoff] = useState<ArtworkHandoff | null>(null);
   const input = useRef<HTMLInputElement>(null),
@@ -334,7 +334,7 @@ export function ArtworkStudioClient() {
     try {
       checkInput();
       if (route !== "generate" && refs.length !== 1)
-        throw new Error("无损放大或直接复用需要一张明确的内容原图");
+        throw new Error("无损放大或用原图需要一张明确的内容原图");
       const prompt = authoredPrompt(text, transparentBackground),
         snapshot = JSON.stringify({
           prompt,
@@ -501,11 +501,12 @@ export function ArtworkStudioClient() {
     });
   }
   const parsed = splitPrompt(authoredPrompt(text, transparentBackground));
-  const shown = cases.filter(
-      (c) => filter === "all" || c.productions.at(-1)?.transparentBackground === true,
-    ),
+  const shown = cases,
     visible = allHistory ? shown : shown.slice(0, 30);
+  // The history column only appears once there is something in it.
+  const hasHistory = !data || cases.length > 0;
   const working = busy || organizing;
+  const splitting = split && route === "generate" && mode === "text";
   const historyStatus = (c: Case) => {
     const r = roundOf(c),
       done = r.filter((j) => j.status === "returned").length;
@@ -526,7 +527,7 @@ export function ArtworkStudioClient() {
         <PageHeader
           compact
           title="图稿生成"
-          description="传参考图、写要求，生成 Logo 或图案；做好的图稿可以局部修补、再加工，下载透明 PNG。"
+          description="传参考图、写要求，生成 Logo 或图案；做好的图稿可以局部修补、变清晰，下载透明 PNG。"
           actions={<button className="button sm" onClick={startBlank}>新建图稿</button>}
         />
         {handoff && (
@@ -574,7 +575,7 @@ export function ArtworkStudioClient() {
             {error || notice}
           </p>
         )}
-        <div className="studio">
+        <div className={hasHistory ? "studio" : "studio no-history"}>
           <section className="col col-left" aria-label="输入">
             <div className="col-head">
               <h3>输入</h3>
@@ -680,6 +681,21 @@ export function ArtworkStudioClient() {
                   </div>
                 </>
               ) : (
+                <>
+                <div className="organize">
+                  <button
+                    className="button sm"
+                    disabled={working || !text.trim() || !prices}
+                    onClick={() => void organize()}
+                  >
+                    {organizing ? "AI 正在填…" : "AI 帮我填这七项"}
+                  </button>
+                  <small>
+                    {organizing
+                      ? "一般 10 秒左右；关掉页面也会在后台填完。"
+                      : `看参考图和要求，分别填进下面七项，填完可逐项改。${prices && !prices.exempt ? chargeLabel(prices, "analyze") : ""}`}
+                  </small>
+                </div>
                 <dl className="seven-view">
                   {parsed.parts.map((p) => (
                     <div key={p.label}>
@@ -711,21 +727,8 @@ export function ArtworkStudioClient() {
                     </div>
                   ))}
                 </dl>
+                </>
               )}
-              <div className="organize">
-                <button
-                  className="button sm"
-                  disabled={working || !text.trim() || !prices}
-                  onClick={() => void organize()}
-                >
-                  {organizing ? "AI 正在整理…" : "AI 整理成七项"}
-                </button>
-                <small>
-                  {organizing
-                    ? "一般 10 秒左右；关掉页面也会在后台整理完。"
-                    : `看图和要求，拆成七项，可逐项改。${chargeLabel(prices, "analyze")}`}
-                </small>
-              </div>
               <div className="field-label">
                 <span>制作方式</span>
               </div>
@@ -754,35 +757,33 @@ export function ArtworkStudioClient() {
               </label>
               <p className="sub" id="studio-output-hint">
                 {transparentBackground
-                  ? "去除背景，只保留图案本身；放到衣服上建议勾选。"
-                  : "保留背景或使用场景，不自动抠图。"}
+                  ? "会去掉底色，只留图案；要印到衣服上建议勾上。"
+                  : "勾上会自动去掉底色，只留图案。"}
               </p>
             </div>
             <div className="col-foot start-foot">
+              {route === "generate" && mode === "text" && (
+                <label className="row split-check">
+                  <input type="checkbox" checked={split} disabled={working} onChange={(e) => setSplit(e.target.checked)} />
+                  <span>要分开出几张图：AI 先列清单，确认后一起出</span>
+                </label>
+              )}
               <div className="cost-row">
                 <span>预计冻结</span>
-                <b>{chargeLabel(prices, route)}</b>
+                <b>{chargeLabel(prices, splitting ? "analyze" : route)}</b>
               </div>
               <div className="start-row">
                 <button
                   className="button primary"
                   disabled={working || !text.trim() || !prices}
-                  onClick={() => void begin()}
+                  onClick={() => void begin(splitting)}
                 >
-                  {busy && !planning ? "正在提交…" : "开始制作"}
-                </button>
-                <button
-                  className="button"
-                  title={`AI 看要求拆成几张，列出来给你确认后一起出。${chargeLabel(prices, "analyze")}`}
-                  disabled={working || !text.trim() || !prices || route !== "generate" || mode !== "text"}
-                  onClick={() => void begin(true)}
-                >
-                  {planning ? "AI 正在拆…" : "AI 拆成多张"}
+                  {planning ? "AI 正在拆…" : busy ? "正在提交…" : splitting ? "让 AI 拆分" : "开始制作"}
                 </button>
               </div>
-              <p className="tiny muted">
-                「开始制作」出 1 张；要求里有好几样要分别出图时点「AI 拆成多张」。按上限冻结，跑完按实际结算，多余退回。
-              </p>
+              {prices && !prices.exempt && (
+                <p className="tiny muted">按上限冻结，跑完按实际结算，多余退回。</p>
+              )}
             </div>
           </section>
           <section className="col col-mid" aria-label="结果">
@@ -849,7 +850,7 @@ export function ArtworkStudioClient() {
                               setPlan((p) => p && { ...p, items: p.items.filter((x) => x.key !== item.key) })
                             }
                           >
-                            删掉
+                            移除
                           </button>
                         </div>
                         <textarea
@@ -924,21 +925,22 @@ export function ArtworkStudioClient() {
                   {prices?.exempt ? "内部免计费" : prices ? `最多 ${prices.generate * plan.items.length} 积分` : ""}
                 </span>
               </div>
-            ) : (
+            ) : job ? (
             <div className="col-foot result-tools">
               <button
                 className="button sm"
                 disabled={!file}
-                onClick={() => setTarget({ type: "artwork", id: job!.id })}
+                onClick={() => setTarget({ type: "artwork", id: job.id })}
               >
                 局部修补
               </button>
               <button
                 className="button sm"
+                title="把这张当原图，切到无损放大；点「开始制作」才会提交"
                 disabled={!file || working}
                 onClick={() => void reprocess()}
               >
-                再加工
+                变清晰
               </button>
               <button
                 className="button sm"
@@ -964,7 +966,7 @@ export function ArtworkStudioClient() {
                 <a
                   className="button sm"
                   href={assetURL(file.asset)}
-                  download={round.length > 1 ? `独立图稿-${round.indexOf(job!) + 1}.png` : "独立图稿.png"}
+                  download={round.length > 1 ? `独立图稿-${round.indexOf(job) + 1}.png` : "独立图稿.png"}
                 >
                   下载 PNG
                 </a>
@@ -974,19 +976,13 @@ export function ArtworkStudioClient() {
                 </button>
               )}
             </div>
-            )}
+            ) : null}
           </section>
+          {hasHistory && (
           <section className="col col-right" aria-label="我的图稿">
             <div className="col-head">
               <h3>我的图稿</h3>
-              <div className="seg">
-                <button aria-pressed={filter === "all"} onClick={() => setFilter("all")}>
-                  全部
-                </button>
-                <button aria-pressed={filter === "transparent"} onClick={() => setFilter("transparent")}>
-                  透明
-                </button>
-              </div>
+              <span className="tiny muted">{cases.length ? `${cases.length} 个` : ""}</span>
             </div>
             <div className="col-body hist-list">
               {visible.map((c) => {
@@ -1030,13 +1026,10 @@ export function ArtworkStudioClient() {
                   显示更早的 {shown.length - visible.length} 条
                 </button>
               )}
-              {!shown.length && (
-                <p className="small muted">
-                  {cases.length ? "还没有透明背景的图稿。" : "还没有制作记录，做好的图稿都会保存在这里。"}
-                </p>
-              )}
+              {!shown.length && <p className="small muted">正在读取…</p>}
             </div>
           </section>
+          )}
         </div>
       </main>
       <SaasEditors target={target} onClose={close} onSaved={saved} />

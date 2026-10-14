@@ -43,7 +43,7 @@ export function EditDialog({ title, note, current, history, price, onGenerate, o
             <label>参考图 <span className="lp-muted lp-small">可选，比如想要的背景或姿势</span></label>
             <label className="ref">{reference ? <img src={reference.url} alt="参考图" /> : <span>＋ 上传参考图</span>}
               <input type="file" accept="image/*" hidden onChange={e => { const f = e.target.files?.[0]; if (f) setReference({ file: f, url: URL.createObjectURL(f) }); }} /></label>
-            {reference && <button type="button" className="lp-btn link" onClick={() => setReference(null)}>去掉参考图</button>}
+            {reference && <button type="button" className="lp-btn link" onClick={() => setReference(null)}>移除参考图</button>}
             <div className="go"><button type="button" className="lp-btn primary" disabled={busy} onClick={() => void generate()}>{busy ? "生成中，约 40 秒…" : `生成${price ? ` · ${price}` : ""}`}</button>{error && <span className="lp-warn">{error}</span>}</div>
             {made.length > 0 && <><label>新生成的 <span className="lp-muted lp-small">满意就点采用；不满意改一下描述再生成</span></label>
               <div className="cands">{made.map((src, i) => <figure key={src + i}><img src={src} alt="" /><button type="button" className="lp-btn sm primary" onClick={() => onAdopt(src)}>采用</button></figure>)}</div></>}

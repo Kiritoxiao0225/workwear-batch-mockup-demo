@@ -1506,3 +1506,40 @@
     max-height: 520px;
   }
 }
+
+/* Studio on wide screens: the history column appears only once there is history, and the input
+   column is only as tall as its form, so the start button sits right under it instead of at the
+   bottom of the screen. A long form still scrolls inside the column with the button pinned. */
+@media (min-width: 1041px) {
+  .saas-app .studio-page .studio.no-history {
+    grid-template-columns: 360px minmax(0, 1fr);
+  }
+  .saas-app .studio-page .col-left {
+    align-self: start;
+    max-height: 100%;
+  }
+}
+@media (min-width: 1041px) and (max-width: 1240px) {
+  .saas-app .studio-page .studio.no-history {
+    grid-template-columns: 320px minmax(0, 1fr);
+  }
+}
+.saas-app .studio-page .split-check {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink);
+  cursor: pointer;
+}
+.saas-app .studio-page .split-check span {
+  flex: 1;
+  min-width: 0;
+}
+.saas-app .studio-page .split-check input {
+  flex: none;
+  margin-top: 2px;
+  accent-color: var(--brand);
+}

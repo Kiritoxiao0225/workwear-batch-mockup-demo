@@ -1641,6 +1641,8 @@ button.catalog-card-image { width: 100%; padding: 0; border: 0; cursor: zoom-in;
 .account-balance { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
 .account-balance > div { padding: 20px; border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; }
 .account-balance > div:last-child { border-right: 0; }
+.account-balance.compact { grid-template-columns: repeat(2, minmax(0,1fr)); }
+.admin-card .button.admin-enter { border-color: #ecd38a; background: #fff8e1; color: #7a5600; }
 .account-balance span { font-size: 12px; color: var(--muted); }
 .account-balance b { font-size: 28px; font-variant-numeric: tabular-nums; color: var(--brand); line-height: 1.2; }
 .account-balance b.held { color: var(--warning); }

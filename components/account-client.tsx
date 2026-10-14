@@ -68,7 +68,14 @@ export function AccountClient({ deniedPage }: { deniedPage?: string }) {
         {account && (
           <>
             <section className="account-security"><div><h2>账号安全</h2><p>{account.user.email}</p></div><a href={account.user.hasPassword ? "/login?mode=reset" : "/login?mode=setup"}>{account.user.hasPassword ? "通过邮箱重置密码" : "设置登录密码"}</a></section>
-            <section className="account-balance">
+            <section className={account.tenant.internal ? "account-balance compact" : "account-balance"}>
+              {account.tenant.internal ? (
+                <div>
+                  <span>积分</span>
+                  <b className="plan">内部免计费</b>
+                  <small>只记录成本，不扣积分</small>
+                </div>
+              ) : <>
               <div>
                 <span>可用积分</span>
                 <b>{account.balance.balanceCents.toLocaleString('zh-CN')}</b>
@@ -82,8 +89,9 @@ export function AccountClient({ deniedPage }: { deniedPage?: string }) {
               <div>
                 <span>套餐</span>
                 <b className="plan">{account.tenant.plan === 'internal' ? '内部' : account.tenant.plan === 'pro' ? '付费版' : '免费版'}</b>
-                <small>{account.tenant.internal ? '免计费，仅记录成本' : '积分由管理员发放'}</small>
+                <small>积分由管理员发放</small>
               </div>
+              </>}
               <div>
                 <span>已用存储</span>
                 <b className="plan">{gib(account.quota.bytesUsed)} GiB</b>
