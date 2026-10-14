@@ -1136,7 +1136,7 @@
   flex: 1;
   min-height: 0;
   height: auto;
-  grid-template-columns: 360px minmax(0, 1fr) 272px;
+  grid-template-columns: 360px minmax(0, 1fr) 240px;
   gap: 14px;
 }
 .saas-app .studio-page .field-label {
@@ -1487,7 +1487,7 @@
 }
 @media (max-width: 1240px) {
   .saas-app .studio-page .studio {
-    grid-template-columns: 320px minmax(0, 1fr) 236px;
+    grid-template-columns: 320px minmax(0, 1fr) 220px;
   }
 }
 @media (max-width: 1040px) {
@@ -1507,21 +1507,13 @@
   }
 }
 
-/* Studio on wide screens: the history column appears only once there is history, and the input
-   column is only as tall as its form, so the start button sits right under it instead of at the
-   bottom of the screen. A long form still scrolls inside the column with the button pinned. */
+/* Studio on wide screens: the input column is only as tall as its form, so the start button sits
+   right under it instead of at the bottom of the screen. A long form still scrolls inside the
+   column with the button pinned. */
 @media (min-width: 1041px) {
-  .saas-app .studio-page .studio.no-history {
-    grid-template-columns: 360px minmax(0, 1fr);
-  }
   .saas-app .studio-page .col-left {
     align-self: start;
     max-height: 100%;
-  }
-}
-@media (min-width: 1041px) and (max-width: 1240px) {
-  .saas-app .studio-page .studio.no-history {
-    grid-template-columns: 320px minmax(0, 1fr);
   }
 }
 .saas-app .studio-page .split-check {

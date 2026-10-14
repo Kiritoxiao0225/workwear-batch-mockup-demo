@@ -503,8 +503,6 @@ export function ArtworkStudioClient() {
   const parsed = splitPrompt(authoredPrompt(text, transparentBackground));
   const shown = cases,
     visible = allHistory ? shown : shown.slice(0, 30);
-  // The history column only appears once there is something in it.
-  const hasHistory = !data || cases.length > 0;
   const working = busy || organizing;
   const splitting = split && route === "generate" && mode === "text";
   const historyStatus = (c: Case) => {
@@ -575,7 +573,7 @@ export function ArtworkStudioClient() {
             {error || notice}
           </p>
         )}
-        <div className={hasHistory ? "studio" : "studio no-history"}>
+        <div className="studio">
           <section className="col col-left" aria-label="输入">
             <div className="col-head">
               <h3>输入</h3>
@@ -978,7 +976,6 @@ export function ArtworkStudioClient() {
             </div>
             ) : null}
           </section>
-          {hasHistory && (
           <section className="col col-right" aria-label="我的图稿">
             <div className="col-head">
               <h3>我的图稿</h3>
@@ -1026,10 +1023,11 @@ export function ArtworkStudioClient() {
                   显示更早的 {shown.length - visible.length} 条
                 </button>
               )}
-              {!shown.length && <p className="small muted">正在读取…</p>}
+              {!shown.length && (
+                <p className="small muted">{data ? "做好的图稿会出现在这里，点一条就能接着改。" : "正在读取…"}</p>
+              )}
             </div>
           </section>
-          )}
         </div>
       </main>
       <SaasEditors target={target} onClose={close} onSaved={saved} />
