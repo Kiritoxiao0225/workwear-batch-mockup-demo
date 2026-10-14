@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppHeader } from '@/components/app-header';
+import { PageHeader, PageTabs } from '@/components/page-header';
 import { APP_PAGES } from '@/lib/app-pages';
 
 type Role = 'admin' | 'editor' | 'viewer';
@@ -166,17 +167,12 @@ export function AdminClient() {
   return (
     <main>
       <AppHeader />
-      <div className="admin-page">
-        <h1>管理后台</h1>
+      <div className="page-frame admin-page">
+        <PageHeader title="管理后台" description="账号与积分、页面权限、价目表，以及需要人工裁定的扣费。">
+          <PageTabs label="管理后台" value={tab} onChange={setTab}
+            tabs={TABS.map(([key, label]) => [key, key === 'disputes' && disputes.length > 0 ? <>{label}<span className="admin-badge">{disputes.length}</span></> : label] as const)} />
+        </PageHeader>
         {error && <p className="login-error" role="alert">{error}</p>}
-
-        <nav className="admin-tabs" role="tablist">
-          {TABS.map(([key, label]) => (
-            <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}>
-              {label}{key === 'disputes' && disputes.length > 0 && <span className="admin-badge">{disputes.length}</span>}
-            </button>
-          ))}
-        </nav>
 
         {tab !== 'disputes' && tab !== 'prices' && (
           <div className="admin-filters">

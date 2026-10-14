@@ -1,4 +1,5 @@
-.listing-page { max-width: 1240px; margin: 0 auto; padding: 22px 24px 100px; color: var(--ink); }
+/* Width and gutters come from the shared .page-frame; the extra bottom room clears the sticky bars. */
+.page-frame.listing-page { padding-bottom: 100px; }
 .listing-page button { font: inherit; color: inherit; cursor: pointer; }
 .lp-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); font-size: 13px; font-weight: 500; white-space: nowrap; color: var(--ink); text-decoration: none; cursor: pointer; }
 .lp-btn:hover { background: var(--panel-muted); }
@@ -33,7 +34,6 @@
 .lp-drop:hover, .lp-drop.over { border-color: var(--brand); background: var(--brand-soft); }
 .lp-confirm { margin-top: 10px; background: var(--brand-soft); border-radius: 12px; padding: 10px 14px; display: flex; gap: 10px; align-items: center; justify-content: center; flex-wrap: wrap; font-size: 13.5px; }
 .lp-filters { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
-.lp-phead { display: grid; gap: 4px; margin-bottom: 16px; } .lp-phead h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -.01em; } .lp-phead p { margin: 0; color: var(--muted); font-size: 13.5px; }
 .lp-seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--panel-soft); border-radius: 9px; }
 .lp-seg button { border: 0; background: none; padding: 4px 12px; border-radius: 7px; font-size: 13px; font-weight: 500; color: var(--muted); white-space: nowrap; }
 .lp-seg button.on { background: var(--panel); color: var(--ink); box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
@@ -365,16 +365,12 @@ button.it:hover img { outline: 2px solid var(--brand); outline-offset: -2px; }
   .lp-pop { right: auto; left: -140px; }
 }
 @media (max-width: 560px) {
-  .listing-page { padding: 16px 16px 80px; } .lp-layouts { grid-template-columns: 1fr; }
+  .page-frame.listing-page { padding-bottom: 80px; } .lp-layouts { grid-template-columns: 1fr; }
   .lp-modal { padding: 0; } .lp-box, .lp-box.lp-plan { border-radius: 0; height: 100dvh; max-height: 100dvh; }
   .lp-fields { grid-template-columns: 1fr; } .lp-fields > span { display: none; }
 }
 
 
-/* 页面切换：工作台 / 店铺设置 */
-.lp-views { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: -6px 0 20px; }
-.lp-views button { border: 0; background: none; padding: 8px 12px 10px; font-size: 14px; font-weight: 500; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
-.lp-views button.on { color: var(--ink); border-bottom-color: var(--ink); }
 .lp-chip-s { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; font-size: 11.5px; font-weight: 500; background: var(--panel-soft); color: var(--muted); }
 .listing-page .chip, .lp-modal .chip { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; font-size: 11.5px; font-weight: 500; background: var(--panel-soft); color: var(--muted); white-space: nowrap; }
 .listing-page .chip.y, .lp-modal .chip.y { background: color-mix(in srgb, #e6a100 16%, var(--panel)); color: var(--warning); }

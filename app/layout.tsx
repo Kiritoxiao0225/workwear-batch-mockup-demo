@@ -5,8 +5,8 @@ import '@/app/globals.css';
 import '@/components/app-header.css';
 
 export const metadata: Metadata = {
-  title: '工作服批量效果图 Demo',
-  description: '内部工作服 Logo 批量效果图制作台',
+  title: '工作服效果图 · 图稿与电商主图',
+  description: '工作服 Logo 图稿生成与电商主图制作台',
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppHeader } from "./app-header";
+import { PageHeader } from "./page-header";
 import { SaasEditors } from "./saas-editors";
 import { authoredPrompt, splitPrompt } from "./saas-requirement-editor";
 import {
@@ -522,13 +523,12 @@ export function ArtworkStudioClient() {
     <div className="saas-app studio-app">
       <AppHeader />
       <main className="page studio-page">
-        <div className="studio-bar">
-          <h1>图稿生成</h1>
-          <p>传参考图、写要求，生成 Logo 或图案。要看穿在衣服上的效果，做好后点「放到成衣效果图」。</p>
-          <button className="button sm" onClick={startBlank}>
-            新建图稿
-          </button>
-        </div>
+        <PageHeader
+          compact
+          title="图稿生成"
+          description="传参考图、写要求，生成 Logo 或图案；做好的图稿可以局部修补、再加工，下载透明 PNG。"
+          actions={<button className="button sm" onClick={startBlank}>新建图稿</button>}
+        />
         {handoff && (
           <div className="studio-handoff" role="group" aria-label="来自成衣效果图">
             <span className="dot" aria-hidden="true" />

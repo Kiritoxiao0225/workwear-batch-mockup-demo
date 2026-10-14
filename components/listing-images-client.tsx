@@ -7,6 +7,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppHeader } from "./app-header";
+import { PageHeader, PageTabs } from "./page-header";
 import type { Config, Detail, LayoutCard, Summary } from "@/lib/listing/api-types";
 import { api, assetUrl, downloadUrl, isDemo, post } from "@/lib/listing/client-api";
 import { checkDraft, DEFAULT_COUNTS, fillParts, type Counts, type Draft, type PriceLine } from "@/lib/listing/draft";
@@ -117,6 +118,13 @@ function stageOf(p: Summary, upload: Upload | undefined, draft: Draft | null, la
   if (p.status === "square") return { step: 4, c: "y", text: p.broken ? `方图做好了，${p.broken} 张没成功，可以重做；改满意后出竖版` : "方图出好了：哪张不满意点开改，满意了再出竖版" };
   return p.broken ? { step: 4, c: "y", text: `做好 ${p.made}/${p.slots} 张，${p.broken} 张没成功，可以重做` } : { step: 5, c: "g", text: `全部做好了，共 ${p.made} 张` };
 }
+
+const VIEWS = [["home", "工作台"], ["lib", "母版库"], ["shop", "店铺设置"]] as const;
+const VIEW_INTRO: Record<(typeof VIEWS)[number][0], string> = {
+  home: "拖入商品文件夹，AI 整理素材、排好方案，你确认后出图。",
+  lib: "每套母版定好了风格、字体和每张图的排法。下面是同一款冲锋衣用不同母版出的效果。",
+  shop: "这里只放店铺的服务：写一次，每款出图都会用到。",
+};
 
 export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
   const [config, setConfig] = useState<Config | null>(null);
@@ -244,13 +252,13 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
   return (
     <>
       {demo ? <div className="lp-demo-bar">本地演示：数据是假的，不花钱、不存盘；图是自家测试款的真实出图，灰色「演示占位」图是还没出过的类型。刷新页面会回到初始状态。</div> : <AppHeader />}
-      <main className="listing-page">
-        <nav className="lp-views" aria-label="电商主图">{([["home", "工作台"], ["lib", "母版库"], ["shop", "店铺设置"]] as const).map(([k, n]) =>
-          <button type="button" key={k} className={view === k ? "on" : ""} aria-current={view === k ? "page" : undefined} onClick={() => setView(k)}>{n}</button>)}</nav>
+      <main className="listing-page page-frame">
+        <PageHeader title="电商主图" description={VIEW_INTRO[view]}>
+          <PageTabs label="电商主图" tabs={VIEWS} value={view} onChange={setView} />
+        </PageHeader>
         {view === "shop" ? <ShopPage unit={prices.image} exempt={prices.exempt} onSay={say} />
         : view === "lib" ? <MasterLibrary layouts={layouts} /> : <>
         <ServiceTip onOpen={() => setView("shop")} />
-        <div className="lp-phead"><h1>电商主图</h1><p>拖入商品文件夹，AI 整理素材、排好方案，你确认后出图。</p></div>
         <div className="lp-dropwrap">
           <button type="button" className={"lp-drop" + (over ? " over" : "")}
             onDragOver={e => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={onDrop} onClick={() => pick.current?.click()}>

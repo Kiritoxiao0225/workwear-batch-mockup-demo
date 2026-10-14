@@ -79,12 +79,12 @@ export function LoginClient({ next, initialMode = 'login', sessionExpired = fals
     finally { pending.current = false; setBusy(false); }
   };
   const title = { login: '账号登录', register: '邮箱注册', reset: '找回密码', setup: '首次设置密码' }[mode];
-  const subtitle = { login: '登录后，继续制作你的图稿和效果图。', register: '验证邮箱并设置密码，即可创建账号。', reset: '通过注册邮箱验证身份，找回你的账号。', setup: '为已通过验证码注册的账号补充登录密码。' }[mode];
+  const subtitle = { login: '登录后，继续制作你的图稿和电商主图。', register: '验证邮箱并设置密码，即可创建账号。', reset: '通过注册邮箱验证身份，找回你的账号。', setup: '为已通过验证码注册的账号补充登录密码。' }[mode];
   const emailReady = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email.trim());
   return <div className="login-wrap auth-wrap">
-    <aside className="login-aside"><div className="brand"><span className="brand-mark" aria-hidden="true">衣</span><span><strong>工作服效果图</strong><small>批量图稿与效果图制作台</small></span></div>
-      <h2>上传衣服和需求<br/>批量拿到可交付的效果图</h2>
-      <ul><li>自己的商品素材库，标一次印花位置反复用</li><li>需求理解 → 图稿制作 → 上衣效果图，一条链路跑完</li><li>生图、无损放大、抠图都在后台队列，关页面继续跑</li><li>按实际发生的动作计费，失败不扣</li></ul>
+    <aside className="login-aside"><div className="brand"><span className="brand-mark" aria-hidden="true">衣</span><span><strong>工作服效果图</strong><small>图稿与电商主图制作台</small></span></div>
+      <h2>传参考图和商品素材<br/>拿到能直接用的图稿和主图</h2>
+      <ul><li>图稿生成：照参考图和要求出 Logo、图案，可局部修补、无损放大、去背景</li><li>电商主图：拖入商品文件夹，AI 整理素材、排好方案，确认后出整套主图</li><li>制作都在后台排队，关掉页面也会继续</li><li>按实际发生的动作计费，失败不扣</li></ul>
       <p className="login-foot">内测期间需管理员开通额度后才能发起制作</p>
     </aside>
     <main className="login-main">
@@ -109,7 +109,7 @@ export function LoginClient({ next, initialMode = 'login', sessionExpired = fals
         : mode === 'register' ? <p className="auth-return">已有账号？ <a href={href('login')}>直接登录</a></p>
           : <p className="auth-hint auth-bottom-note">{mode === 'reset' ? '重置后需使用新密码重新登录。' : '设置密码不会新建账号，也不会改变原有素材和积分。'}</p>}
       {step === 2 && error && <button type="button" className="auth-reverify" disabled={busy} onClick={() => { setStep(1); setCode(''); setProof(''); setPassword(''); setConfirm(''); setError(''); setNotice('请重新获取验证码。'); }}>重新验证邮箱</button>}
-      {(mode === 'login' || mode === 'register') && <p className="login-terms">继续即表示同意《服务条款》与《隐私政策》。<br/>你的素材、图稿和效果图仅在自己的工作区内可见。</p>}
+      {(mode === 'login' || mode === 'register') && <p className="login-terms">继续即表示同意《服务条款》与《隐私政策》。<br/>你的素材、图稿和主图仅在自己的工作区内可见。</p>}
     </main>
   </div>;
 }

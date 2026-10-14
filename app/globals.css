@@ -1634,11 +1634,11 @@ button.catalog-card-image { width: 100%; padding: 0; border: 0; cursor: zoom-in;
 @media (max-width: 820px) { .login-wrap { grid-template-columns: 1fr; } .login-aside { display: none; } .login-main { padding: 32px 22px; } }
 
 /* ---------- 我的账户 ---------- */
-.account-page { max-width: 1100px; margin: auto; padding: 28px 24px 60px; display: flex; flex-direction: column; gap: 18px; }
-.account-page h1 { font-size: 24px; margin: 0; }
+.account-page { display: flex; flex-direction: column; gap: 18px; }
+.account-page > .page-header, .admin-page > .page-header { margin-bottom: 0; }
 .account-page h2 { font-size: 15px; margin: 0 0 10px; }
 .muted-note { margin: 0; color: var(--muted); font-size: 12px; }
-.account-balance { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+.account-balance { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
 .account-balance > div { padding: 20px; border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; }
 .account-balance > div:last-child { border-right: 0; }
 .account-balance span { font-size: 12px; color: var(--muted); }
@@ -1646,9 +1646,7 @@ button.catalog-card-image { width: 100%; padding: 0; border: 0; cursor: zoom-in;
 .account-balance b.held { color: var(--warning); }
 .account-balance b.plan { font-size: 20px; color: var(--ink); }
 .account-balance small { font-size: 11px; color: var(--muted); }
-.account-quota { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 24px; padding: 16px 20px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
-.quota-head { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; }
-.quota-bar { height: 7px; border-radius: 5px; background: var(--panel-soft); overflow: hidden; }
+.quota-bar { height: 6px; margin: 6px 0 2px; border-radius: 5px; background: var(--panel-soft); overflow: hidden; }
 .quota-bar i { display: block; height: 100%; background: var(--brand); border-radius: 5px; }
 .account-disputed { padding: 16px 20px; background: #fff8e9; border: 1px solid #dfcaa3; border-radius: 12px; color: #705528; }
 .account-disputed p { margin: 0 0 10px; font-size: 12px; line-height: 1.8; }
@@ -1662,11 +1660,10 @@ button.catalog-card-image { width: 100%; padding: 0; border: 0; cursor: zoom-in;
 .account-ledger .right { text-align: right; font-variant-numeric: tabular-nums; }
 .account-ledger .minus { color: var(--danger); }
 .account-ledger .plus { color: var(--brand); }
-@media (max-width: 860px) { .account-balance, .account-quota { grid-template-columns: 1fr; } .account-balance > div { border-right: 0; border-bottom: 1px solid var(--line); } }
+@media (max-width: 860px) { .account-balance { grid-template-columns: repeat(2, minmax(0,1fr)); } .account-balance > div:nth-child(2n) { border-right: 0; } .account-balance > div:nth-child(-n+2) { border-bottom: 1px solid var(--line); } }
 
 /* ---------- 管理后台 ---------- */
-.admin-page { max-width: 1280px; margin: auto; padding: 28px 24px 60px; display: flex; flex-direction: column; gap: 18px; }
-.admin-page h1 { font-size: 24px; margin: 0; }
+.admin-page { display: flex; flex-direction: column; gap: 18px; }
 .admin-card { padding: 18px 20px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
 .admin-card h2 { font-size: 15px; margin: 0 0 8px; }
 .admin-card table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }
@@ -1681,9 +1678,6 @@ button.catalog-card-image { width: 100%; padding: 0; border: 0; cursor: zoom-in;
 .admin-modal > div { width: min(440px,100%); padding: 24px; background: var(--panel); border-radius: 14px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 14px; }
 .admin-modal h2 { margin: 0; font-size: 17px; }
 .admin-modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
-.admin-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
-.admin-tabs button { padding: 9px 14px; border: 0; border-bottom: 2px solid transparent; background: none; font: inherit; font-size: 14px; color: var(--muted); cursor: pointer; }
-.admin-tabs button.active { color: var(--brand); border-bottom-color: var(--brand); font-weight: 600; }
 .admin-badge { margin-left: 6px; padding: 1px 6px; border-radius: 9px; background: var(--warning); color: #fff; font-size: 11px; }
 .admin-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .admin-filters input, .admin-filters select, .admin-card select { padding: 6px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink); font: inherit; font-size: 13px; }

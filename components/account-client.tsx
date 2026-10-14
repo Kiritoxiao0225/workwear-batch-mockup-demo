@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { AppHeader } from '@/components/app-header';
+import { PageHeader } from '@/components/page-header';
 import { APP_PAGES } from '@/lib/app-pages';
 
 type Account = {
@@ -32,6 +33,8 @@ function plainReason(reason: string) {
 }
 
 const gib = (bytes: number) => (bytes / 1024 ** 3).toFixed(2);
+// Quotas this large are how an unlimited workspace is stored; show them as such.
+const UNLIMITED_BYTES = 2 ** 50;
 const yuan = (cents: number) => (cents / 100).toFixed(2);
 
 export function AccountClient({ deniedPage }: { deniedPage?: string }) {
@@ -51,14 +54,13 @@ export function AccountClient({ deniedPage }: { deniedPage?: string }) {
     })();
   }, []);
 
-  const styleRatio = account ? Math.min(100, (account.quota.styleCount / Math.max(1, account.quota.styleQuota)) * 100) : 0;
   const bytesRatio = account ? Math.min(100, (account.quota.bytesUsed / Math.max(1, account.quota.storageQuotaBytes)) * 100) : 0;
 
   return (
     <main>
       <AppHeader />
-      <div className="account-page">
-        <h1>我的账户</h1>
+      <div className="page-frame account-page">
+        <PageHeader title="我的账户" description="登录方式、积分余额和每一笔消耗。" />
         {denied && <p className="account-denied" role="alert">当前账号没有开通「{denied}」页面，如需使用请联系管理员。</p>}
         {error && <p className="login-error" role="alert">{error}</p>}
         {!account && !error && <p className="muted-note" role="status">正在读取账户…</p>}
@@ -82,16 +84,12 @@ export function AccountClient({ deniedPage }: { deniedPage?: string }) {
                 <b className="plan">{account.tenant.plan === 'internal' ? '内部' : account.tenant.plan === 'pro' ? '付费版' : '免费版'}</b>
                 <small>{account.tenant.internal ? '免计费，仅记录成本' : '积分由管理员发放'}</small>
               </div>
-            </section>
-
-            <section className="account-quota">
               <div>
-                <div className="quota-head"><span>款式</span><span>{account.quota.styleCount} / {account.quota.styleQuota}</span></div>
-                <div className="quota-bar"><i style={{ width: `${styleRatio}%` }} /></div>
-              </div>
-              <div>
-                <div className="quota-head"><span>存储</span><span>{gib(account.quota.bytesUsed)} / {gib(account.quota.storageQuotaBytes)} GiB</span></div>
-                <div className="quota-bar"><i style={{ width: `${bytesRatio}%` }} /></div>
+                <span>已用存储</span>
+                <b className="plan">{gib(account.quota.bytesUsed)} GiB</b>
+                {account.quota.storageQuotaBytes >= UNLIMITED_BYTES
+                  ? <small>空间不限</small>
+                  : <><div className="quota-bar"><i style={{ width: `${bytesRatio}%` }} /></div><small>共 {gib(account.quota.storageQuotaBytes)} GiB</small></>}
               </div>
             </section>
 

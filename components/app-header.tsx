@@ -82,21 +82,11 @@ export function AppHeader({ beforeLogout }: { beforeLogout?: () => Promise<boole
       </Link>
       <div className="product-header__controls">
         <nav className="product-header__nav" aria-label="主导航">
-          {[
-            // Until the account loads every page shows; afterwards only the ones this account holds.
-            ...APP_PAGES.filter(page => !account || account.pages.includes(page.href)).map(page => [page.href, page.label]),
-            ["/account", "我的账户"],
-            ...(account?.user.role === "admin" ? [["/admin", "管理后台"]] : []),
-          ].map(([href, label]) => (
-            <Link
-              key={href}
-              href={href}
-              aria-current={pathname === href ? "page" : undefined}
-              className={[
-                pathname === href ? "active" : "",
-              ].join(" ")}
-            >
-              {label}
+          {/* The tools only; the account pages live in the account menu. Until the account loads
+              every tool shows, afterwards only the ones this account holds. */}
+          {APP_PAGES.filter(page => !account || account.pages.includes(page.href)).map(page => (
+            <Link key={page.href} href={page.href} aria-current={pathname === page.href ? "page" : undefined} className={pathname === page.href ? "active" : undefined}>
+              {page.label}
             </Link>
           ))}
         </nav>
@@ -130,8 +120,11 @@ export function AppHeader({ beforeLogout }: { beforeLogout?: () => Promise<boole
           {menuOpen && session.user && (
             <div className="product-header__menu" role="menu">
               {account?.user.email && <span className="product-header__menu-email">{account.user.email}</span>}
-              <Link role="menuitem" href="/account" onClick={() => setMenuOpen(false)}>我的账户</Link>
+              {account && <span className="product-header__menu-credit"><span>积分</span><b>{account.tenant.internal ? "内部免计费" : account.balance.balanceCents.toLocaleString()}</b></span>}
+              <Link role="menuitem" href="/account" aria-current={pathname === "/account" ? "page" : undefined} onClick={() => setMenuOpen(false)}>我的账户</Link>
+              {account?.user.role === "admin" && <Link role="menuitem" href="/admin" aria-current={pathname === "/admin" ? "page" : undefined} onClick={() => setMenuOpen(false)}>管理后台</Link>}
               {account?.enteredBy && <button type="button" role="menuitem" disabled={returning} onClick={() => void returnToAdmin()}>返回管理员账号（{account.enteredBy.displayName}）</button>}
+              <span className="product-header__menu-divider" aria-hidden="true" />
               <button type="button" role="menuitem" className="product-header__logout" disabled={loggingOut} onClick={() => void logout()}>{loggingOut ? "正在退出…" : "退出登录"}</button>
             </div>
           )}

@@ -130,7 +130,6 @@ function ShopForm({ state, unit, exempt, onSay }: { state: ShopState; unit: numb
   const editDef = editing ? SERVICE_IMAGES.find(s => s.id === editing)! : null, editMade = editing ? shop.made[editing] : undefined;
   return (
     <div className="lp-shop">
-      <div className="lp-phead"><h1>店铺设置</h1><p>这里只放店铺的服务：写一次，每款出图都会用到。</p></div>
       <div className="lp-shop-grid">
         <nav className="lp-snav" aria-label="店铺设置目录">
           <a href="#lp-s-svc">服务卖点</a><a href="#lp-s-craft">印绣工艺和 LOGO</a>

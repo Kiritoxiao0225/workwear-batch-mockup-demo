@@ -1132,25 +1132,6 @@
   color: inherit;
   font-weight: 600;
 }
-.saas-app .studio-bar {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  min-height: 34px;
-}
-.saas-app .studio-bar h1 {
-  font-size: 18px;
-  white-space: nowrap;
-}
-.saas-app .studio-bar p {
-  flex: 1;
-  min-width: 0;
-  color: var(--muted);
-  font-size: 12.5px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 .saas-app .studio-page .studio {
   flex: 1;
   min-height: 0;
@@ -1523,8 +1504,5 @@
   }
   .saas-app .studio-page .col-right {
     max-height: 520px;
-  }
-  .saas-app .studio-bar p {
-    white-space: normal;
   }
 }

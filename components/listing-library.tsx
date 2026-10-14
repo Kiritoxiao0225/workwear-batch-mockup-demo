@@ -14,7 +14,6 @@ export function MasterLibrary({ layouts }: { layouts: LayoutCard[] }) {
   const masters = layouts.filter(l => !l.own);
   return (
     <section className="lp-mlib">
-      <div className="lp-phead"><h1>母版库</h1><p>每套母版定好了风格、字体和每张图的排法。下面是同一款冲锋衣用不同母版出的效果。</p></div>
       <div className="lp-seg"><button type="button" className="on">冲锋衣<b>{masters.length}</b></button><button type="button" disabled>更多品类陆续上线</button></div>
       {masters.map(l => {
         const info = masterInfo(l.id);
