@@ -3,8 +3,11 @@ import { pagesFor, type AppPage } from '@/lib/app-pages';
 import { CatalogHttpError, INTERNAL_TENANT_ID } from './catalog-auth';
 import { catalogDatabase, catalogTransaction } from './catalog-database';
 
-/** Where a charge came from. 'other' covers holds whose origin can no longer be told. */
-export type SpendPage = AppPage | 'other';
+/**
+ * Where a charge came from. 成衣效果图 and 批量生成 moved to the offline app but their past charges
+ * still count. 'other' covers holds whose origin can no longer be told.
+ */
+export type SpendPage = AppPage | '/garment-mockup' | '/batch' | 'other';
 
 type Row = Record<string, unknown>;
 

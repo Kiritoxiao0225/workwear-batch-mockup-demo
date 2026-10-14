@@ -1,9 +1,15 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { HOME_PAGE } from '@/lib/app-pages';
 
-// Paths retired with the old WPS workflow, including already-open/cached browser clients.
+// Pages and APIs that moved to the offline mockup-legacy app (商品素材库、成衣效果图、批量生成、
+// WPS 批量生成) or were retired before it. Already-open or bookmarked clients land somewhere sensible.
 const RETIRED = [
-  '/api/wps-production/', '/api/wps-tasks/',
-  '/wps-production/legacy', '/wps-production/overview', '/task-review',
+  '/products', '/garment-mockup', '/batch', '/wps-production', '/wps-connect', '/workbench',
+  '/task-review', '/logo-studio', '/listing-demo',
+  '/api/wps-production/', '/api/wps-tasks/', '/api/wps-workbench/', '/api/wps/', '/api/garment-mockup/',
+  '/api/logo-studio', '/api/state', '/api/catalog/products', '/api/catalog/styles', '/api/catalog/upload',
+  '/api/catalog/reuse', '/api/catalog/standards', '/api/catalog/production-garments',
+  '/api/catalog/production-preview', '/api/catalog/simple-garment',
 ];
 
 // Reachable without a session: the sign-in screen and the endpoints it calls.
@@ -23,10 +29,10 @@ export function proxy(request: NextRequest) {
 
   if (isRetired(pathname)) {
     if (pathname.startsWith('/api/')) {
-      return NextResponse.json({ error: '旧版工作台已停用，请使用新版批量效果图', code: 'LEGACY_WPS_RETIRED' },
+      return NextResponse.json({ error: '该功能已下线', code: 'FEATURE_RETIRED' },
         { status: 410, headers: { 'Cache-Control': 'no-store' } });
     }
-    return NextResponse.redirect(new URL('/wps-production', request.url));
+    return NextResponse.redirect(new URL(HOME_PAGE, request.url));
   }
 
   if (pathname === '/api/health' || isPublic(pathname)) return NextResponse.next();

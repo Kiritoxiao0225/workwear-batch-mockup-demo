@@ -10,13 +10,13 @@ describe('expired session recovery', () => {
     expect(destination.searchParams.get('reason')).toBe('session-expired');
   });
   it.each([200, 403, 429, 500, 502, 503, 504])('keeps status %i on the workspace for retry', status => {
-    expect(expiredSessionDestination(status, '/products')).toBeNull();
+    expect(expiredSessionDestination(status, '/artwork-studio')).toBeNull();
   });
   it.each(['/login', '/login?mode=reset', '/login?mode=setup', '/login?mode=register', '/login/'])('never loops or interrupts auth forms on %s', path => {
     expect(expiredSessionDestination(401, path)).toBeNull();
   });
   it.each(['//evil.example', '/\\evil.example', 'https://evil.example', '/ bad'])('rejects unsafe return paths: %s', path => {
     const destination = new URL(expiredSessionDestination(401, path)!, 'https://mockup.example');
-    expect(destination.searchParams.get('next')).toBe('/products');
+    expect(destination.searchParams.get('next')).toBe('/artwork-studio');
   });
 });

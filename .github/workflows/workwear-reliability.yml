@@ -34,7 +34,8 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run test:requirements
-      - run: npm run test:mockups
+      - run: npm run test:intake
+      - run: npm run test:stability
       - run: npm run build
       - name: Assert new routes actually exist in this source and build
         shell: bash
@@ -42,7 +43,7 @@ jobs:
           node --input-type=module - <<'JS'
           import fs from 'node:fs';
           import assert from 'node:assert/strict';
-          const routes = ['/wps-production/page', '/wps-production/legacy/page', '/api/batch/[...path]/route', '/wps-production/overview/page', '/api/wps-production/diagnostics/route', '/api/wps-production/preflight/route', '/api/wps-production/reanalyze/route', '/api/wps-production/recompose/route', '/api/wps-production/recover-cutout/route'];
+          const routes = ['/artwork-studio/page', '/listing-images/page', '/account/page', '/admin/page', '/login/page', '/api/batch/[...path]/route', '/api/listing/[...path]/route', '/api/health/route'];
           const manifest = JSON.parse(fs.readFileSync('.next/server/app-paths-manifest.json', 'utf8'));
           for (const route of routes) {
             assert(fs.existsSync(`app${route}.ts`) || fs.existsSync(`app${route}.tsx`) || fs.existsSync(`app${route}.js`), `Missing source: ${route}`);
@@ -68,7 +69,6 @@ jobs:
       # Each script boots its own embedded PostgreSQL on 127.0.0.1 with a random port inside a
       # temp directory and replaces globalThis.fetch to forbid any real network / paid service.
       - run: npm run test:batch-cloud
-      - run: npm run test:production-storage
-      - run: npm run test:artwork-jobs
-      - run: npm run test:shared-artwork
-      - run: npm run test:reliability
+      - run: npm run test:batch-claim
+      - run: npm run test:auth
+      - run: npm run test:listing

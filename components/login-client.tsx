@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { HOME_PAGE } from '@/lib/app-pages';
 
 type Mode = 'login' | 'register' | 'reset' | 'setup';
 class AuthRequestError extends Error {
@@ -32,7 +33,7 @@ export function LoginClient({ next, initialMode = 'login', sessionExpired = fals
   const timer = useRef<ReturnType<typeof setInterval> | null>(null), pending = useRef(false), passwordInput = useRef<HTMLDivElement>(null);
   useEffect(() => () => { if (timer.current) clearInterval(timer.current); }, []);
   useEffect(() => { if (step === 2) passwordInput.current?.querySelector('input')?.focus(); }, [step]);
-  const href = (view: Mode) => `/login?mode=${view}${next === '/products' ? '' : `&next=${encodeURIComponent(next)}`}`;
+  const href = (view: Mode) => `/login?mode=${view}${next === HOME_PAGE ? '' : `&next=${encodeURIComponent(next)}`}`;
   const startCooldown = (seconds: number) => {
     setCooldown(seconds); if (timer.current) clearInterval(timer.current);
     timer.current = setInterval(() => setCooldown(value => { if (value <= 1 && timer.current) clearInterval(timer.current); return Math.max(0, value - 1); }), 1000);

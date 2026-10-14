@@ -21,7 +21,6 @@ import {
 import {
   readArtworkHandoff,
   retargetHandoff,
-  targetLabel,
   writeArtworkHandoff,
   type ArtworkHandoff,
 } from "@/lib/garment-editor/artwork-handoff";
@@ -111,7 +110,6 @@ export function ArtworkStudioClient() {
     [allHistory, setAllHistory] = useState(false),
     [filter, setFilter] = useState<"all" | "transparent">("all"),
     [stage, setStage] = useState<Stage>("checker"),
-    [moreOpen, setMoreOpen] = useState(false),
     [handoff, setHandoff] = useState<ArtworkHandoff | null>(null);
   const input = useRef<HTMLInputElement>(null),
     textarea = useRef<HTMLTextAreaElement>(null),
@@ -488,28 +486,6 @@ export function ArtworkStudioClient() {
     organized.current = null;
     setNotice("输入已切换为当前结果；点击左下「开始制作」才会提交新任务。");
   }
-  async function addToBatch() {
-    if (!file) return;
-    setMoreOpen(false);
-    setBusy(true);
-    try {
-      const r = await fetch(assetURL(file.asset));
-      if (!r.ok) throw new Error("结果读取失败");
-      const images = await uploadImages([
-        new File([await r.blob()], "图稿.png", { type: "image/png" }),
-      ]);
-      await batchAPI("/api/cases", {
-        text: "使用图1完整图稿制作上衣效果图，请填写款式、颜色和印花位置。",
-        images,
-        requestId: crypto.randomUUID(),
-      });
-      setNotice("已加入批量生成草稿，补充款色与位置后再识别。");
-    } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
   function insertPhrase(phrase: string) {
     const el = textarea.current,
       start = el?.selectionStart ?? text.length,
@@ -596,9 +572,6 @@ export function ArtworkStudioClient() {
         {(error || notice) && (
           <p className="notice warn" role="status">
             {error || notice}
-            {notice.includes("已加入批量") && (
-              <Link href="/batch"> 前往批量生成 →</Link>
-            )}
           </p>
         )}
         <div className="studio">
@@ -953,19 +926,6 @@ export function ArtworkStudioClient() {
               </div>
             ) : (
             <div className="col-foot result-tools">
-              {file ? (
-                <a
-                  className="button sm primary"
-                  title={handoff && !handoff.replace ? "放到 " + targetLabel(handoff) : undefined}
-                  href={"/garment-mockup?artwork=" + encodeURIComponent(assetURL(file.asset))}
-                >
-                  {handoff?.replace ? `替换成衣上的 ${handoff.replace.label}` : "放到成衣效果图"}
-                </a>
-              ) : (
-                <button className="button sm primary" disabled>
-                  放到成衣效果图
-                </button>
-              )}
               <button
                 className="button sm"
                 disabled={!file}
@@ -1013,25 +973,6 @@ export function ArtworkStudioClient() {
                   下载 PNG
                 </button>
               )}
-              <div className="more">
-                <button
-                  className="button sm"
-                  aria-label="更多操作"
-                  aria-expanded={moreOpen}
-                  disabled={!file || working}
-                  onClick={() => setMoreOpen((v) => !v)}
-                >
-                  ⋯
-                </button>
-                {moreOpen && (
-                  <div className="more-menu" role="menu">
-                    <button role="menuitem" onClick={() => void addToBatch()}>
-                      <b>加入批量生成</b>
-                      <small>建一条批量草稿，补款色和位置后识别</small>
-                    </button>
-                  </div>
-                )}
-              </div>
             </div>
             )}
           </section>

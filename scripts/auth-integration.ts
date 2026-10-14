@@ -71,11 +71,9 @@ try {
   const { currentPrices, ceilingMicroCents, microToCents, holdCredits, settleHold, releaseHold,
     adjudicateHold, grantCredits, creditBalance, openHolds } = await import('../lib/server/credits');
   const { GET: catalogFileRoute } = await import('../app/api/catalog/files/[id]/route');
-  const { GET: retiredState } = await import('../app/api/state/route');
   const { GET: accountRoute } = await import('../app/api/account/route');
   const { GET: adminTenantsRoute } = await import('../app/api/admin/tenants/route');
   const { POST: adminGrantRoute } = await import('../app/api/admin/grant/route');
-  const { POST: retiredLogoStudio } = await import('../app/api/logo-studio/route');
   const { catalogTransaction } = await import('../lib/server/catalog-database');
 
   const applied = await migrateCatalog();
@@ -454,8 +452,6 @@ try {
   check(strangerRead.status === 404, '非所有者通过 HTTP 读取同一文件 → 404');
 
   // 旧入口已退役
-  check((await retiredState()).status === 410, '/api/state 已停用');
-  check((await retiredLogoStudio()).status === 410, '/api/logo-studio 已停用');
 
   // ---- 第 5 步：积分 ----
   const prices = await currentPrices();

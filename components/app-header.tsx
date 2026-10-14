@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useProjectSession } from "./project-session";
-import { APP_PAGES } from "@/lib/app-pages";
+import { APP_PAGES, HOME_PAGE } from "@/lib/app-pages";
 /** One 48px row on every page; logout lives in the account menu. */
 export function AppHeader({ beforeLogout }: { beforeLogout?: () => Promise<boolean> } = {}) {
   const pathname = usePathname();
@@ -76,7 +76,7 @@ export function AppHeader({ beforeLogout }: { beforeLogout?: () => Promise<boole
   }, []);
   return (
     <header className="product-header" aria-label="工作台顶部导航">
-      <Link className="product-header__brand" href="/products" aria-label="工作服效果图首页">
+      <Link className="product-header__brand" href={HOME_PAGE} aria-label="工作服效果图首页">
         <span className="product-header__mark">衣</span>
         <strong>工作服效果图</strong>
       </Link>
@@ -94,7 +94,6 @@ export function AppHeader({ beforeLogout }: { beforeLogout?: () => Promise<boole
               aria-current={pathname === href ? "page" : undefined}
               className={[
                 pathname === href ? "active" : "",
-                href === "/wps-production" ? "wps" : "",
               ].join(" ")}
             >
               {label}

@@ -26,7 +26,7 @@ const RANGES = [['7d', '近 7 天'], ['30d', '近 30 天'], ['month', '本月'],
 type Range = (typeof RANGES)[number][0];
 const ROLES: [Role, string][] = [['admin', '管理员'], ['editor', '普通'], ['viewer', '只看']];
 // Pages that can carry a charge; the rest never spend credits.
-const SPEND_PAGES = [['/artwork-studio', '图稿生成'], ['/garment-mockup', '成衣效果图'], ['/batch', '批量生成'], ['other', '其他']] as const;
+const SPEND_PAGES = [['/artwork-studio', '图稿生成'], ['/listing-images', '电商主图'], ['/garment-mockup', '成衣效果图（已下线）'], ['/batch', '批量生成（已下线）'], ['other', '其他']] as const;
 const PAGE_LABEL: Record<string, string> = Object.fromEntries([...APP_PAGES.map(page => [page.href, page.label]), ['other', '其他']]);
 // What each billed action is, where it happens and who supplies it.
 const ACTIONS: { action: string; label: string; where: string; supplier: string; free?: boolean }[] = [
@@ -250,18 +250,13 @@ export function AdminClient() {
                         {ROLES.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
                       </select>
                     </td>
-                    {APP_PAGES.map(page => {
-                      const internalOnly = page.href === '/wps-production' && !account.tenant.internal;
-                      return (
-                        <td key={page.href} className="center">
-                          {internalOnly ? <small>仅内部</small> : (
-                            <input type="checkbox" aria-label={`${account.displayName} ${page.label}`}
-                              checked={account.pages.includes(page.href)} disabled={busy || account.role === 'admin'}
-                              onChange={() => togglePage(account, page.href)} />
-                          )}
-                        </td>
-                      );
-                    })}
+                    {APP_PAGES.map(page => (
+                      <td key={page.href} className="center">
+                        <input type="checkbox" aria-label={`${account.displayName} ${page.label}`}
+                          checked={account.pages.includes(page.href)} disabled={busy || account.role === 'admin'}
+                          onChange={() => togglePage(account, page.href)} />
+                      </td>
+                    ))}
                     <td className="nowrap">
                       {account.allowedPages !== null && account.role !== 'admin' && (
                         <button className="button" disabled={busy} onClick={() => void update(account, { allowedPages: null })}>恢复默认</button>

@@ -3,7 +3,6 @@ import { createAdmissionGate } from './resource-guard.mjs';
 import { catalogDatabase,catalogTransaction } from '../../lib/server/catalog-database.ts';
 import { cloudStorage,CLOUD_ROOT } from '../adapters/cloud-files.mjs';
 import { executeTask,markInterrupted } from './service.mjs';
-import { enqueueWpsSync } from './sync-scheduler.mjs';
 export function workerScope(value = process.env.BATCH_WORKER_SCOPE || 'main') {
  if (!['main', 'external'].includes(value)) throw new Error('BATCH_WORKER_SCOPE 必须为 main 或 external');
  return value;
@@ -51,7 +50,6 @@ export async function startBatchWorker({scope = workerScope(), concurrency = wor
    if(admission.check().paused)return;
    const expired=await expireTasks(scope);
    for(const task of expired.rows)if(task.status==='unknown')await cloudStorage(()=>markInterrupted(CLOUD_ROOT,task),{workspace:task.workspace});
-   if(scope==='main')await enqueueWpsSync({automatic:true,workspace:'main'});
    while(running.size<concurrency&&!closed&&!admission.check().paused){
     const task=await claimNextTask(owner,scope);
     if(!task)break;
@@ -65,5 +63,5 @@ export async function startBatchWorker({scope = workerScope(), concurrency = wor
   }finally{pumping=false;}
  }
  await heartbeat();const beat=setInterval(()=>{void heartbeat().catch(e=>console.error('[batch-heartbeat]',e.name));},10000),tick=setInterval(()=>{void pump().catch(e=>console.error('[batch-pump]',e.name));},2000);
- void pump().catch(e=>console.error('[batch-pump]',e.name));return {status:()=>({scope,concurrency,automaticWpsSync:scope==='main',ready:!closed&&Date.now()-lastHeartbeat<30000,running:running.size,admission:admission.status()}),close:async()=>{closed=true;clearInterval(tick);while(pumping)await new Promise(resolve=>setTimeout(resolve,50));await Promise.allSettled([...running]);clearInterval(beat);}};
+ void pump().catch(e=>console.error('[batch-pump]',e.name));return {status:()=>({scope,concurrency,ready:!closed&&Date.now()-lastHeartbeat<30000,running:running.size,admission:admission.status()}),close:async()=>{closed=true;clearInterval(tick);while(pumping)await new Promise(resolve=>setTimeout(resolve,50));await Promise.allSettled([...running]);clearInterval(beat);}};
 }

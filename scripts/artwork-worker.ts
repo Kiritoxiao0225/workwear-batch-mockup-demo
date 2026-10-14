@@ -22,8 +22,6 @@ process.once('SIGTERM', stop); process.once('SIGINT', stop);
 const { createAdmissionGate } = await import('../batch-mockup/runtime/resource-guard.mjs');
 const admission = createAdmissionGate();
 const worker = await startBatchWorker({ admission });
-const { startGarmentWorker } = await import('../lib/server/garment-mockup-ai');
-const garmentWorker = await startGarmentWorker({ canAccept: () => !admission.check().paused });
 const { startListingWorker } = await import('../lib/server/listing-jobs');
 const listingWorker = await startListingWorker({ canAccept: () => !admission.check().paused });
 const { startOffsiteBackup } = await import('../lib/server/catalog-backup-scheduler');
@@ -37,5 +35,5 @@ const health = process.env.PORT ? createServer((_request, response) => {
     stabilityRelease: process.env.STABILITY_RELEASE_SHA256 ?? null, logicVersion: WORKWEAR_LOGIC_VERSION, commit: process.env.WORKWEAR_BUILD_COMMIT ?? null, objectStore }));
 }).listen(Number(process.env.PORT), '0.0.0.0') : undefined;
 console.log('[batch-worker] ready:', worker.status().scope, 'legacy worker disabled');
-try { await stopped; await Promise.all([worker.close(), garmentWorker.close(), listingWorker.close(), backup.close()]); }
+try { await stopped; await Promise.all([worker.close(), listingWorker.close(), backup.close()]); }
 finally { health?.close(); await closeCatalogDatabase(); }
