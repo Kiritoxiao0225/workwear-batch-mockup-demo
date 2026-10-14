@@ -118,3 +118,23 @@ test('明确要求透明背景但供应商返回不透明图片时，不能标�
  const result=await executeProduction(f.root,j.id,{generate:async()=>f.opaque,cutout:async()=>{cuts++;return f.opaque;}});
  assert.equal(result.status,'partial');assert.match(result.error,/透明背景检查未通过/);assert.equal(cuts,1);
 });
+// What Node's fetch throws when every address of the host timed out while connecting: nothing was sent.
+const unsent=()=>Object.assign(new TypeError('fetch failed'),{cause:Object.assign(new AggregateError([Object.assign(new Error('connect ETIMEDOUT 1.2.3.4:443'),{code:'ETIMEDOUT',syscall:'connect'})],''),{code:'ETIMEDOUT'})});
+test('连接没建立就失败的生图自动再发，不算结果未知、不计费；断在半路的仍是结果未知且不重发',async t=>{
+ const f=await fixture(t),[j]=await reserveProduction(f.root,f.manifest,f.requests);let calls=0;
+ const r=await executeProduction(f.root,j.id,{generate:async()=>{if(++calls<3)throw unsent();return f.transparent;}});
+ assert.equal(r.status,'returned');assert.deepEqual(r.steps.map(s=>s.status),['failed','failed','returned']);assert.match(r.steps[0].error,/连接服务超时.*请求没有发出/);
+ const g=await fixture(t),[k]=await reserveProduction(g.root,g.manifest,g.requests);calls=0;
+ const never=await executeProduction(g.root,k.id,{generate:async()=>{calls++;throw unsent();}});
+ assert.equal(never.status,'failed');assert.equal(calls,3);assert.match(never.error,/生图未完成：连接服务超时。请求没有发出/);
+ const h=await fixture(t),[m]=await reserveProduction(h.root,h.manifest,h.requests);calls=0;
+ const reset=await executeProduction(h.root,m.id,{generate:async()=>{calls++;throw Object.assign(new TypeError('fetch failed'),{cause:Object.assign(new Error('read ECONNRESET'),{code:'ECONNRESET',syscall:'read'})});}});
+ assert.equal(reset.status,'unknown');assert.equal(calls,1);assert.match(reset.error,/连接被中途断开/);
+});
+test('还没调用服务就失败（读素材出错）是明确失败，错误不为空',async t=>{
+ const f=await fixture(t),[j]=await reserveProduction(f.root,f.manifest,f.requests);
+ const input=JSON.parse(await readFile(resolve(f.root,'production-jobs',j.id,'input.json'),'utf8'));
+ await rm(resolve(f.root,'public',input.images[0].asset));
+ const r=await executeProduction(f.root,j.id,{generate:async()=>{throw Error('不应调用');}});
+ assert.equal(r.status,'failed');assert.equal(r.steps.length,0);assert.ok(r.error);
+});

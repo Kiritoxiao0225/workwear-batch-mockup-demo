@@ -5,8 +5,21 @@ import { hash, jsonFile, saveJSON, atomicFile, assetPath, fail, readBytes, mater
 import { requirementWorkbench, validateRequirementDraft } from './requirements.mjs';
 import { productionPolicy, inspectPixels, withoutFaintSpecks, hardenInteriorAlpha, flattenOnWhite } from '../adapters/production-images.mjs';
 import { readRepairState } from './production-repair.mjs';
+import { artworkNetworkFailure } from '../../lib/server/artwork-network-error.ts';
 
 const stamp=()=>new Date().toISOString();
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+// True only when every underlying error happened while opening the connection: the request never
+// reached the service, so there is nothing to pay for and sending it again cannot charge twice.
+// Node reports a multi-address connect that timed out as an AggregateError with an empty message.
+export function notSent(error){
+  const leaves=[],pending=[error],seen=new Set();
+  while(pending.length&&seen.size<16){const e=pending.shift();if(!e||typeof e!=='object'||seen.has(e))continue;seen.add(e);
+    const inner=[...(Array.isArray(e.errors)?e.errors:[]),...(e.cause?[e.cause]:[])];if(inner.length)pending.push(...inner);else leaves.push(e);}
+  return leaves.length>0&&leaves.every(e=>['connect','getaddrinfo'].includes(e.syscall)||e.code==='UND_ERR_CONNECT_TIMEOUT');
+}
+const STAGES={generate:'生图',enhance:'高清',cutout:'抠图'};
+const errorText=(e,stage)=>(artworkNetworkFailure(e,stage)?.message||String(e?.message||e?.code||e))+(notSent(e)?'请求没有发出，不扣费，可直接重新制作。':'');
 const dirFor=(root,id)=>{if(!/^[a-f0-9]{64}$/u.test(id))throw fail('制作编号无效');return resolve(root,'production-jobs',id);};
 export async function readProductionJobs(root) {
   const dirs=await listDirectories(resolve(root,'production-jobs'));
@@ -78,14 +91,20 @@ export async function executeProduction(root,id,providers,onProgress=()=>{}) {
   const dir=dirFor(root,id),job=await jsonFile(resolve(dir,'state.json'));if(job.status!=='queued')return job;
   const input=await jsonFile(resolve(dir,'input.json'));
   const save=async()=>{await saveJSON(resolve(dir,'state.json'),job);await checkpoint();onProgress(job);};
-  async function step(name,action){job.phase=name;const s={name,attemptId:randomUUID(),status:'running',startedAt:stamp()};job.steps.push(s);await save();try{const value=await action(resolve(dir,name));const result=value&&!Buffer.isBuffer(value)&&value.bytes?value:null;if(result?.cost)s.cost=result.cost;if(result?.transparentRequested)s.transparentRequested=true;s.status='returned';s.elapsedMs=Date.now()-Date.parse(s.startedAt);await save();return result?result.bytes:value;}catch(e){s.status=e.definiteFailure?'failed':'unknown';s.error=e.message;s.elapsedMs=Date.now()-Date.parse(s.startedAt);throw e;}}
+  // Set once a paid service may have been reached; a failure before that is certain and free.
+  let contacted=false;
+  async function step(name,action){for(let attempt=1;;attempt++){job.phase=name;const s={name,attemptId:randomUUID(),status:'running',startedAt:stamp()};job.steps.push(s);contacted=true;await save();try{const value=await action(resolve(dir,name));const result=value&&!Buffer.isBuffer(value)&&value.bytes?value:null;if(result?.cost)s.cost=result.cost;if(result?.transparentRequested)s.transparentRequested=true;s.status='returned';s.elapsedMs=Date.now()-Date.parse(s.startedAt);await save();return result?result.bytes:value;}catch(e){const unsent=notSent(e);s.status=e.definiteFailure||unsent?'failed':'unknown';s.error=errorText(e,STAGES[name]);s.elapsedMs=Date.now()-Date.parse(s.startedAt);
+    // A connection that never opened sent nothing, so it is tried again a couple of times.
+    if(unsent&&attempt<3){await save();await sleep(1000*attempt);continue;}throw e;}}}
+  // Reading the job's own pictures back is free and repeatable.
+  const read=async path=>{for(let attempt=1;;attempt++)try{return await readBytes(path);}catch(e){if(!notSent(e)||attempt>=3)throw e;await sleep(1000*attempt);}};
   async function publish(bytes,label){const pixels=await inspectPixels(bytes);if(!pixels.visiblePixels)throw new Error('图片完全透明，没有可见图稿');
     const sha256=hash(bytes),m=await import('sharp').then(x=>x.default(bytes).metadata());
     const asset=`production-results/${id}/${label}.${m.format==='jpeg'?'jpg':m.format}`;
     await atomicFile(assetPath(root,asset),bytes);return{asset,sha256,bytes:bytes.length,...pixels};}
   job.status='running';job.startedAt=stamp();await save();
   try {
-    const images=[];for(const img of input.images){const path=assetPath(root,img.asset),bytes=await readBytes(path);if(hash(bytes)!==img.sha256)throw new Error('固定原图校验失败');images.push({...img,path:await materialize(path)});}
+    const images=[];for(const img of input.images){const path=assetPath(root,img.asset),bytes=await read(path);if(hash(bytes)!==img.sha256)throw new Error('固定原图校验失败');images.push({...img,path:await materialize(path)});}
     if(hash(input.prompt)!==input.promptSHA256)throw new Error('固定正文校验失败');
     let raw;
     if(job.resumeCutout){if(!job.raw||job.steps.filter(s=>s.name==='cutout').at(-1)?.status!=='failed')throw new Error('未确认抠图失败，不能重试未知请求');raw=await readBytes(assetPath(root,job.raw.asset));if(hash(raw)!==job.raw.sha256)throw new Error('已生成原图校验失败');}
@@ -118,7 +137,7 @@ export async function executeProduction(root,id,providers,onProgress=()=>{}) {
     }
     }
     job.status='returned';job.phase='done';job.error=null;
-  }catch(e){job.status=job.raw?'partial':e.definiteFailure?'failed':'unknown';job.error=String(e.message);}
+  }catch(e){job.status=job.raw?'partial':e.definiteFailure||notSent(e)||!contacted?'failed':'unknown';job.error=errorText(e,contacted?STAGES[job.phase]||'制作':'读取素材');}
   job.finishedAt=stamp();job.elapsedMs=Date.parse(job.finishedAt)-Date.parse(job.startedAt);await save();return job;
 }
 export async function createProductionWorker(root,providerFactory,{concurrency=3,onProgress=()=>{}}={}) {

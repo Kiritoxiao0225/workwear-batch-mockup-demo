@@ -312,6 +312,9 @@ export function ArtworkStudioClient() {
         },
       ],
     });
+    // Accepted: the next 开始制作 is a new request even with the same text and pictures, so a
+    // failed or unknown picture can be made again without refreshing the page.
+    request.current = null;
     organized.current = null;
     setPlan(null);
     setPick(null);

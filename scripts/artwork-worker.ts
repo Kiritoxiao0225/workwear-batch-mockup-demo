@@ -1,6 +1,11 @@
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
+import { setDefaultAutoSelectFamilyAttemptTimeout } from 'node:net';
 createRequire(import.meta.url)('@next/env').loadEnvConfig(process.cwd());
+// From the Beijing host, R2 and the image service are across the border. Node gives each resolved
+// address only 250 ms to connect; when all of them run over, the job ends with an empty-message
+// AggregateError although nothing was sent. Let a slow handshake finish instead.
+setDefaultAutoSelectFamilyAttemptTimeout(3000);
 
 if (process.env.BATCH_WORKBENCH_ENABLED !== '1') throw new Error('旧版后台已停用，请开启 BATCH_WORKBENCH_ENABLED=1');
 if (process.env.VERCEL === '1') throw new Error('后台任务需要持续运行的服务');
