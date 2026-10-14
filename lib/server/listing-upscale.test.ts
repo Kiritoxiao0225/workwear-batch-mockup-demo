@@ -12,7 +12,7 @@ describe('listing upscale', () => {
   });
 
   it('still delivers the platform size when MediaKit fails', async () => {
-    const out = await upscaleListingImage(await image(832, 1248), 'poster', async () => { throw new Error('down'); });
+    const out = await upscaleListingImage(await image(832, 1248), 'long', async () => { throw new Error('down'); });
     expect(out.enhanced).toBe(false);
     expect(await sharp(out.bytes).metadata()).toMatchObject({ width: 1440, height: 2160 });
   });

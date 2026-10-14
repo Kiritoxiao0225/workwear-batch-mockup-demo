@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { cliproxyListingImage } from './cliproxy-image-2';
 /**
- * EvoLink calls for 电商主图. One paid request per call; nothing here retries, because a request
- * that was sent may already have been charged.
+ * Model calls for 电商主图: the analysis and the images on EvoLink (gpt-image-2.5), as live, unless
+ * LISTING_PLAN_PROVIDER=cliproxy or LISTING_IMAGE_PROVIDER=cliproxy moves that half to the Codex
+ * relay (CLIProxy, gpt-image-2; the local setup uses it). One request per call; nothing here
+ * retries, because a request that was sent may already have been charged.
  */
 type Env = Record<string, string | undefined>;
 type Options = { env?: Env; fetchImplementation?: typeof fetch; beforeSubmit: () => Promise<void>; receipt: (id: string) => Promise<void> };
@@ -9,21 +12,61 @@ type Options = { env?: Env; fetchImplementation?: typeof fetch; beforeSubmit: ()
 export const LISTING_PLAN_MODEL = (env: Env = process.env) => env.LISTING_PLAN_MODEL?.trim() || 'gpt-6.1-sol';
 
 export function assertListingProviderConfigured(env: Env = process.env) {
-  if (!env.EVOLINK_API_KEY?.trim()) throw new Error('EVOLINK_API_KEY 未配置，未冻结积分也未提交模型');
+  const used = [listingPlanProvider(env), listingImageProvider(env)];
+  if (used.includes('evolink') && !env.EVOLINK_API_KEY?.trim()) throw new Error('EVOLINK_API_KEY 未配置，未冻结积分也未提交模型');
+  if (used.includes('cliproxy') && !(env.CLIPROXY_API_KEY?.trim() && env.CLIPROXY_API_BASE_URL?.trim())) throw new Error('CLIPROXY_API_KEY 或 CLIPROXY_API_BASE_URL 未配置，未冻结积分也未提交模型');
 }
+/** Where the analysis runs: EvoLink unless moved to the Codex relay. */
+export const listingPlanProvider = (env: Env = process.env): 'cliproxy' | 'evolink' => env.LISTING_PLAN_PROVIDER?.trim() === 'cliproxy' ? 'cliproxy' : 'evolink';
+/** Where the images are made: EvoLink unless moved to the Codex relay. */
+export const listingImageProvider = (env: Env = process.env): 'cliproxy' | 'evolink' => env.LISTING_IMAGE_PROVIDER?.trim() === 'cliproxy' ? 'cliproxy' : 'evolink';
+/** The relay rate-limits several images at once: a worker runs fewer of them. */
+export const listingWorkerConcurrency = (env: Env = process.env) => Number(env.LISTING_WORKER_CONCURRENCY) || (listingImageProvider(env) === 'cliproxy' ? 4 : 6);
 
 export type PlanCall = { content: string; model: string; requestId: string; usage: unknown; durationMs: number };
 
 export async function callPlanModel(request: object, options: Options): Promise<PlanCall> {
   const env = options.env ?? process.env, transport = options.fetchImplementation ?? fetch;
-  const key = env.EVOLINK_API_KEY?.trim();
-  if (!key) throw new Error('EVOLINK_API_KEY 未配置');
+  const relay = listingPlanProvider(env) === 'cliproxy';
+  const key = (relay ? env.CLIPROXY_API_KEY : env.EVOLINK_API_KEY)?.trim();
+  if (!key) throw new Error(relay ? 'CLIPROXY_API_KEY 未配置' : 'EVOLINK_API_KEY 未配置');
+  const endpoint = relay ? `${env.CLIPROXY_API_BASE_URL?.trim().replace(/\/$/u, '')}/chat/completions` : 'https://direct.evolink.ai/v1/chat/completions';
   const started = Date.now();
   await options.beforeSubmit();
-  const response = await transport('https://direct.evolink.ai/v1/chat/completions', {
+  // Streamed: the words come back as they are written, so a long analysis never sits silent long
+  // enough for the connection to be cut (10-13: 199 photos, cut at about two minutes).
+  const response = await transport(endpoint, {
     method: 'POST', redirect: 'error', signal: AbortSignal.timeout(600_000),
-    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify(request),
+    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ ...request, stream: true, stream_options: { include_usage: true } }),
   });
+  if (!response.ok || !response.headers.get('content-type')?.includes('event-stream')) return wholeAnswer(response, key, options, started);
+  let content = '', id = '', model = '', usage: unknown = null, finish = '', buffer = '';
+  const reader = response.body!.getReader(), decoder = new TextDecoder();
+  for (;;) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const lines = buffer.split('\n');
+    buffer = done ? '' : lines.pop()!;
+    for (const line of lines) {
+      const data = line.startsWith('data:') ? line.slice(5).trim() : '';
+      if (!data || data === '[DONE]') continue;
+      let chunk: { id?: string; model?: string; usage?: unknown; choices?: { finish_reason?: string | null; delta?: { content?: string | null } }[] };
+      try { chunk = JSON.parse(data); } catch { continue; }
+      if (chunk.id && !id) { id = chunk.id; await options.receipt(id); }
+      if (chunk.model) model = chunk.model;
+      if (chunk.usage) usage = chunk.usage;
+      const choice = chunk.choices?.[0];
+      if (choice?.delta?.content) content += choice.delta.content;
+      if (choice?.finish_reason) finish = choice.finish_reason;
+    }
+    if (done) break;
+  }
+  if (content.includes(key)) throw new Error('响应含敏感配置，已丢弃');
+  if (finish !== 'stop' || !content) throw new Error(`分析没有完整结束（${finish || '无结果'}）`);
+  return { content, model, requestId: id, usage, durationMs: Date.now() - started };
+}
+/** An answer that came back whole (an error, or a provider that does not stream). */
+async function wholeAnswer(response: Response, key: string, options: Options, started: number): Promise<PlanCall> {
   const raw = await response.text();
   if (raw.includes(key)) throw new Error('响应含敏感配置，已丢弃');
   let body: { id?: string; model?: string; usage?: unknown; choices?: { finish_reason?: string; message?: { content?: string } }[] } = {};
@@ -35,9 +78,12 @@ export async function callPlanModel(request: object, options: Options): Promise<
   return { content: choice.message.content, model: body.model ?? '', requestId: body.id ?? '', usage: body.usage ?? null, durationMs: Date.now() - started };
 }
 
-export const LISTING_IMAGE_MODEL = 'gpt-image-2.5-sunburst';
+const EVOLINK_IMAGE_MODEL = 'gpt-image-2.5-sunburst';
+export const listingImageModel = (env: Env = process.env) => listingImageProvider(env) === 'cliproxy' ? 'gpt-image-2' : EVOLINK_IMAGE_MODEL;
+/** gpt-image-2 sizes for the shapes (sides in multiples of 16). */
+const RELAY_SIZES = { square: '1024x1024', portrait: '1152x1536', long: '1024x1536' } as const;
 const mimeOf = (bytes: Buffer) => bytes[0] === 0xff && bytes[1] === 0xd8 ? 'image/jpeg' : bytes.subarray(8, 12).toString() === 'WEBP' ? 'image/webp' : 'image/png';
-const RATIOS = { square: '1:1', portrait: '3:4', poster: '2:3' } as const;
+const RATIOS = { square: '1:1', portrait: '3:4', long: '2:3' } as const;
 export type ImageCall = { bytes: Buffer; taskId: string; credits: number | null; durationMs: number };
 
 /**
@@ -45,12 +91,22 @@ export type ImageCall = { bytes: Buffer; taskId: string; credits: number | null;
  * A task the provider reports as failed or cancelled is not charged, so it throws with
  * `notCharged`; anything else after submission may have been charged.
  */
-export async function generateListingImage(input: { prompt: string; references: Buffer[]; ratio: keyof typeof RATIOS }, options: Options & { pollMs?: number; timeoutMs?: number }): Promise<ImageCall> {
+export async function generateListingImage(input: { prompt: string; references: Buffer[]; ratio: keyof typeof RATIOS; mask?: Buffer }, options: Options & { pollMs?: number; timeoutMs?: number }): Promise<ImageCall> {
   const env = options.env ?? process.env, transport = options.fetchImplementation ?? fetch;
+  if (listingImageProvider(env) === 'cliproxy') {
+    // The relay runs on a subscription: a failed image costs nothing, so the user is not charged for it.
+    await options.beforeSubmit();
+    try {
+      const call = await cliproxyListingImage({ prompt: input.prompt, images: input.references, size: RELAY_SIZES[input.ratio], mask: input.mask });
+      return { bytes: call.bytes, taskId: '', credits: null, durationMs: call.durationMs };
+    } catch (error) { throw Object.assign(error instanceof Error ? error : new Error('出图失败'), { notCharged: true }); }
+  }
   const key = env.EVOLINK_API_KEY?.trim();
   if (!key) throw new Error('EVOLINK_API_KEY 未配置');
   const auth = { Authorization: `Bearer ${key}` };
-  const urls = await Promise.all(input.references.map(async (bytes, i) => {
+  // A mask (a PNG the size of the first reference, transparent where to redraw) redraws only that part.
+  const files = input.mask ? [...input.references, input.mask] : input.references;
+  const uploaded = await Promise.all(files.map(async (bytes, i) => {
     const response = await transport('https://files-api.evolink.ai/api/v1/files/upload/base64', {
       method: 'POST', redirect: 'error', signal: AbortSignal.timeout(120_000), headers: { ...auth, 'Content-Type': 'application/json' },
       // Unique names: concurrent uploads under one name overwrote each other, and jobs got
@@ -61,11 +117,12 @@ export async function generateListingImage(input: { prompt: string; references: 
     if (!response.ok || !body?.success || !String(body.data?.file_url).startsWith('https://')) throw new Error(`参考图上传失败（HTTP ${response.status}）`);
     return body.data!.file_url!;
   }));
+  const urls = input.mask ? uploaded.slice(0, -1) : uploaded, maskUrl = input.mask ? uploaded.at(-1) : undefined;
   const started = Date.now();
   await options.beforeSubmit();
   const created = await transport('https://api.evolink.ai/v1/images/generations', {
     method: 'POST', redirect: 'error', signal: AbortSignal.timeout(120_000), headers: { ...auth, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: LISTING_IMAGE_MODEL, prompt: input.prompt, image_urls: urls, size: RATIOS[input.ratio], resolution: '1K', quality: 'medium', background: 'opaque', output_format: 'png', n: 1 }),
+    body: JSON.stringify({ model: EVOLINK_IMAGE_MODEL, prompt: input.prompt, image_urls: urls, ...(maskUrl ? { mask_url: maskUrl } : {}), size: RATIOS[input.ratio], resolution: '1K', quality: 'medium', background: 'opaque', output_format: 'png', n: 1 }),
   });
   const task = await created.json().catch(() => null) as { id?: string } | null;
   if (!created.ok || !task?.id) throw Object.assign(new Error(`出图提交失败（HTTP ${created.status}）`), { notCharged: created.status >= 400 && created.status < 500 });

@@ -136,3 +136,51 @@ export async function generateCliproxyArtwork(prompt: string, images: string[], 
     generationNote: `Codex ${CLIPROXY_ARTWORK_MODEL}（CLIProxyAPI）：请求 2048×2048 / Medium；实际 PNG ${metadata.width}×${metadata.height}`,
   };
 }
+
+const mimeOf = (bytes: Buffer) => bytes[0] === 0xff && bytes[1] === 0xd8 ? 'image/jpeg' : bytes.subarray(8, 12).toString() === 'WEBP' ? 'image/webp' : 'image/png';
+
+/**
+ * One gpt-image-2 image for 电商主图: the reference images in the order the prompt names them (a
+ * mask, transparent where to redraw, applies to the first), at the size asked. Never retried: a
+ * failed call is reported, not repeated.
+ */
+export async function cliproxyListingImage(input: { prompt: string; images: Buffer[]; size: string; mask?: Buffer; timeoutMs?: number }) {
+  const { apiKey, base } = configuration();
+  const options = { model: CLIPROXY_ARTWORK_MODEL, size: input.size, quality: 'medium', background: 'opaque', output_format: 'png', response_format: 'b64_json', n: 1 };
+  const headers: Record<string, string> = { Authorization: `Bearer ${apiKey}` };
+  let body: BodyInit;
+  if (input.images.length) {
+    const form = new FormData();
+    for (const [name, value] of Object.entries(options)) form.set(name, String(value));
+    form.set('prompt', input.prompt);
+    input.images.forEach((bytes, i) => form.append('image[]', new Blob([new Uint8Array(bytes)], { type: mimeOf(bytes) }), `ref-${i + 1}.${mimeOf(bytes).split('/')[1]}`));
+    if (input.mask) form.append('mask', new Blob([new Uint8Array(input.mask)], { type: 'image/png' }), 'mask.png');
+    body = form;
+  } else {
+    headers['Content-Type'] = 'application/json';
+    body = JSON.stringify({ ...options, prompt: input.prompt });
+  }
+  const started = Date.now();
+  let result: unknown;
+  try {
+    const response = await fetch(`${base}/images/${input.images.length ? 'edits' : 'generations'}`, {
+      method: 'POST', headers, body, redirect: 'error', signal: AbortSignal.timeout(input.timeoutMs ?? 300_000),
+    });
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
+      const reason = response.status === 401 || response.status === 403 ? '转接授权失效' : response.status === 429 ? '转接限速，稍后重做' : '转接服务出错';
+      throw new Error(`出图没有成功（HTTP ${response.status}，${reason}）`);
+    }
+    result = await readResponse(response);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('出图没有成功')) throw error;
+    throw new Error('出图连接中断或超时');
+  }
+  const data = result && typeof result === 'object' && 'data' in result ? result.data : null;
+  const encoded = Array.isArray(data) && typeof data[0]?.b64_json === 'string' ? data[0].b64_json as string : '';
+  if (!encoded || encoded.length > Math.ceil(MAX_IMAGE_BYTES / 3) * 4) throw new Error('出图没有返回图片');
+  const bytes = Buffer.from(encoded, 'base64');
+  const metadata = await sharp(bytes, { failOn: 'error', limitInputPixels: 16_777_216 }).metadata().catch(() => null);
+  if (!metadata?.width || !metadata.height) throw new Error('出图返回的不是有效图片');
+  return { bytes, durationMs: Date.now() - started };
+}

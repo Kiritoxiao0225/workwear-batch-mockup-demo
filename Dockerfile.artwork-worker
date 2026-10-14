@@ -9,6 +9,10 @@ COPY scripts/artwork-worker.ts scripts/catalog-offsite-backup.ts ./scripts/
 COPY db/migrations ./db/migrations
 COPY public/fonts ./public/fonts
 COPY public/brand ./public/brand
+# 电商主图: each master's sample images go to the image model as the layout reference (lib/server/listing-specs.ts):
+# the competitors' washed images (rivals), and our own for 无模特's cover (masters).
+COPY public/listing-images/masters ./public/listing-images/masters
+COPY public/listing-images/rivals ./public/listing-images/rivals
 ENV NODE_ENV=production PORT=8080
 EXPOSE 8080
 CMD ["npm", "run", "artwork:worker"]

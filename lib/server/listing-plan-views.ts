@@ -167,3 +167,16 @@ export async function planViews(sources: PlanSource[], fullSize = PLAN_FULL_SIZE
   }
   throw new Error(`素材太多（去掉重复后 ${kept.length} 张），一次分析放不下，请拆成几款再传`);
 }
+
+/**
+ * What the colour list is read from before anything is sorted (10-14): every colour image, swatch,
+ * detail page and main image (by folder or file name), and a few photos spread over every other
+ * folder, so a colour shown only in photos is seen too.
+ */
+export function colourSources(sources: PlanSource[], perFolder = 4): PlanSource[] {
+  const told = (s: PlanSource) => SKU_HINT.test(s.folder + '/' + s.name) || /详情|主图|首图/.test(s.folder + '/' + s.name);
+  const rest = new Map<string, PlanSource[]>();
+  for (const s of [...sources].sort(byPath)) if (!told(s)) rest.set(s.folder, [...(rest.get(s.folder) ?? []), s]);
+  const spread = (list: PlanSource[]) => list.length <= perFolder ? list : Array.from({ length: perFolder }, (_, k) => list[Math.floor((k + 0.5) * list.length / perFolder)]);
+  return [...sources.filter(told), ...[...rest.values()].flatMap(spread)];
+}

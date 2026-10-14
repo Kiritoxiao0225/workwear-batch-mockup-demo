@@ -1,11 +1,11 @@
 /**
- * Main images and the poster go out at the platforms' sizes: MediaKit's standard enhance doubles
+ * Main images and the long image go out at the platforms' sizes: MediaKit's standard enhance doubles
  * the 1K image, then it is scaled to the exact size. If MediaKit fails the 1K image is scaled
  * directly, so the image is still delivered at the right size. SKU and product images keep 1K.
  */
 import sharp from 'sharp';
 
-export const LISTING_SIZES = { square: [1440, 1440], portrait: [1440, 1920], poster: [1440, 2160] } as const;
+export const LISTING_SIZES = { square: [1440, 1440], portrait: [1440, 1920], long: [1440, 2160] } as const;
 export type ListingSizeKind = keyof typeof LISTING_SIZES;
 type Enhance = (bytes: Buffer) => Promise<Buffer>;
 

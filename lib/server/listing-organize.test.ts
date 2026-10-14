@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { chooseMaterials, parseOrganized, type SortedImage } from './listing-organize';
-import { usableAsIs } from '../listing/plan';
+import { chooseMaterials, mergeSameColors, parseOrganized, parseRead, parseSorted, recolored, settleCopies, worthReading, type SortedImage } from './listing-organize';
+import { usableAsIs } from '../listing/draft';
 
-const img = (id: string, over: Partial<SortedImage>): SortedImage => ({ id, kind: '模特实拍', color: '', front: false, detail: '', text: false, logo: false, same: '', ...over });
+const img = (id: string, over: Partial<SortedImage>): SortedImage => ({ id, kind: '模特实拍', color: '', front: false, detail: '', text: false, logo: false, same: '', person: '', face: false, ...over });
 
 describe('chooseMaterials', () => {
   it('picks a clean still life per colour and never a rack of several garments as the full front view', () => {
@@ -46,9 +46,80 @@ describe('structure parts', () => {
 });
 
 describe('parseOrganized', () => {
+  it('keeps only kinds of point, ways of drawing and categories that exist', () => {
+    const data = parseOrganized(JSON.stringify({ images: [], colors: [], category: 'workwear', categoryWhy: '素材写了团体定制',
+      points: [{ type: '功能', text: '三防面料', concept: 'triple', proof: 'water-beads' }, { type: '做工', text: '贴腕袖口', concept: 'made-up', proof: 'nope', part: '袖口' }],
+      checks: [{ concept: 'warm', seen: '不像', why: '单层' }, { concept: 'made-up', seen: '有' }], titles: { 功能: ['三防面料 雨天不怕'], 海报: ['不要'] } }), []);
+    expect(data.category).toBe('workwear');
+    expect(data.points.map(p => [p.concept, p.proof, p.part])).toEqual([['triple', 'water-beads', ''], [null, '', '袖口']]);
+    expect(data.checks).toEqual([{ concept: 'warm', seen: '不像', why: '单层' }]);
+    expect(data.titles).toEqual({ 功能: ['三防面料 雨天不怕'] });
+    expect(parseOrganized(JSON.stringify({ images: [], colors: [], category: '不知道' }), []).category).toBe('generic');
+  });
+
+  it('keeps the AI pick of master and cover only where the master can use it', () => {
+    const look = (l: object) => parseOrganized(JSON.stringify({ images: [], colors: [], look: l }), []).look;
+    expect(look({ master: 'M2', place: '物业', sell: '防水', why: '三防多' })).toEqual({ master: 'M2', place: '物业', sell: '防水', why: '三防多' });
+    expect(look({ master: 'M1', place: '登山', sell: '防水', why: '' })).toEqual({ master: 'M1', why: '' });
+    expect(look({ master: 'M4', place: '工地', sell: '耐磨', why: '' })).toEqual({ master: 'M4', why: '' });
+    expect(look({ master: 'M3', place: '工地', sell: '好看', why: '' })).toEqual({ master: 'M3', place: '工地', why: '' });
+    expect(look({ master: 'M9', place: '工地' })).toBeNull();
+    expect(parseOrganized(JSON.stringify({ images: [], colors: [] }), []).look).toBeNull();
+  });
+
   it('keeps images the model skipped and drops ids it made up', () => {
     const data = parseOrganized(JSON.stringify({ images: [{ id: 'M1', kind: '奇怪的', front: true }, { id: 'M9', kind: '静物' }], colors: [{ name: '黑色', from: ['M1', 'M9'] }] }), ['M1', 'M2']);
     expect(data.images.map(i => [i.id, i.kind])).toEqual([['M1', '无关'], ['M2', '无关']]);
     expect(data.colors[0].from).toEqual(['M1']);
+  });
+});
+
+describe('the analysis in parts', () => {
+  it('keeps an image a batch skipped as unsorted, and forgets a copy of an image outside the batch', () => {
+    const images = parseSorted(JSON.stringify({ images: [{ id: 'M1', kind: '静物', same: 'M9' }, { id: 'M2', kind: '细节特写', detail: '袖口', same: 'M1' }, { id: 'M7', kind: '静物' }] }), ['M1', 'M2', 'M3']);
+    expect(images.map(i => [i.id, i.kind, i.same])).toEqual([['M1', '静物', ''], ['M2', '细节特写', 'M1'], ['M3', '无关', '']]);
+  });
+  it('puts the batches and the whole product together as one analysis', () => {
+    const images = [img('M1', { kind: '静物', color: '黑色', front: true }), img('M2', { kind: '卖点图', text: true })];
+    const o = parseRead(JSON.stringify({ colors: [{ name: '黑色', hex: '#111', from: ['M1', 'M9'] }], points: [{ type: '功能', text: '三级防水', from: ['M2'] }], category: 'workwear' }), images);
+    expect(o.images).toHaveLength(2);
+    expect(o.colors[0].from).toEqual(['M1']);
+    expect(o.category).toBe('workwear');
+    expect(worthReading([...images, img('M3', { kind: '无关' }), img('M4', { same: 'M1' })]).map(i => i.id)).toEqual(['M1', 'M2']);
+  });
+});
+
+describe('colours written two ways', () => {
+  it('drops a colour with no image that reads the same as one with an image, and keeps one only named in text', () => {
+    const colors = [{ name: '黑拼白', hex: '', from: ['M47'] }, { name: '黑白拼', hex: '', from: [] }, { name: '藏青色', hex: '', from: [] }, { name: '卡其', hex: '', from: ['M3'] }, { name: '卡其色', hex: '', from: [] }];
+    expect(mergeSameColors(colors).map(c => c.name)).toEqual(['黑拼白', '藏青色', '卡其']);
+  });
+});
+
+describe('copies marked both ways round', () => {
+  const img = (id: string, kind: SortedImage['kind'], same: string, color = '白 + 咖啡', text = false): SortedImage =>
+    ({ id, kind, color, front: true, detail: '', parts: [], text, logo: false, same, person: '', face: false });
+  it('keeps the still life of a pair that each say the other is the copy, and gives it to its colour', () => {
+    const images = settleCopies([img('M5', '静物', 'M146'), img('M146', '颜色款图', 'M5', '白 + 咖啡', true), img('M60', '模特实拍', '')]);
+    expect(images.find(i => i.id === 'M5')!.same).toBe('');
+    expect(images.find(i => i.id === 'M146')!.same).toBe('M5');
+    const chosen = chooseMaterials({ images, colors: [{ name: '白+咖啡', hex: '', from: ['M60'] }] }, []);
+    expect(chosen.colors[0].pick).toBe('M5');
+  });
+  it('leaves a group that already has its original alone', () => {
+    const images = settleCopies([img('M1', '静物', 'M2'), img('M2', '颜色款图', '')]);
+    expect(images.map(i => i.same)).toEqual(['M2', '']);
+  });
+});
+
+describe('colours named before the colours were known', () => {
+  const img = (id: string, color: string) => ({ id, color });
+  it('takes the reading\'s colour for an image sorted under a name of its own', () => {
+    const out = recolored([img('M48', '橙色'), img('M44', '橙色'), img('M21', '爱马仕橙')], ['落霞橙', '爱马仕橙'], { M48: '爱马仕橙', M44: '不存在的色' });
+    expect(out.map(i => i.color)).toEqual(['爱马仕橙', '橙色', '爱马仕橙']);
+  });
+  it('gives a label to the one colour whose name holds it, and guesses nothing when two do', () => {
+    const out = recolored([img('M1', '蓝色'), img('M2', '橙色'), img('M3', '黑 色')], ['北欧蓝', '落霞橙', '爱马仕橙', '黑色']);
+    expect(out.map(i => i.color)).toEqual(['北欧蓝', '橙色', '黑 色']);
   });
 });
