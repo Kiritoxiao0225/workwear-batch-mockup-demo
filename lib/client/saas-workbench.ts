@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 export type Artwork = {
   id: string;
   name: string;
@@ -158,14 +158,27 @@ export async function batchAPI<T = Record<string, unknown>>(
   if (!response.ok) throw new Error(data.error || "操作失败，请重试");
   return data;
 }
+/** Something is still being read or made, so its status is worth checking often. */
+const inProgress = (w: Workbench | null) =>
+  !!w?.cases.some(
+    (c) => c.analysis?.status === "running" || c.productions.some((j) => j.status === "queued" || j.status === "running"),
+  );
+// Every 5 seconds while something is in progress; otherwise every 30 seconds, plus right away
+// when the tab comes back or the page itself started something (reload).
+const BUSY_POLL_MS = 5000,
+  IDLE_POLL_MS = 30000;
 export function useWorkbench() {
   const [data, setData] = useState<Workbench | null>(null),
     [error, setError] = useState("");
+  const latest = useRef<Workbench | null>(null),
+    reschedule = useRef<() => void>(() => {});
   const reload = useCallback(async () => {
     try {
       const next = await batchAPI<Workbench>("/api/requirements");
+      latest.current = next;
       setData(next);
       setError("");
+      reschedule.current();
       return next;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -173,25 +186,41 @@ export function useWorkbench() {
     }
   }, []);
   useEffect(() => {
-    let alive = true;
+    let alive = true,
+      timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = () => {
+      clearTimeout(timer);
+      if (alive) timer = setTimeout(() => void read(), inProgress(latest.current) ? BUSY_POLL_MS : IDLE_POLL_MS);
+    };
     const read = async () => {
-      try {
-        const next = await batchAPI<Workbench>("/api/requirements");
-        if (alive) {
-          setData(next);
-          setError("");
+      if (!document.hidden) {
+        try {
+          const next = await batchAPI<Workbench>("/api/requirements");
+          latest.current = next;
+          if (alive) {
+            setData(next);
+            setError("");
+          }
+        } catch (e) {
+          if (alive) setError(e instanceof Error ? e.message : String(e));
         }
-      } catch (e) {
-        if (alive) setError(e instanceof Error ? e.message : String(e));
+      }
+      schedule();
+    };
+    const visible = () => {
+      if (!document.hidden) {
+        clearTimeout(timer);
+        void read();
       }
     };
+    reschedule.current = schedule;
     void read();
-    const timer = setInterval(() => {
-      if (!document.hidden) void read();
-    }, 5000);
+    document.addEventListener("visibilitychange", visible);
     return () => {
       alive = false;
-      clearInterval(timer);
+      clearTimeout(timer);
+      reschedule.current = () => {};
+      document.removeEventListener("visibilitychange", visible);
     };
   }, []);
   return { data, error, reload };

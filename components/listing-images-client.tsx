@@ -146,18 +146,27 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
     try { const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null"); if (saved?.counts && "long" in saved.counts) setSettings({ counts: saved.counts }); } catch { /* first visit */ }
     api<Config>("config").then(setConfig).catch(error => say(error.message));
   }, [say]);
-  const refresh = useCallback(async () => {
+  // What each product looked like at the last refresh, so the background poll can skip idle ones.
+  const seen = useRef<Record<string, string>>({});
+  /**
+   * full: every product's detail (on load and after any action). The background poll passes false
+   * and reloads only products still generating or whose status changed since the last look.
+   */
+  const refresh = useCallback(async (full = true) => {
     const list = await api<Summary[]>("projects");
+    const before = seen.current;
+    seen.current = Object.fromEntries(list.map(p => [p.id, `${p.status}|${p.updated_at}|${p.made}|${p.broken}`]));
     setProjects(list);
     // The plan page and the results need the product's material, plan and images.
-    const needed = list.filter(p => ["materials", "generating", "square", "done"].includes(p.status));
+    const needed = list.filter(p => ["materials", "generating", "square", "done"].includes(p.status)
+      && (full || p.status === "generating" || before[p.id] !== seen.current[p.id]));
     const loaded = await Promise.all(needed.map(p => api<Detail>("projects/" + p.id).catch(() => null)));
     setDetails(old => ({ ...old, ...Object.fromEntries(loaded.filter((d): d is Detail => !!d).map(d => [d.id, d])) }));
   }, []);
   useEffect(() => { refresh().catch(error => say(error.message)); }, [refresh, say]);
   /* eslint-enable react-hooks/set-state-in-effect */
   const busy = projects.some(p => ["planning", "writing", "generating"].includes(p.status)) || Object.keys(uploads).length > 0;
-  useEffect(() => { if (!busy) return; const t = setInterval(() => void refresh().catch(() => {}), 3000); return () => clearInterval(t); }, [busy, refresh]);
+  useEffect(() => { if (!busy) return; const t = setInterval(() => void refresh(false).catch(() => {}), 3000); return () => clearInterval(t); }, [busy, refresh]);
 
   const layouts = config?.layouts ?? BUILT_IN;
   const prices: Prices = { image: config?.imageCredits ?? 0, multi: config?.multiCredits ?? 0, exempt: !config || config.exempt };

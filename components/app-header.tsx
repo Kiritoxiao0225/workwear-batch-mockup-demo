@@ -68,10 +68,13 @@ export function AppHeader({ beforeLogout }: { beforeLogout?: () => Promise<boole
     void read();
     const timer = setInterval(() => {
       if (!document.hidden) void read();
-    }, 15000);
+    }, 60000);
+    const focused = () => void read();
+    window.addEventListener("focus", focused);
     return () => {
       alive = false;
       clearInterval(timer);
+      window.removeEventListener("focus", focused);
     };
   }, []);
   return (
