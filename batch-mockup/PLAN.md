@@ -550,3 +550,23 @@ WPS 同步完成后，后台逐条预约尚无识别记录和草稿的有效原�
   2. worker 先发：暂停 → 新镜像 `6aceda42`（release `4634e1d1…`，159 个文件，变化 2 个 + 新进闭包的 `lib/server/artwork-network-error.ts`）→ 两个 worker 切换，哈希、健康一致。
   3. Web 改 4 个文件，新部署 `6acedc3e`，release `1e91cfaa…`；ready、migration 033。工作区未提交的电商主图改动不在里面。
 - 回退：`output/studio-retry-release-20261014/rollback.json`（无迁移）。
+
+### 2026-10-14 下午：电商主图一周改版上线（先定颜色再配图、SKU 模板图、店铺服务图、点图修改）
+
+- 背景：线上电商主图还是 10-07 的版本。10-08 到 10-13 在另一台电脑上做的改版（分轮出图、五套母版、SKU 模板图、店铺服务图、改图候选、分段整理）连同 10-14 本机验收时修的问题一起上线。
+- 10-14 修的问题（`ce19135`、`04a258b`，发布分支 `release-listing-20261014` = `main` + 这两个提交）：
+  - 整理素材先定颜色清单，再分批给图配颜色；读完回头纠正对不上的颜色名（6610 的模特图被分成「橙色」，落霞橙、爱马仕橙都没配上）。
+  - 互相标成重复的一组图留一张、静物优先（6609 每个颜色的白底静物图和详情页颜色图互指，两张都被丢掉，6 个颜色改用模特图重画）。
+  - 「正面」要求没人穿的图衣服合拢；方案汇总按备注分行（免费账号价格都是 0，重画的白底图被并进「直接用静物图」那一行）。
+  - 收口图最多 6 色，服务器检查与页面一致；SKU 图人物取景到大腿中部、标题下加「男女同款」；整理结果不完整不扣费；状态类型补上 writing，构建恢复。
+  - 迁移 037：036 新建的 `listing_plan_parts` 没给 `mockup_app` 授权，线上整理会失败；本机用管理员账号测不出。
+  - 模型：线上仍是 EvoLink（分析 `gpt-6.1-sol`、出图 `gpt-image-2.5-sunburst`）；`LISTING_PLAN_PROVIDER` / `LISTING_IMAGE_PROVIDER=cliproxy` 才走 Codex 转接（本机 `.env.local` 设了）。
+- 测试：发布分支 tsc、lint 0 错误、vitest 1653、build、`test:listing` 30 组（禁止联网）通过。`test:artwork-jobs` 最后一组失败，`main` 上同样失败，与本次无关。
+- 发布（本机直连被拦，数据库和平台接口经本机代理；代理不稳，平台调用和上传加了重试）：
+  1. 核对线上：Web `d-6acedc3e`、两个 worker `d-6aceda42`、migration 033，无运行任务；电商主图旧商品 1 款、学过的版式 0 个。
+  2. 备份：在主 worker 里强制做一次异地备份，快照 07:25Z，514 MB、54 张表，R2 校验通过（`backup.json`）。
+  3. worker 暂停（无任务）→ 迁移 034–037（管理员账号，前后行数一致，`mockup_app` 已有 `listing_plan_parts` 权限）→ 按 034 的约定清掉旧商品：「M12#轻量化连帽单冲」1 款，286 个文件，退还 152 MB（`cleared.json`）。
+  4. worker 新镜像 `6acf398c`（release `823f1eed…`，224 个文件，含字体、母版和竞品参考图、服务图样例；构建时加载电商主图模块并检查这些文件）→ 两个 worker 切换，哈希、健康一致。
+  5. Web 改 114 个文件、删 3 个，新部署 `6acf3b9f`，release `8b82a8ab…`；ready、migration 037。
+  6. 发布后：两个电商主图后台循环有心跳；三个服务都没设 `LISTING_*`，用 EvoLink（`postcheck.json`）。
+- 回退：`output/listing-release-20261014/rollback.json`（迁移只加不删，旧代码能在上面跑，回退不撤迁移）。
