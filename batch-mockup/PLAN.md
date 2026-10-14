@@ -533,3 +533,20 @@ WPS 同步完成后，后台逐条预约尚无识别记录和草稿的有效原�
   3. Web 改 9 个文件，新部署 `6acdd1b5`，release `162ee366…`；ready、migration 033。另一个会话的 `1df8729` 不在里面。
 - 回退：`output/studio-multi-release-20261013/rollback.json`（先回 Web 再回 worker，无迁移）。
 
+
+### 2026-10-14 上午：图稿生成失败后不刷新就能重做；连不上服务时自动再发、记为失败不扣费
+
+- 背景：线上图稿生成「成功一次就失败，必须刷新再来」。10-13 外部账号的 4 次「结果未知」：1 次生图 2 秒内 `fetch failed`，3 次还没开始生图就失败、错误为空；失败都在上一次成功 6 分钟以上之后，紧接着的下一次都成功。
+- 原因：
+  - 页面：提交成功后不清请求编号，同样的要求再点「开始制作」拿回原记录，只显示「已回读此前提交的任务：结果未知」，刷新才换编号。
+  - 后台：北京 worker 到 R2 和生图服务跨境，Node 每个地址只等 250ms 连接，全超时就抛空消息的 AggregateError；请求根本没发出，却记成「结果未知」。由空错误和时间规律推断，没有取到运行日志直接证实。
+- 改动（`d3c4eaa`，发布分支 `release-studio-retry-20261014` = `be48a45` + 摘取为 `616fd10`）：
+  - 页面：提交被接受后清掉请求编号。
+  - `production.mjs`：连接没建立就失败（叶子错误都是 connect/getaddrinfo 或 `UND_ERR_CONNECT_TIMEOUT`）时生图/抠图/高清自动再发最多 2 次，读素材图同样重试；仍失败记 `failed`、写明原因、步骤记 failed 不计费。还没调用付费服务就失败的记 `failed`。断在半路的照旧「结果未知」、不重发。
+  - `artwork-worker.ts`：`setDefaultAutoSelectFamilyAttemptTimeout(3000)`。
+- 测试：发布分支 tsc、vitest 1573、requirements 72（含新增 4 项）通过。
+- 发布（本机直连被拦，数据库和平台接口经本机代理；Zeabur 本机登录 10-14 重新登录）：
+  1. 核对线上：Web `d-6acdd1b5`、两个 worker `d-6acdd0a2`，文件与上次发布逐个一致，无运行任务。
+  2. worker 先发：暂停 → 新镜像 `6aceda42`（release `4634e1d1…`，159 个文件，变化 2 个 + 新进闭包的 `lib/server/artwork-network-error.ts`）→ 两个 worker 切换，哈希、健康一致。
+  3. Web 改 4 个文件，新部署 `6acedc3e`，release `1e91cfaa…`；ready、migration 033。工作区未提交的电商主图改动不在里面。
+- 回退：`output/studio-retry-release-20261014/rollback.json`（无迁移）。
