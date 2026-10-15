@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppHeader } from "./app-header";
 import { PageHeader } from "./page-header";
+import { OUTPUT_RATIOS, OUTPUT_RESOLUTIONS, outputSize, type OutputRatio, type OutputResolution, type Size } from "@/lib/artwork-output-size";
 import { SaasEditors } from "./saas-editors";
 import { authoredPrompt, splitPrompt } from "./saas-requirement-editor";
 import {
@@ -110,6 +111,9 @@ export function ArtworkStudioClient() {
     ),
     [allHistory, setAllHistory] = useState(false),
     [split, setSplit] = useState(false),
+    [ratio, setRatio] = useState<OutputRatio>("original"),
+    [resolution, setResolution] = useState<OutputResolution>("1K"),
+    [firstRefSize, setFirstRefSize] = useState<Size | null>(null),
     [stage, setStage] = useState<Stage>("checker"),
     [handoff, setHandoff] = useState<ArtworkHandoff | null>(null);
   const input = useRef<HTMLInputElement>(null),
@@ -146,6 +150,18 @@ export function ArtworkStudioClient() {
     writeArtworkHandoff(next);
   };
   const handoffOwner = handoff?.products.find((p) => p.id === handoff.ownerId);
+  const firstRefUrl = refs.find((r) => r.index === 1)?.url;
+  useEffect(() => {
+    if (!firstRefUrl) return;
+    let alive = true;
+    const img = new Image();
+    img.onload = () => alive && setFirstRefSize({ width: img.naturalWidth, height: img.naturalHeight });
+    img.src = firstRefUrl;
+    return () => {
+      alive = false;
+    };
+  }, [firstRefUrl]);
+  const output = outputSize(ratio, resolution, firstRefUrl ? firstRefSize : null);
   const close = useCallback(() => setTarget(null), []),
     saved = useCallback(() => {
       void reload();
@@ -211,6 +227,8 @@ export function ArtworkStudioClient() {
     setRoute("generate");
     setTransparentBackground(!!handoff);
     setMode("text");
+    setRatio("original");
+    setResolution("1K");
     setPlan(null);
     setPick(null);
     request.current = null;
@@ -758,6 +776,37 @@ export function ArtworkStudioClient() {
                   ? "会去掉底色，只留图案；要印到衣服上建议勾上。"
                   : "勾上会自动去掉底色，只留图案。"}
               </p>
+              {route === "generate" && (
+                <>
+                  <div className="field-label">
+                    <span>输出规格</span>
+                  </div>
+                  <div className="seg full ratio-seg" role="group" aria-label="比例">
+                    {OUTPUT_RATIOS.map(([key, label]) => (
+                      <button key={key} aria-pressed={ratio === key} disabled={working} onClick={() => setRatio(key)}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="seg full size-seg" role="group" aria-label="像素">
+                    {OUTPUT_RESOLUTIONS.map((key) => (
+                      <button key={key} aria-pressed={resolution === key} disabled={working} onClick={() => setResolution(key)}>
+                        {key}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="sub output-size">
+                    {output ? (
+                      <>
+                        将输出 <b>{output.width} × {output.height}</b> px
+                        {resolution !== "1K" && "，先出 1K 再用火山高清放大，试用期按 1K 收费"}
+                      </>
+                    ) : (
+                      "没有参考图时比例由模型决定；加了参考图会按图1的比例出。"
+                    )}
+                  </p>
+                </>
+              )}
             </div>
             <div className="col-foot start-foot">
               {route === "generate" && mode === "text" && (

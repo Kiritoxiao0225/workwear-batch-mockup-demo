@@ -1535,3 +1535,14 @@
   margin-top: 2px;
   accent-color: var(--brand);
 }
+/* 输出规格：比例一排、像素一排，下面一行是最终尺寸 */
+.saas-app .studio-page .size-seg {
+  margin-top: 6px;
+}
+.saas-app .studio-page .ratio-seg button {
+  padding: 5px 2px;
+}
+.saas-app .studio-page .output-size b {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
