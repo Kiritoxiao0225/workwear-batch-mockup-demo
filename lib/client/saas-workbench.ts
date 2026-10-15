@@ -1,10 +1,13 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
+export type ArtworkOutput = { ratio: import("../artwork-output-size").OutputRatio; resolution: import("../artwork-output-size").OutputResolution };
 export type Artwork = {
   id: string;
   name: string;
   route: "generate" | "enhance" | "reuse";
   transparentBackground?: boolean;
+  /** 输出规格; absent on artworks made before it existed (the model chose the size). */
+  output?: ArtworkOutput;
   prompt: string;
   imageIds: string[];
   applications: { style: string; color: string; position: string }[];
@@ -33,6 +36,8 @@ export type Job = {
   final?: ResultFile;
   raw?: ResultFile;
   repair?: { file: ResultFile };
+  output?: ArtworkOutput;
+  warning?: string;
 };
 export type Case = {
   caseId: string;

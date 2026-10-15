@@ -87,7 +87,7 @@ export async function evolinkGenerate(input, dir, { env = process.env, pollMs = 
   const urls = await Promise.all(used.map(image => uploadOnce(key, image, `${input.caseId}-${image.index}`)));
   const background = input.transparentBackground === false ? 'opaque' : 'transparent';
   const body = { model: 'gpt-image-2.5-sunburst', prompt: note + input.prompt + (background === 'transparent' ? TRANSPARENT_NOTE : ''), ...(urls.length ? { image_urls: urls } : {}),
-    size: 'auto', quality: input.quality === 'high' ? 'high' : 'medium', background, output_format: 'png', n: 1 };
+    size: input.size || 'auto', quality: input.quality === 'high' ? 'high' : 'medium', background, output_format: 'png', n: 1 };
   await saveJSON(`${dir}/request.json`, { ...body, image_urls: used.map(i => ({ id: i.id, index: i.index, sha256: i.sha256 })) });
   const created = await fetch('https://api.evolink.ai/v1/images/generations', { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(120_000),
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

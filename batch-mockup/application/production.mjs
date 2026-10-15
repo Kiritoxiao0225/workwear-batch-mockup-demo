@@ -6,6 +6,7 @@ import { requirementWorkbench, validateRequirementDraft } from './requirements.m
 import { productionPolicy, inspectPixels, withoutFaintSpecks, hardenInteriorAlpha, flattenOnWhite } from '../adapters/production-images.mjs';
 import { readRepairState } from './production-repair.mjs';
 import { artworkNetworkFailure } from '../../lib/server/artwork-network-error.ts';
+import { drawSize, ratioValue, upscalePasses } from '../../lib/artwork-output-size.ts';
 
 const stamp=()=>new Date().toISOString();
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -18,7 +19,7 @@ export function notSent(error){
     const inner=[...(Array.isArray(e.errors)?e.errors:[]),...(e.cause?[e.cause]:[])];if(inner.length)pending.push(...inner);else leaves.push(e);}
   return leaves.length>0&&leaves.every(e=>['connect','getaddrinfo'].includes(e.syscall)||e.code==='UND_ERR_CONNECT_TIMEOUT');
 }
-const STAGES={generate:'生图',enhance:'高清',cutout:'抠图'};
+const STAGES={generate:'生图',enhance:'高清',cutout:'抠图','upscale-1':'放大','upscale-2':'放大'};
 const errorText=(e,stage)=>(artworkNetworkFailure(e,stage)?.message||String(e?.message||e?.code||e))+(notSent(e)?'请求没有发出，不扣费，可直接重新制作。':'');
 const dirFor=(root,id)=>{if(!/^[a-f0-9]{64}$/u.test(id))throw fail('制作编号无效');return resolve(root,'production-jobs',id);};
 export async function readProductionJobs(root) {
@@ -40,7 +41,8 @@ export function productionInput(c,a,quality=a.quality) {
   return {schema:'production-input-v1',caseId:c.caseId,artworkId:a.id,name:a.name,revision:c.revision,
     supplementRevision:c.supplement.revision,prompt:a.prompt,promptSHA256:hash(a.prompt),route:a.route,
     applications:a.applications.map(application),imageIds:a.imageIds,images:c.images,readingIssues:c.draft.readingIssues.map(x=>({scope:x.scope,issue:x.issue})),policy:productionPolicy,
-    ...(a.transparentBackground===undefined?{}:{transparentBackground:a.transparentBackground}),...(quality==='high'?{quality}:{})};
+    ...(a.transparentBackground===undefined?{}:{transparentBackground:a.transparentBackground}),...(quality==='high'?{quality}:{}),
+    ...(a.route==='generate'&&a.output?{output:{ratio:a.output.ratio,resolution:a.output.resolution}}:{})};
 }
 export function sourceFor(input) {
   const selected=input.images.filter(i=>input.imageIds.includes(i.id));
@@ -82,10 +84,20 @@ export async function reserveProduction(root,manifest,requests) {
       input.images=fixed;await saveJSON(resolve(dir,'input.json'),input);
       const job={id,caseId:c.caseId,artworkId:a.id,name:a.name,revision:c.revision,supplementRevision:c.supplement.revision,promptSHA256:input.promptSHA256,route:a.route,
         createdAt:stamp(),status:blocked?'blocked':'queued',error:blocked,steps:[],qualityStatus:'not_reviewed',policy:productionPolicy,
-        ...(input.transparentBackground===undefined?{}:{transparentBackground:input.transparentBackground}),...(input.quality?{quality:input.quality}:{})};
+        ...(input.transparentBackground===undefined?{}:{transparentBackground:input.transparentBackground}),...(input.quality?{quality:input.quality}:{}),
+        ...(input.output?{output:input.output}:{})};
       await saveJSON(resolve(dir,'state.json'),job);jobs.push(job);
     }
   }return jobs;
+}
+export async function drawingSize(input,images){
+  if(!input.output)return{};
+  const first=images.find(i=>i.index===1);
+  let reference=null;
+  if(first){const m=await import('sharp').then(x=>x.default(first.path).metadata());reference=(m.orientation||1)>=5?{width:m.height,height:m.width}:{width:m.width,height:m.height};}
+  const ratio=ratioValue(input.output.ratio,reference);
+  if(!ratio)return{};
+  const size=drawSize(ratio);return{size:`${size.width}x${size.height}`};
 }
 export async function executeProduction(root,id,providers,onProgress=()=>{}) {
   const dir=dirFor(root,id),job=await jsonFile(resolve(dir,'state.json'));if(job.status!=='queued')return job;
@@ -102,13 +114,42 @@ export async function executeProduction(root,id,providers,onProgress=()=>{}) {
     const sha256=hash(bytes),m=await import('sharp').then(x=>x.default(bytes).metadata());
     const asset=`production-results/${id}/${label}.${m.format==='jpeg'?'jpg':m.format}`;
     await atomicFile(assetPath(root,asset),bytes);return{asset,sha256,bytes:bytes.length,...pixels};}
+  /**
+   * 2K/4K: the finished 1K artwork enlarged by the Volcengine upscaler (2× per pass) and scaled to a
+   * 2048/4096 px long edge. A transparent artwork is enlarged on white and its alpha scaled on its own.
+   * The opaque raw is scaled to the same size so 局部修补 still lines up. If the upscaler fails the
+   * picture is scaled directly: the size is still right, the detail softer, and nothing is redrawn.
+   */
+  async function enlarge(passes){
+    const sharp=(await import('sharp')).default,limit={limitInputPixels:50_000_000,failOn:'error'};
+    const finalBytes=await read(assetPath(root,job.final.asset)),rawBytes=await read(assetPath(root,job.raw.asset));
+    const long=passes===1?2048:4096,scale=long/Math.max(job.final.width,job.final.height);
+    const width=Math.round(job.final.width*scale),height=Math.round(job.final.height*scale);
+    const transparent=job.final.transparentPixels>0;
+    let colour=transparent?await flattenOnWhite(finalBytes):finalBytes,fallback=null;
+    for(let n=1;n<=passes&&!fallback;n++){
+      const asset=assetPath(root,`production-results/${id}/upscale-input-${n}.png`);await atomicFile(asset,colour);
+      try{colour=await step(`upscale-${n}`,async dir=>providers.enhance({path:await materialize(asset)},dir));}
+      catch(e){fallback=errorText(e,'放大');}
+    }
+    const sized=await sharp(colour,limit).removeAlpha().resize(width,height,{fit:'fill',kernel:'lanczos3'}).png().toBuffer();
+    const finalOut=transparent
+      ?await sharp(sized,limit).joinChannel(await sharp(finalBytes,limit).ensureAlpha().extractChannel(3).resize(width,height,{fit:'fill',kernel:'lanczos3'}).png().toBuffer()).png().toBuffer()
+      :sized;
+    const rawOut=await sharp(rawBytes,limit).resize(width,height,{fit:'fill',kernel:'lanczos3'}).png().toBuffer();
+    job.base={raw:job.raw,final:job.final};
+    job.raw=await publish(rawOut,`raw-${long}`);job.final=await publish(finalOut,`final-${long}`);
+    job.upscale={resolution:input.output.resolution,width,height,passes,...(fallback?{fallback}:{})};
+    if(fallback)job.warning=(job.warning?job.warning+'；':'')+'火山高清放大没成功，已直接按比例放大到目标尺寸，细节会软一些';
+    await save();
+  }
   job.status='running';job.startedAt=stamp();await save();
   try {
     const images=[];for(const img of input.images){const path=assetPath(root,img.asset),bytes=await read(path);if(hash(bytes)!==img.sha256)throw new Error('固定原图校验失败');images.push({...img,path:await materialize(path)});}
     if(hash(input.prompt)!==input.promptSHA256)throw new Error('固定正文校验失败');
     let raw;
     if(job.resumeCutout){if(!job.raw||job.steps.filter(s=>s.name==='cutout').at(-1)?.status!=='failed')throw new Error('未确认抠图失败，不能重试未知请求');raw=await readBytes(assetPath(root,job.raw.asset));if(hash(raw)!==job.raw.sha256)throw new Error('已生成原图校验失败');}
-    else if(input.route==='generate')raw=await step('generate',dir=>providers.generate({...input,images},dir));
+    else if(input.route==='generate')raw=await step('generate',async dir=>providers.generate({...input,images,...await drawingSize(input,images)},dir));
     else {const image=images.find(i=>i.id===sourceFor(input).id);raw=input.route==='enhance'?await step('enhance',dir=>providers.enhance(image,dir)):await import('node:fs/promises').then(fs=>fs.readFile(image.path));}
     // A generator that already returned transparency: keep its output for audit, make the logo's
     // interior solid, and store an opaque copy on white as the source repair strokes restore from.
@@ -136,6 +177,8 @@ export async function executeProduction(root,id,providers,onProgress=()=>{}) {
       }
     }
     }
+    const passes=input.route==='generate'&&input.output?upscalePasses(input.output.resolution):0;
+    if(passes&&!job.upscale)await enlarge(passes);
     job.status='returned';job.phase='done';job.error=null;
   }catch(e){job.status=job.raw?'partial':e.definiteFailure||notSent(e)||!contacted?'failed':'unknown';job.error=errorText(e,contacted?STAGES[job.phase]||'制作':'读取素材');}
   job.finishedAt=stamp();job.elapsedMs=Date.parse(job.finishedAt)-Date.parse(job.startedAt);await save();return job;

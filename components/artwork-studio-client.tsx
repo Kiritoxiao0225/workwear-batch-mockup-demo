@@ -19,6 +19,7 @@ import {
   type Artwork,
   type Case,
   type Job,
+  type ArtworkOutput,
 } from "@/lib/client/saas-workbench";
 import {
   readArtworkHandoff,
@@ -42,7 +43,8 @@ type Reference = {
 type Stage = "checker" | "white" | "dark";
 // What AI read from the request: one entry per picture, waiting for the author to confirm.
 type Plan = { caseId: string; items: { key: string; name: string; text: string }[] };
-type Submit = { name: string; prompt: string; route: Artwork["route"]; transparentBackground: boolean };
+type Submit = { name: string; prompt: string; route: Artwork["route"]; transparentBackground: boolean; output?: ArtworkOutput };
+const specLabel = (o: ArtworkOutput) => `${o.ratio === "original" ? "原比例" : o.ratio} · ${o.resolution}`;
 const ROUTES = [
   ["generate", "生图", "按要求生成或修改图片。"],
   ["enhance", "无损放大", "已有清晰原图，只提高清晰度。"],
@@ -210,6 +212,8 @@ export function ArtworkStudioClient() {
     setText(prompt);
     setMode(sevenFields(prompt) ? "seven" : "text");
     setRoute(art?.route || "generate");
+    setRatio(art?.output?.ratio ?? "original");
+    setResolution(art?.output?.resolution ?? "1K");
     // A request still waiting for its pictures to be confirmed starts like a new one.
     setTransparentBackground(art?.transparentBackground ?? (split ? !!handoff : true));
     setRefs(next);
@@ -310,6 +314,7 @@ export function ArtworkStudioClient() {
         name: a.name,
         route: a.route,
         transparentBackground: a.transparentBackground,
+        ...(a.output ? { output: a.output } : {}),
         prompt: a.prompt,
         imageIds: c.images.map((i) => i.id),
         applications: [],
@@ -358,6 +363,7 @@ export function ArtworkStudioClient() {
           prompt,
           route,
           transparentBackground,
+          output: route === "generate" ? { ratio, resolution } : null,
           refs: refs.map((r) => r.key),
         }),
         split = multiple && route === "generate" && mode === "text";
@@ -390,7 +396,7 @@ export function ArtworkStudioClient() {
         await reload();
         return;
       }
-      const single = { name: "独立图稿", prompt, route, transparentBackground };
+      const single: Submit = { name: "独立图稿", prompt, route, transparentBackground, ...(route === "generate" ? { output: { ratio, resolution } } : {}) };
       if (!split) return await submit(c, [single]);
       organized.current = { caseId: c.caseId, refs: refsKey(refs) };
       if (!(c.analysis?.mode === "plan" && c.analysis.status === "returned")) {
@@ -434,6 +440,7 @@ export function ArtworkStudioClient() {
           prompt: authoredPrompt(i.text.trim(), transparentBackground),
           route: "generate",
           transparentBackground,
+          output: { ratio, resolution },
         })),
       );
     } catch (e) {
@@ -467,7 +474,7 @@ export function ArtworkStudioClient() {
         );
       setSelected(c.caseId);
       await submit(c, [
-        { name: art.name, prompt: art.prompt, route: art.route, transparentBackground: !!art.transparentBackground },
+        { name: art.name, prompt: art.prompt, route: art.route, transparentBackground: !!art.transparentBackground, ...(art.output ? { output: art.output } : {}) },
       ]);
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e));
@@ -955,6 +962,7 @@ export function ArtworkStudioClient() {
               </div>
             )}
             {!plan && job?.error && <p className="notice warn tiny">{job.error}</p>}
+            {!plan && !job?.error && job?.warning && <p className="notice warn tiny">{job.warning}</p>}
             {plan ? (
               <div className="col-foot result-tools">
                 <button
@@ -1060,6 +1068,7 @@ export function ArtworkStudioClient() {
                         <span className={"state " + (busyCase ? "run" : j?.status === "returned" ? "ok" : "")}>
                           {historyStatus(c)}
                         </span>
+                        {j?.output && <span>{specLabel(j.output)}</span>}
                         {j?.transparentBackground && <span>透明</span>}
                         <span>{when(j?.createdAt)}</span>
                       </div>
