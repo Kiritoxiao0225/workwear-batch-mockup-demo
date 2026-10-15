@@ -65,7 +65,18 @@ export async function createCase(root, body) {
   const manifest = await ensureWorkspace(root);
   // A picture this workspace already holds is named by its fingerprint instead of being sent again.
   const held = new Map(manifest.cases.flatMap(c => c.images).map(i => [i.originalSHA256, i]));
-  const reused = input => typeof input?.sha256 === 'string' && !input.uploadId ? input.sha256 : null;
+  const reused = input => typeof input?.sha256 === 'string' && !input.uploadId && input.result === undefined ? input.sha256 : null;
+  // A finished artwork of this workspace (放大到 2K/4K) is copied server-side from its result file.
+  const RESULT = /^production-results\/[a-f0-9]{64}\/[a-z0-9-]+\.(png|jpg|webp)$/u;
+  const results = new Map();
+  for (const input of inputs) {
+    if (input?.result === undefined) continue;
+    if (typeof input.result !== 'string' || !RESULT.test(input.result) || typeof input.sha256 !== 'string') throw fail('图稿结果无效');
+    let bytes;
+    try { bytes = await readBytes(assetPath(root, input.result)); } catch { throw fail('图稿结果读取失败，请刷新后重试', 409); }
+    if (hash(bytes) !== input.sha256) throw fail('图稿结果已变化，请刷新后重试', 409);
+    results.set(input, bytes);
+  }
   for (const input of inputs) {
     const sha = reused(input);
     if (sha === null) continue;
@@ -80,7 +91,7 @@ export async function createCase(root, body) {
   const previous=manifest.cases.find(c=>c.caseId===caseId);
   if(previous){
     const digests=[];
-    for(const [i,input] of inputs.entries())digests.push(reused(input)??hash((await decodeImage(await imageBase64(root,input),i+1)).bytes));
+    for(const [i,input] of inputs.entries())digests.push(reused(input)??(results.has(input)?input.sha256:hash((await decodeImage(await imageBase64(root,input),i+1)).bytes)));
     if(previous.sourceText!==text||previous.entry!==(body.entry==='studio'?'studio':'batch')||JSON.stringify(previous.images.map(i=>i.originalSHA256))!==JSON.stringify(digests))throw fail('该保存请求已成功，但内容后来发生变化；请刷新查看已保存行后继续编辑',409);
     return {caseId,imageCount:previous.images.length};
   }
@@ -94,7 +105,9 @@ export async function createCase(root, body) {
         sourceFileName: typeof input?.name === 'string' ? input.name.slice(0, 240) : known.sourceFileName, fetchedAt: new Date().toISOString() });
       continue;
     }
-    const { bytes, metadata } = await decodeImage(await imageBase64(root,input), index);
+    const { bytes, metadata } = results.has(input)
+      ? await decodeImage(results.get(input).toString('base64'), index)
+      : await decodeImage(await imageBase64(root,input), index);
     const sha = hash(bytes);
     const asset = `wps-assets/${sha}.${metadata.format === 'jpeg' ? 'jpg' : metadata.format}`;
     await atomicFile(assetPath(root, asset), bytes);

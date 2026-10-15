@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
 import { createCase, updateCase, removeCase, ensureWorkspace } from '../application/intake.mjs';
-import { jsonFile, hash } from '../adapters/a-files.mjs';
+import { jsonFile, hash, atomicFile } from '../adapters/a-files.mjs';
 import { requirementImages } from '../application/requirements.mjs';
 
 const png = (r) => sharp({ create: { width: 32, height: 16, channels: 3, background: { r, g: 90, b: 120 } } }).png().toBuffer();
@@ -113,6 +113,23 @@ test('已有的素材图按指纹复用，不再上传；没有的指纹要求�
     assert.equal(b.images[1].index, 2);
     await assert.rejects(createCase(root, { text: '图稿三', entry: 'studio', images: [{ sha256: 'f'.repeat(64), name: 'x.png' }] }), /需要重新上传/);
     await assert.rejects(createCase(root, { text: '图稿四', entry: 'studio', images: [{ sha256: '../../etc', name: 'x.png' }] }), /需要重新上传/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('放大到 2K/4K：按结果文件在服务器上复制成新需求的图1；路径或指纹不对就拒绝', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'intake-result-'));
+  try {
+    await ensureWorkspace(root);
+    const bytes = await png(90), sha = hash(bytes), result = `production-results/${'a'.repeat(64)}/final-2048.png`;
+    await atomicFile(path.resolve(root, 'public', result), bytes);
+    const created = await createCase(root, { text: '放大', entry: 'studio', images: [{ result, sha256: sha, name: '图稿.png' }] });
+    const saved = (await jsonFile(path.resolve(root, 'manifest.json'))).cases.find(c => c.caseId === created.caseId);
+    assert.equal(saved.images[0].originalSHA256, sha);
+    assert.match(saved.images[0].asset, /^wps-assets\//u);
+    await assert.rejects(createCase(root, { text: '放大', images: [{ result: '../manifest.json', sha256: sha }] }), /图稿结果无效/);
+    await assert.rejects(createCase(root, { text: '放大', images: [{ result, sha256: 'b'.repeat(64) }] }), /已变化/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

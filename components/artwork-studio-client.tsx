@@ -60,6 +60,7 @@ const PHRASES = [
 ] as const;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const refsKey = (refs: Reference[]) => refs.map((r) => r.key).join("|");
+const ENHANCE_TEXT = "使用图1完整图稿，只提升清晰度，保持原有图形、文字、字体、配色和布局。";
 const sevenFields = (text: string) => /^主体：/m.test(text) && /^输出：/m.test(text);
 // A seven-field prompt is listed by its 主体, not by its 【图稿】 header.
 const caseTitle = (c: Case) =>
@@ -210,7 +211,11 @@ export function ArtworkStudioClient() {
     const art = c.draft?.artworks[0],
       // A request AI split into several pictures is shown as it was written.
       split = c.analysis?.mode === "plan",
-      prompt = (split ? c.sourceText : art?.prompt) || c.sourceText,
+      // Written as one paragraph and never edited item by item: reopen it as that paragraph,
+      // not as the seven items it was expanded into when it was made.
+      plain =
+        !!art && !sevenFields(c.sourceText) && art.prompt === authoredPrompt(c.sourceText, !!art.transparentBackground),
+      prompt = (split || plain ? c.sourceText : art?.prompt) || c.sourceText,
       next = c.images.map((i) => ({
         key: i.id,
         index: i.index,
@@ -490,34 +495,37 @@ export function ArtworkStudioClient() {
       running.current = false;
     }
   }
-  async function reprocess() {
-    if (!file) return;
-    const response = await fetch(assetURL(file.asset));
-    if (!response.ok) {
-      setNotice("当前结果读取失败");
-      return;
+  // 放大到 2K/4K: the picture on screen enlarged as a record of its own, charged as 无损放大. The
+  // server copies the result file itself, so nothing is downloaded or uploaded here.
+  async function upscaleResult(resolution: "2K" | "4K") {
+    if (!file || !job || running.current) return;
+    running.current = true;
+    setBusy(true);
+    setNotice("");
+    try {
+      const created = await batchAPI<{ caseId: string }>("/api/cases", {
+        text: ENHANCE_TEXT,
+        images: [{ result: file.asset, sha256: file.sha256, name: `${job.name}.png` }],
+        entry: "studio",
+        requestId: crypto.randomUUID(),
+      });
+      const c = await readCase(created.caseId);
+      setSelected(c.caseId);
+      await submit(c, [
+        {
+          name: `${job.name} · ${resolution}`,
+          prompt: authoredPrompt(ENHANCE_TEXT, !!job.transparentBackground),
+          route: "enhance",
+          transparentBackground: !!job.transparentBackground,
+          output: { ratio: "original", resolution },
+        },
+      ]);
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+      running.current = false;
     }
-    const f = new File([await response.blob()], "当前结果.png", {
-      type: "image/png",
-    });
-    setRefs([
-      {
-        key: crypto.randomUUID(),
-        index: 1,
-        name: f.name,
-        url: URL.createObjectURL(f),
-        file: f,
-      },
-    ]);
-    setRoute("enhance");
-    setText(
-      "使用图1完整图稿，只提升清晰度，保持原有图形、文字、字体、配色和布局。",
-    );
-    setMode("text");
-    setSelected(null);
-    request.current = null;
-    organized.current = null;
-    setNotice("输入已切换为当前结果；点击左下「开始制作」才会提交新任务。");
   }
   function insertPhrase(phrase: string) {
     const el = textarea.current,
@@ -542,6 +550,7 @@ export function ArtworkStudioClient() {
   const jobPending = !!job && pending(job),
     hd = job?.output && job.output.resolution !== "1K" ? job.output.resolution : null,
     upscaling = jobPending && !!file && !!hd,
+    longEdge = file?.width && file?.height ? Math.max(file.width, file.height) : 0,
     hdSize =
       upscaling && file?.width && file?.height
         ? (() => {
@@ -569,7 +578,7 @@ export function ArtworkStudioClient() {
         <PageHeader
           compact
           title="图稿生成"
-          description="传参考图、写要求，生成 Logo 或图案；做好的图稿可以局部修补、变清晰，下载透明 PNG。"
+          description="传参考图、写要求，生成 Logo 或图案；做好的图稿可以局部修补、放大到 2K / 4K，下载 PNG。"
           actions={<button className="button sm" onClick={startBlank}>新建图稿</button>}
         />
         {handoff && (
@@ -1027,14 +1036,17 @@ export function ArtworkStudioClient() {
               >
                 局部修补
               </button>
-              <button
-                className="button sm"
-                title="把这张当原图，切到无损放大；点「开始制作」才会提交"
-                disabled={!file || working || jobPending}
-                onClick={() => void reprocess()}
-              >
-                变清晰
-              </button>
+              {(["2K", "4K"] as const).map((r) => (
+                <button
+                  key={r}
+                  className="button sm"
+                  title={`高清放大，长边 ${r === "2K" ? 2048 : 4096} px；另算一次无损放大（${chargeLabel(prices, "enhance")}）`}
+                  disabled={!file || working || jobPending || longEdge >= (r === "2K" ? 2048 : 4096)}
+                  onClick={() => void upscaleResult(r)}
+                >
+                  放大到 {r}
+                </button>
+              ))}
               <button
                 className="button sm"
                 title="这张的要求再做一张，另算一次制作"

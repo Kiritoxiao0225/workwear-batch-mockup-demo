@@ -90,3 +90,36 @@ test('没有输出规格的旧需求：模型自定尺寸、不放大', async t 
   assert.deepEqual([r.final.width, r.final.height], [1024, 1536]);
   assert.equal(r.upscale, undefined);
 });
+
+// 放大到 2K/4K on a finished picture: the 无损放大 route with a size, from the picture's own size.
+async function enhanceFixture(t, width, height, resolution) {
+  const root = await mkdtemp(resolve(tmpdir(), 'production-enhance-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = await drawn(width, height);
+  const images = [{ imageId: 'E-1', index: 1, asset: 'assets/E-1.png', originalSHA256: hash(source), originalBytes: source.length, width, height }];
+  await atomicFile(resolve(root, 'public', images[0].asset), source);
+  const draft = { artworks: [{ id: 'artwork', name: '图稿 · ' + resolution, route: 'enhance', transparentBackground: false, applications: [], imageIds: ['E-1'],
+    output: { ratio: 'original', resolution }, prompt: '【图稿】\n\n主体：使用图1完整图稿，只提升清晰度。\n\n文字：沿用。\n\n字体：沿用。\n\n颜色：沿用。\n\n排版：原样。\n\n尺寸：未指定。\n\n输出：独立图稿。' }], readingIssues: [] };
+  const manifest = { run: {}, cases: [{ caseId: 'E', sourceText: '放大', images }] };
+  await saveJSON(resolve(root, 'requirements-state/E.json'), { revision: 1, draft, draftSupplementRevision: 0, analyses: [], confirmations: [] });
+  const [job] = await reserveProduction(root, manifest, [{ caseId: 'E', revision: 1, supplementRevision: 0 }]);
+  return { root, job };
+}
+
+test('放大到 4K：2K 成品放大一次到 3044×4096，不先走旧的单次高清', async t => {
+  const { root, job } = await enhanceFixture(t, 1522, 2048, '4K');
+  const passes = [];
+  const r = await executeProduction(root, job.id, { generate: () => { throw new Error('不应生图'); }, enhance: doubler(passes) });
+  assert.equal(r.status, 'returned');
+  assert.equal(passes.length, 1);
+  assert.deepEqual([r.final.width, r.final.height], [3044, 4096]);
+  assert.deepEqual(r.steps.map(s => s.name), ['upscale-1']);
+});
+
+test('放大到 2K：已经是 2K 的图原样交付，不调用放大', async t => {
+  const { root, job } = await enhanceFixture(t, 1522, 2048, '2K');
+  const r = await executeProduction(root, job.id, { enhance: async () => { throw new Error('不应放大'); } });
+  assert.equal(r.status, 'returned');
+  assert.deepEqual([r.final.width, r.final.height], [1522, 2048]);
+  assert.equal(r.upscale.passes, 0);
+});

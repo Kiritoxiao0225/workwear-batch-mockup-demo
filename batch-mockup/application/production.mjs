@@ -6,7 +6,7 @@ import { requirementWorkbench, validateRequirementDraft } from './requirements.m
 import { productionPolicy, inspectPixels, withoutFaintSpecks, hardenInteriorAlpha, flattenOnWhite } from '../adapters/production-images.mjs';
 import { readRepairState } from './production-repair.mjs';
 import { artworkNetworkFailure } from '../../lib/server/artwork-network-error.ts';
-import { drawSize, ratioValue, upscalePasses } from '../../lib/artwork-output-size.ts';
+import { drawSize, ratioValue } from '../../lib/artwork-output-size.ts';
 
 const stamp=()=>new Date().toISOString();
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -42,7 +42,7 @@ export function productionInput(c,a,quality=a.quality) {
     supplementRevision:c.supplement.revision,prompt:a.prompt,promptSHA256:hash(a.prompt),route:a.route,
     applications:a.applications.map(application),imageIds:a.imageIds,images:c.images,readingIssues:c.draft.readingIssues.map(x=>({scope:x.scope,issue:x.issue})),policy:productionPolicy,
     ...(a.transparentBackground===undefined?{}:{transparentBackground:a.transparentBackground}),...(quality==='high'?{quality}:{}),
-    ...(a.route==='generate'&&a.output?{output:{ratio:a.output.ratio,resolution:a.output.resolution}}:{})};
+    ...(a.route!=='reuse'&&a.output?{output:{ratio:a.output.ratio,resolution:a.output.resolution}}:{})};
 }
 export function sourceFor(input) {
   const selected=input.images.filter(i=>input.imageIds.includes(i.id));
@@ -120,10 +120,14 @@ export async function executeProduction(root,id,providers,onProgress=()=>{}) {
    * The opaque raw is scaled to the same size so 局部修补 still lines up. If the upscaler fails the
    * picture is scaled directly: the size is still right, the detail softer, and nothing is redrawn.
    */
-  async function enlarge(passes){
+  async function enlarge(resolution){
     const sharp=(await import('sharp')).default,limit={limitInputPixels:50_000_000,failOn:'error'};
+    const long=resolution==='2K'?2048:4096,scale=long/Math.max(job.final.width,job.final.height);
+    // Already that large (a finished 2K picture asked for 2K): delivered as it is, never shrunk.
+    if(scale<=1){job.upscale={resolution,width:job.final.width,height:job.final.height,passes:0};await save();return;}
+    // Each Volcengine pass doubles the picture; the exact scaling after it covers the remainder.
+    const passes=scale<=2?1:2;
     const finalBytes=await read(assetPath(root,job.final.asset)),rawBytes=await read(assetPath(root,job.raw.asset));
-    const long=passes===1?2048:4096,scale=long/Math.max(job.final.width,job.final.height);
     const width=Math.round(job.final.width*scale),height=Math.round(job.final.height*scale);
     const transparent=job.final.transparentPixels>0;
     let colour=transparent?await flattenOnWhite(finalBytes):finalBytes,fallback=null;
@@ -139,7 +143,7 @@ export async function executeProduction(root,id,providers,onProgress=()=>{}) {
     const rawOut=await sharp(rawBytes,limit).resize(width,height,{fit:'fill',kernel:'lanczos3'}).png().toBuffer();
     job.base={raw:job.raw,final:job.final};
     job.raw=await publish(rawOut,`raw-${long}`);job.final=await publish(finalOut,`final-${long}`);
-    job.upscale={resolution:input.output.resolution,width,height,passes,...(fallback?{fallback}:{})};
+    job.upscale={resolution,width,height,passes,...(fallback?{fallback}:{})};
     if(fallback)job.warning=(job.warning?job.warning+'；':'')+'火山高清放大没成功，已直接按比例放大到目标尺寸，细节会软一些';
     await save();
   }
@@ -150,7 +154,7 @@ export async function executeProduction(root,id,providers,onProgress=()=>{}) {
     let raw;
     if(job.resumeCutout){if(!job.raw||job.steps.filter(s=>s.name==='cutout').at(-1)?.status!=='failed')throw new Error('未确认抠图失败，不能重试未知请求');raw=await readBytes(assetPath(root,job.raw.asset));if(hash(raw)!==job.raw.sha256)throw new Error('已生成原图校验失败');}
     else if(input.route==='generate')raw=await step('generate',async dir=>providers.generate({...input,images,...await drawingSize(input,images)},dir));
-    else {const image=images.find(i=>i.id===sourceFor(input).id);raw=input.route==='enhance'?await step('enhance',dir=>providers.enhance(image,dir)):await import('node:fs/promises').then(fs=>fs.readFile(image.path));}
+    else {const image=images.find(i=>i.id===sourceFor(input).id);raw=input.route==='enhance'&&!input.output?await step('enhance',dir=>providers.enhance(image,dir)):await import('node:fs/promises').then(fs=>fs.readFile(image.path));}
     // A generator that already returned transparency: keep its output for audit, make the logo's
     // interior solid, and store an opaque copy on white as the source repair strokes restore from.
     const direct=input.route==='generate'&&!job.resumeCutout&&job.steps.findLast(x=>x.name==='generate')?.transparentRequested?await inspectPixels(raw):null;
@@ -177,8 +181,7 @@ export async function executeProduction(root,id,providers,onProgress=()=>{}) {
       }
     }
     }
-    const passes=input.route==='generate'&&input.output?upscalePasses(input.output.resolution):0;
-    if(passes&&!job.upscale)await enlarge(passes);
+    if(input.output&&input.output.resolution!=='1K'&&!job.upscale)await enlarge(input.output.resolution);
     job.status='returned';job.phase='done';job.error=null;
   }catch(e){job.status=job.raw?'partial':e.definiteFailure||notSent(e)||!contacted?'failed':'unknown';job.error=errorText(e,contacted?STAGES[job.phase]||'制作':'读取素材');}
   job.finishedAt=stamp();job.elapsedMs=Date.parse(job.finishedAt)-Date.parse(job.startedAt);await save();return job;
