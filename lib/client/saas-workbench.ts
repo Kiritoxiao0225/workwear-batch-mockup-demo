@@ -54,6 +54,7 @@ export type Case = {
     label: string;
     asset: string;
     source: string;
+    sha256?: string;
   }[];
   supplement: { revision: number };
   draft: Draft | null;
@@ -271,13 +272,18 @@ export async function uploadImages(files: File[]) {
     const uploadId = crypto.randomUUID(),
       size = 1400000,
       chunkCount = Math.ceil(base64.length / size);
-    for (let index = 0; index < chunkCount; index++)
-      await batchAPI("/api/cases/image", {
-        id: uploadId,
-        index,
-        count: chunkCount,
-        base64: base64.slice(index * size, (index + 1) * size),
-      });
+    // Chunks are stored by index, so three go up at a time instead of one after another.
+    let next = 0;
+    const send = async () => {
+      for (let index = next++; index < chunkCount; index = next++)
+        await batchAPI("/api/cases/image", {
+          id: uploadId,
+          index,
+          count: chunkCount,
+          base64: base64.slice(index * size, (index + 1) * size),
+        });
+    };
+    await Promise.all(Array.from({ length: Math.min(3, chunkCount) }, send));
     results.push({ uploadId, chunkCount, name: file.name });
   }
   return results;

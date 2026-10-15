@@ -1546,3 +1546,60 @@
   color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
+/* 2K/4K：先显示模糊的 1K 预览和进度，高清图到了模糊渐变消失 */
+.saas-app .studio-page .preview .thumb {
+  position: relative;
+}
+.saas-app .studio-page .preview .thumb img {
+  transition: filter 0.8s ease, transform 0.8s ease;
+}
+.saas-app .studio-page .preview .thumb img.pending-hd {
+  filter: blur(18px) saturate(1.1);
+  transform: scale(1.04);
+}
+.saas-app .studio-page .stage-wait {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 20px;
+  text-align: center;
+  color: #fff;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+.saas-app .studio-page .stage-wait > div {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 16px 22px;
+  border-radius: 14px;
+  background: rgba(15, 22, 19, 0.5);
+}
+.saas-app .studio-page .stage-wait b {
+  font-size: 16px;
+}
+.saas-app .studio-page .stage-wait span {
+  font-size: 12.5px;
+  opacity: 0.92;
+}
+.saas-app .studio-page .stage-wait .spin,
+.saas-app .studio-page .spin.big {
+  width: 28px;
+  height: 28px;
+  border-width: 3px;
+}
+.saas-app .studio-page .stage-wait .spin {
+  border-color: rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+}
+.saas-app .studio-page .empty .spin.big {
+  margin: 0 auto 10px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .saas-app .studio-page .preview .thumb img {
+    transition: none;
+  }
+}

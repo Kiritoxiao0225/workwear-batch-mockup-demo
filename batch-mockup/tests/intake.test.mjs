@@ -94,3 +94,26 @@ test('拒绝空原文、超量图片和损坏图片', async () => {
     await assert.rejects(() => createCase(root, { text: 'ok', images: [{ base64: Buffer.from('not an image').toString('base64') }] }), /无法读取/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('已有的素材图按指纹复用，不再上传；没有的指纹要求重新上传', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'intake-reuse-'));
+  try {
+    const bytes = await png(60);
+    const first = await createCase(root, { text: '图稿一', entry: 'studio', images: [{ base64: bytes.toString('base64'), name: 'logo.png' }] });
+    const sha = hash(bytes);
+    const second = await createCase(root, { text: '图稿二', entry: 'studio', requestId: crypto.randomUUID(),
+      images: [{ sha256: sha, name: '再用一次.png' }, { base64: await b64(220), name: 'new.png' }] });
+    const cases = (await jsonFile(path.resolve(root, 'manifest.json'))).cases;
+    const [a, b] = [first, second].map(c => cases.find(x => x.caseId === c.caseId));
+    assert.equal(b.images.length, 2);
+    assert.equal(b.images[0].asset, a.images[0].asset, '同一份图片文件');
+    assert.equal(b.images[0].originalSHA256, sha);
+    assert.equal(b.images[0].imageId, `${b.caseId}-1`);
+    assert.equal(b.images[0].sourceFileName, '再用一次.png');
+    assert.equal(b.images[1].index, 2);
+    await assert.rejects(createCase(root, { text: '图稿三', entry: 'studio', images: [{ sha256: 'f'.repeat(64), name: 'x.png' }] }), /需要重新上传/);
+    await assert.rejects(createCase(root, { text: '图稿四', entry: 'studio', images: [{ sha256: '../../etc', name: 'x.png' }] }), /需要重新上传/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

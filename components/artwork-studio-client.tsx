@@ -39,6 +39,8 @@ type Reference = {
   name: string;
   url: string;
   file?: File;
+  /** The file's SHA-256, so a picture the server already holds is named instead of sent again. */
+  sha256?: string;
 };
 type Stage = "checker" | "white" | "dark";
 // What AI read from the request: one entry per picture, waiting for the author to confirm.
@@ -185,16 +187,23 @@ export function ArtworkStudioClient() {
       return;
     }
     const max = Math.max(0, ...refs.map((r) => r.index));
-    setRefs((v) => [
-      ...v,
-      ...files.map((f, i) => ({
-        key: crypto.randomUUID(),
-        index: max + i + 1,
-        name: f.name,
-        url: URL.createObjectURL(f),
-        file: f,
-      })),
-    ]);
+    const added = files.map((f, i) => ({
+      key: crypto.randomUUID(),
+      index: max + i + 1,
+      name: f.name,
+      url: URL.createObjectURL(f),
+      file: f,
+    }));
+    setRefs((v) => [...v, ...added]);
+    for (const r of added)
+      void r.file
+        .arrayBuffer()
+        .then((bytes) => crypto.subtle.digest("SHA-256", bytes))
+        .then((digest) => {
+          const sha256 = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+          setRefs((v) => v.map((x) => (x.key === r.key ? { ...x, sha256 } : x)));
+        })
+        .catch(() => {});
     setNotice("");
   }
   function selectCase(c: Case) {
@@ -207,6 +216,7 @@ export function ArtworkStudioClient() {
         index: i.index,
         name: i.label,
         url: assetURL(i.asset),
+        sha256: i.sha256,
       }));
     setSelected(c.caseId);
     setText(prompt);
@@ -239,6 +249,28 @@ export function ArtworkStudioClient() {
     organized.current = null;
     setNotice("已新建空白制作要求");
   }
+  // Pictures the server already holds: those on any request, plus what this page has uploaded.
+  const uploaded = useRef(new Set<string>());
+  async function createStudioCase(caseText: string, list: Reference[], requestId: string) {
+    const held = new Set([...(data?.cases ?? []).flatMap((c) => c.images.map((i) => i.sha256)), ...uploaded.current]);
+    const send = async (reuse: boolean) => {
+      const known = (r: Reference) => reuse && !!r.sha256 && held.has(r.sha256);
+      const fresh = list.filter((r) => !known(r));
+      const uploads = fresh.length ? await uploadImages(await refFiles(fresh)) : [];
+      let n = 0;
+      const images = list.map((r) => (known(r) ? { sha256: r.sha256, name: r.name } : uploads[n++]));
+      const created = await batchAPI<{ caseId: string }>("/api/cases", { text: caseText, images, entry: "studio", requestId });
+      for (const r of fresh) if (r.sha256) uploaded.current.add(r.sha256);
+      return created.caseId;
+    };
+    try {
+      return await send(true);
+    } catch (e) {
+      // The server no longer has one of them: send everything in full.
+      if (e instanceof Error && e.message.includes("需要重新上传")) return await send(false);
+      throw e;
+    }
+  }
   function checkInput() {
     if (!text.trim()) throw new Error("请先写制作要求");
     if (refs.some((r, i) => r.index !== i + 1))
@@ -255,14 +287,7 @@ export function ArtworkStudioClient() {
     setNotice("");
     try {
       checkInput();
-      const images = await uploadImages(await refFiles(refs)),
-        created = await batchAPI<{ caseId: string }>("/api/cases", {
-          text,
-          images,
-          entry: "studio",
-          requestId: crypto.randomUUID(),
-        });
-      let c = await readCase(created.caseId);
+      let c = await readCase(await createStudioCase(text, refs, crypto.randomUUID()));
       setSelected(c.caseId);
       setPlan(null);
       c = await analyze(c, "AI 整理还没返回。结果会留在右侧「我的图稿」里，稍后点开这条即可，不会重复扣费。");
@@ -374,19 +399,7 @@ export function ArtworkStudioClient() {
       let c = reuse ? await readCase(reuse) : null;
       // The count is read from the record's own text, so edited text needs a new record.
       if (c && split && c.sourceText !== text) c = null;
-      if (!c) {
-        const images = await uploadImages(await refFiles(refs));
-        c = await readCase(
-          (
-            await batchAPI<{ caseId: string }>("/api/cases", {
-              text,
-              images,
-              entry: "studio",
-              requestId: request.current.id,
-            })
-          ).caseId,
-        );
-      }
+      if (!c) c = await readCase(await createStudioCase(text, refs, request.current.id));
       setSelected(c.caseId);
       setPick(null);
       // An uncertain submit is read back, never turned into a second paid request.
@@ -458,19 +471,13 @@ export function ArtworkStudioClient() {
     setBusy(true);
     setNotice("");
     try {
-      const files = await refFiles(
-          active.images.map((i) => ({ key: i.id, index: i.index, name: i.label, url: assetURL(i.asset) })),
-        ),
-        body = splitPrompt(art.prompt).parts.find((p) => p.label === "主体")?.value.trim(),
+      const body = splitPrompt(art.prompt).parts.find((p) => p.label === "主体")?.value.trim(),
         c = await readCase(
-          (
-            await batchAPI<{ caseId: string }>("/api/cases", {
-              text: body || art.prompt,
-              images: await uploadImages(files),
-              entry: "studio",
-              requestId: crypto.randomUUID(),
-            })
-          ).caseId,
+          await createStudioCase(
+            body || art.prompt,
+            active.images.map((i) => ({ key: i.id, index: i.index, name: i.label, url: assetURL(i.asset), sha256: i.sha256 })),
+            crypto.randomUUID(),
+          ),
         );
       setSelected(c.caseId);
       await submit(c, [
@@ -530,6 +537,18 @@ export function ArtworkStudioClient() {
     visible = allHistory ? shown : shown.slice(0, 30);
   const working = busy || organizing;
   const splitting = split && route === "generate" && mode === "text";
+  // A 2K/4K picture shows its 1K drawing, blurred, while the Volcengine upscaler works on it; the
+  // download and edit tools wait for the finished picture.
+  const jobPending = !!job && pending(job),
+    hd = job?.output && job.output.resolution !== "1K" ? job.output.resolution : null,
+    upscaling = jobPending && !!file && !!hd,
+    hdSize =
+      upscaling && file?.width && file?.height
+        ? (() => {
+            const k = (hd === "2K" ? 2048 : 4096) / Math.max(file.width, file.height);
+            return { width: Math.round(file.width * k), height: Math.round(file.height * k) };
+          })()
+        : null;
   const historyStatus = (c: Case) => {
     const r = roundOf(c),
       done = r.filter((j) => j.status === "returned").length;
@@ -856,7 +875,7 @@ export function ArtworkStudioClient() {
                 )}
                 <span className="tiny muted">
                   {file?.width && file?.height
-                    ? `${file.width} × ${file.height}${job?.transparentBackground ? " · 透明 PNG" : ""}`
+                    ? `${file.width} × ${file.height}${hdSize ? ` → ${hdSize.width} × ${hdSize.height}` : ""}${job?.transparentBackground ? " · 透明 PNG" : ""}`
                     : ""}
                 </span>
               </div>
@@ -923,7 +942,26 @@ export function ArtworkStudioClient() {
               <div className={"preview" + (round.length > 1 ? " has-strip" : "")}>
                 <div className={"thumb stage-" + stage}>
                   {file ? (
-                    <img src={assetURL(file.asset)} alt="制作结果" />
+                    <>
+                      <img src={assetURL(file.asset)} alt="制作结果" className={upscaling ? "pending-hd" : undefined} />
+                      {upscaling && hdSize && (
+                        <div className="stage-wait" role="status">
+                          <div>
+                            <i className="spin" aria-hidden="true" />
+                            <b>正在高清放大到 {hd}</b>
+                            <span>
+                              {hdSize.width} × {hdSize.height}，约 20–60 秒，好了自动换上
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  ) : jobPending ? (
+                    <div className="empty" role="status">
+                      <i className="spin big" aria-hidden="true" />
+                      <h3>正在生成</h3>
+                      <p>{hd ? `先出图，再高清放大到 ${hd}，一般 1–2 分钟` : "一般 30–60 秒"}；关掉页面也会继续。</p>
+                    </div>
                   ) : (
                     <div className="empty">
                       <h3>{job ? statusText(job.status) : "图稿将在这里显示"}</h3>
@@ -984,7 +1022,7 @@ export function ArtworkStudioClient() {
             <div className="col-foot result-tools">
               <button
                 className="button sm"
-                disabled={!file}
+                disabled={!file || jobPending}
                 onClick={() => setTarget({ type: "artwork", id: job.id })}
               >
                 局部修补
@@ -992,7 +1030,7 @@ export function ArtworkStudioClient() {
               <button
                 className="button sm"
                 title="把这张当原图，切到无损放大；点「开始制作」才会提交"
-                disabled={!file || working}
+                disabled={!file || working || jobPending}
                 onClick={() => void reprocess()}
               >
                 变清晰
@@ -1008,7 +1046,7 @@ export function ArtworkStudioClient() {
               <span className="grow" />
               <button
                 className="button sm"
-                disabled={!file}
+                disabled={!file || jobPending}
                 onClick={() =>
                   void copyImage(file!.asset)
                     .then(() => setNotice("图片已复制"))
@@ -1017,7 +1055,7 @@ export function ArtworkStudioClient() {
               >
                 复制
               </button>
-              {file ? (
+              {file && !jobPending ? (
                 <a
                   className="button sm"
                   href={assetURL(file.asset)}

@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import sharp from 'sharp';
 import { readRequirementState, validateRequirementDraft } from './requirements.mjs';
 import { STUDIO_PLAN_MAX } from './studio-plan.mjs';
-import { jsonFile, saveJSON, atomicFile, assetPath, hash, fail } from '../adapters/a-files.mjs';
+import { jsonFile, saveJSON, atomicFile, assetPath, hash, fail, readBytes } from '../adapters/a-files.mjs';
 
 /**
  * Manual requirement intake.
@@ -63,18 +63,37 @@ export async function createCase(root, body) {
   if (inputs.length > MAX_IMAGES) throw fail(`最多 ${MAX_IMAGES} 张素材图`);
 
   const manifest = await ensureWorkspace(root);
+  // A picture this workspace already holds is named by its fingerprint instead of being sent again.
+  const held = new Map(manifest.cases.flatMap(c => c.images).map(i => [i.originalSHA256, i]));
+  const reused = input => typeof input?.sha256 === 'string' && !input.uploadId ? input.sha256 : null;
+  for (const input of inputs) {
+    const sha = reused(input);
+    if (sha === null) continue;
+    const known = /^[a-f0-9]{64}$/u.test(sha) && held.get(sha);
+    // The client uploads in full after this answer, so a missing picture never fails the request.
+    if (!known) throw fail('素材图需要重新上传', 409);
+    try { if (hash(await readBytes(assetPath(root, known.asset))) !== sha) throw new Error('changed'); }
+    catch { throw fail('素材图需要重新上传', 409); }
+  }
   const caseId = 'U' + hash(body.requestId || randomUUID()).slice(0, 12);
   if(body.requestId && !/^[a-f0-9-]{36}$/u.test(body.requestId))throw fail('操作编号无效');
   const previous=manifest.cases.find(c=>c.caseId===caseId);
   if(previous){
     const digests=[];
-    for(const [i,input] of inputs.entries())digests.push(hash((await decodeImage(await imageBase64(root,input),i+1)).bytes));
+    for(const [i,input] of inputs.entries())digests.push(reused(input)??hash((await decodeImage(await imageBase64(root,input),i+1)).bytes));
     if(previous.sourceText!==text||previous.entry!==(body.entry==='studio'?'studio':'batch')||JSON.stringify(previous.images.map(i=>i.originalSHA256))!==JSON.stringify(digests))throw fail('该保存请求已成功，但内容后来发生变化；请刷新查看已保存行后继续编辑',409);
     return {caseId,imageCount:previous.images.length};
   }
   const images = [];
   for (const [position, input] of inputs.entries()) {
     const index = position + 1;
+    const reuse = reused(input);
+    if (reuse !== null) {
+      const known = held.get(reuse);
+      images.push({ ...known, index, imageId: `${caseId}-${index}`,
+        sourceFileName: typeof input?.name === 'string' ? input.name.slice(0, 240) : known.sourceFileName, fetchedAt: new Date().toISOString() });
+      continue;
+    }
     const { bytes, metadata } = await decodeImage(await imageBase64(root,input), index);
     const sha = hash(bytes);
     const asset = `wps-assets/${sha}.${metadata.format === 'jpeg' ? 'jpg' : metadata.format}`;
