@@ -280,7 +280,7 @@ export async function executeLayout(row: { id: string; tenant_id: string; create
     const call = await plan({ model: LISTING_PLAN_MODEL(), reasoning_effort: 'low', max_completion_tokens: 8000, response_format: { type: 'json_object' }, stream: false,
       messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content }] }, noHooks);
     let spec: Spec;
-    try { spec = specOf(specSchema.parse(JSON.parse(call.content))); } catch { throw new Error('AI 总结的版式不完整，请换几张参考图再学'); }
+    try { spec = specOf(specSchema.parse(JSON.parse(call.content))); } catch { throw new CatalogHttpError(422, 'AI 总结的版式不完整，请换几张参考图再学'); }
     const name = (await db().query('SELECT name FROM listing_layouts WHERE id=$1', [row.id])).rows[0].name as string;
     const layout: Layout = { ...spec, id: row.id, name, samples: [] };
     const product = await sampleProduct();

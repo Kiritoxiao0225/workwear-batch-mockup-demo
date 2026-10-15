@@ -5,7 +5,7 @@ import { defaultDraft } from '../listing/draft';
 import { LEGACY_LAYOUTS as BUILT_IN_LAYOUTS } from '../listing/legacy-layouts';
 import { SERVICE_IMAGES } from '../listing/service';
 import { BUILT_IN_LAYOUTS as MASTERS, FLAT_EXAMPLE, fitTemplate, type Layout } from '../listing/templates';
-import { coverOf, fabricCrop, planJobs, wordsOf } from './listing-generation';
+import { coverOf, fabricCrop, planJobs, wordsOf, zipEntryName } from './listing-generation';
 import { castOnePrompt, castPrompt, editPrompt, longPrompt, mainPrompt, redrawPrompt, servicePrompt, serviceWordsPrompt, skuPrompt } from './listing-prompts';
 import type { StoredPlan } from './listing-store';
 
@@ -176,5 +176,15 @@ describe('the masters', () => {
     expect(servicePrompt(dark, ['免费看样｜满意再下单', '可开发票｜普票专票都行'], false)).toContain('右上权益卡：「可开发票」「普票专票都行」');
     expect(serviceWordsPrompt([{ from: '免费看样｜满意再下单', to: '可开发票｜普票专票都行' }])).toContain('「免费看样」「满意再下单」 换成 「可开发票」「普票专票都行」');
     expect(redrawPrompt({ ratio: 'square', ask: '背景换成工地', reference: true })).toContain('参考图2是用户给的参考');
+  });
+});
+
+describe('zip entry names from colour names', () => {
+  it('keeps a typed name as one file, never a path out of the folder', () => {
+    expect(zipEntryName('藏青')).toBe('藏青');
+    expect(zipEntryName('../../x')).toBe('__.._x');
+    expect(zipEntryName('a/b\\c:d')).toBe('a_b_c_d');
+    expect(zipEntryName('..')).toBe('_');
+    expect(zipEntryName('')).toBe('_');
   });
 });

@@ -288,6 +288,16 @@ try {
   const users = await db.query("SELECT count(*)::int AS n FROM user_identities WHERE kind='phone' AND identifier=$1", [racing]);
   check(users.rows[0].n === 1, '并发登录没有建出两个账号');
 
+  // ---- 并发猜验证码：同时发 20 个也最多比对 5 次 ----
+  const flooding = phones();
+  const floodCode = await requestPhoneCode({ phone: flooding, ip: '203.0.113.14' });
+  const guesses = Array.from({ length: 20 }, (_, i) => String((Number(floodCode.mockCode) + 1 + i) % 1_000_000).padStart(6, '0'));
+  const flood = await Promise.allSettled(guesses.map(code => signInWithPhone({ phone: flooding, code })));
+  const compared = flood.filter(r => r.status === 'rejected' && (r.reason as Error).message === '验证码不正确').length;
+  check(flood.every(r => r.status === 'rejected') && compared <= 5, `并发猜码最多比对 5 次（实际 ${compared}）`);
+  const counted = await db.query('SELECT attempts, superseded FROM sms_challenges WHERE phone=$1 ORDER BY created_at DESC LIMIT 1', [flooding]);
+  check(counted.rows[0].attempts <= 5 && counted.rows[0].superseded === true, '并发猜码后计数不超上限且验证码作废');
+
   // ---- 停用租户：会话立即失效 ----
   const suspended = phones();
   const suspendedCode = await requestPhoneCode({ phone: suspended, ip: '203.0.113.14' });

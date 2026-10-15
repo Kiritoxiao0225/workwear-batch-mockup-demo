@@ -157,15 +157,23 @@ export async function service(root,path,method,body={},options={}){
  * a confirmed 4xx or an unknown outcome, and those settle very differently.
  */
 const BILLABLE_STEPS={generate:'generate',enhance:'enhance',cutout:'cutout'};
-function stepAttempts(job){
- const attempts=[];
+export function stepAttempts(job){
+ const attempts=[];let upscale=null;
  for(const [index,step] of (job?.steps||[]).entries()){
-  const action=BILLABLE_STEPS[step.name];
-  if(!action)continue;
   // 'failed' carries a definite 4xx receipt: the call was rejected and costs nothing.
   if(step.status==='failed')continue;
-  attempts.push(attempt(action,step.status==='returned',{attemptId:step.attemptId||job.id+':'+index}));
+  const receipt={attemptId:step.attemptId||job.id+':'+index};
+  // 「放大到 2K/4K」 is one 无损放大 per click, however many 2× passes the size needs. The generate
+  // route's own upscale stays inside its 1K price during the trial.
+  if(/^upscale-\d+$/.test(step.name)){
+   if(job.route==='enhance'&&(!upscale||!upscale.certain&&step.status==='returned'))upscale=attempt('enhance',step.status==='returned',receipt);
+   continue;
+  }
+  const action=BILLABLE_STEPS[step.name];
+  if(!action)continue;
+  attempts.push(attempt(action,step.status==='returned',receipt));
  }
+ if(upscale)attempts.push(upscale);
  return attempts;
 }
 export async function executeTask(root,task,enqueue,dependencies={}){

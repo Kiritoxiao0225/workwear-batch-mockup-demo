@@ -9,6 +9,7 @@ setDefaultAutoSelectFamilyAttemptTimeout(3000);
 
 if (process.env.BATCH_WORKBENCH_ENABLED !== '1') throw new Error('旧版后台已停用，请开启 BATCH_WORKBENCH_ENABLED=1');
 if (process.env.VERCEL === '1') throw new Error('后台任务需要持续运行的服务');
+await import('../lib/server/sharp-policy');
 const { startBatchWorker } = await import('../batch-mockup/runtime/worker.mjs');
 const { closeCatalogDatabase } = await import('../lib/server/catalog-database');
 const { catalogStorageConfig } = await import('../lib/server/catalog-files');

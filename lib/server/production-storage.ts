@@ -3,18 +3,11 @@ import { registerFileRef } from './file-authorization';
 import type { CatalogQueryClient } from './catalog-database';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { NextRequest } from 'next/server';
-import { catalogUser } from './catalog-auth';
 import { readCatalogFile, saveCatalogFile } from './catalog-files';
 import { productionFileId, productionFileUrl } from '@/lib/production-file-url';
 
 export const usesProductionCloud = () => process.env.WPS_PRODUCTION_STORAGE === 'cloud';
 export const productionStateKey = () => process.env.WPS_PRODUCTION_STATE_KEY || 'main';
-export async function productionUser(request: Request | undefined, write = false) {
-  if (!usesProductionCloud()) return null;
-  if (!request) throw new Error('云端生产接口需要登录');
-  return catalogUser(new NextRequest(request.url, { method: request.method, headers: request.headers }), write);
-}
 export async function readProductionFile(url: string) {
   const id = productionFileId(url);
   if (id) return (await readCatalogFile(id)).bytes;

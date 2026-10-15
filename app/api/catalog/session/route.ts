@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { assertSameOrigin, catalogUser, CatalogHttpError, CATALOG_COOKIE, loginWorkspace, logoutCatalog, renewCatalogSession, workspaceOpenAccess } from '@/lib/server/catalog-auth';
+import { assertSameOrigin, catalogUser, CatalogHttpError, CATALOG_COOKIE, loginWorkspace, logoutCatalog, workspaceOpenAccess } from '@/lib/server/catalog-auth';
 import type { CatalogUser } from '@/lib/catalog';
 import { catalogError, catalogJson } from '@/lib/server/catalog-http';
 import { revokeAdminBehind } from '@/lib/server/impersonation';
@@ -27,14 +27,13 @@ export async function POST(request: NextRequest) {
     return sessionResponse(await loginWorkspace(input.password));
   } catch (error) { return catalogError(error); }
 }
+// Old clients still send PATCH. It reads the session like GET and never extends it: an extension
+// would turn a 12-hour 进入账号 session into a 30-day one.
 export async function PATCH(request: NextRequest) {
-  try {
-    if (workspaceOpenAccess()) { assertSameOrigin(request); return GET(request); }
-    return sessionResponse(await renewCatalogSession(request));
-  }
-  catch (error) { return sessionError(error); }
+  try { assertSameOrigin(request); return await GET(request); }
+  catch (error) { return catalogError(error); }
 }
 export async function DELETE(request: NextRequest) {
-  try { await revokeAdminBehind(request); await logoutCatalog(request); return clearedSessionResponse(); }
+  try { assertSameOrigin(request); await revokeAdminBehind(request); await logoutCatalog(request); return clearedSessionResponse(); }
   catch (error) { return catalogError(error); }
 }

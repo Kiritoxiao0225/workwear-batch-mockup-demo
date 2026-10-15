@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import sharp from 'sharp';
-import { syncWps } from '../runtime/wps.mjs';
+import { syncWps, wpsAttachmentURL } from '../runtime/wps.mjs';
 import { requirementWorkbench } from '../application/requirements.mjs';
 import { workbenchData } from '../runtime/service.mjs';
 import { jsonFile, saveJSON } from '../adapters/a-files.mjs';
@@ -95,4 +95,13 @@ test('WPS 工作台只读取同步维护的单据索引，不读取共享工作�
  assert(all.cases.some(c=>c.caseId==='studio'));
  const index=await jsonFile(resolve(f.root,'wps-case-index.json'));
  assert.deepEqual(index.caseIds,wps.cases.map(c=>c.caseId));
+});
+
+test('WPS 附件地址：只下载公网 https 域名，内网和 IP 一律拒绝', () => {
+  for (const ok of ['https://kdocs.cn/api/v3/office/file/1/download', 'https://img.qwps.cn/a.png?sign=1'])
+    assert.equal(wpsAttachmentURL(ok).protocol, 'https:', ok);
+  for (const bad of ['http://kdocs.cn/a.png', 'https://user:pw@kdocs.cn/a.png', 'https://127.0.0.1/a', 'https://2130706433/a', 'https://0x7f000001/a',
+    'https://10.0.0.5/a', 'https://100.100.100.200/latest/meta-data', 'https://169.254.169.254/a', 'https://[::1]/a', 'https://[::ffff:7f00:1]/a',
+    'https://localhost/a', 'https://localhost./a', 'https://foo.localhost/a', 'https://postgresql/a', 'https://postgresql.zeabur.internal/a', 'https://kdocs.cn./a'])
+    assert.throws(() => wpsAttachmentURL(bad), /WPS附件地址无效/, bad);
 });

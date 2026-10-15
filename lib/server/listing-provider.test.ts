@@ -1,6 +1,6 @@
 import sharp from 'sharp';
 import { describe, expect, it, vi } from 'vitest';
-import { callPlanModel, generateListingImage } from './listing-provider';
+import { callPlanModel, generateListingImage, providerReason } from './listing-provider';
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
@@ -96,5 +96,14 @@ describe('the analysis call', () => {
     const fetchImplementation = (async (target: string) => { url = target; return new Response(JSON.stringify({ id: 'c', choices: [{ finish_reason: 'stop', message: { content: '{}' } }] }), { headers: { 'Content-Type': 'application/json' } }); }) as typeof fetch;
     await callPlanModel({ model: 'm' }, { env: { EVOLINK_API_KEY: 'k' }, fetchImplementation, beforeSubmit: async () => {}, receipt: async () => {} });
     expect(url).toBe('https://direct.evolink.ai/v1/chat/completions');
+  });
+});
+
+describe('a provider failure shown to the tenant', () => {
+  it('keeps the reason but drops links and token-like strings', () => {
+    const shown = providerReason('Content rejected by moderation, see https://api.evolink.ai/v1/debug?key=sk-abc for request req_9f8e7d6c5b4a39281706f5e4d3c2b1a0');
+    expect(shown).toContain('Content rejected by moderation');
+    expect(shown).not.toMatch(/https?:|sk-abc|9f8e7d6c5b4a/);
+    expect(providerReason('x'.repeat(200)).length).toBeLessThanOrEqual(80);
   });
 });

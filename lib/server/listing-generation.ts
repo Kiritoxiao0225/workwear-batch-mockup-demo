@@ -514,7 +514,7 @@ const sampleOf = (sample: string) => readFile(join(process.cwd(), 'lib/listing/s
 /** A version of one of this product's images, at 1K, as a reference. */
 async function versionAt1K(projectId: string, assetId: string) {
   const row = (await db().query('SELECT file_id FROM listing_assets WHERE id=$1 AND project_id=$2', [assetId, projectId])).rows[0];
-  if (!row) throw new Error('找不到要改的那一版图');
+  if (!row) throw new CatalogHttpError(404, '找不到要改的那一版图');
   return sharp(await fileOf(row.file_id)).resize(1024, 1024, { fit: 'inside' }).png().toBuffer();
 }
 
@@ -533,16 +533,16 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
     if (input.kind === 'copy') {
       // The shop's service image for this master: copied, no model call, nothing charged.
       const bytes = await shopServiceImage(job.tenant_id, input.image);
-      if (!bytes) throw new Error('店铺还没出这套母版的服务图：去「店铺设置」确认生成后，再点重新生成');
+      if (!bytes) throw new CatalogHttpError(409, '店铺还没出这套母版的服务图：去「店铺设置」确认生成后，再点重新生成');
       await succeed(bytes);
       return;
     }
     const p = (await db().query('SELECT plan FROM listing_projects WHERE id=$1', [job.project_id])).rows[0];
     const stored = p.plan as StoredPlan, d = stored?.draft;
     const layout = d ? await resolveLayout(job.tenant_id, (input.kind === 'main' && input.layout) || d.layout) : undefined;
-    if (d && !layout) throw new Error('版式不存在');
+    if (d && !layout) throw new CatalogHttpError(404, '版式不存在');
     const outputs = await latestOutputs(job.project_id);
-    const output = async (slot: string) => { const o = outputs.get(slot); if (!o) throw new Error(`缺少前一步的图：${slot}`); return fileOf(o.file_id); };
+    const output = async (slot: string) => { const o = outputs.get(slot); if (!o) throw new CatalogHttpError(409, `缺少前一步的图：${slot}`); return fileOf(o.file_id); };
     let prompt = '', references: Buffer[] = [], ratio: Ratio = 'square', mask: Buffer | undefined, paste: { original: Buffer; boxes: Box[] } | undefined;
     if (input.kind === 'service') {
       const def = SERVICE_IMAGES.find(x => x.id === input.image)!, words = input.words.tags;
@@ -562,15 +562,15 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
       references = [await versionAt1K(job.project_id, input.base)];
       if (input.reference) {
         const ref = (await db().query(`SELECT file_id FROM listing_assets WHERE id=$1 AND project_id=$2 AND kind='ref'`, [input.reference, job.project_id])).rows[0];
-        if (!ref) throw new Error('参考图找不到了');
+        if (!ref) throw new CatalogHttpError(404, '参考图找不到了');
         references.push(await fileOf(ref.file_id));
       }
       ratio = input.ratio;
       prompt = redrawPrompt({ ratio, ask: input.ask, reference: !!input.reference, style: layout?.style });
     } else {
-      if (!d || !layout) throw new Error('还没有定方案');
+      if (!d || !layout) throw new CatalogHttpError(409, '还没有定方案');
       const colors = stored.colors, garment = stored.garment, main = colors[0];
-      const colorOf = (sku: string) => colors.find(c => c.sku === sku) ?? (() => { throw new Error(`颜色不存在：${sku}`); })();
+      const colorOf = (sku: string) => colors.find(c => c.sku === sku) ?? (() => { throw new CatalogHttpError(404, `颜色不存在：${sku}`); })();
       const hasCast = outputs.has('cast');
       // What is printed on the chest; the customer's LOGO is sent as the last reference image.
       const logoMode = d.logo?.mode ?? 'LOGO', logoAsset = logoMode === '客户' ? stored.images.find(i => i.label === d.logo?.label)?.assetId : undefined;
@@ -584,7 +584,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         const label = stored.photos ? stored.photos[input.sku] : modelPhotoFor(m.materials?.sorted?.images ?? [], input.sku, color.name, d.model.lead, skuPair(layout));
         const assetId = label ? stored.images.find(i => i.label === label)?.assetId : undefined;
         const source = assetId && (await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [assetId])).rows[0];
-        if (label && !source) throw new Error('找不到这个颜色的模特图（原始素材可能已在最后一次出图 30 天后清理）');
+        if (label && !source) throw new CatalogHttpError(404, '找不到这个颜色的模特图（原始素材可能已在最后一次出图 30 天后清理）');
         const photo = source ? await fileOf(source.file_id) : outputs.has(`skumodel:${input.sku}`) ? await output(`skumodel:${input.sku}`) : null;
         // The material's photo is usually a scene: the analysis model finds the model's head and knees on it.
         const frame = source && photo ? await findFrame(photo, recognize) : null;
@@ -608,7 +608,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
       } else if (input.kind === 'product') {
         const assetId = stored.images.find(i => i.label === input.sku)?.assetId;
         const source = assetId && (await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [assetId])).rows[0];
-        if (!source) throw new Error('找不到这个颜色的衣服图（原始素材可能已在最后一次出图 30 天后清理）');
+        if (!source) throw new CatalogHttpError(404, '找不到这个颜色的衣服图（原始素材可能已在最后一次出图 30 天后清理）');
         if (input.direct) {
           // The colour's own clean still life, on a white square: no model call, nothing charged.
           const square = await sharp(await fileOf(source.file_id), { limitInputPixels: 60_000_000 }).rotate().flatten({ background: '#ffffff' })
@@ -624,7 +624,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
       } else if (input.kind === 'cast' && input.who) {
         const assetId = input.photo ? stored.images.find(i => i.label === input.photo)?.assetId : undefined;
         const source = assetId && (await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [assetId])).rows[0];
-        if (input.photo && !source) throw new Error('找不到选的模特照片（原始素材可能已在最后一次出图 30 天后清理）');
+        if (input.photo && !source) throw new CatalogHttpError(404, '找不到选的模特照片（原始素材可能已在最后一次出图 30 天后清理）');
         const photo = source ? await sharp(await fileOf(source.file_id), { limitInputPixels: 60_000_000 }).rotate().resize(1536, 1536, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer() : null;
         prompt = castOnePrompt({ color: main.name, garment, who: input.who, photo: !!photo });
         references = [await output(`product:${main.sku}`), ...(photo ? [photo] : [])];
@@ -643,7 +643,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
       } else if (input.edit) {
         // A 画板 change: the current version at 1K is the reference; only the box is redrawn.
         const base = (await db().query('SELECT file_id FROM listing_assets WHERE id=$1 AND project_id=$2', [input.edit.base, job.project_id])).rows[0];
-        if (!base) throw new Error('找不到要改的那一版图');
+        if (!base) throw new CatalogHttpError(404, '找不到要改的那一版图');
         const original = await fileOf(base.file_id), small = await sharp(original).resize(1024, 1024, { fit: 'inside' }).png().toBuffer();
         const meta = await sharp(small).metadata(), boxes = [pad(input.edit.box), ...(input.edit.to ? [pad(input.edit.to)] : [])];
         mask = await maskOf(boxes, meta.width!, meta.height!);
@@ -790,10 +790,12 @@ export async function slotStates(projectId: string) {
 }
 
 const KIND_FILE: Record<string, string> = { square: '1比1主图', portrait: '3比4主图', long: '2比3长图' };
+// Colour names are typed by the user; inside the zip they stay one file name, never a path.
+export const zipEntryName = (name: string) => name.replace(/[\\/:*?"<>|\u0000-\u001f]/gu, '_').replace(/^\.+/u, '_') || '_';
 /** Current images named in Taobao order; product images and each extra colour's covers in their own folder. */
 export async function downloadZip(projectId: string) {
   const p = (await db().query('SELECT name,plan FROM listing_projects WHERE id=$1', [projectId])).rows[0];
-  const stored = p.plan as StoredPlan | null, colors = stored?.colors ?? [], nameOf = (sku: string) => colors.find(c => c.sku === sku)?.name ?? sku;
+  const stored = p.plan as StoredPlan | null, colors = stored?.colors ?? [], nameOf = (sku: string) => zipEntryName(colors.find(c => c.sku === sku)?.name ?? sku);
   const states = await slotStates(projectId), outputs = await latestOutputs(projectId), zip = new JSZip();
   for (const s of states) {
     const o = outputs.get(s.slot); if (!o) continue;

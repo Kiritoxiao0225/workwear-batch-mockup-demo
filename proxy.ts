@@ -9,7 +9,7 @@ const RETIRED = [
   '/api/wps-production/', '/api/wps-tasks/', '/api/wps-workbench/', '/api/wps/', '/api/garment-mockup/',
   '/api/logo-studio', '/api/state', '/api/catalog/products', '/api/catalog/styles', '/api/catalog/upload',
   '/api/catalog/reuse', '/api/catalog/standards', '/api/catalog/production-garments',
-  '/api/catalog/production-preview', '/api/catalog/simple-garment',
+  '/api/catalog/production-preview', '/api/catalog/simple-garment', '/api/logos',
 ];
 
 // Reachable without a session: the sign-in screen and the endpoints it calls.

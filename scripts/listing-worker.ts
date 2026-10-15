@@ -10,6 +10,7 @@ if(process.argv.includes('--local')){
   process.env.CATALOG_LOCAL_OBJECT_ROOT=root+'/objects';
   Object.assign(process.env,{NODE_ENV:'development'});
 }
+await import('../lib/server/sharp-policy');
 const { startListingWorker } = await import('../lib/server/listing-jobs');
 const { closeCatalogDatabase } = await import('../lib/server/catalog-database');
 const worker=await startListingWorker();

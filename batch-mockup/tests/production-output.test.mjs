@@ -6,6 +6,7 @@ import { resolve } from 'node:path';
 import sharp from 'sharp';
 import { hash, saveJSON, atomicFile } from '../adapters/a-files.mjs';
 import { reserveProduction, executeProduction } from '../application/production.mjs';
+import { stepAttempts } from '../runtime/service.mjs';
 
 // 图稿生成「输出规格」: the 1K drawing size sent to the generator, then the Volcengine upscale.
 const prompt = '【图稿】\n\n主体：使用图1的盾牌图形。\n\n文字：安全第一\n\n字体：沿用。\n\n颜色：沿用。\n\n排版：原样。\n\n尺寸：未指定。\n\n输出：独立图稿。';
@@ -122,4 +123,50 @@ test('放大到 2K：已经是 2K 的图原样交付，不调用放大', async t
   assert.equal(r.status, 'returned');
   assert.deepEqual([r.final.width, r.final.height], [1522, 2048]);
   assert.equal(r.upscale.passes, 0);
+});
+
+// Settlement: 「放大到 2K/4K」 bills one 无损放大 per click; the generate route's upscale stays at 1K.
+const billed = job => stepAttempts(job).map(a => [a.action, a.certain]);
+
+test('计费 · 放大到 2K：火山一次，收一次无损放大', async t => {
+  const { root, job } = await enhanceFixture(t, 1100, 1100, '2K');
+  const r = await executeProduction(root, job.id, { enhance: doubler([]) });
+  assert.equal(r.upscale.passes, 1);
+  assert.deepEqual(billed(r), [['enhance', true]]);
+});
+
+test('计费 · 放大到 4K：火山两次，仍只收一次无损放大', async t => {
+  const { root, job } = await enhanceFixture(t, 1100, 1100, '4K');
+  const r = await executeProduction(root, job.id, { enhance: doubler([]) });
+  assert.equal(r.upscale.passes, 2);
+  assert.deepEqual(billed(r), [['enhance', true]]);
+});
+
+test('计费 · 放大第二遍结果未知：第一遍已回，按一次确定收费', async t => {
+  const { root, job } = await enhanceFixture(t, 1100, 1100, '4K');
+  let calls = 0; const pass = doubler([]);
+  const r = await executeProduction(root, job.id, { enhance: async input => { if (++calls === 2) throw new Error('火山高清enhance连接中断'); return pass(input); } });
+  assert.deepEqual(r.steps.map(s => s.status), ['returned', 'unknown']);
+  assert.deepEqual(billed(r), [['enhance', true]]);
+});
+
+test('计费 · 放大结果未知后走了兜底：记一次待裁定，不直接扣', async t => {
+  const { root, job } = await enhanceFixture(t, 1100, 1100, '2K');
+  const r = await executeProduction(root, job.id, { enhance: async () => { throw new Error('火山高清enhance连接中断'); } });
+  assert.equal(r.status, 'returned');
+  assert.match(r.upscale.fallback, /连接中断/);
+  assert.deepEqual(billed(r), [['enhance', false]]);
+});
+
+test('计费 · 放大被火山明确拒绝：不收费', async t => {
+  const { root, job } = await enhanceFixture(t, 1100, 1100, '2K');
+  const r = await executeProduction(root, job.id, { enhance: async () => { throw Object.assign(new Error('火山高清enhance返回HTTP 400'), { definiteFailure: true }); } });
+  assert.deepEqual(billed(r), []);
+});
+
+test('计费 · 生图路线的 2K：试用期只收生图，放大不另收', async t => {
+  const { root, job } = await fixture(t, { transparentBackground: false, output: { ratio: '2:3', resolution: '2K' } });
+  const r = await executeProduction(root, job.id, { generate: async () => drawn(832, 1248), enhance: doubler([]) });
+  assert.deepEqual(r.steps.map(s => s.name), ['generate', 'upscale-1']);
+  assert.deepEqual(billed(r), [['generate', true]]);
 });

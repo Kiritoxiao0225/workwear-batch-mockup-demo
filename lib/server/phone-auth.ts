@@ -100,18 +100,19 @@ const codeMatches = (candidate: string, expected: string) => {
  */
 async function consumeChallenge(phone: string, purpose: 'login' | 'bind', code: string, ip: string | null) {
   const found = await catalogDatabase().query(
-    `SELECT id, code_hash, attempts FROM sms_challenges
+    `SELECT id, code_hash FROM sms_challenges
       WHERE phone=$1 AND purpose=$2 AND consumed_at IS NULL AND NOT superseded AND expires_at > now()
       ORDER BY created_at DESC LIMIT 1`, [phone, purpose]);
   if (!found.rowCount) throw new CatalogHttpError(400, '验证码已过期，请重新获取');
-  const challenge = found.rows[0] as { id: string; code_hash: string; attempts: number };
+  const challenge = found.rows[0] as { id: string; code_hash: string };
 
   // Attempts are recorded outside the business transaction so a later rollback cannot erase them.
   const ok = codeMatches(hashVerificationCode(code, phone, purpose), challenge.code_hash);
   await catalogDatabase().query('INSERT INTO sms_attempts(id,challenge_id,ok,request_ip) VALUES($1,$2,$3,$4)', [randomUUID(), challenge.id, ok, ip]);
-  await catalogDatabase().query('UPDATE sms_challenges SET attempts=attempts+1 WHERE id=$1', [challenge.id]);
-
-  if (challenge.attempts + 1 > MAX_CODE_ATTEMPTS) {
+  // Counted and checked in one statement: parallel guesses each take a slot, so no more than
+  // MAX_CODE_ATTEMPTS of them are ever compared.
+  const counted = await catalogDatabase().query('UPDATE sms_challenges SET attempts=attempts+1 WHERE id=$1 AND attempts<$2 RETURNING attempts', [challenge.id, MAX_CODE_ATTEMPTS]);
+  if (!counted.rowCount) {
     await catalogDatabase().query('UPDATE sms_challenges SET superseded=true WHERE id=$1', [challenge.id]);
     throw new CatalogHttpError(429, '验证次数过多，请重新获取验证码');
   }

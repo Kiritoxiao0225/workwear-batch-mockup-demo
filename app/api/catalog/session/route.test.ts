@@ -3,11 +3,11 @@ import { NextRequest } from 'next/server';
 import { limitPasswordLogin } from '@/lib/server/password-login-limit';
 vi.mock('@/lib/server/password-login-limit', () => ({ limitPasswordLogin: vi.fn() }));
 import { DELETE, GET, PATCH, POST } from './route';
-import { CatalogHttpError, catalogUser, loginWorkspace, logoutCatalog, renewCatalogSession, SESSION_SECONDS } from '@/lib/server/catalog-auth';
+import { CatalogHttpError, catalogUser, loginWorkspace, logoutCatalog, SESSION_SECONDS } from '@/lib/server/catalog-auth';
 
 vi.mock('@/lib/server/catalog-auth', async importOriginal => {
   const original = await importOriginal<typeof import('@/lib/server/catalog-auth')>();
-  return { ...original, catalogUser: vi.fn(), loginWorkspace: vi.fn(), logoutCatalog: vi.fn(), renewCatalogSession: vi.fn() };
+  return { ...original, catalogUser: vi.fn(), loginWorkspace: vi.fn(), logoutCatalog: vi.fn() };
 });
 const user = { id: 'ebcc50c7-459a-4bf8-b41d-4385938a6d85', email: 'test@example.test', displayName: '测试', role: 'editor' as const };
 const token = 'a'.repeat(64);
@@ -19,7 +19,6 @@ beforeEach(() => {
   vi.clearAllMocks(); vi.stubEnv('NODE_ENV', 'production'); vi.stubEnv('CATALOG_APP_ORIGIN', 'https://mockup.example');
   vi.mocked(limitPasswordLogin).mockResolvedValue(undefined);
   vi.mocked(loginWorkspace).mockResolvedValue({ user, token });
-  vi.mocked(renewCatalogSession).mockResolvedValue({ user, token });
   vi.mocked(catalogUser).mockResolvedValue(user);
 });
 afterEach(() => vi.unstubAllEnvs());
@@ -40,9 +39,8 @@ describe('persistent project sessions', () => {
       expect(response.headers.has('set-cookie')).toBe(false);
     }
     expect(loginWorkspace).not.toHaveBeenCalled();
-    expect(renewCatalogSession).not.toHaveBeenCalled();
   });
-  it('sets the same protected 30-day cookie on login and renewal without exposing the token in JSON', async () => {
+  it('sets the same protected 30-day cookie on login and on an old client\'s PATCH without exposing the token in JSON', async () => {
     const responses = [await POST(request('POST', { password: 'example-password' })), await PATCH(request('PATCH'))];
     expect(loginWorkspace).toHaveBeenCalledExactlyOnceWith('example-password');
     for (const response of responses) {
@@ -72,8 +70,15 @@ describe('persistent project sessions', () => {
     expect(loginWorkspace).not.toHaveBeenCalled();
     expect(response.headers.has('set-cookie')).toBe(false);
   });
+  it('reads the session on PATCH without extending it, and only from the app\'s own origin', async () => {
+    expect((await PATCH(request('PATCH'))).status).toBe(200);
+    expect(catalogUser).toHaveBeenCalledOnce();
+    const crossSite = await PATCH(new NextRequest('https://mockup.example/api/catalog/session', { method: 'PATCH', headers: { origin: 'https://other.example', cookie: `catalog_session=${token}` } }));
+    expect(crossSite.status).toBe(403);
+    expect(catalogUser).toHaveBeenCalledOnce();
+  });
   it('clears every historical cookie path when the session is expired or revoked', async () => {
-    vi.mocked(renewCatalogSession).mockRejectedValue(new CatalogHttpError(401, '登录已过期，请重新登录'));
+    vi.mocked(catalogUser).mockRejectedValue(new CatalogHttpError(401, '登录已过期，请重新登录'));
     const response = await PATCH(request('PATCH'));
     expect(response.status).toBe(401);
     expect(response.cookies.get('catalog_session')).toMatchObject({ value: '', path: '/', maxAge: 0 });
@@ -94,10 +99,14 @@ describe('persistent project sessions', () => {
   });
   it('upgrades to a root cookie without renewing GET and clears all paths on logout', async () => {
     expect((await GET(request('GET'))).cookies.get('catalog_session')).toMatchObject({ value: token, path: '/' });
-    expect(renewCatalogSession).not.toHaveBeenCalled();
     const response = await DELETE(request('DELETE'));
     expect(logoutCatalog).toHaveBeenCalledOnce();
     expect(response.cookies.get('catalog_session')).toMatchObject({ value: '', path: '/', maxAge: 0 });
     expect(response.headers.getSetCookie().some(value => value.includes('Path=/api/catalog;') && value.includes('Max-Age=0'))).toBe(true);
+  });
+  it('refuses a cross-site logout before touching any session', async () => {
+    const response = await DELETE(new NextRequest('https://mockup.example/api/catalog/session', { method: 'DELETE', headers: { origin: 'https://other.example', cookie: `catalog_session=${token}` } }));
+    expect(response.status).toBe(403);
+    expect(logoutCatalog).not.toHaveBeenCalled();
   });
 });

@@ -312,9 +312,9 @@ export async function executeWrite(job: JobRow, provider: Provider = (request, h
   const p = (await db().query('SELECT name,materials FROM listing_projects WHERE id=$1', [job.project_id])).rows[0];
   const m = p.materials as Materials, draft = m?.draft;
   try {
-    if (!draft) throw new Error('还没有定方案');
+    if (!draft) throw new CatalogHttpError(409, '还没有定方案');
     const layout = await resolveLayout(job.tenant_id, draft.layout);
-    if (!layout) throw new Error('版式不存在');
+    if (!layout) throw new CatalogHttpError(404, '版式不存在');
     const views = await writeViews(job.project_id, m, draft);
     const call = await provider(writeRequest({ views, draft, layout, model, product: p.name }), {
       beforeSubmit: async () => { await db().query(`INSERT INTO listing_attempts(id,job_id,provider,model,status) VALUES($1,$2,$3,$4,'submitted')`, [attemptId, job.id, listingPlanProvider(), model]); },

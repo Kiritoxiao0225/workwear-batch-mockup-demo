@@ -84,6 +84,9 @@ export const listingImageModel = (env: Env = process.env) => listingImageProvide
 const RELAY_SIZES = { square: '1024x1024', portrait: '1152x1536', long: '1024x1536' } as const;
 const mimeOf = (bytes: Buffer) => bytes[0] === 0xff && bytes[1] === 0xd8 ? 'image/jpeg' : bytes.subarray(8, 12).toString() === 'WEBP' ? 'image/webp' : 'image/png';
 const RATIOS = { square: '1:1', portrait: '3:4', long: '2:3' } as const;
+// The provider's words help (a refusal reads differently from a timeout); links and token-like runs
+// stay out of what the tenant sees.
+export const providerReason = (text: string) => text.replace(/https?:\/\/\S+/gu, '[链接]').replace(/[A-Za-z0-9_\-+/=]{24,}/gu, '…').slice(0, 80);
 export type ImageCall = { bytes: Buffer; taskId: string; credits: number | null; durationMs: number };
 
 /**
@@ -139,7 +142,10 @@ export async function generateListingImage(input: { prompt: string; references: 
     detail = (await poll()) ?? detail;
     if (['completed', 'failed', 'cancelled'].includes(detail?.status ?? '')) break;
   }
-  if (detail?.status === 'failed' || detail?.status === 'cancelled') throw Object.assign(new Error(`出图没有成功（${detail.error?.message ?? detail.status}）`), { notCharged: true });
+  if (detail?.status === 'failed' || detail?.status === 'cancelled') {
+    if (detail.error?.message) console.error('[listing] provider failed', task.id, detail.error.message);
+    throw Object.assign(new Error(`出图没有成功（${detail.error?.message ? providerReason(detail.error.message) : detail.status}）`), { notCharged: true });
+  }
   // Billing settles shortly after completion; wait briefly for the real figure.
   for (let i = 0; detail?.status === 'completed' && detail.usage?.credits_used === undefined && i < 5; i++) { await wait(); detail = (await poll()) ?? detail; }
   if (detail?.status !== 'completed') throw new Error('出图结果未知，任务编号已保存');

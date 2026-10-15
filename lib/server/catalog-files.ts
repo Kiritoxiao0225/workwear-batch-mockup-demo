@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import sharp from 'sharp';
+import { CatalogHttpError } from './catalog-auth';
 import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './catalog-database';
 import { assertCatalogObjectStoreConfig, catalogOssBrowserSigner, catalogOssObjects } from './catalog-oss';
 import { imageStoreConfig, imageStoreRequest, signedImageStoreFile } from './catalog-image-store';
@@ -40,11 +41,12 @@ function localObjectPath(bucket: string, key: string) {
   return path.join(bucket, key);
 }
 export async function inspectCatalogImage(bytes: Buffer) {
-  if (!bytes.length || bytes.length > 64 * 1024 * 1024) throw new Error(`图片大小超出 1 B–64 MiB：${bytes.length}`);
-  const metadata = await sharp(bytes, { failOn: 'error', limitInputPixels: 80_000_000 }).metadata();
-  if (!['png', 'jpeg', 'webp'].includes(metadata.format ?? '') || !metadata.width || !metadata.height) throw new Error(`不支持的图片格式：${metadata.format}`);
+  if (!bytes.length || bytes.length > 64 * 1024 * 1024) throw new CatalogHttpError(413, `图片大小超出 1 B–64 MiB：${bytes.length}`);
+  const unreadable = () => { throw new CatalogHttpError(415, '图片无法读取，请换一张 PNG、JPEG 或 WebP'); };
+  const metadata = await sharp(bytes, { failOn: 'error', limitInputPixels: 80_000_000 }).metadata().catch(unreadable);
+  if (!['png', 'jpeg', 'webp'].includes(metadata.format ?? '') || !metadata.width || !metadata.height) throw new CatalogHttpError(415, `不支持的图片格式：${metadata.format}`);
   // Decode the complete image, not just its header, before accepting an upload.
-  await sharp(bytes, { failOn: 'error', limitInputPixels: 80_000_000 }).stats();
+  await sharp(bytes, { failOn: 'error', limitInputPixels: 80_000_000 }).stats().catch(unreadable);
   return { sha256: fileSha256(bytes), width: metadata.width, height: metadata.height, hasAlpha: metadata.hasAlpha ?? false, byteLength: bytes.length, mimeType: `image/${metadata.format === 'jpeg' ? 'jpeg' : metadata.format}` };
 }
 export async function saveCatalogFile(bytes: Buffer, originalName: string, purpose: 'catalog' | 'production' = 'catalog',
@@ -78,13 +80,13 @@ export async function saveCatalogFile(bytes: Buffer, originalName: string, purpo
   while (Date.now() < deadline) {
     const claimed = await catalogTransaction(async client => {
       const file = (await client.query('SELECT * FROM files WHERE backend=$1 AND bucket=$2 AND sha256=$3 FOR UPDATE', [config.backend, config.bucket, hash])).rows[0];
-      if (!file) throw new Error('文件登记丢失，请重试');
+      if (!file) throw new CatalogHttpError(409, '文件登记丢失，请重试');
       if (config.backend !== 'local') assertOssObjectKey(file.object_key);
       if (file.status === 'ready' && file.gc_state === 'active') {
         if (retain) await retain(client, file.id);
         return { file, ready: true };
       }
-      if (file.gc_state === 'deleting') throw new Error('文件正在回收，请稍后重试');
+      if (file.gc_state === 'deleting') throw new CatalogHttpError(409, '文件正在回收，请稍后重试');
       const lease = await client.query(`INSERT INTO production_operations(operation_key,owner,lease_until)
         VALUES($1,$2,now()+interval '2 minutes') ON CONFLICT(operation_key) DO UPDATE
         SET owner=EXCLUDED.owner,lease_until=EXCLUDED.lease_until,updated_at=now()
@@ -135,7 +137,7 @@ export async function saveCatalogFile(bytes: Buffer, originalName: string, purpo
       return await catalogTransaction(async client => {
         await client.query('SELECT id FROM files WHERE id=$1 FOR UPDATE', [file.id]);
         const lease = await client.query('SELECT owner FROM production_operations WHERE operation_key=$1 AND owner=$2 AND lease_until>now() FOR UPDATE', [key, owner]);
-        if (!lease.rowCount) throw new Error('文件上传租约已过期，请重试读取已上传文件');
+        if (!lease.rowCount) throw new CatalogHttpError(409, '文件上传租约已过期，请重试读取已上传文件');
         await client.query("UPDATE files SET status='ready',gc_state='active',error=NULL,object_version_id=$2,upload_count=upload_count+$3 WHERE id=$1", [file.id, versionId, uploaded ? 1 : 0]);
         if (retain) await retain(client, file.id);
         await client.query('DELETE FROM production_operations WHERE operation_key=$1 AND owner=$2', [key, owner]);
@@ -150,7 +152,7 @@ export async function saveCatalogFile(bytes: Buffer, originalName: string, purpo
       throw error;
     } finally { clearInterval(heartbeat); }
   }
-  throw new Error('相同文件仍在上传，请稍后重试；已上传内容会自动复用');
+  throw new CatalogHttpError(409, '相同文件仍在上传，请稍后重试；已上传内容会自动复用');
 }
 
 export async function catalogFile(id: string) {

@@ -3,7 +3,6 @@ import { fetchApi, readApiBlob } from './api-response';
 import { artworkGraphicLayers, assertArtworkDraft, type ArtworkDraft, type ArtworkGraphicLayer } from '@/lib/artwork-editor';
 import { artworkLayers, croppedGraphicGeometry, padArtworkPiece, splitArtworkPixels, updateArtworkLayer, wholeGraphicGeometry, type ArtworkSelection, type PixelPiece } from '@/lib/artwork-layers';
 import { loadArtworkImage } from './render-artwork';
-import { uploadLogo } from './logo';
 
 function pixelCanvas(width: number, height: number) {
   const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
@@ -54,7 +53,7 @@ export async function splitArtworkGraphic(draft: ArtworkDraft, id: string, selec
 }
 
 /** Persist every new source/mask before writing the project; never save browser-only blob URLs. */
-export async function persistArtworkLayerAssets(draft: ArtworkDraft, upload = uploadLogo): Promise<ArtworkDraft> {
+export async function persistArtworkLayerAssets(draft: ArtworkDraft, upload: (file: File) => Promise<{ url: string }>): Promise<ArtworkDraft> {
   const uploads = new Map<string, Promise<string>>();
   const persist = (url: string) => {
     if (!/^(?:data:|blob:)/i.test(url)) return Promise.resolve(url);

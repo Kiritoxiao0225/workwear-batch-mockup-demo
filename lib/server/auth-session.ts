@@ -40,8 +40,25 @@ export const publicUser = (user: CatalogUser) => ({
   id: user.id, email: user.email, displayName: user.displayName, role: user.role,
 });
 
+// Temporary (2026-10 security batch 1): how Zeabur forwards the client address decides which hop the
+// rate limits can trust. Only the shape is logged, never an address; removed once requestIp is fixed.
+let forwardingShapesLogged = 0;
+const privateAddress = (ip: string) => /^(10\.|127\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|::1$|f[cd]|fe80:)/iu.test(ip);
+function logForwardingShape(headers: Headers) {
+  if (forwardingShapesLogged >= 20) return;
+  forwardingShapesLogged += 1;
+  const hops = (headers.get('x-forwarded-for') ?? '').split(',').map(hop => hop.trim()).filter(Boolean);
+  const realIp = headers.get('x-real-ip')?.trim();
+  console.info('[client-ip] shape', JSON.stringify({
+    hops: hops.length, privateHops: hops.map(privateAddress),
+    realIp: realIp ? (realIp === hops[0] ? 'first' : realIp === hops.at(-1) ? 'last' : 'other') : 'absent',
+    headers: [...headers.keys()].filter(name => /ip|forward|real|client|via/iu.test(name)),
+  }));
+}
+
 /** Trust only the proxy hop we control; an arbitrary X-Forwarded-For chain is attacker-supplied. */
 export function requestIp(request: Request) {
+  logForwardingShape(request.headers);
   const header = request.headers.get('x-forwarded-for');
   const first = header?.split(',')[0]?.trim();
   if (first && /^[0-9a-fA-F:.]{3,45}$/u.test(first)) return first;

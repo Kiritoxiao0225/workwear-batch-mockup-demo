@@ -105,18 +105,6 @@ export async function catalogUser(request: NextRequest, write = false): Promise<
   if (write && row.role === 'viewer') throw new CatalogHttpError(403, '当前账号只有查看权限');
   return { id: row.id, email: row.email, displayName: row.display_name, role: row.role };
 }
-export async function renewCatalogSession(request: NextRequest) {
-  assertSameOrigin(request);
-  const token = sessionToken(request);
-  const found = await catalogDatabase().query(`UPDATE sessions s SET expires_at=now()+$2*interval '1 second'
-    FROM users u LEFT JOIN tenants t ON t.id=u.tenant_id
-    WHERE s.user_id=u.id AND s.token_hash=$1 AND s.expires_at>now() AND NOT u.disabled AND COALESCE(t.disabled,false)=false
-    RETURNING u.id,u.email,u.display_name,u.role`, [tokenHash(token), SESSION_SECONDS]);
-  if (!found.rowCount) throw new CatalogHttpError(401, '登录已过期，请重新登录');
-  const row = found.rows[0];
-  const user: CatalogUser = { id: row.id, email: row.email, displayName: row.display_name, role: row.role };
-  return { token, user };
-}
 export async function logoutCatalog(request: NextRequest) {
   assertSameOrigin(request);
   const token = request.cookies.get(CATALOG_COOKIE)?.value;

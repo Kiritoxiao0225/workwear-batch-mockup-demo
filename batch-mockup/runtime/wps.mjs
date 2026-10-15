@@ -1,10 +1,19 @@
+import { isIP } from 'node:net';
 import { resolve } from 'node:path';
 import sharp from 'sharp';
 import { airscriptSource,airscriptRecords } from '../../lib/server/wps-airscript.ts';
 import { classifyWpsScope } from '../experiments/standardize-36/wps-scope.mjs';
 import { jsonFile,saveJSON,atomicFile,assetPath,hash,checkpoint } from '../adapters/a-files.mjs';
+// Attachment links come out of the WPS file's AirScript: only a public https name is fetched, never
+// an IP literal (URL already turns 0x7f000001 or 2130706433 into dotted form), a single-label
+// service name or an internal suffix.
+export function wpsAttachmentURL(url){
+ const u=new URL(url),host=u.hostname.replace(/^\[|\]$/g,'').toLowerCase();
+ if(u.protocol!=='https:'||u.username||u.password||isIP(host)||!host.includes('.')||host.endsWith('.')||/(^|\.)(localhost|local|localdomain|internal|intranet|lan|home|corp)$/.test(host))throw Error('WPS附件地址无效');
+ return u;
+}
 async function download(url){
- const u=new URL(url);if(u.protocol!=='https:'||u.username||u.password||u.hostname==='localhost'||/^[\d:[\]]+$/.test(u.hostname))throw Error('WPS附件地址无效');
+ const u=wpsAttachmentURL(url);
  const r=await fetch(u,{redirect:'error',signal:AbortSignal.timeout(45000)});if(!r.ok)throw Error('WPS附件下载HTTP '+r.status);
  const chunks=[];let size=0;for await(const chunk of r.body){size+=chunk.length;if(size>40*1024*1024)throw Error('WPS附件超过40MB');chunks.push(chunk);}return Buffer.concat(chunks);
 }

@@ -69,7 +69,7 @@ type AssetInput = {
   tenantId?: string;
 };
 export async function importCatalogAsset(input: AssetInput) {
-  if (!input.styleCode.trim() || !input.colorName.trim() || input.styleCode.length > 200 || input.colorName.length > 100) throw new Error('款号和颜色必填，款号最多 200 字、颜色最多 100 字');
+  if (!input.styleCode.trim() || !input.colorName.trim() || input.styleCode.length > 200 || input.colorName.length > 100) throw new CatalogHttpError(400, '款号和颜色必填，款号最多 200 字、颜色最多 100 字');
   const tenantId = input.tenantId ?? INTERNAL_TENANT_ID;
   const thumbBytes = await sharp(input.bytes).resize({ width: 640, height: 640, fit: 'inside', withoutEnlargement: true }).webp({ quality: 82 }).toBuffer();
   const reservationId = randomUUID();

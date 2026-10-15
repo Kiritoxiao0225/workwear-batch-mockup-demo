@@ -20,8 +20,20 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
+  poweredByHeader: false,
   async headers() {
     return [{
+      // Framing stays same-origin only: /artwork-studio embeds /api/batch/saas-editors. A full CSP
+      // waits until the OCR CDN and signed OSS/R2 image hosts are listed.
+      source: '/:path*',
+      headers: [
+        { key: 'Strict-Transport-Security', value: 'max-age=31536000' },
+        { key: 'X-Content-Type-Options', value: 'nosniff' },
+        { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+        { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+        { key: 'Content-Security-Policy', value: "frame-ancestors 'self'" },
+      ],
+    }, {
       source: '/ocr-models/:path*',
       headers: [{
         key: 'Cache-Control',
