@@ -16,6 +16,8 @@
 | 3 | **本地试用** | 内嵌 PostgreSQL，`127.0.0.1:55439` | `scripts/catalog-local.ts` 自动创建 | ✅ 删 `data/catalog-local/` 即可 |
 | 4 | **测试** | 每次运行新建的临时实例，随机端口 | 各集成测试脚本自动创建 | ✅ 跑完自动删 |
 
+**生产库没有公网端口**（2026-10-16 关闭 Zeabur 端口转发）：web 与两个 worker 走内网 `postgresql.zeabur.internal:5432`，不受影响；本机用 1、2 号连接（迁移、备份）前，先 `node scripts/ops/db-port.mjs open`，用完立刻 `close`。重新打开后端口号可能变，以脚本打印的为准，同步改两个 `.env` 文件里的地址。
+
 **1 和 2 是同一个数据库**，区别只在账号权限：
 
 - `mockup_app`（1）：只有业务表的读写权限，Web 和 worker 用它
@@ -131,12 +133,14 @@ npm run catalog:restore -- /绝对路径/backup.json
 
 参见 [WPS 交付回归检查清单](../output/saas-plan-20260920/WPS交付回归检查清单.md)。摘要：
 
+0. 临时打开公网端口：`node scripts/ops/db-port.mjs open`（核对端口号与 `.env` 一致）
 1. 采集基线：`npx tsx scripts/migration-baseline.ts output/<日期>/before.json`
 2. 备份并保留：`npm run catalog:backup -- <绝对路径>`
 3. 执行迁移：`npm run catalog:migrate`
 4. 再次采集：`... after.json`
 5. **逐项比对** before / after：计数与四项内容指纹
 6. 不一致 → 立即回滚，不带伤上线
+7. 关闭公网端口：`node scripts/ops/db-port.mjs close`，无论第 6 步结果如何
 
 其中第 5 步的四项指纹里，`catalog` 这一项**必须完全相同**——
 019 只给 `garment_styles` 加列、不改数据，变了就说明迁移写错了。
