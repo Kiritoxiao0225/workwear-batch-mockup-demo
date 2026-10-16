@@ -1,7 +1,7 @@
 // 电商主图验收：上传、租户隔离、积分冻结/结算/退回、AI 整理素材、卖点上图、写画面、先出方图再出竖版、画板改图、换模特、加一套首图、店铺服务图、点图修改、学版式（模拟供应商）。不调用任何付费接口。
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
@@ -655,6 +655,21 @@ try {
   await call(0, 'projects/' + id, undefined, 404);
   assert.ok(!(await (await call(0, 'projects')).json()).some((p: { id: string }) => p.id === id));
   pass('删除：别人删不了，删除后列表和详情都看不到；退还空间，别的款还在用的文件照样计入');
+
+  // ---- 存储额度：用满后，新图在写进对象存储之前就被拒绝，不留下孤儿对象；已有的图重传不占空间 ----
+  const objects = async () => (await readdir(join(root, 'objects'), { recursive: true, withFileTypes: true })).filter(entry => entry.isFile()).length;
+  const full = randomUUID();
+  await call(1, 'projects', { id: full, name: '额度验收', layout: 'M3', counts: counts(3, 2, 1) });
+  const held = await image(300, 300, '#123456');
+  await upload(1, full, held, '额度/已有.jpg');
+  await db().query('UPDATE tenants SET storage_quota_bytes=(SELECT bytes_used FROM tenant_usage WHERE tenant_id=$1) WHERE id=$1', [tenants[1]]);
+  const objectsBefore = await objects();
+  await upload(1, full, await image(320, 320, '#654321'), '额度/新图.jpg', 413);
+  await call(1, `projects/${full}/refs`, await image(330, 330, '#abcdef'), 413, 'POST', { 'content-type': 'application/octet-stream', 'x-file-name': encodeURIComponent('参考.jpg') });
+  assert.equal(await objects(), objectsBefore, '被拒绝的上传没有写进对象存储');
+  await upload(1, full, held, '额度/已有-再传.jpg');
+  await db().query('UPDATE tenants SET storage_quota_bytes=10000000 WHERE id=$1', [tenants[1]]);
+  pass('额度：用满后新图和参考图都在写入存储前被拒（413），存储里不多出文件；已有的同一张图重传照常');
   console.log(`COMPLETE ${checks} checks; no external provider called`);
 } finally {
   await closeCatalogDatabase(); await database.stop().catch(() => {}); await rm(root, { recursive: true, force: true });

@@ -10,7 +10,8 @@ import sharp from 'sharp';
 import { z } from 'zod';
 import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './catalog-database';
 import { CatalogHttpError } from './catalog-auth';
-import { readCatalogFile, saveCatalogFile } from './catalog-files';
+import { readCatalogFile, saveCatalogFile, fileSha256 } from './catalog-files';
+import { assertStorageRoom } from './quota';
 import { registerFileRef } from './file-authorization';
 import { currentPrices, holdCredits, microToCents, priceOf, releaseHold, settleHold } from './credits';
 import { LEGACY_LAYOUTS } from '../listing/legacy-layouts';
@@ -83,6 +84,7 @@ export async function addLayoutRef(tenant: string, layoutId: string, bytes: Buff
   let meta: Awaited<ReturnType<ReturnType<typeof sharp>['metadata']>>;
   try { meta = await sharp(bytes, { failOn: 'error', limitInputPixels: 60_000_000 }).metadata(); } catch { throw new CatalogHttpError(400, `不是能读取的图片：${name}`); }
   if (!['jpeg', 'png', 'webp'].includes(meta.format ?? '')) throw new CatalogHttpError(400, `只支持 JPG、PNG、WebP：${name}`);
+  await assertStorageRoom(tenant, bytes.length, fileSha256(bytes));
   let n = -1;
   await saveCatalogFile(bytes, name.slice(0, 200), 'production', async (c, fileId) => {
     await c.query('SELECT id FROM tenants WHERE id=$1 AND NOT disabled FOR UPDATE', [tenant]);

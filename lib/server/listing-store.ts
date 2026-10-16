@@ -4,7 +4,8 @@ import { z } from 'zod';
 import sharp from 'sharp';
 import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './catalog-database';
 import { CatalogHttpError } from './catalog-auth';
-import { saveCatalogFile, readCatalogFile } from './catalog-files';
+import { saveCatalogFile, readCatalogFile, fileSha256 } from './catalog-files';
+import { assertStorageRoom } from './quota';
 import { registerFileRef } from './file-authorization';
 import { shapeOf } from '../listing/templates';
 import { countsSchema, type SubmittedDraft } from '../listing/draft-schema';
@@ -39,6 +40,7 @@ export async function addSourceImage(tenant: string, projectId: string, bytes: B
   const rotated = (meta.orientation ?? 1) >= 5;
   const width = (rotated ? meta.height : meta.width) ?? 0, height = (rotated ? meta.width : meta.height) ?? 0;
   const rel = relPath.replace(/\\/g, '/').replace(/^\/+/, '').slice(0, 400) || name;
+  await assertStorageRoom(tenant, bytes.length, fileSha256(bytes));
   let asset = '';
   await saveCatalogFile(bytes, name.slice(0, 200), 'production', async (c, fileId) => {
     // Locks the tenant row: serialises quota accounting and the per-project limit.
@@ -227,12 +229,17 @@ export async function addReference(tenant: string, projectId: string, bytes: Buf
     const out = await sharp(bytes, { failOn: 'error', limitInputPixels: 60_000_000 }).rotate().resize(1536, 1536, { fit: 'inside', withoutEnlargement: true }).png().toBuffer({ resolveWithObject: true });
     png = out.data; width = out.info.width; height = out.info.height;
   } catch { throw new CatalogHttpError(400, `不是能读取的图片：${name}`); }
+  await assertStorageRoom(tenant, png.length, fileSha256(png));
   let asset = '';
   await saveCatalogFile(png, `参考-${name.slice(0, 100)}.png`, 'production', async (c, fileId) => {
     await c.query('SELECT id FROM tenants WHERE id=$1 AND NOT disabled FOR UPDATE', [tenant]);
     if (!(await c.query('SELECT 1 FROM listing_projects WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL', [projectId, tenant])).rowCount) throw new CatalogHttpError(404, '商品不存在');
     const owned = await c.query('SELECT 1 FROM tenant_file_refs WHERE tenant_id=$1 AND file_id=$2 LIMIT 1', [tenant, fileId]);
-    if (!owned.rowCount) await c.query('UPDATE tenant_usage SET bytes_used=bytes_used+$2 WHERE tenant_id=$1', [tenant, png.length]);
+    if (!owned.rowCount) {
+      const updated = await c.query(`UPDATE tenant_usage u SET bytes_used=bytes_used+$2 FROM tenants t
+        WHERE u.tenant_id=$1 AND t.id=u.tenant_id AND u.bytes_used+u.bytes_reserved+$2<=t.storage_quota_bytes RETURNING u.tenant_id`, [tenant, png.length]);
+      if (!updated.rowCount) throw new CatalogHttpError(413, '存储空间不足');
+    }
     asset = randomUUID();
     await c.query(`INSERT INTO listing_assets(id,tenant_id,project_id,file_id,kind,name,rel_path,width,height) VALUES($1,$2,$3,$4,'ref',$5,$6,$7,$8)`,
       [asset, tenant, projectId, fileId, name.slice(0, 200), `参考/${asset}`, width, height]);

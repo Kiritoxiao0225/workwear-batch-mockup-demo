@@ -18,6 +18,7 @@ import { buildPlan, writeRequest } from './listing-write';
 import { colourSources, planViews, type PlanSource, type PlanView } from './listing-plan-views';
 import { assertListingProviderConfigured, callPlanModel, LISTING_PLAN_MODEL, listingPlanProvider, listingWorkerConcurrency, type PlanCall } from './listing-provider';
 import { addSourceImage, clearOldSources, sourceImages } from './listing-store';
+import { sweepExpiredReservations } from './quota';
 import sharp from 'sharp';
 import { executeImage, failBlocked, finishRun, holdRun, insertJobs, planJobs, runHold, type JobInput, type Upscale } from './listing-generation';
 import type { Tenant } from './tenant-scope';
@@ -422,7 +423,13 @@ export async function startListingWorker({ canAccept = () => true, concurrency =
         try {
           await sweep();
           // Old products' source images: checked hourly; an advisory lock keeps the workers apart.
-          if (Date.now() - clearedAt > 3600_000) { clearedAt = Date.now(); stage = '清理旧素材'; await clearOldSources().catch(error => console.error('[listing-worker] clear', error instanceof Error ? error.message : 'error')); }
+          // Expired quota reservations go back in the same hour; without it a crashed upload held
+          // its capacity for good.
+          if (Date.now() - clearedAt > 3600_000) {
+            clearedAt = Date.now(); stage = '清理旧素材';
+            await clearOldSources().catch(error => console.error('[listing-worker] clear', error instanceof Error ? error.message : 'error'));
+            await sweepExpiredReservations().catch(error => console.error('[listing-worker] quota sweep', error instanceof Error ? error.message : 'error'));
+          }
           while (live() && running.size < concurrency) {
             stage = '领任务';
             const next = await claim();

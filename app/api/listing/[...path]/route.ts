@@ -7,6 +7,7 @@ import { addReference, addSourceImage, chooseVersion, createProject, deleteProje
 import { addExtraImage, imagePrices, planPrice, requestPlan, submitDraft } from '@/lib/server/listing-jobs';
 import { addSet, downloadZip, editSlot, recast, redoSkus, redoSlot, redrawSlot, slotStates, startVerticals } from '@/lib/server/listing-generation';
 import { makeServices, saveShop, saveShopLogo, shopState } from '@/lib/server/listing-shop';
+import { limitUploads, LISTING_UPLOAD_WINDOWS } from '@/lib/server/upload-limit';
 import { addLayoutRef, createLayout, deleteLayout, layoutCards, layoutFile, layoutState, openLayouts, saveLayout, startLearning } from '@/lib/server/listing-layouts';
 
 export const dynamic = 'force-dynamic';
@@ -46,6 +47,9 @@ export async function POST(request: NextRequest, context: Context) {
   try {
     const { tenant, user } = await tenantScope(request, true), { path } = await context.params;
     await assertPageAccess(user.id, ['/listing-images']);
+    const upload = (path[0] === 'layouts' && path[1] && path[2] === 'refs') || (path[0] === 'shop' && path[1] === 'logo')
+      || (path[0] === 'projects' && path[1] && ['refs', 'extra', 'images'].includes(path[2]));
+    if (upload) await limitUploads(`upload:${tenant.id}`, LISTING_UPLOAD_WINDOWS);
     if (path[0] === 'layouts' && path[1] && path[2] === 'refs') {
       const bytes = await catalogBody(request, MAX_SOURCE_BYTES);
       return json(await addLayoutRef(tenant.id, path[1], bytes, header(request, 'x-file-name') || '参考图'));

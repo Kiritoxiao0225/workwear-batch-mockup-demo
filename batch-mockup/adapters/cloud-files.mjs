@@ -3,6 +3,7 @@ import { resolve, relative, sep } from 'node:path';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { catalogDatabase, catalogTransaction } from '../../lib/server/catalog-database.ts';
 import { saveCatalogFile, readCatalogFile } from '../../lib/server/catalog-files.ts';
+import { assertStorageRoom } from '../../lib/server/quota.ts';
 import { currentPrices, ceilingMicroCents, microToCents, holdCredits } from '../../lib/server/credits.ts';
 import { emptyWpsProductionState } from '../../lib/wps-production.ts';
 import { withFileStorage, hash, fail } from './a-files.mjs';
@@ -53,6 +54,9 @@ export async function cloudStorage(action, { workspace = workspaceId(), lease } 
       const key=keyFor(path);
       if(key.startsWith('public/')) {
         const sha=hash(bytes);
+        // Refused before the object store PUT when the workspace is already full; the transaction below still decides.
+        const owner=(await db.query('SELECT id FROM tenants WHERE workspace=$1 AND NOT disabled',[workspace])).rows[0];
+        if(owner)await assertStorageRoom(owner.id,bytes.length,sha,db);
         await saveCatalogFile(bytes,key.split('/').at(-1),'production',async(client,id)=>{
           const existing=(await client.query('SELECT sha256 FROM batch_assets WHERE workspace=$1 AND path=$2',[workspace,key])).rows[0];
           if(existing&&existing.sha256!==sha)throw fail('不可覆盖已有图片版本',409);

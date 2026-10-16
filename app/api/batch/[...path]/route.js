@@ -9,6 +9,7 @@ import { cloudStorage,CLOUD_ROOT,queueHealth,queueActivity } from '@/batch-mocku
 import { service } from '@/batch-mockup/runtime/service.mjs';
 import { enqueueWpsSync,readWpsSyncStatus } from '@/batch-mockup/runtime/sync-scheduler.mjs';
 import { assetResponse } from '@/batch-mockup/runtime/asset-response.mjs';
+import { limitUploads,CHUNK_WINDOWS } from '@/lib/server/upload-limit';
 export const dynamic='force-dynamic';
 export const runtime='nodejs';
 export const maxDuration=300;
@@ -51,6 +52,8 @@ async function handle(request,context){
   // Sync and adopt read and write the customer's real WPS table.
   if(write&&['api/wps/sync','api/wps/adopt'].includes(path)&&!internal&&process.env.WPS_WRITE_INTERNAL_ONLY!=='0')
    return NextResponse.json({error:'WPS 同步仅限内部账号'},{status:403,headers:{'Cache-Control':'no-store'}});
+  // Upload chunks are kept in batch_documents outside the storage quota; they are rate limited per workspace instead.
+  if(write&&['api/cases/image','api/supplements/chunk','api/production/edit/chunk'].includes(path))await limitUploads('upload-chunk:'+workspace,CHUNK_WINDOWS);
   const body=write?JSON.parse((await catalogBody(request,4*1024*1024)).toString('utf8')):Object.fromEntries(url.searchParams);
   const result=await cloudStorage(async adapter=>{if(!['api/mockups','api/mockups/prepare','api/garments','api/wps/sync'].includes(path))await adapter.preload();return service(CLOUD_ROOT,'/'+path,request.method,body,{enqueue:task=>adapter.enqueue(task),scheduleSync:()=>enqueueWpsSync(),workspace,wpsOnly});},{workspace});
   if(path==='api/requirements'){

@@ -8,6 +8,20 @@ export type QuotaRequest = { id: string; tenantId: string; bytes?: number; style
 const DEFAULT_TTL_SECONDS = 30 * 60;
 
 /**
+ * A look before bytes go to object storage. The transaction that records the file still makes the
+ * binding check; this stops an account already at its quota from pushing objects that are then
+ * refused and left behind, since nothing deletes them. A picture the tenant already holds costs no
+ * space and passes.
+ */
+export async function assertStorageRoom(tenantId: string, bytes: number, sha256: string, db: Client = catalogDatabase()) {
+  const { rows: [row] } = await db.query(`SELECT
+      EXISTS(SELECT 1 FROM files f JOIN tenant_file_refs r ON r.file_id=f.id WHERE r.tenant_id=$1 AND f.sha256=$3 AND f.status='ready') AS held,
+      EXISTS(SELECT 1 FROM tenant_usage u JOIN tenants t ON t.id=u.tenant_id
+              WHERE u.tenant_id=$1 AND u.bytes_used+u.bytes_reserved+$2<=t.storage_quota_bytes) AS room`, [tenantId, bytes, sha256]);
+  if (!row?.held && !row?.room) throw new CatalogHttpError(413, '存储空间不足');
+}
+
+/**
  * Reserve capacity before writing anything.
  *
  * Counting rows and then writing cannot hold a limit: two concurrent uploads both read the
