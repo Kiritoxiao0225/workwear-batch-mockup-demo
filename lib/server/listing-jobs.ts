@@ -8,7 +8,7 @@ import { catalogDatabase, catalogTransaction } from './catalog-database';
 import { CatalogHttpError } from './catalog-auth';
 import { readCatalogFile } from './catalog-files';
 import { currentPrices, holdCredits, microToCents, priceOf, releaseHold, settleHold } from './credits';
-import { draftImages, usableAsIs, usedSlots } from '../listing/draft';
+import { directKeys, draftImages, pickProblems, usedSlots } from '../listing/draft';
 import { draftSchema, type SubmittedDraft } from '../listing/draft-schema';
 import { skuPhotos } from '../listing/sku-card';
 import { skuPair } from '../listing/templates';
@@ -237,6 +237,8 @@ export async function submitDraft(tenant: Tenant, user: string, projectId: strin
     const unknown = [...draft.colors.map(x => x.pick), ...draft.parts.map(x => x.pick)].filter((x): x is string => !!x && !labels.has(x));
     if (unknown.length) throw new CatalogHttpError(400, `图片不存在：${unknown.join('、')}`);
     if (new Set(names).size !== names.length) throw new CatalogHttpError(400, '有两个颜色名一样');
+    const problem = pickProblems(draft.colors, m.sorted.images)[0];
+    if (problem) throw new CatalogHttpError(400, problem);
     if (!names.includes(draft.main)) throw new CatalogHttpError(400, '主推色不在颜色里');
     if (!draft.parts.find(x => x.part === '正面全身')?.pick) throw new CatalogHttpError(400, '缺正面全身图，补上后才能出图');
     const ids = new Set(draft.points.map(x => x.id));
@@ -246,10 +248,10 @@ export async function submitDraft(tenant: Tenant, user: string, projectId: strin
       if (s.colors.some(x => !names.includes(x))) throw new CatalogHttpError(400, `第 ${k + 1} 张的颜色不对`);
       if (s.cells.some(x => !ids.has(x.point))) throw new CatalogHttpError(400, `第 ${k + 1} 张有格子的卖点不存在`);
     }
-    if (draft.counts.long && !draft.long.title) throw new CatalogHttpError(400, '长图还没有字');
+    // With square images the long image is the cover laid out again, in the cover's words.
+    if (draft.counts.long && !draft.counts.square && !draft.long.title) throw new CatalogHttpError(400, '长图还没有字');
     if (draft.extra.some(e => !names.includes(e.color) || e.color === draft.main) || new Set(draft.extra.map(e => e.color)).size !== draft.extra.length) throw new CatalogHttpError(400, '加的那套首图颜色不对');
-    const sorted = new Map(m.sorted.images.map(i => [i.id, i]));
-    const direct = new Set(draft.colors.filter(x => usableAsIs(sorted.get(x.pick!))).map(x => x.pick!));
+    const direct = new Set(directKeys(draft.colors, m.sorted.images));
     // Round one is held now; 「出竖版」 holds round two.
     const photos = new Set(Object.keys(skuPhotos(draft, m.sorted.images, skuPair(layout))));
     const runId = await holdRun(c, tenant, projectId, draftImages(draft, layout, direct, photos).filter(i => i.round === 1), prices);
@@ -286,7 +288,10 @@ async function writeViews(projectId: string, m: Materials, draft: SubmittedDraft
   const fileOf = new Map(assets.map(a => [a.id, a.file_id]));
   const rows = new Map(m.images.filter(i => fileOf.has(i.assetId)).map(i => [i.label, fileOf.get(i.assetId)!]));
   const wanted = new Map<string, { text: string; side: number }>();
-  for (const c of draft.colors) wanted.set(c.pick!, { text: `【${c.pick}】颜色「${c.name}」的衣服图（这个颜色以它为准）`, side: 768 });
+  for (const c of draft.colors) {
+    const shared = draft.colors.filter(x => x.pick === c.pick).map(x => x.name);
+    wanted.set(c.pick!, { text: shared.length > 1 ? `【${c.pick}】合照，颜色「${shared.join('」「')}」的衣服都以它里面对应颜色的那件为准` : `【${c.pick}】颜色「${c.name}」的衣服图（这个颜色以它为准）`, side: 768 });
+  }
   for (const part of draft.parts) if (part.pick && !wanted.has(part.pick)) wanted.set(part.pick, { text: `【${part.pick}】结构参考：${part.part}`, side: 768 });
   // The pictures the points on the images came from: what a card demonstrates is drawn from them.
   const shown = new Set(usedSlots(draft, draft.counts.square).flatMap(i => draft.slots[i].cells.map(x => x.point)));
@@ -322,8 +327,7 @@ export async function executeWrite(job: JobRow, provider: Provider = (request, h
       receipt: async id => { await db().query('UPDATE listing_attempts SET provider_request_id=$2 WHERE id=$1', [attemptId, id]); },
     });
     await db().query(`UPDATE listing_attempts SET status='succeeded',receipt=$2,finished_at=now() WHERE id=$1`, [attemptId, { model: call.model, usage: call.usage, durationMs: call.durationMs }]);
-    const sorted = new Map(m.sorted.images.map(i => [i.id, i]));
-    const stored = buildPlan(call.content, { draft, images: m.images, direct: draft.colors.filter(c => usableAsIs(sorted.get(c.pick!))).map(c => c.pick!), photos: skuPhotos(draft, m.sorted.images, skuPair(layout)), model: call.model });
+    const stored = buildPlan(call.content, { draft, images: m.images, direct: directKeys(draft.colors, m.sorted.images), photos: skuPhotos(draft, m.sorted.images, skuPair(layout)), sorted: m.sorted.images, model: call.model });
     const jobs = planJobs(stored, layout, 1);
     await catalogTransaction(async c => {
       const hold = (await c.query('SELECT state FROM credit_holds WHERE id=$1 AND tenant_id=$2 FOR UPDATE', [runHold(draft.runId), job.tenant_id])).rows[0];

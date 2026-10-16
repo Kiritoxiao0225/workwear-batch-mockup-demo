@@ -3,7 +3,8 @@
  * they say and which picture each colour gets. The words come only from the material: a row it has
  * nothing for gives way to the next one, so nothing is made up.
  */
-import type { Point } from './draft';
+import { colorKeys, type Point } from './draft';
+import { isComponent } from './garment-role';
 
 export type SkuIcon = 'style' | 'fabric' | 'color' | 'water' | 'breathe' | 'wear' | 'wind' | 'warm' | 'light' | 'zip' | 'scene' | 'dot';
 export type SkuRow = { label: string; value: string; sub: string; icon: SkuIcon };
@@ -62,16 +63,17 @@ export function skuCardText(input: { name: string; category: string; points: Pic
  * (`pair`), else one person (the lead's gender before the other); a clear face counts. None: the
  * cast's models are drawn in that colour (lib/server/listing-generation.ts).
  */
-export function modelPhotoFor(images: { id: string; kind: string; color: string; same?: string; person?: string; face?: boolean }[], pick: string, name: string, lead?: '男' | '女', pair = false) {
+export function modelPhotoFor(images: { id: string; kind: string; color: string; same?: string; person?: string; face?: boolean; role?: string; detail?: string }[], pick: string, name: string, lead?: '男' | '女', pair = false) {
   const color = images.find(i => i.id === pick)?.color || name;
   const single = (p?: string) => p === '男' || p === '女';
   const rank = (i: (typeof images)[number]) => (pair
     ? (i.person === '男女' ? 4 : i.person === '多人' ? 2 : 1)
     : (i.person === lead ? 4 : single(i.person) ? 2 : 1)) + (i.face ? 1 : 0);
-  return images.filter(i => i.kind === '模特实拍' && !!i.person && !i.same && (i.color === color || i.color === name)).sort((a, b) => rank(b) - rank(a))[0]?.id ?? null;
+  return images.filter(i => i.kind === '模特实拍' && !!i.person && !i.same && !isComponent(i) && (i.color === color || i.color === name)).sort((a, b) => rank(b) - rank(a))[0]?.id ?? null;
 }
 
-/** Each colour's own model photo, by the colour's image label; colours without one are left out. */
+/** Each colour's own model photo, by the colour's key (colorKeys); colours without one are left out. */
 export function skuPhotos(d: { colors: { name: string; pick: string | null }[]; model: { lead: '男' | '女' } }, images: Parameters<typeof modelPhotoFor>[0], pair: boolean): Record<string, string> {
-  return Object.fromEntries(d.colors.flatMap(c => { const label = c.pick ? modelPhotoFor(images, c.pick, c.name, d.model.lead, pair) : null; return label ? [[c.pick!, label]] : []; }));
+  const keys = colorKeys(d.colors);
+  return Object.fromEntries(d.colors.flatMap((c, k) => { const label = c.pick ? modelPhotoFor(images, c.pick, c.name, d.model.lead, pair) : null; return label ? [[keys[k]!, label]] : []; }));
 }

@@ -43,3 +43,10 @@ describe('modelPhotoFor', () => {
     expect(modelPhotoFor([shot('M1', '黑色'), shot('M2', '黑色', '')], 'M1', '黑色')).toBeNull();
   });
 });
+
+describe('modelPhotoFor and liners', () => {
+  it('a model photo of the liner alone is not the colour\'s model photo', () => {
+    const images = [{ id: 'M4', kind: '静物', color: '黑色' }, { id: 'M75', kind: '模特实拍', color: '黑色', person: '男', face: true, role: '内胆' }, { id: 'M80', kind: '模特实拍', color: '黑色', person: '男' }];
+    expect(modelPhotoFor(images, 'M4', '黑色', '男')).toBe('M80');
+  });
+});

@@ -12,10 +12,11 @@ import type { LayoutCard, Materials, Source } from "@/lib/listing/api-types";
 import { assetUrl } from "@/lib/listing/client-api";
 import { CATEGORIES, categoryById, GROUP_HINT, GROUP_LABEL, TASK_HINT, TASK_LABEL } from "@/lib/listing/category";
 import {
-  checkDraft, CLOSER_MAX, colorize, defaultDraft, draftImages, FRONT, LIMITS, notesOf, placesFor, priceLines, proofsFor, renamePoint, replan, showsGarment, structureHint, sumCredits, syncCloser,
-  templateFor, takeOff, putOn, usableAsIs, usageOf, usedSlots, fitProof, fillParts, fillModel, modelPhotos, castFromPhotos, GENDERS, missingParts, partOf, wantsCast, hasPart, noPhotoProof,
+  checkDraft, CLOSER_MAX, colorize, colorKeys, defaultDraft, directKeys, draftImages, FRONT, LIMITS, notesOf, placesFor, priceLines, proofsFor, renamePoint, replan, showsGarment, structureHint, sumCredits, syncCloser,
+  templateFor, takeOff, putOn, usageOf, usedSlots, fitProof, fillParts, fillModel, modelPhotos, castFromPhotos, GENDERS, missingParts, partOf, wantsCast, hasPart, noPhotoProof,
   type Counts, type Draft, type Point, type PriceLine, type Slot,
 } from "@/lib/listing/draft";
+import { isComponent, isGroup } from "@/lib/listing/garment-role";
 import { proofById } from "@/lib/listing/proofs";
 import { auditDraft, type AuditFix } from "@/lib/listing/audit";
 import { skuPhotos } from "@/lib/listing/sku-card";
@@ -104,8 +105,7 @@ function recolor(d: Draft, layout: Layout): Draft {
 
 /** The two rounds' images and credits: round one at 「开始出图」, round two at 「出竖版」. */
 export function draftPrice(d: Draft, m: Materials, layout: Layout, prices: Prices) {
-  const sorted = new Map(m.sorted.images.map(i => [i.id, i]));
-  const direct = new Set(live(d).filter(c => usableAsIs(sorted.get(c.pick!))).map(c => c.pick!));
+  const direct = new Set(directKeys(d.colors, m.sorted.images));
   const items = draftImages(d, layout, direct, photosOf(d, m, layout));
   const round = (r: 1 | 2) => { const lines = priceLines(items.filter(i => i.round === r), prices.image, prices.multi); return { lines, images: lines.reduce((n, l) => n + l.count, 0), credits: sumCredits(lines) }; };
   return { now: round(1), later: round(2) };
@@ -152,16 +152,16 @@ export function PlanDialog({ name, materials, sources, draft, layouts, prices, o
   const byLabel = new Map(materials.images.map(i => [i.label, { label: i.label, url: assetUrl(i.assetId), path: sources.find(s => s.id === i.assetId)?.path ?? i.label }]));
   const copies = [...materials.duplicates.map(([copy, keep]) => ({ copy, keep })), ...materials.sorted.images.filter(i => i.same).map(i => ({ copy: i.id, keep: i.same }))];
   const library = [...byLabel.values()].filter(i => !copies.some(c => c.copy === i.label));
-  const check = checkDraft(draft, layout), cost = draftPrice(draft, materials, layout, prices), ok = live(draft);
+  const check = checkDraft(draft, layout, materials.sorted.images), cost = draftPrice(draft, materials, layout, prices), ok = live(draft);
   const used = usedSlots(draft, draft.counts.square), usage = usageOf(draft), hint = structureHint(draft, layout);
   const pointOf = (id: string | null | undefined) => draft.points.find(p => p.id === id);
   const on = draft.points.filter(p => p.on && p.type !== "定位");
   const set = (patch: Partial<Draft>) => onChange({ ...draft, ...patch });
-  const kindOf = (label: string | null) => (label && sorted.get(label)?.kind) || "补传";
+  const kindOf = (label: string | null) => (label && (isComponent(sorted.get(label)) ? sorted.get(label)?.role || "内胆" : isGroup(sorted.get(label)) ? "合照" : sorted.get(label)?.kind)) || "补传";
   const candidates = (t: NonNullable<Target>) => {
     if (t.kind === "color") {
       const c = draft.colors[t.index], chosen = materials.chosen.colors.find(x => x.name === c.name)?.candidates ?? [];
-      return library.filter(i => chosen.includes(i.label) || sorted.get(i.label)?.color === c.name);
+      return library.filter(i => !isComponent(sorted.get(i.label)) && (chosen.includes(i.label) || sorted.get(i.label)?.color === c.name));
     }
     if (t.kind === "model") {
       const known = materials.sorted.images.some(i => i.person !== undefined), fit = known ? modelPhotos(materials.sorted.images, GENDERS[t.index]) : materials.sorted.images.filter(i => i.kind === "模特实拍" && !i.same);
@@ -255,7 +255,7 @@ export function PlanDialog({ name, materials, sources, draft, layouts, prices, o
 
   /* ② 版式、模特、张数 */
   const photos = photosOf(draft, materials, layout), cast = wantsCast(draft, layout, photos);
-  const skuDrawn = layout.sku.specCard ? live(draft).filter(c => !photos.has(c.pick!)).length : 0;
+  const skuDrawn = layout.sku.specCard ? colorKeys(draft.colors).filter(k => k && !photos.has(k)).length : 0;
   const modelShots = materials.sorted.images.filter(i => i.kind === "模特实拍" && !i.same).length;
   /** Draw the cast from the material: the clearest man and woman picked, or none yet. */
   const pickModelPhotos = () => {

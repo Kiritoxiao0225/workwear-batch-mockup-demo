@@ -8,9 +8,11 @@
  */
 import { z } from 'zod';
 import { CATEGORIES, TASKS, type Category } from '../listing/category';
+import { GARMENT_ROLES, isComponent, isGroup, type GarmentRole } from '../listing/garment-role';
 import { PROOFS } from '../listing/proofs';
 import { MASTER_INFO, PLACE_IDS, PLACES, SELLS, type PlaceId, type Sell } from '../listing/scene';
 import { BUILT_IN_LAYOUTS } from '../listing/templates';
+import { modelJson } from './listing-json';
 import type { PlanView } from './listing-plan-views';
 
 export const MATERIAL_KINDS = ['颜色款图', '静物', '3D渲染', '模特实拍', '细节特写', '卖点图', '详情页', '海报', '尺码表', '无关'] as const;
@@ -24,6 +26,8 @@ const ROLE = '你是淘宝服装店的素材整理员。';
 /** Every image's rules: kind, colour, front, part, words, LOGO, people, face, copies. */
 const IMAGE_RULES = `每张图（images，一张不漏，按编号）：
 - kind：颜色款图（用来区分颜色款的图，通常一个颜色一张、带颜色名）/ 静物（平铺、挂拍、人台、白底产品图）/ 3D渲染 / 模特实拍（没有加文字的模特照片）/ 细节特写（局部近拍）/ 卖点图（做好的主图或营销图，上面有卖点文字）/ 详情页（详情页切片，长图或图文排版）/ 海报 / 尺码表 / 无关（二维码、聊天截图、价格说明、空白图、别的商品等）。
+- role：画面里衣服的角色：主体（这款卖的衣服本身，穿着或挂拍时露出内胆也算主体）/ 内胆（单独拍的抓绒、摇粒绒、棉内胆等可拆内胆）/ 配件（单独拍的帽子、袖套等可拆配件）/ 组合（外套和内胆拆开并排摆）/ 不确定。单独拍的内胆再干净、再正面完整也写内胆，不能当外套。
+- colorsSeen：画面里清楚看到的每一件主体衣服的颜色名（多人合照逐件列，同色只列一次）；名字照抄颜色清单的写法，清单里没有的按看到的起常见名；内胆、内搭、裤子的颜色不算；没有主体衣服留空数组。
 - color：画面里这件衣服的颜色名，和 colors 里的名字一致；图上写了颜色名就一字不改地照抄，没写就按你看到的起一个常见颜色名；一张图里有多种颜色或看不出时留空。
 - front：衣服是否完整、正面朝前地出现（领口到下摆都在画面里，没被手、包、文字挡住主体）。没人穿的图（静物、3D渲染、颜色款图）还要衣服合拢、门襟拉链拉上：敞开的、露出内胆或里布的、翻过来的、斜挂着的都写 false。
 - detail：如果是局部特写，拍的是这件衣服的哪个部位，用这件衣服实际有的东西来叫，2–6 个字（如 连帽、帽檐调节、立领、门襟拉链、袖口、下摆抽绳、口袋、腋下透气拉链、内胆、面料、背面）；看清楚再叫，帽子就写帽子相关的名字，不要叫成领口。同一个部位在不同图里用同一个叫法。不是特写留空。整件衣服的背面照片 detail 也写“背面”。
@@ -35,7 +39,7 @@ const IMAGE_RULES = `每张图（images，一张不漏，按编号）：
 - same：如果这张和另一张是同一张照片（裁剪、缩放、调色、加字前后的版本），写那一张的编号，否则留空。`;
 /** The whole product's rules: colours, points, category, checks, titles, master. */
 const WHOLE_RULES = `整款：
-- colors：这款衣服的全部颜色。名字严格照抄颜色图、色卡、详情页上写的颜色名，一个字都不改（带品牌词的如“爱马仕橙”也照抄，不要换说法、不要自己起更好听的名字）；素材上完全没写颜色名的，才按你看到的颜色起一个常见名；hex 是你看到的颜色；from 写能看到这个颜色衣服的图的编号（最多 5 个）。色卡或文字里提到、但素材里没有这个颜色衣服图的，也要列出来，from 留空。同一个颜色在不同地方写法不一样（字的顺序不同，如“黑拼白”和“黑白拼”；或多一个“色”字），算一个颜色，只列一次，名字用颜色图或色卡上的写法。
+- colors：这款衣服的全部颜色，每张图 colorsSeen 里的颜色都要算上（只在多人合照里出现的颜色也是这款的颜色）；单独拍的内胆、配件的颜色不算。名字严格照抄颜色图、色卡、详情页上写的颜色名，一个字都不改（带品牌词的如“爱马仕橙”也照抄，不要换说法、不要自己起更好听的名字）；素材上完全没写颜色名的，才按你看到的颜色起一个常见名；hex 是你看到的颜色；from 写能看到这个颜色衣服的图的编号（最多 5 个）。色卡或文字里提到、但素材里没有这个颜色衣服图的，也要列出来，from 留空。同一个颜色在不同地方写法不一样（字的顺序不同，如“黑拼白”和“黑白拼”；或多一个“色”字），算一个颜色，只列一次，名字用颜色图或色卡上的写法。
 - points：卖点，只能来自图上的文字或清楚可见的演示（如水珠滚落），不要编造；text 只做提炼：用素材原文里的字和说法（品牌名、型号、数字都照原样保留），不改写、不换说法、不美化；原文超过 16 个字时只截取其中最关键的连续部分；note 是素材里专门解释这条卖点本身的说明，同样只提炼原文（如卖点“防水三级以上”配“防水指数三级以上 雨天外出更安心”），不超过 16 个字，不带句末标点。讲的是另一个部位、另一个功能或另一种材料的字，哪怕排在旁边也不能用（比如卖点“防风保暖”旁边写着“帽围自由调节”，那是在讲帽子；卖点是衣身成分，旁边写的是包边条成分），这时 note 留空；type 是 定位/功能/面料/做工/实用/颜色款式/人群场景/服务定制 之一；from 写出处编号。最多 16 条，按重要性从高到低排，排第一、第二的会放上首图。重要性看两点：① 商家有多强调——在素材里反复出现、放在显眼位置（大标题、首屏）讲的更重要；② 买家有多在乎——买这类衣服的人做决定时最先看的更重要。why 用一句话（不超过 30 个字）说明排在这里的理由，如“主图和详情页 5 处都在讲，冲锋衣买家最先看防水”。
 - 每条卖点还要写：concept（它属于下面"卖点类别"里的哪一类，写类别编号；哪一类都不是就写 null）；proof（这条卖点在图上怎么证明，从下面"画法"里选一个编号；做工、实用类讲的是衣服某个部位的，选 part）；part（选了 part 或讲的是某个部位时，写部位名，用 images 里 detail 的叫法，如“袖口”）。
 - notes：你发现的问题，比如“色卡里有藏青，但没有藏青的衣服图”“没有背面图”，没有就空数组。
@@ -45,7 +49,7 @@ const WHOLE_RULES = `整款：
 - checks：下面"卖点类别"里属于衣服功能的每一类（不含服务类），看这件衣服的图判断它像不像有：seen 写 有 / 看不出 / 不像；why 一句话依据（不超过 30 个字），如“单层薄款，没看到内胆或加绒”。素材里已经讲到的类别也要判断。
 - titles：给每类主图各写 2–3 句候选大标题（4–10 个字，概括这类图要讲的，口语、有力，如“细节经得起看”“三防面料 雨天不怕”），类别：${TASKS.filter(t => t !== '收口').join('、')}。只能根据素材里有的卖点写，不编造参数和承诺。
 - look：这款用哪套母版、首图在哪儿拍、首图主打哪个卖点。先看素材里有没有写给谁穿、什么行业（如 4S 店、物业、工地、餐饮、团建），写了就照着选；没写就看衣服本身：颜色深浅、功能卖点多不多、偏商务还是偏户外。master：从下面"母版"里选一个编号；M4 只在素材讲男女同款、情侣或年轻团队时选；M5 是给不想用模特、想省积分的店铺自己换的，不要选；素材里没有模特图不要紧，出图时模特是另画的。place：首图地点编号，只有首图是实景的母版才写，不能选这套母版不能拍的地点，否则留空。sell：首图主打的卖点，从下面"首图卖点"里选一个，要是 points 里讲到的、并且在这个地点演得出来的（看地点后面列的）；都不沾留空。why：一句话理由（不超过 40 个字），如“三防卖点多、深色款，选暗黑科技；素材写了物业保安，在小区门口拍”。`;
-const IMAGE_SHAPE = '{ "id": "M1", "kind": "", "color": "", "front": false, "detail": "", "parts": [], "text": false, "logo": false, "person": "", "face": false, "same": "" }';
+const IMAGE_SHAPE = '{ "id": "M1", "kind": "", "role": "", "colorsSeen": [], "color": "", "front": false, "detail": "", "parts": [], "text": false, "logo": false, "person": "", "face": false, "same": "" }';
 const WHOLE_SHAPE = `"colors": [{ "name": "", "hex": "", "from": ["M1"] }],
   "points": [{ "type": "", "text": "", "note": "", "from": ["M1"], "why": "", "concept": null, "proof": "", "part": "" }],
   "notes": [""], "category": "", "categoryWhy": "", "checks": [{ "concept": "", "seen": "", "why": "" }], "titles": { "功能": [""] },
@@ -100,8 +104,7 @@ export function coloursRequest(input: { views: PlanView[]; paths: string[]; mode
 }
 /** The colour list, one entry per colour however it was written. */
 export function parseColours(content: string): { name: string; hex: string }[] {
-  let raw: unknown;
-  try { raw = JSON.parse(content); } catch { throw new Error('颜色清单不是完整的 JSON'); }
+  const raw = modelJson(content, '颜色清单不是完整的 JSON');
   const parsed = coloursSchema.safeParse(raw);
   if (!parsed.success) throw new Error('颜色清单缺少颜色');
   return parsed.data.colors.filter((c, i, all) => all.findIndex(o => colorKey(o.name) === colorKey(c.name)) === i);
@@ -166,6 +169,7 @@ const imageSchema = z.object({
   id: z.string(), kind: z.enum(MATERIAL_KINDS).catch('无关'), color: z.string().default(''), front: z.boolean().default(false),
   detail: z.string().trim().max(12).catch(''), parts: z.array(z.string().trim().max(12)).max(8).catch([]).default([]), text: z.boolean().default(false), logo: z.boolean().default(false), same: z.string().default(''),
   person: z.enum(['', '男', '女', '男女', '多人']).catch('').default(''), face: z.boolean().catch(false).default(false),
+  role: z.enum(GARMENT_ROLES).optional().catch(undefined), colorsSeen: z.array(z.string().trim().min(1).max(12)).max(12).optional().catch(undefined),
 });
 const organizeSchema = z.object({
   images: z.array(imageSchema),
@@ -182,8 +186,8 @@ const organizeSchema = z.object({
 /** The AI's pick of the master, where the cover is shot and the point it acts out; empty parts fall back to the plan's rules. */
 export type Look = { master: string; place?: PlaceId; sell?: Sell; why: string };
 export type Organized = Omit<z.infer<typeof organizeSchema>, 'look' | 'images'> & { look: Look | null; images: SortedImage[] };
-/** `parts` is missing on material sorted before 10-13. */
-export type SortedImage = Omit<z.infer<typeof imageSchema>, 'parts'> & { parts?: string[] };
+/** `parts` is missing on material sorted before 10-13; `role` and `colorsSeen` before 10-16. */
+export type SortedImage = Omit<z.infer<typeof imageSchema>, 'parts' | 'role' | 'colorsSeen'> & { parts?: string[]; role?: GarmentRole; colorsSeen?: string[] };
 
 /** A colour name's characters, in any order, without 色: 「黑白拼」 and 「黑拼白」 are the same colour. */
 const colorKey = (name: string) => [...name.replace(/[色\s]/gu, '')].sort().join('');
@@ -195,9 +199,25 @@ const colorKey = (name: string) => [...name.replace(/[色\s]/gu, '')].sort().joi
 export function mergeSameColors<C extends { name: string; from: string[] }>(colors: C[]): C[] {
   return colors.filter(c => c.from.length || !colors.some(o => o !== c && o.from.length && colorKey(o.name) === colorKey(c.name)));
 }
+/**
+ * Colours seen on a garment image that the colour list does not have (10-15: 白色 and 军绿 worn
+ * only on a group photo were left out, and the set went out with four colours of six): a note for
+ * the user, not a colour added on the model's word.
+ */
+export function unlistedColors(images: SortedImage[], names: string[]): string[] {
+  const listed = (name: string) => {
+    const core = (x: string) => x.replace(/[色\s]/gu, ''), own = core(name);
+    return !own || names.some(n => colorKey(n) === colorKey(name) || n.includes(own) || (!!core(n) && own.includes(core(n))));
+  };
+  const seen = new Map<string, string[]>();
+  for (const i of images) {
+    if (i.same || i.kind === '无关' || isComponent(i)) continue;
+    for (const c of i.colorsSeen ?? []) if (!listed(c)) seen.set(c, [...(seen.get(c) ?? []), i.id]);
+  }
+  return [...seen].map(([c, ids]) => `${ids.slice(0, 3).join('、')} 里还有「${c}」的衣服，颜色清单里没有：核对一下是不是漏了这个颜色`);
+}
 export function parseOrganized(content: string, ids: string[]): Organized {
-  let raw: unknown;
-  try { raw = JSON.parse(content); } catch { throw new Error('整理结果不是完整的 JSON'); }
+  const raw = modelJson(content, '整理结果不是完整的 JSON');
   const parsed = organizeSchema.safeParse(raw);
   if (!parsed.success) throw new Error(`整理结果缺少必要内容（${[...new Set(parsed.error.issues.map(i => String(i.path[0] ?? '结构')))].join('、')}）`);
   const known = new Set(ids), data = parsed.data;
@@ -207,6 +227,7 @@ export function parseOrganized(content: string, ids: string[]): Organized {
   data.images = settleCopies(data.images);
   for (const c of data.colors) c.from = c.from.filter(id => known.has(id));
   data.colors = mergeSameColors(data.colors);
+  data.notes = [...data.notes, ...unlistedColors(data.images, data.colors.map(c => c.name))];
   for (const p of data.points) p.from = p.from.filter(id => known.has(id));
   // Only kinds, ways of drawing and categories that exist.
   const category = CATEGORIES.find(c => c.id === data.category) ?? CATEGORIES[CATEGORIES.length - 1];
@@ -225,8 +246,7 @@ const readSchema = organizeSchema.omit({ images: true }).extend({ recolor: z.rec
 const unsorted = (id: string): SortedImage => ({ id, kind: '无关', color: '', front: false, detail: '', parts: [], text: false, logo: false, same: '', person: '', face: false });
 /** One batch's images; one the model skipped is kept as unsorted rather than lost. */
 export function parseSorted(content: string, ids: string[]): SortedImage[] {
-  let raw: unknown;
-  try { raw = JSON.parse(content); } catch { throw new Error('整理结果不是完整的 JSON'); }
+  const raw = modelJson(content, '整理结果不是完整的 JSON');
   const parsed = sortedSchema.safeParse(raw);
   if (!parsed.success) throw new Error('整理结果缺少每张图的分类');
   const known = new Set(ids), images = parsed.data.images.filter(i => known.has(i.id));
@@ -257,8 +277,7 @@ export function settleCopies<I extends SortedImage>(images: I[]): I[] {
 const copyRank = (i: SortedImage) => (colourRank[i.kind] ?? 0) * 2 + (i.text ? 0 : 1);
 /** The sorted images and the whole product's reading, put together as the one-call analysis gave them. */
 export function parseRead(content: string, images: SortedImage[]): Organized {
-  let raw: unknown;
-  try { raw = JSON.parse(content); } catch { throw new Error('整理结果不是完整的 JSON'); }
+  const raw = modelJson(content, '整理结果不是完整的 JSON');
   const parsed = readSchema.safeParse(raw);
   if (!parsed.success) throw new Error(`整理结果缺少必要内容（${[...new Set(parsed.error.issues.map(i => String(i.path[0] ?? '结构')))].join('、')}）`);
   const { recolor, ...data } = parsed.data;
@@ -304,12 +323,15 @@ export function chooseMaterials(sorted: Pick<Organized, 'images' | 'colors'>, si
   const usable = sorted.images.filter(i => !i.same && i.kind !== '无关' && i.kind !== '尺码表');
   const best = (list: SortedImage[], rank: (i: SortedImage) => number) => [...list].sort((a, b) => rank(b) - rank(a) || (px.get(b.id) ?? 0) - (px.get(a.id) ?? 0))[0]?.id ?? null;
   const colors = sorted.colors.map(c => {
-    const candidates = usable.filter(i => colorKey(i.color) === colorKey(c.name) || c.from.includes(i.id)).filter(i => i.front && colourRank[i.kind]);
-    return { name: c.name, hex: c.hex, pick: best(candidates, i => (colourRank[i.kind] ?? 0) * 2 + (i.logo ? 0 : 1)), candidates: candidates.map(i => i.id) };
+    const own = usable.filter(i => !isComponent(i) && colourRank[i.kind] && (colorKey(i.color) === colorKey(c.name) || c.from.includes(i.id)));
+    // With no whole front view, the garment itself open on a hanger (10-15: each 3-in-1 jacket showed its
+    // liner; the liner alone was the only front view) is drawn closed rather than the colour left without one.
+    const fronts = own.filter(i => i.front), candidates = fronts.length ? fronts : own.filter(i => i.role === '主体');
+    return { name: c.name, hex: c.hex, pick: best(candidates, i => (colourRank[i.kind] ?? 0) * 2 + (i.logo ? 0 : 1) - (isGroup(i) ? 3 : 0)), candidates: candidates.map(i => i.id) };
   });
   // A full front view shows one garment: an image with one colour, ideally a colour's own pick.
   const picked = new Set(colors.map(c => c.pick));
-  const fronts = usable.filter(i => i.front && i.color && colourRank[i.kind]);
+  const fronts = usable.filter(i => !isComponent(i) && i.front && i.color && colourRank[i.kind]);
   const front = { part: FRONT, pick: best(fronts, i => (picked.has(i.id) ? 10 : 0) + (colourRank[i.kind] ?? 0)), candidates: fronts.map(i => i.id) };
   const named = new Map<string, SortedImage[]>();
   // A part counts from an image sorted as it, and from a detail page that shows it among others (`parts`).

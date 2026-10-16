@@ -10,6 +10,7 @@
  * - which colour each image shows, who models, and what the two rounds of images cost.
  */
 import { BUILDS, categoryById, groupOf, evidenceOf, type Category, type PointGroup, type PointType, type Task } from './category';
+import { isComponent, isGroup } from './garment-role';
 import { proofById, type Proof } from './proofs';
 import { MASTER_INFO, SELLS, sellOf } from './scene';
 import { capacity, fitTemplate, mostCells, needsCast, type Layout, type Ratio, type Template } from './templates';
@@ -104,6 +105,12 @@ function fabricWords(fabric: Point[], room: number): string[] {
   return [pill.text, ...facts].slice(0, room);
 }
 /** Does a heading speak of this point (two characters in a row in common)? */
+/** The garment part a heading names, if any, as the word its card's point says it with (立领 → 领). */
+export function partNamed(text: string) {
+  const m = /帽|领口|立领|翻领|衣领|袖|口袋|拉链|门襟|下摆|压胶|胶条|肩部|腋下|抽绳|魔术贴|反光条/.exec(text)?.[0];
+  const short: Record<string, string> = { 领口: '领', 立领: '领', 翻领: '领', 衣领: '领', 压胶: '胶', 胶条: '胶', 肩部: '肩', 腋下: '腋', 反光条: '反光' };
+  return m && (short[m] ?? m);
+}
 const about = (heading: string, text: string) => [...text].some((_, i) => i < text.length - 1 && heading.includes(text.slice(i, i + 2)));
 export const isList = (text: string) => text.split(/[、，,/／]/).filter(t => t.trim()).length >= 3;
 const rank = (points: Point[]) => [...points].sort((a, b) => b.score - a.score);
@@ -214,10 +221,13 @@ export function planSlots(points: Point[], category: Category, layout: Layout, c
   const seen = new Map<Task, number>();
   // The AI's headings for the kind of image, in turn; never the cover's own words again. A feature
   // image's heading says its lead point (the line under it is that point's note), else it is the point.
+  // A close-up image's heading names no part, or its lead's, the first card: one headed 「帽围自由调节」
+  // had a pocket as its big picture (10-15).
   const heading = (task: Task, fallback: string) => {
     const k = seen.get(task) ?? 0, fresh = (titles[task] ?? []).filter(t => !cover || (t !== cover.text && !t.includes(cover.text)));
     seen.set(task, k + 1);
-    return (task === '功能' ? fresh.filter(t => about(t, fallback)) : fresh)[task === '功能' ? 0 : k] ?? fallback;
+    const pool = task === '功能' ? fresh.filter(t => about(t, fallback)) : task === '细节' ? fresh.filter(t => about(t, fallback) || !partNamed(t)) : fresh;
+    return pool[task === '功能' ? 0 : k] ?? fallback;
   };
   const middle: Slot[] = tasks.includes('服务') ? [{ task: '服务', lead: null, title: '店铺服务图', sub: '', tags: [], cells: [], act: null, colors: [], shopService: 'shop', score: 0.5 }] : [];
   while (middle.length < MIDDLE) {
@@ -385,8 +395,15 @@ export function staleMentions(slot: Pick<Slot, 'title' | 'sub' | 'tags'>, gone: 
 }
 
 /** The garment part a close-up cell needs a picture of ("袖口" for 贴腕袖口). */
-export const partOf = (p: { part?: string; text: string }) => p.part || p.text;
-export const hasPart = (d: Pick<Draft, 'parts'>, part: string) => d.parts.some(x => x.pick && (x.part === part || part.includes(x.part) || x.part.includes(part)));
+/**
+ * The part a point's close-up shows. Taped seams are taped on the inside: a photo of the outer
+ * stitching is not one of them (10-15: 「接缝全压胶」 drawn from an outer seam), so the claim wants a
+ * photo of the tape itself.
+ */
+export const partOf = (p: { part?: string; text: string }) => /压胶/.test(p.text + (p.part ?? '')) && !/压胶|胶条/.test(p.part ?? '') ? '压胶条' : p.part || p.text;
+/** The structure image of a part (its label), if the plan has one. */
+export const partPick = (d: Pick<Draft, 'parts'>, part: string) => d.parts.find(x => x.pick && (x.part === part || part.includes(x.part) || x.part.includes(part)))?.pick ?? null;
+export const hasPart = (d: Pick<Draft, 'parts'>, part: string) => !!partPick(d, part);
 /** A sorted image, as far as finding a part on it goes. */
 export type PartSource = { id: string; detail: string; same?: string; kind?: string; parts?: string[] };
 const CLOSE_KINDS = ['细节特写', '卖点图', '详情页'];
@@ -540,13 +557,59 @@ export function notesOf(d: Draft, i: number, layout: Layout): string[] {
     if (!p || !proof) continue;
     if (proof.person && !t.people) notes.push(`「${p.text}」的画法要有人，这张图没有人：换个画法`);
   }
+  // A heading that names a part needs a card of it (generating puts that card first: leadCard).
+  const named = s.task !== '首图' && s.cells.length ? partNamed(s.title) : undefined;
+  if (named && leadCard(d, s.title, s.cells) < 0 && !(s.act && pointNames(d, s.lead, named)))
+    notes.push(`大标题讲「${named}」，格子里没有讲「${named}」的：改标题，或换个讲「${named}」的卖点`);
   return notes;
 }
+const pointNames = (d: Pick<Draft, 'points'>, id: string | null | undefined, part: string) => { const p = d.points.find(x => x.id === id); return !!p && (p.text + p.part).includes(part); };
+/**
+ * The card a heading naming a part speaks of: generating draws it first, the biggest picture (10-15:
+ * 「袖口大小随意调」 over a collar). -1: the heading names no part, or no card shows it.
+ */
+export function leadCard(d: Pick<Draft, 'points'>, title: string, cells: { point: string | null }[]) {
+  const named = partNamed(title);
+  return named ? cells.findIndex(c => pointNames(d, c.point, named)) : -1;
+}
 
-/** Red: generating is refused until fixed. Yellow: the images (by number) worth a second look. */
-export function checkDraft(d: Draft, layout: Layout) {
+/**
+ * Each colour's key for its own images (product:, skumodel:, sku:): the label of its image. A group
+ * photo chosen for several colours (10-15: 白色 and 军绿 worn only on a photo of six people) gives the
+ * second colour `<label>-2`, the third `-3`: one photo, but each colour its own images.
+ */
+export function colorKeys(colors: { pick: string | null }[]): (string | null)[] {
+  const seen = new Map<string, number>();
+  return colors.map(c => {
+    if (!c.pick) return null;
+    const n = (seen.get(c.pick) ?? 0) + 1;
+    seen.set(c.pick, n);
+    return n === 1 ? c.pick : `${c.pick}-${n}`;
+  });
+}
+/** What a colour's image is, as far as choosing it goes: its role, people and colours seen. */
+export type PickSource = { id: string; role?: string; detail?: string; person?: string; colorsSeen?: string[] };
+/**
+ * Colour images that cannot be generated from: a liner or an accessory (not the garment sold), and
+ * one photo of a single garment chosen for two colours (only a photo of several garments can be).
+ */
+export function pickProblems(colors: { name: string; pick: string | null }[], images: PickSource[]): string[] {
+  const byId = new Map(images.map(i => [i.id, i])), shared = new Map<string, string[]>();
+  for (const c of colors) if (c.pick) shared.set(c.pick, [...(shared.get(c.pick) ?? []), c.name]);
+  return [
+    ...colors.filter(c => c.pick && isComponent(byId.get(c.pick))).map(c => `「${c.name}」选的是单独拍的内胆或配件（${c.pick}）：换一张这个颜色的衣服本身`),
+    ...[...shared].filter(([pick, names]) => names.length > 1 && !isGroup(byId.get(pick))).map(([pick, names]) => `「${names.join('」「')}」用了同一张衣服图（${pick}）：每个颜色换一张自己颜色的图`),
+  ];
+}
+
+/**
+ * Red: generating is refused until fixed. Yellow: the images (by number) worth a second look. With
+ * the sorted `images` the colour images are checked too (pickProblems); the server always checks them.
+ */
+export function checkDraft(d: Draft, layout: Layout, images?: PickSource[]) {
   const live = d.colors.filter(c => c.pick);
   const red = [
+    ...(images ? pickProblems(d.colors, images) : []),
     ...d.colors.filter(c => !c.pick).map(c => `「${c.name}」没有衣服图：补传一张，或者不要这个颜色`),
     ...(d.parts.find(p => p.part === FRONT)?.pick ? [] : ['缺正面全身图：补传一张']),
     ...(d.parts.some(p => !p.part.trim()) ? ['有衣服部位没写名字'] : []),
@@ -566,7 +629,7 @@ export function checkDraft(d: Draft, layout: Layout) {
 
 /** Does the set need the cast: an image with people, or a SKU image of a colour the material has no model photo of (`photos`). */
 export const wantsCast = (d: Pick<Draft, 'category' | 'colors'>, layout: Layout, photos: Set<string>) =>
-  needsCast(layout, categoryById(d.category).tasks) || (!!layout.sku.specCard && d.colors.some(c => c.pick && !photos.has(c.pick)));
+  needsCast(layout, categoryById(d.category).tasks) || (!!layout.sku.specCard && colorKeys(d.colors).some(k => k && !photos.has(k)));
 
 export type ImageItem = { slot: string; label: string; ratio?: Ratio; round: 1 | 2; multi: boolean; free: boolean; person: boolean };
 /**
@@ -578,16 +641,16 @@ export type ImageItem = { slot: string; label: string; ratio?: Ratio; round: 1 |
  * the material's own photo (`photos`, by colour image label), else the cast's model drawn in it (paid).
  */
 export function draftImages(d: Draft, layout: Layout, direct: Set<string>, photos: Set<string> = new Set()): ImageItem[] {
-  const colors = d.colors.filter(c => c.pick);
-  const drawn = layout.sku.specCard ? colors.filter(c => !photos.has(c.pick!)) : [];
+  const colors = colorKeys(d.colors).filter((k): k is string => !!k);
+  const drawn = layout.sku.specCard ? colors.filter(k => !photos.has(k)) : [];
   const items: ImageItem[] = [];
-  for (const c of colors) items.push({ slot: `product:${c.pick}`, label: '白底产品图', round: 1, multi: false, free: direct.has(c.pick!), person: false });
+  for (const k of colors) items.push({ slot: `product:${k}`, label: '白底产品图', round: 1, multi: false, free: direct.has(k), person: false });
   if (wantsCast(d, layout, photos)) {
     if (castFromPhotos(d.model)) for (const g of GENDERS) items.push({ slot: `cast:${g}`, label: '模特定妆照', round: 1, multi: false, free: false, person: false });
     else items.push({ slot: 'cast', label: '模特定妆照', round: 1, multi: false, free: false, person: false });
   }
-  for (const c of drawn) items.push({ slot: `skumodel:${c.pick}`, label: 'SKU 模特图', round: 1, multi: false, free: false, person: true });
-  for (const c of colors) items.push({ slot: `sku:${c.pick}`, label: 'SKU 图', round: 1, multi: false, free: !!layout.sku.specCard, person: layout.sku.people > 0 || !!layout.sku.specCard });
+  for (const k of drawn) items.push({ slot: `skumodel:${k}`, label: 'SKU 模特图', round: 1, multi: false, free: false, person: true });
+  for (const k of colors) items.push({ slot: `sku:${k}`, label: 'SKU 图', round: 1, multi: false, free: !!layout.sku.specCard, person: layout.sku.people > 0 || !!layout.sku.specCard });
   const add = (ratio: 'square' | 'portrait', n: number, round: 1 | 2) => usedSlots(d, n).forEach((i, k) => {
     const s = d.slots[i];
     const kept = ratio === 'square' && !!s.shopService;
@@ -624,6 +687,12 @@ export const sumCredits = (lines: PriceLine[]) => lines.reduce((n, l) => n + l.c
 
 /** A clean front still life or render of the garment, without a logo, is the product image as it is. */
 export const usableAsIs = (image: { kind: string; front: boolean; logo: boolean } | undefined) => !!image && (image.kind === '静物' || image.kind === '3D渲染') && image.front && !image.logo;
+/** The colours (by key, colorKeys) whose own clean still life is their white-background image as it is; never a photo of several garments. */
+export function directKeys(colors: { pick: string | null }[], images: (PickSource & { kind: string; front: boolean; logo: boolean })[]): string[] {
+  const byId = new Map(images.map(i => [i.id, i])), keys = colorKeys(colors);
+  const shared = (pick: string) => colors.filter(c => c.pick === pick).length > 1;
+  return colors.flatMap((c, k) => c.pick && usableAsIs(byId.get(c.pick)) && !isGroup(byId.get(c.pick)) && !shared(c.pick) ? [keys[k]!] : []);
+}
 
 /* ---------- the starting plan ---------- */
 

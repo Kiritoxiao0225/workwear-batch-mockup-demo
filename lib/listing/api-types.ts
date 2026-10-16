@@ -17,7 +17,9 @@ export type Summary = {
 };
 export type Sorted = { id: string; kind: string; color: string; front: boolean; detail: string; text: boolean; logo: boolean; same: string;
   /** Who is in the picture (男 / 女 / 男女 / 多人) and whether a face is clear enough to draw from; missing on material sorted before 10-11. */
-  person?: string; face?: boolean };
+  person?: string; face?: boolean;
+  /** 主体 / 内胆 / 配件 / 组合 / 不确定, and the colours of the garments on it; missing on material sorted before 10-16. */
+  role?: string; colorsSeen?: string[] };
 export type Materials = {
   /** The AI's call on the category and why; its look at the kinds of point the material does not mention; its headings for each kind of image. */
   category: string; categoryWhy?: string; checks?: Check[]; titles?: Partial<Record<Task, string[]>>;

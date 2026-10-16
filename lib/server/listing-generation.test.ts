@@ -5,7 +5,8 @@ import { defaultDraft } from '../listing/draft';
 import { LEGACY_LAYOUTS as BUILT_IN_LAYOUTS } from '../listing/legacy-layouts';
 import { SERVICE_IMAGES } from '../listing/service';
 import { BUILT_IN_LAYOUTS as MASTERS, FLAT_EXAMPLE, fitTemplate, type Layout } from '../listing/templates';
-import { coverOf, fabricCrop, planJobs, wordsOf, zipEntryName } from './listing-generation';
+import { contentOf, coverOf, fabricCrop, planJobs, wordsOf, zipEntryName } from './listing-generation';
+import { buildPlan } from './listing-write';
 import { castOnePrompt, castPrompt, editPrompt, longPrompt, mainPrompt, redrawPrompt, servicePrompt, serviceWordsPrompt, skuPrompt } from './listing-prompts';
 import type { StoredPlan } from './listing-store';
 
@@ -186,5 +187,45 @@ describe('zip entry names from colour names', () => {
     expect(zipEntryName('a/b\\c:d')).toBe('a_b_c_d');
     expect(zipEntryName('..')).toBe('_');
     expect(zipEntryName('')).toBe('_');
+  });
+});
+
+describe('a group photo for two colours (10-15)', () => {
+  const written = JSON.stringify({ product: { name: '', garment: ['连帽'] }, scenes: [], sku: { tag: '', fabric: '' } });
+  it('gives each colour its own key on the same photo, and says which garment on it to take', () => {
+    const d = defaultDraft(DEMO_MATERIAL, commute), group = d.colors[0].pick!;
+    const draft = { ...d, colors: d.colors.map((c, k) => k === 1 ? { ...c, pick: group } : c) };
+    const plan = buildPlan(written, { draft, images: [{ label: group, assetId: 'a1' }], direct: [], sorted: [{ id: group, person: '多人' }], model: 'm' });
+    const [first, second] = [plan.colors.find(c => c.name === draft.colors[0].name)!, plan.colors.find(c => c.name === draft.colors[1].name)!];
+    expect([first.sku, second.sku]).toEqual([group, `${group}-2`]);
+    expect(plan.images).toContainEqual({ label: `${group}-2`, assetId: 'a1' });
+    expect(plan.sourceSelections).toMatchObject({ [group]: first.name, [`${group}-2`]: second.name });
+    const products = planJobs(plan, commute, 1).filter(j => j.slot.startsWith('product:')).map(j => j.slot);
+    expect(new Set(products).size).toBe(products.length);
+    expect(products).toContain(`product:${group}-2`);
+  });
+  it('a plan without group photos is as before', () => {
+    const draft = defaultDraft(DEMO_MATERIAL, commute);
+    const plan = buildPlan(written, { draft, images: [], direct: [], model: 'm' });
+    expect(plan.colors.map(c => c.sku).sort()).toEqual(draft.colors.map(c => c.pick!).sort());
+    expect(plan.sourceSelections).toBeUndefined();
+  });
+});
+
+describe('close-up cards (10-15)', () => {
+  const s = stored(), d = s.draft, id = (text: string) => d.points.find(p => p.text === text)!.id;
+  const i = d.slots.findIndex(x => x.task === '细节');
+  const input = (title: string) => ({ kind: 'main' as const, ratio: 'square' as const, index: i, n: 2, total: 5, skus: ['M30'], colors: ['落霞橙'],
+    words: { title, sub: '', tags: [], cells: [{ point: id('利落立领'), proof: 'part', caption: '利落立领' }, { point: id('双侧拉链口袋'), proof: 'part', caption: '双侧拉链口袋' }, { point: id('贴腕袖口'), proof: 'part', caption: '贴腕袖口' }] } });
+  it('draws the card of the part the heading names first', () => {
+    expect(contentOf(s, input('口袋装得下'), 'square:2', commute, '').cells.map(c => c.text)).toEqual(['双侧拉链口袋', '利落立领', '贴腕袖口']);
+    expect(contentOf(s, input('细节经得起看'), 'square:2', commute, '').cells.map(c => c.text)).toEqual(['利落立领', '双侧拉链口袋', '贴腕袖口']);
+  });
+  it('a close-up goes with the material\'s photo of its part, and without one is an icon and its words', () => {
+    const cells = contentOf(s, input('细节经得起看'), 'square:2', commute, '').cells;
+    expect(cells[0]).toMatchObject({ photo: 'M40', icon: false });
+    expect(cells[1]).toMatchObject({ photo: 'M42' });
+    expect(cells[2]).toMatchObject({ icon: true });
+    expect(cells[2].photo).toBeUndefined();
   });
 });

@@ -1,7 +1,7 @@
 /**
  * 电商主图: how a selling point is shown on an image (画法). Taken from what the best-selling
  * competitors draw: water beading on the fabric for waterproofing, steam through the fabric over a
- * hot cup for breathability, a cross-section with glowing heat for warmth. A close-up of a garment
+ * hot cup for breathability, warm light around the garment's own fabric for warmth. A close-up of a garment
  * part needs a picture of that part; a demonstration with a person needs a person on the image.
  */
 export type ProofKind = '效果演示' | '原理示意' | '部位特写' | '场景' | '图标文字';
@@ -14,7 +14,8 @@ export const PROOFS: Proof[] = [
   { id: 'juice-pour', kind: '效果演示', name: '泼饮料', recipe: '一杯果汁泼在面料上，液体聚成圆珠滑落，不留污渍', person: false },
   { id: 'steam-cup', kind: '效果演示', name: '热杯透汽', recipe: '一块面料盖在一杯热水上，白色蒸汽从面料表面透出来', person: false },
   { id: 'wind-arrows', kind: '原理示意', name: '挡风示意', recipe: '面料截面放大示意：外面一排冷色风的箭头被面料挡住，里面是暖色区域', person: false },
-  { id: 'heat-layers', kind: '原理示意', name: '锁温截面', recipe: '面料分层截面放大：外层挡风，中间保暖层里有发光的暖色热粒子，向上的箭头表示热量被锁住', person: false },
+  // Not a cross-section (10-15): one drawn with a padded middle layer gave thin shells cotton wadding they do not have.
+  { id: 'heat-layers', kind: '原理示意', name: '锁温示意', recipe: '这件衣服真实面料的表面特写，厚薄和实物一致；面料外侧几道柔和的暖色光晕和向内的弧形箭头表示热量被留住；不画分层截面、棉絮、羽绒、蓬松夹层等素材里没有的结构', person: false },
   { id: 'lining-open', kind: '部位特写', name: '掀开看内里', recipe: '衣襟掀开一角，露出里面的保暖内里，旁边一个升温小图标', person: false },
   { id: 'scissors', kind: '效果演示', name: '剪刀测试', recipe: '剪刀尖用力抵在面料上，面料完好没有破口', person: false },
   { id: 'stretch-arm', kind: '效果演示', name: '抬手不紧绷', recipe: '模特大幅度抬手伸展，衣服不紧绷、下摆不上提', person: true },

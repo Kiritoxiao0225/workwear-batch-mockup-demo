@@ -12,6 +12,7 @@ import { useState } from "react";
 import type { Detail, LayoutCard, SlotState } from "@/lib/listing/api-types";
 import { assetUrl, downloadUrl, post, redrawImage } from "@/lib/listing/client-api";
 import { TASK_LABEL } from "@/lib/listing/category";
+import { colorKeys } from "@/lib/listing/draft";
 import { skuPhotos } from "@/lib/listing/sku-card";
 import { skuPair } from "@/lib/listing/templates";
 import { EditDialog } from "./listing-edit";
@@ -27,7 +28,7 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
 }) {
   const plan = detail.plan, layout = layoutOf(layouts, plan?.layout ?? detail.layout);
   const colors = plan?.colors.filter(c => c.pick) ?? [], main = plan?.main ?? "";
-  const nameOf = (pick: string) => colors.find(c => c.pick === pick)?.name ?? pick;
+  const keys = colorKeys(colors), nameOf = (key: string) => colors[keys.indexOf(key)]?.name ?? key;
   const free = colors.filter(c => c.name !== main && !plan?.extra.some(e => e.color === c.name));
   const [adding, setAdding] = useState<{ color: string; layout: string } | null>(null);
   const [busy, setBusy] = useState(false);

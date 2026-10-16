@@ -30,8 +30,10 @@ const DISPLAY: Record<Display, string> = { 平铺: '平铺在台面上，正面�
 const RATIO_NAME = { square: '正方形 1:1', portrait: '竖版 3:4', long: '竖版 2:3' } as const;
 export type Ratio = keyof typeof RATIO_NAME;
 
-export function productPrompt(input: { color: string; garment: string[] }) {
-  return `从参考图里把这件衣服单独提取出来，做成一张电商白底产品图，正方形 1:1。
+/** `group`: the reference is a photo of several garments; only the one in this colour is taken (10-15: two colours on one group photo). */
+export function productPrompt(input: { color: string; garment: string[]; group?: boolean }) {
+  const pick = input.group ? `参考图里有好几件衣服，只取其中「${input.color}」的那一件外套：不取别人身上的衣服，不把别的颜色改成「${input.color}」，内搭、裤子、包和配饰都不要。\n` : '';
+  return `${pick}从参考图里把这件衣服单独提取出来，做成一张电商白底产品图，正方形 1:1。
 - 隐形模特效果（ghost mannequin）：衣服立体地“穿”在看不见的人身上，正面朝前，拉链或扣子合上，两只袖子自然下垂。
 - 纯白背景，柔和均匀的棚拍光，只有一点点地面投影。
 - 画面里只有这件衣服：不要人、不要手、不要任何文字、标签、logo、水印、图标和道具。
@@ -117,7 +119,8 @@ function people(t: Template, lead: '男' | '女', cast: number) {
 }
 
 /** What fills an image's zones. Cells and tags in reading order; `act`: what the models do; `scene`: background and action details the writing step added. */
-export type Content = { title: string; sub: string; tags: string[]; cells: { text: string; recipe: string; icon?: boolean; note?: string }[]; act?: string; scene: string; badge?: string };
+/** `photo` on a card: the label of the material's own photo of the part it shows close up (sent as a reference image). */
+export type Content = { title: string; sub: string; tags: string[]; cells: { text: string; recipe: string; icon?: boolean; note?: string; photo?: string }[]; act?: string; scene: string; badge?: string };
 
 /**
  * One main image (or the long image) from its template. References: the garment's image(s) first,
@@ -157,7 +160,8 @@ export function mainPrompt(input: {
         const x = c.cells[cell++];
         if (!x) return '';
         if (sheet && z.kind === 'icon') return `图标：${area(z.box)}；一个细线圆框，框里一个简洁的线描图标，圆框下面一行字「${x.text}」（字高约占画面 3%）；不加方形卡片底，直接在面料上。`;
-        return z.kind === 'icon' || x.icon ? `图标卡片：${area(z.box)}；一个简洁的线描图标配一行字「${x.text}」，字高约占画面 2.8%。`
+        // An icon card shows no garment: one with a strip of tape behind a taped-seam icon made the tape up (10-16).
+        return z.kind === 'icon' || x.icon ? `图标卡片：${area(z.box)}；一个简洁的线描图标配一行字「${x.text}」，字高约占画面 2.8%；卡片底是干净的纯色，不画衣服、面料、胶条或任何结构。`
           : `卡片：${area(z.box)}；卡片里画：${x.recipe}；卡片底部一行字「${x.text}」，字高约占画面 3%。`;
       }
       case 'person': return `人物：${area(z.box)}；${input.cast ? people(t, input.lead, input.cast) : '模特穿着这件衣服。'}${c.act ? `动作：${c.act}。` : ''}`;

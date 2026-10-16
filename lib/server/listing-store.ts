@@ -87,7 +87,7 @@ type ProjectRow = { id: string; name: string; layout: string; counts: unknown; s
 /**
  * What a product is generated from: the plan the user started (`draft`, with the square images'
  * words as the 画板 left them), the model's garment description and each image's scene. `colors`
- * start with the main colour; `sku` is the label of the colour's garment image. `direct`: colours
+ * start with the main colour; `sku` is the colour's key (colorKeys: its garment image's label). `direct`: colours
  * whose own image is the product image. `round`: 1 after 「开始出图」, 2 after 「出竖版」.
  */
 export type StoredPlan = {
@@ -95,6 +95,8 @@ export type StoredPlan = {
   colors: { name: string; hex: string; sku: string }[]; direct: string[]; images: { label: string; assetId: string }[]; model: string; round: 1 | 2;
   /** The material's own model photo of a colour, for its SKU image (colour label → photo label); the other colours' models are drawn. */
   photos?: Record<string, string>;
+  /** A colour drawn from a photo of several garments (colour key → the colour to take from it); none before 10-16. */
+  sourceSelections?: Record<string, string>;
 };
 
 export async function listProjects(tenant: string) {

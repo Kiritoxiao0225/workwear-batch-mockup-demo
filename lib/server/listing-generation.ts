@@ -23,7 +23,7 @@ import sharp from 'sharp';
 import { z } from 'zod';
 import type { CanvasEdit, Element, Words } from '../listing/api-types';
 import { TASK_LABEL, type Task } from '../listing/category';
-import { castFromPhotos, GENDERS, usedSlots, wantsCast, type Gender } from '../listing/draft';
+import { castFromPhotos, GENDERS, leadCard, partOf, partPick, usedSlots, wantsCast, type Gender } from '../listing/draft';
 import { colorRow, modelPhotoFor, skuCardText, skuPhotos } from '../listing/sku-card';
 import { renderSkuCard } from './listing-sku-card';
 import { enOf, sampleBytes, specFor, specPrompt, type Fill } from './listing-specs';
@@ -414,6 +414,29 @@ export type Upscale = typeof upscaleListingImage;
 type Recognize = (request: object) => Promise<PlanCall>;
 
 async function fileOf(fileId: string) { return (await readCatalogFile(fileId)).bytes; }
+/** At most this many photos of parts go with one main image. */
+const PART_PHOTOS = 3;
+/**
+ * The material's own photos of the parts a main image's cards show close up, after its other
+ * references; each card says which one it is drawn from. Drawn from the white-background image alone,
+ * next to the master's sample, close-ups took the sample's structure (10-15: wadding in a thin shell,
+ * outer stitching for taped seams). A photo no longer kept (sources are cleared 30 days after the last
+ * generation) leaves its card as it was.
+ */
+async function withPartPhotos(stored: StoredPlan, projectId: string, cells: Content['cells'], references: Buffer[]) {
+  const at = new Map<string, number>();
+  for (const cell of cells) {
+    if (!cell.photo) continue;
+    if (!at.has(cell.photo)) {
+      const assetId = at.size < PART_PHOTOS ? stored.images.find(i => i.label === cell.photo)?.assetId : undefined;
+      const row = assetId && (await db().query('SELECT file_id FROM listing_assets WHERE id=$1 AND project_id=$2', [assetId, projectId])).rows[0];
+      const bytes = row ? await readCatalogFile(row.file_id).then(f => f.bytes, () => null) : null;
+      if (!bytes) continue;
+      at.set(cell.photo, references.push(await sharp(bytes, { limitInputPixels: 60_000_000 }).rotate().resize(1024, 1024, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 88 }).toBuffer()));
+    }
+    cell.recipe += `（这个部位的样子照参考图${at.get(cell.photo)}：只取这个部位的结构、缝线和材质，参考图里的其他东西和字都不要）`;
+  }
+}
 /** The cast's two halves side by side, man on the left, at one height: what every image with people is drawn from. */
 async function sideBySide(halves: Buffer[]) {
   const parts = await Promise.all(halves.map(b => sharp(b).resize({ height: 1536 }).toBuffer({ resolveWithObject: true })));
@@ -434,9 +457,15 @@ export function coverOf(d: StoredPlan['draft'], layout: Layout) {
 /** What a main image's zones show: words, each card's picture, the models' demonstration and the scene; `badge`: the words on the lanyard badge. */
 export function contentOf(stored: StoredPlan, input: Extract<JobInput, { kind: 'main' }>, slot: string, layout: Layout, badge: string): Content {
   const d = stored.draft, s = input.index >= 0 ? d.slots[input.index] : undefined;
-  const cells = input.words.cells.map(c => {
+  // The card of the part the heading names is drawn first, the biggest picture.
+  const lead = leadCard(d, input.words.title, input.words.cells), ordered = lead > 0 ? [input.words.cells[lead], ...input.words.cells.filter((_, k) => k !== lead)] : input.words.cells;
+  const cells = ordered.map(c => {
     const p = d.points.find(x => x.id === c.point), proof = proofById(c.proof);
-    return { text: c.caption, recipe: proof ? recipeOf(proof, p?.part || p?.text) : '', icon: proof?.kind === '图标文字' && proof.id === 'icon-text', note: p?.note ?? '' };
+    // A close-up is drawn from the material's photo of that part; with none (a plan made before taped seams
+    // wanted a photo of the tape) it is an icon and its words, never a structure the model makes up.
+    const close = !!p && (!!proof?.part || proof?.kind === '部位特写'), photo = close ? partPick(d, partOf(p!)) : null;
+    if (close && !photo && proof?.part) return { text: c.caption, recipe: `${proofById('icon-text')!.recipe}；底色干净，不画衣服、面料、胶条或任何结构`, icon: true, note: p?.note ?? '' };
+    return { text: c.caption, recipe: proof ? recipeOf(proof, p && partOf(p)) : '', icon: proof?.kind === '图标文字' && proof.id === 'icon-text', note: p?.note ?? '', ...(photo ? { photo } : {}) };
   });
   let scene = stored.scenes[slot.split('+')[0]] ?? stored.scenes[`${input.ratio}:1`] ?? '';
   let act = s?.act ? proofById(s.act)?.recipe : undefined;
@@ -454,7 +483,7 @@ type MainInput = Extract<JobInput, { kind: 'main' }>;
  * fabric), the cast when people are in it, the customer's LOGO, and the master's sample image last.
  * Null when the master has no spec for the image, or the plan gave it another number of cards.
  */
-export async function specShot(o: { stored: StoredPlan; input: MainInput; slot: string; layout: Layout; output: (slot: string) => Promise<Buffer>; cast: Buffer | null;
+export async function specShot(o: { stored: StoredPlan; projectId: string; input: MainInput; slot: string; layout: Layout; output: (slot: string) => Promise<Buffer>; cast: Buffer | null;
   logo: { bytes: Buffer | null; line: string } | null; badge: () => Promise<string> }) {
   const d = o.stored.draft, s = d.slots[o.input.index], task = s.task as Task;
   const spec = specFor(o.layout.id, task, o.input.words.cells.length);
@@ -466,6 +495,7 @@ export async function specShot(o: { stored: StoredPlan; input: MainInput; slot: 
   const sample = references.push(await sampleBytes(spec));
   // 免费印绣 on 车展工牌's lanyard badge and in 暗黑科技's black block, when the shop offers it.
   const c = contentOf(o.stored, o.input, o.slot, o.layout, task === '首图' && ['M1', 'M2'].includes(o.layout.id) ? await o.badge() : '');
+  await withPartPhotos(o.stored, o.projectId, c.cells, references);
   const lead = d.model.lead === '男' ? '男生' : '女生', luma = (hex: string) => { const n = parseInt(hex.slice(1), 16); return 0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255); };
   const fill: Fill = {
     title: c.title, sub: c.sub, tags: c.tags.filter(t => !t.includes('｜')),
@@ -616,7 +646,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
           await succeed(square);
           return;
         }
-        prompt = productPrompt({ color: colorOf(input.sku).name, garment });
+        prompt = productPrompt({ color: colorOf(input.sku).name, garment, group: !!stored.sourceSelections?.[input.sku] });
         references = [await fileOf(source.file_id)];
       } else if (input.kind === 'cast' && input.pair) {
         await succeed(await sideBySide(await Promise.all(GENDERS.map(g => output(`cast:${g}`)))));
@@ -653,7 +683,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         paste = { original, boxes };
       } else if (input.ratio === 'square' && input.index >= 0) {
         // A square image its master has a spec for: drawn the way the master's sample was.
-        const shot = await specShot({ stored, input, slot: job.slot, layout, output, cast: hasCast ? await output('cast') : null,
+        const shot = await specShot({ stored, projectId: job.project_id, input, slot: job.slot, layout, output, cast: hasCast ? await output('cast') : null,
           logo: logoBytes && logoLine ? { bytes: logoBytes, line: logoLine } : logoLine ? { bytes: null, line: logoLine } : null,
           badge: async () => (await shopSettings(job.tenant_id)).settings?.items.some(x => x.on && x.title === '免费印绣') ? '免费印绣' : '' });
         if (shot) { references = shot.references; prompt = shot.prompt; ratio = 'square'; }
@@ -672,9 +702,11 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         const used = input.colors.map(n => colors.find(c => c.name === n)!).filter(Boolean);
         const shop = t.zones.some(z => z.kind === 'badge') ? (await shopSettings(job.tenant_id)).settings : null;
         const badge = shop?.items.some(x => x.on && x.title === '免费印绣') ? '免费印绣' : '';
-        prompt = mainPrompt({ ratio, task: input.index >= 0 ? TASK_LABEL[d.slots[input.index].task as Task] : '长图', template: t, layout, content: contentOf(stored, input, job.slot, layout, badge),
+        const logoRef = shows && logoBytes && logoLine ? references.length : undefined, content = contentOf(stored, input, job.slot, layout, badge);
+        await withPartPhotos(stored, job.project_id, content.cells, references);
+        prompt = mainPrompt({ ratio, task: input.index >= 0 ? TASK_LABEL[d.slots[input.index].task as Task] : '长图', template: t, layout, content,
           used, all: colors, garment, lead: d.model.lead, fromSku: multi, cast, n: input.ratio === 'long' ? undefined : input.n, total: input.total,
-          logo: shows ? logoLine : null, logoRef: shows && logoBytes && logoLine ? references.length : undefined, fabric });
+          logo: shows ? logoLine : null, logoRef, fabric });
       }
     }
     if (input.note) prompt += `\n\n补充要求：${input.note}`;

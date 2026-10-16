@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chooseMaterials, mergeSameColors, parseOrganized, parseRead, parseSorted, recolored, settleCopies, worthReading, type SortedImage } from './listing-organize';
+import { chooseMaterials, mergeSameColors, parseOrganized, parseRead, parseSorted, recolored, settleCopies, unlistedColors, worthReading, type SortedImage } from './listing-organize';
 import { usableAsIs } from '../listing/draft';
 
 const img = (id: string, over: Partial<SortedImage>): SortedImage => ({ id, kind: '模特实拍', color: '', front: false, detail: '', text: false, logo: false, same: '', person: '', face: false, ...over });
@@ -121,5 +121,54 @@ describe('colours named before the colours were known', () => {
   it('gives a label to the one colour whose name holds it, and guesses nothing when two do', () => {
     const out = recolored([img('M1', '蓝色'), img('M2', '橙色'), img('M3', '黑 色')], ['北欧蓝', '落霞橙', '爱马仕橙', '黑色']);
     expect(out.map(i => i.color)).toEqual(['北欧蓝', '橙色', '黑 色']);
+  });
+});
+
+describe('liners, group photos and colours seen (10-15)', () => {
+  it('never picks a liner photographed on its own for a colour or the full front view', () => {
+    const sorted = {
+      images: [
+        img('M75', { kind: '静物', color: '黑色', front: true, role: '内胆' }),
+        img('M4', { kind: '模特实拍', color: '黑色', front: true, role: '主体', person: '男' }),
+      ],
+      colors: [{ name: '黑色', hex: '#111', from: ['M75', 'M4'] }], points: [], notes: [],
+    };
+    const chosen = chooseMaterials(sorted, []);
+    expect(chosen.colors[0]).toMatchObject({ pick: 'M4', candidates: ['M4'] });
+    expect(chosen.parts[0].pick).toBe('M4');
+  });
+  it('with no whole front view of the jacket, takes the jacket open on its hanger, never its liner', () => {
+    const sorted = {
+      images: [
+        img('M4', { kind: '静物', color: '黑色', front: false, role: '主体' }),
+        img('M75', { kind: '静物', color: '黑色', front: true, role: '内胆' }),
+        img('M9', { kind: '静物', color: '黑色', front: false }), // sorted before 10-16: no role, not a fallback
+      ],
+      colors: [{ name: '黑色', hex: '#111', from: ['M4', 'M75'] }], points: [], notes: [],
+    };
+    expect(chooseMaterials(sorted, []).colors[0]).toMatchObject({ pick: 'M4', candidates: ['M4'] });
+  });
+  it('takes a colour from a group photo only when it has no photo of its own', () => {
+    const sorted = {
+      images: [img('M17', { front: true, person: '多人', colorsSeen: ['白色', '军绿'] }), img('M18', { front: true, color: '白色', person: '女' })],
+      colors: [{ name: '白色', hex: '#fff', from: ['M17', 'M18'] }, { name: '军绿', hex: '#4b5320', from: ['M17'] }], points: [], notes: [],
+    };
+    expect(chooseMaterials(sorted, []).colors.map(c => c.pick)).toEqual(['M18', 'M17']);
+  });
+  it('notes a colour seen on a garment that the colour list left out, but not a liner\'s or a shade it has', () => {
+    const images = [img('M17', { person: '多人', colorsSeen: ['黑色', '白色', '军绿'] }), img('M75', { kind: '静物', role: '内胆', colorsSeen: ['浅紫'] }), img('M5', { colorsSeen: ['蓝色'] })];
+    const notes = unlistedColors(images, ['黑色', '北欧蓝']);
+    expect(notes).toEqual([expect.stringContaining('「白色」'), expect.stringContaining('「军绿」')]);
+    expect(notes[0]).toContain('M17');
+  });
+  it('reads role and colours seen, and drops values it does not know', () => {
+    const [a, b] = parseSorted(JSON.stringify({ images: [{ id: 'M1', kind: '静物', role: '内胆', colorsSeen: ['黑色'] }, { id: 'M2', kind: '静物', role: '外套', colorsSeen: '黑色' }] }), ['M1', 'M2']);
+    expect(a).toMatchObject({ role: '内胆', colorsSeen: ['黑色'] });
+    expect(b.role).toBeUndefined();
+    expect(b.colorsSeen).toBeUndefined();
+  });
+  it('takes off a Markdown wrapper round the whole answer, and nothing else', () => {
+    expect(parseSorted('```json\n{"images":[{"id":"M1","kind":"静物"}]}\n```', ['M1'])[0].kind).toBe('静物');
+    expect(() => parseSorted('这是结果：```json\n{"images":[]}\n```', ['M1'])).toThrow('整理结果不是完整的 JSON');
   });
 });

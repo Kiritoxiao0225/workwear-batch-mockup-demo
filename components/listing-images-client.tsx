@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppHeader } from "./app-header";
 import { PageHeader, PageTabs } from "./page-header";
-import type { Config, Detail, LayoutCard, Summary } from "@/lib/listing/api-types";
+import type { Config, Detail, LayoutCard, Sorted, Summary } from "@/lib/listing/api-types";
 import { api, assetUrl, downloadUrl, isDemo, post } from "@/lib/listing/client-api";
 import { checkDraft, DEFAULT_COUNTS, fillParts, type Counts, type Draft, type PriceLine } from "@/lib/listing/draft";
 import { BUILT_IN_LAYOUTS } from "@/lib/listing/templates";
@@ -101,13 +101,13 @@ const sumLines = (all: PriceLine[][]) => {
 
 const STEPS = ["整理素材", "定方案", "出方图", "改图和竖版"];
 type Stage = { step: number; c: "" | "b" | "g" | "y" | "r"; text: string };
-function stageOf(p: Summary, upload: Upload | undefined, draft: Draft | null, layouts: LayoutCard[]): Stage {
+function stageOf(p: Summary, upload: Upload | undefined, draft: Draft | null, layouts: LayoutCard[], images?: Sorted[]): Stage {
   if (p.status === "uploading") return upload ? { step: 1, c: "", text: `上传中 ${upload.done}/${upload.total}${upload.failed ? `，${upload.failed} 张没传上` : ""}` } : { step: 1, c: "y", text: `已上传 ${p.images} 张，还没开始整理` };
   if (p.status === "planning") return { step: 1, c: "b", text: "AI 正在整理素材：去重、分类、读卖点、和竞品比一遍，约 1–2 分钟" };
   if (p.status === "failed") return { step: 1, c: "r", text: p.error || "整理没成功" };
   if (p.status === "materials") {
     if (!draft) return { step: 2, c: "b", text: "素材整理好了，等你定方案" };
-    const k = checkDraft(draft, layoutOf(layouts, draft.layout));
+    const k = checkDraft(draft, layoutOf(layouts, draft.layout), images);
     if (k.red.length) return { step: 2, c: "r", text: k.red[0] };
     if (p.error) return { step: 2, c: "y", text: p.error };
     return k.warn.length ? { step: 2, c: "y", text: `方案好了，第 ${k.warn.join("、")} 张有提醒，看一眼再出图` } : { step: 2, c: "g", text: "方案好了：看一眼卖点和每张图讲什么，就能出图" };
@@ -278,7 +278,7 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
   const needsMe = (p: Summary) => ["materials", "failed", "square"].includes(p.status) || (p.status === "uploading" && !uploads[p.id] && p.images > 0);
   const running = (p: Summary) => ["planning", "writing", "generating"].includes(p.status) || !!uploads[p.id];
   const TABS: Record<Tab, (p: Summary) => boolean> = { 全部: () => true, 待我处理: needsMe, 进行中: running, 已完成: p => p.status === "done" };
-  const ready = projects.filter(p => p.status === "materials" && draftOf(p.id) && !checkDraft(draftOf(p.id)!, plain(draftOf(p.id)!.layout)).red.length);
+  const ready = projects.filter(p => p.status === "materials" && draftOf(p.id) && !checkDraft(draftOf(p.id)!, plain(draftOf(p.id)!.layout), details[p.id]?.materials?.sorted.images).red.length);
   const readyCost = ready.map(p => { const d = draftOf(p.id)!; return draftPrice(d, details[p.id].materials!, plain(d.layout), prices).now; });
   const readyLines = sumLines(readyCost.map(c => c.lines)), readyTotal = readyCost.reduce((n, c) => n + c.credits, 0);
   const done = projects.filter(p => p.status === "done");
@@ -320,7 +320,7 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
           {tab === "已完成" && done.length > 0 && <button type="button" className="lp-btn sm" disabled={zipping} onClick={() => void downloadAll(done)}>{zipping ? "正在打包…" : `全部下载（${done.length} 款，一个压缩包）`}</button>}
         </div>}
         <div className="lp-list">{projects.filter(TABS[tab]).map(p => {
-          const draft = p.status === "materials" ? draftOf(p.id) : null, s = stageOf(p, uploads[p.id], draft, layouts);
+          const draft = p.status === "materials" ? draftOf(p.id) : null, s = stageOf(p, uploads[p.id], draft, layouts, details[p.id]?.materials?.sorted.images);
           const cost = draft && details[p.id]?.materials && !prices.exempt ? draftPrice(draft, details[p.id].materials!, plain(draft.layout), prices).now : null;
           const master = layouts.find(l => l.id === (draft?.layout ?? p.layout))?.name.split(" · ")[0] ?? "已删除的版式";
           const squares = (details[p.id]?.slots ?? []).filter(x => /^square:\d+$/.test(x.slot)).sort((a, b) => Number(a.slot.slice(7)) - Number(b.slot.slice(7))).slice(0, 5);
