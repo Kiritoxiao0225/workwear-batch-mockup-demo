@@ -293,6 +293,8 @@ async function writeViews(projectId: string, m: Materials, draft: SubmittedDraft
     wanted.set(c.pick!, { text: shared.length > 1 ? `【${c.pick}】合照，颜色「${shared.join('」「')}」的衣服都以它里面对应颜色的那件为准` : `【${c.pick}】颜色「${c.name}」的衣服图（这个颜色以它为准）`, side: 768 });
   }
   for (const part of draft.parts) if (part.pick && !wanted.has(part.pick)) wanted.set(part.pick, { text: `【${part.pick}】结构参考：${part.part}`, side: 768 });
+  // Where the material's models were photographed: the set's SKU models and closer are shot there too.
+  for (const i of m.sorted.images.filter(x => x.kind === '模特实拍' && x.person && !x.same && !wanted.has(x.id)).slice(0, 2)) wanted.set(i.id, { text: `【${i.id}】素材里的模特实拍（看拍摄地点）`, side: 768 });
   // The pictures the points on the images came from: what a card demonstrates is drawn from them.
   const shown = new Set(usedSlots(draft, draft.counts.square).flatMap(i => draft.slots[i].cells.map(x => x.point)));
   const sources = [...new Set(draft.points.filter(x => shown.has(x.id)).flatMap(x => x.from))].filter(id => !wanted.has(id)).slice(0, 12);

@@ -97,6 +97,8 @@ export type StoredPlan = {
   photos?: Record<string, string>;
   /** A colour drawn from a photo of several garments (colour key → the colour to take from it); none before 10-16. */
   sourceSelections?: Record<string, string>;
+  /** Where the SKU models and the closer's group are photographed, the same for the whole set (the writing step's); none before 10-16. */
+  place?: string;
 };
 
 export async function listProjects(tenant: string) {

@@ -12,6 +12,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Task } from '../listing/category';
+import { crowdLine, DEFAULT_PLACE } from './listing-crowd';
 
 /** What a spec fills its open places with. */
 export type Fill = {
@@ -30,6 +31,8 @@ export type Fill = {
   badge: string;
   /** The customer's LOGO reference number, when it is sent (the closer puts it in a corner too). */
   logoRef?: number;
+  /** The cast's reference number, and where the closer's group is shot (the plan's `place`). */
+  castRef?: number; place?: string;
 };
 export type Spec = {
   /** The sample image (public path), sent as the layout reference. */
@@ -52,17 +55,6 @@ export type Spec = {
 
 const two = (s: string) => { const [a, ...b] = s.trim().split(/\s+/); return b.length ? [a, b.join('')] : [s.trim(), '']; };
 const dots = (f: Fill) => `一个竖向的浅色细描边圆角胶囊框，里面上下排 ${f.all.length} 个小圆点，颜色依次是 ${f.all.map(c => c.hex).join('、')}，不写字`;
-/** How the closer's people stand, by how many (the sample 2-1: five shoulder to shoulder, the middle one forward). */
-const STAND: Record<number, string> = {
-  4: '四人站成一排：中间两人略靠前、离镜头近一点，两边的人退后半步、身体微微侧向中间',
-  5: '五人站成一排：正中间一位站得最靠前，两边的人依次往后退半步、身体微微侧向中间',
-  6: '六人分前后两排：后排三人站着，前排三人站在后排人与人之间的空隙前面、比后排矮半个头，两排的人都看得清上身和衣服',
-};
-/** The closer's people: four (one per colour when there are three or more, up to six), staggered as on the sample, the cast among them. */
-const crowd = (f: Fill) => {
-  const n = f.colors.length <= 2 ? 4 : f.colors.length, names = f.colors.map(c => c.name).join('、');
-  return `人物：${'零一两三四五六'[n] ?? n}位员工，${STAND[n] ?? STAND[4]}；人挨着人站，肩膀略微重叠，整组人左右占满画面宽度（最两边的人可以被画面边缘切掉一点），人和人之间没有大的空隙；所有人头顶在画面上沿往下 8%～20% 之间，不留大片空白；大部分人正面看镜头、表情自然放松，最多一人轻微侧脸，不要有人扭头看旁边；每人姿势不一样（一手拉领口拉链、一手插兜、双手自然垂下等）；参考图里的男生和女生都在、长相不变，其余的人男女交替；${n === f.colors.length ? `${names}每人穿一种，每种颜色都有人穿` : `${names}交替穿`}，拉链拉到胸口，从头拍到大腿`;
-};
 /** A competitor's sample, washed of its brand (trial11/wash.py). */
 const rival = (ref: string) => `/listing-images/rivals/${ref}.jpg`;
 /** The English words of an image's cards, once each. */
@@ -151,18 +143,21 @@ const detailRows = (sample: string): Spec => ({
   ],
   background: () => '很浅的冷灰白纯色底。',
 });
-/** 多人错落 + 横条 (车展工牌, 暗黑科技, 上岗实拍, 双人棚拍; sample 2-1): the band as each master has it, the customer's LOGO top left. */
-const closer = (sample: string, band: string, words: string, bg: string, style?: string): Spec => ({
+/**
+ * The closer (「6色可选」): the team doing something together at the set's place, under the master's
+ * band; from the sample only the band and its words, never its studio line-up.
+ */
+const closer = (sample: string, band: string, words: string, style?: string): Spec => ({
   sample, cells: 0, people: true, photo: true,
   zones: f => [
-    `左0% 上12% 宽100% 高88%：${crowd(f)}。`,
+    `左0% 上12% 宽100% 高88%：人物：${crowdLine(f.colors, f.castRef ? `参考图${f.castRef}` : '定妆照')}；站位和姿势不照示例图，示例图只学横条和字。`,
     !!f.logoRef && `左3% 上3% 宽18% 高10%：左上角放客户的 LOGO（照参考图${f.logoRef}），深灰单色，小小的。`,
     `左89% 上3% 宽6% 高${Math.min(30, 5 + f.all.length * 4)}%：${dots(f)}。`,
     `左2% 上73% 宽96% 高19%：横条：${band}，压在人物腿部前面。`,
     `左10% 上75% 宽80% 高9%：横条里水平居中的大标题「${f.title}」，白色${words}粗黑体，字高约占画面 6%。`,
     f.sub && `左14% 上86% 宽72% 高4%：大标题下面水平居中的一条白色细线和白色细黑体「${f.sub}」，字距略拉开，字高约占画面 2.6%；横条里的字整体居中，左右留白对称。`,
   ],
-  background: () => bg, style,
+  background: f => `实景合影：${f.place || DEFAULT_PLACE}；背景有自然的景深虚化，人物和背景在同一种光下，不能像抠图拼上去。`, style,
 });
 
 export const SPECS: Record<string, Partial<Record<Task, Spec>>> = {
@@ -199,7 +194,7 @@ export const SPECS: Record<string, Partial<Record<Task, Spec>>> = {
         '画面里没有任何人。',
       ],
       background: () => '浅灰纯色底。' },
-    收口: closer(rival('2-1'), '深灰半透明圆角横条', '', '浅灰棚拍，上浅下深，脚下柔和阴影；没有场景。'),
+    收口: closer(rival('2-1'), '深灰半透明圆角横条', ''),
   },
   M2: {
     首图: { sample: rival('30-1'), cells: 0, people: true, photo: true,
@@ -221,8 +216,8 @@ export const SPECS: Record<string, Partial<Record<Task, Spec>>> = {
       ],
       background: () => '纯黑底，只有这一处演示的高速特写。' },
     细节: detailGrid(rival('11-4'), true),
-    收口: closer(rival('2-1'), '纯黑半透明圆角横条，上沿一条细细的琥珀色线', '', '浅灰棚拍，上浅下深，脚下柔和阴影；没有场景。',
-      '色调深灰到纯黑，冷调；这一张多色合影是浅灰棚拍，靠横条和字保持暗黑科技的样子；字体标题白色粗黑体，笔画硬朗；说明字浅灰细黑体；标签和卡片纯黑半透明横条；琥珀色点缀；光正面柔光，人物边缘有一点冷色轮廓光。'),
+    收口: closer(rival('2-1'), '纯黑半透明圆角横条，上沿一条细细的琥珀色线', '',
+      '色调深灰到纯黑，冷调；这一张多色合影是实景合影，靠横条和字保持暗黑科技的样子；字体标题白色粗黑体，笔画硬朗；说明字浅灰细黑体；标签和卡片纯黑半透明横条；琥珀色点缀；光正面柔光，人物边缘有一点冷色轮廓光。'),
   },
   M3: {
     首图: { sample: rival('49-1'), cells: 0, people: true, photo: true,
@@ -245,7 +240,7 @@ export const SPECS: Record<string, Partial<Record<Task, Spec>>> = {
       ],
       background: f => `四个等大方格紧挨着拼满整张图，格子之间没有缝；四格的光和明暗各不相同，拼在一起有节奏；每格主体都是${f.color}面料，可以有道具和手，不出现衣服的领口、帽子、袖子、拉链、口袋。` },
     细节: detailRows(rival('13-3')),
-    收口: closer(rival('2-1'), '深棕色半透明直角横条', '规整', '浅暖灰棚拍，上浅下深，脚下柔和阴影；没有场景。'),
+    收口: closer(rival('2-1'), '深棕色半透明直角横条', '规整'),
   },
   M4: {
     首图: { sample: rival('1-1'), cells: 0, people: true, photo: true,
@@ -258,7 +253,8 @@ export const SPECS: Record<string, Partial<Record<Task, Spec>>> = {
       background: () => '浅灰棚拍纯色底，从上到下轻微渐变，没有场景。' },
     功能: fabricSheet(rival('67-3')),
     细节: detailGrid(rival('11-4'), false),
-    收口: closer(rival('2-1'), '深灰半透明圆角横条', '', '浅灰棚拍，上浅下深，人物脚下有柔和阴影；没有场景。'),
+    // The master's own look says no outdoor scene; its closer is the one picture shot where the set is.
+    收口: closer(rival('2-1'), '深灰半透明圆角横条', '', '色调干净偏冷；字体标题深色粗黑体；说明字深灰细黑体；标签绿色圆角胶囊、白字；这一张多色合影是实景合影，光跟着实景走，不是棚拍。'),
   },
   M5: {
     // The user liked our own cover (主色、深色两行标题 + 粗字卖点 + 圆形图标) better than the competitor's small type (10-13).

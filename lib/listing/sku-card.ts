@@ -9,7 +9,8 @@ import { isComponent } from './garment-role';
 export type SkuIcon = 'style' | 'fabric' | 'color' | 'water' | 'breathe' | 'wear' | 'wind' | 'warm' | 'light' | 'zip' | 'scene' | 'dot';
 export type SkuRow = { label: string; value: string; sub: string; icon: SkuIcon };
 export type SkuFeature = { title: string; sub: string; icons: { icon: SkuIcon; label: string }[] };
-export type SkuText = { title: string[]; rows: SkuRow[]; feature: SkuFeature | null };
+/** `kicker`: the small spaced English line over the title. */
+export type SkuText = { kicker?: string; title: string[]; rows: SkuRow[]; feature: SkuFeature | null };
 
 /** The icon that says a point best, by its words. */
 export function iconFor(text: string): SkuIcon {
@@ -53,7 +54,8 @@ export function skuCardText(input: { name: string; category: string; points: Pic
       icons: labels.map(label => ({ icon: iconFor(label), label })),
     };
   }
-  return { title: input.category === 'workwear' ? ['高端定制', '支持印绣'] : ['品质做工', '舒适百搭'], rows, feature };
+  const workwear = input.category === 'workwear';
+  return { kicker: workwear ? 'PREMIUM CUSTOM' : 'PREMIUM QUALITY', title: workwear ? ['高端定制', '支持印绣'] : ['品质做工', '舒适百搭'], rows, feature };
 }
 
 /**

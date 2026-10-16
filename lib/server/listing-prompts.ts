@@ -7,6 +7,7 @@
  * words. Only the shop's service images learn from a (washed) competitor sample.
  */
 import type { ServiceImageDef } from '../listing/service';
+import { crowdLine, DEFAULT_PLACE } from './listing-crowd';
 import type { Box, Display, Layout, StyleSheet, Template, Zone } from '../listing/templates';
 
 export type Color = { name: string; hex: string };
@@ -86,7 +87,25 @@ ${lines(input.garment)}
  * is one image of both, or (`halves`) one image per person. Every colour is drawn at the same framing
  * on the same plain grey, so the people come out the same size from one colour to the next.
  */
-export function skuModelPrompt(input: { color: string; garment: string[]; lead: '男' | '女'; who: 'pair' | 'lead'; halves: boolean; logo: string | null; logoRef?: number }) {
+/** The SKU models' poses, one per colour in turn: standing at ease (the user's pick over walking), the front of the garment always in view. */
+const SKU_POSES = [
+  '一手插在裤兜里，另一只手自然垂下，像走着路刚停下来看镜头',
+  '一手轻拉胸前的拉链头，另一只手自然垂下，重心放在一条腿上',
+  '双手自然垂下，身体微微侧向一边，重心放在一条腿上',
+  '一手拇指勾着裤兜，身体微微侧向一边，回头看镜头',
+];
+const PAIR_POSES = [
+  '两人肩并肩朝镜头走来，边走边笑着聊天',
+  '女生挽着男生的手臂，两人都看着镜头笑',
+  '男生一手插兜，女生侧身笑着看向男生，再一起看镜头',
+];
+
+/**
+ * A colour's SKU model, photographed where the set is (10-16: on plain grey, hands down and square to
+ * the camera, every one came out stiff); `pose`: the colour's place in the set, so the poses vary.
+ * Head to knees as before: the SKU image finds the person on it and fills its panel.
+ */
+export function skuModelPrompt(input: { color: string; garment: string[]; lead: '男' | '女'; who: 'pair' | 'lead'; halves: boolean; logo: string | null; logoRef?: number; place?: string; pose?: number }) {
   const pair = input.who === 'pair', person = input.lead === '男' ? '男生' : '女生';
   const castRefs = pair && input.halves ? '参考图2是男模特、参考图3是女模特的定妆照' : `参考图2是这套图的模特定妆照`;
   const only = !pair && !input.halves ? `：只画里面的${person}，另一个人不出现` : '';
@@ -95,7 +114,8 @@ export function skuModelPrompt(input: { color: string; garment: string[]; lead: 
 - 两人穿同一件衣服（这个颜色）`
     : `- 只有一位${person}，就是参考图2里的${person}：脸型、五官、发型、肤色、身材都和参考图2一模一样。
 - ${input.lead === '男' ? '他' : '她'}穿这件衣服`;
-  return `为服装商品的 SKU 图生成一张${pair ? '双人' : '单人'}模特图，竖版 3:4。
+  const n = input.pose ?? 0, pose = pair ? PAIR_POSES[n % PAIR_POSES.length] : SKU_POSES[n % SKU_POSES.length];
+  return `为服装商品的 SKU 图生成一张${pair ? '双人' : '单人'}模特实拍图，竖版 3:4。
 参考图1是这件衣服「${input.color}」的白底产品图，衣服的颜色和款式以它为准。${castRefs}，只用来认人${only}${input.logoRef ? `；参考图${input.logoRef}是客户的 LOGO，只用来印在衣服胸口` : ''}。
 
 衣服（必须和参考图1一模一样）：
@@ -104,9 +124,11 @@ ${lines(input.garment)}
 - ${input.logo ?? '衣服上不印任何字。'}
 
 画面：
-${who}，拉链拉到胸口，里面是白色圆领 T 恤，下身深灰色休闲裤；不戴帽子和墨镜，双手自然垂在身体两侧，脸正对镜头、表情自然。
-- 取景固定：从头顶拍到膝盖，膝盖正好在画面下沿；头顶离画面上沿约 5%；${pair ? '两人整体' : '人'}站在画面正中间${pair ? '；两人加起来的宽度不超过画面宽度的 85%，左右两边都露出背景，手臂和肩膀不能碰到画面边缘' : ''}。
-- 纯浅灰色无缝背景（#E6E6E6），柔和均匀的棚拍光，没有地面、道具和阴影色块。
+${who}，拉链拉到胸口，里面是白色圆领 T 恤，下身深灰色休闲裤；不戴帽子和墨镜。
+- 场景实拍：${input.place || DEFAULT_PLACE}；背景有明显的景深虚化，${pair ? '人物' : '人'}和背景在同一种光下（光的方向、色温一致），不能像抠图贴上去。
+- 姿势自然放松：${pose}；脸朝镜头、表情自然微笑；衣服正面（门襟拉链、口袋、领子）清楚完整，不被手臂挡住。
+- 取景固定：从头顶拍到膝盖，膝盖正好在画面下沿；头顶离画面上沿约 5%；${pair ? '两人整体' : '人'}在画面正中间${pair ? '；两人加起来的宽度不超过画面宽度的 85%，左右两边都露出背景，手臂和肩膀不能碰到画面边缘' : '，左右两边都露出背景'}。
+- 真实的商业摄影质感，皮肤有真实纹理、不磨皮，衣服有真实的褶皱和垂坠；不要 HDR、不要过饱和。
 - 画面里没有任何文字、标签和水印。`;
 }
 
@@ -133,8 +155,12 @@ export function mainPrompt(input: {
   logo?: string | null; logoRef?: number;
   /** The image shows only fabric: its reference is a crop of the fabric, and no garment is drawn. */
   fabric?: boolean;
+  /** Where the set's SKU models and its group of colours are shot (the plan's `place`). */
+  place?: string;
 }) {
   const { template: t, content: c, used, all } = input;
+  // Several colours on several people: the team together, each place its colour (listing-crowd.ts).
+  const group = used.length > 1 && t.people > 2;
   const garmentRefs = input.fabric ? `参考图1是这件衣服「${used[0]?.name ?? all[0]?.name}」面料的一小块特写，只用来确定面料的颜色和纹理`
     : used.length > 1 ? used.map((x, i) => `参考图${i + 1}是「${x.name}」的${input.fromSku ? ' SKU 图' : '白底产品图'}`).join('，') : `参考图1是这件衣服的白底产品图`;
   const refs = `${garmentRefs}${input.fabric ? '' : '，衣服的颜色和款式以它为准'}${input.cast ? `；参考图${input.cast}是这套图的模特定妆照，只用来确定模特长什么样，姿势、场景、构图按下面重新做，不照搬它的背景和站姿` : ''}${input.logoRef ? `；参考图${input.logoRef}是客户的 LOGO，只用来印在衣服胸口` : ''}。`;
@@ -164,7 +190,7 @@ export function mainPrompt(input: {
         return z.kind === 'icon' || x.icon ? `图标卡片：${area(z.box)}；一个简洁的线描图标配一行字「${x.text}」，字高约占画面 2.8%；卡片底是干净的纯色，不画衣服、面料、胶条或任何结构。`
           : `卡片：${area(z.box)}；卡片里画：${x.recipe}；卡片底部一行字「${x.text}」，字高约占画面 3%。`;
       }
-      case 'person': return `人物：${area(z.box)}；${input.cast ? people(t, input.lead, input.cast) : '模特穿着这件衣服。'}${c.act ? `动作：${c.act}。` : ''}`;
+      case 'person': return `人物：${area(z.box)}；${group ? `${crowdLine(used, input.cast ? `参考图${input.cast}` : '定妆照')}。` : input.cast ? people(t, input.lead, input.cast) : '模特穿着这件衣服。'}${c.act ? `动作：${c.act}。` : ''}`;
       case 'garment': return `衣服：${area(z.box)}；画面里没有人，衣服${DISPLAY[t.display ?? '平铺']}。`;
       case 'swatch': return `色块：${area(z.box)}；一排圆形色块，每个色块下写颜色名（字高约占画面 2.5%）：${all.map(x => `「${x.name}」${x.hex}`).join('、')}。`;
       case 'badge': return `工牌：${area(z.box)}；模特脖子上挂一条挂绳，胸前垂一张竖向白色工牌卡${c.badge ? `，卡上印「${c.badge}」` : '，卡上只有简单色块和线条，不写字'}。`;
@@ -176,8 +202,8 @@ export function mainPrompt(input: {
   const logo = input.logo ? `- ${input.logo}` : '- 衣服上不印任何字。';
   const garment = input.fabric ? `面料：${used[0]?.name ?? all[0]?.name}，颜色和纹理照参考图1；这张图只拍面料，不画整件衣服，看不到领口、帽子、袖子、拉链、口袋。`
     : `衣服（必须和参考图一模一样）：\n${lines(input.garment)}\n${colorRule}\n${logo}`;
-  // Several colours side by side always stand in a light studio, whatever the master's tone.
-  const studio = used.length > 1 && t.people > 0 ? '\n- 多色同框：背景是浅灰无缝棚拍底，明亮均匀，每件衣服的颜色都看得清；字体和标签样式照整体风格。' : '';
+  // Several colours on people are photographed together where the set is shot, whatever the master's tone (10-16).
+  const together = used.length > 1 && t.people > 0 ? `\n- 多色同框：实景合影，${input.place || DEFAULT_PLACE}；光线自然，每件衣服的颜色都看得清；字体和标签样式照整体风格。` : '';
   return `为淘宝制作一张冲锋衣团体定制商品${input.ratio === 'long' ? '竖版长图（手淘推荐流）' : '主图'}，${RATIO_NAME[input.ratio]}。${head}
 ${refs}
 
@@ -185,7 +211,7 @@ ${garment}
 
 版式（位置用画面百分比，按这里排，不要自己加东西）：
 ${lines(t.zones.map(zone).filter((x): x is string => !!x))}
-${t.people ? '' : c.cells.some(x => x.recipe.includes('手')) ? '- 画面里没有模特：只有卡片里写到的手可以出现，只露手，不露脸和身体。\n' : '- 画面里没有任何人：没有模特、没有手、没有人体的任何部位。\n'}${t.zones.some(z => z.kind === 'person' || z.kind === 'garment') ? '' : '- 这张图不画整件衣服：卡片和格子里只画写到的部位或面料，其余是字、图标和背景。\n'}- 场景和画面细节：${sheet ? fabricLook(c) : c.scene || '干净简洁，衬托衣服'}${studio}
+${t.people ? '' : c.cells.some(x => x.recipe.includes('手')) ? '- 画面里没有模特：只有卡片里写到的手可以出现，只露手，不露脸和身体。\n' : '- 画面里没有任何人：没有模特、没有手、没有人体的任何部位。\n'}${t.zones.some(z => z.kind === 'person' || z.kind === 'garment') ? '' : '- 这张图不画整件衣服：卡片和格子里只画写到的部位或面料，其余是字、图标和背景。\n'}- 场景和画面细节：${sheet ? fabricLook(c) : c.scene || '干净简洁，衬托衣服'}${together}
 ${style(input.layout.style, input.task === '首图')}
 
 ${NO_EXTRA}`;

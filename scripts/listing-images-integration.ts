@@ -375,7 +375,7 @@ try {
   const made: { order: string[]; productBytes?: Buffer; skuRef?: Buffer } = { order: [] };
   let shade = 0;
   const worker2 = await startListingWorker({ concurrency: 4, recognize, generate: async (input, hooks) => {
-    const which = input.prompt.startsWith('从参考图') ? 'product' : input.prompt.startsWith('为一套服装商品主图生成一张“模特定妆照”') ? 'cast' : input.prompt.includes('SKU 规格图') ? 'sku' : input.prompt.startsWith('为服装商品的 SKU 图生成一张单人模特图') ? 'skumodel' : 'main';
+    const which = input.prompt.startsWith('从参考图') ? 'product' : input.prompt.startsWith('为一套服装商品主图生成一张“模特定妆照”') ? 'cast' : input.prompt.includes('SKU 规格图') ? 'sku' : input.prompt.startsWith('为服装商品的 SKU 图生成一张单人模特') ? 'skumodel' : 'main';
     made.order.push(which);
     if (which === 'sku') made.skuRef = input.references[0];
     await hooks.beforeSubmit(); await hooks.receipt('task-unified-' + which);

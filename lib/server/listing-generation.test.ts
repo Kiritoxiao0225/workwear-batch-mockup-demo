@@ -7,7 +7,9 @@ import { SERVICE_IMAGES } from '../listing/service';
 import { BUILT_IN_LAYOUTS as MASTERS, FLAT_EXAMPLE, fitTemplate, type Layout } from '../listing/templates';
 import { contentOf, coverOf, fabricCrop, planJobs, wordsOf, zipEntryName } from './listing-generation';
 import { buildPlan } from './listing-write';
-import { castOnePrompt, castPrompt, editPrompt, longPrompt, mainPrompt, redrawPrompt, servicePrompt, serviceWordsPrompt, skuPrompt } from './listing-prompts';
+import { castOnePrompt, castPrompt, editPrompt, longPrompt, mainPrompt, redrawPrompt, servicePrompt, serviceWordsPrompt, skuModelPrompt, skuPrompt } from './listing-prompts';
+import { crowdLine, DEFAULT_PLACE } from './listing-crowd';
+import { SPECS, specPrompt } from './listing-specs';
 import type { StoredPlan } from './listing-store';
 
 const commute = BUILT_IN_LAYOUTS[0];
@@ -158,11 +160,14 @@ describe('the masters', () => {
     expect(prompt).not.toContain('衣服（必须和参考图一模一样）');
     expect(prompt).toContain('大标题「轻量防水面料」：区域 左4% 上13% 宽58% 高9%，字高约占画面 7%');
   });
-  it('the chest shows the LOGO the plan chose; several colours stand in a light studio', () => {
+  it('the chest shows the LOGO the plan chose; several colours are photographed together where the set is', () => {
     const t = master('M2').templates.收口.square;
     const prompt = mainPrompt({ ratio: 'square', task: '收口', template: t, layout: master('M2'), content: { ...content, title: '团体定制 2色可选' }, used: colors, all: colors, garment: ['连帽'], lead: '男', fromSku: true, cast: 3, logo: '衣服胸口左侧印一个小小的白色「LOGO」字样' });
     expect(prompt).toContain('胸口左侧印一个小小的白色「LOGO」');
-    expect(prompt).toContain('浅灰无缝棚拍底');
+    expect(prompt).toContain(`实景合影，${DEFAULT_PLACE}`);
+    expect(prompt).not.toContain('棚拍底');
+    const there = mainPrompt({ ratio: 'square', task: '收口', template: t, layout: master('M2'), content: { ...content, title: '团体定制 2色可选' }, used: colors, all: colors, garment: ['连帽'], lead: '男', fromSku: true, cast: 3, logo: null, place: '高山草甸步道' });
+    expect(there).toContain('实景合影，高山草甸步道');
     expect(mainPrompt({ ratio: 'square', task: '首图', template: master('M1').templates.首图.square, layout: master('M1'), content: { ...content, title: '防水', sub: '冲锋衣定制' }, used: colors.slice(0, 1), all: colors, garment: ['连帽'], lead: '男', fromSku: false, cast: 2, logo: null }))
       .toContain('大标题「防水」：区域 左76% 上58% 宽17% 高22%，竖排，从上到下一列，每个字高约占画面 9.5%');
   });
@@ -204,6 +209,12 @@ describe('a group photo for two colours (10-15)', () => {
     expect(new Set(products).size).toBe(products.length);
     expect(products).toContain(`product:${group}-2`);
   });
+  it('keeps the place the writing step chose for the SKU models and the closer', () => {
+    const draft = defaultDraft(DEMO_MATERIAL, commute);
+    const there = JSON.stringify({ product: { name: '', garment: ['立领'] }, scenes: [], sku: { tag: '', fabric: '' }, place: ' 高山草甸步道，远处雪山 ' });
+    expect(buildPlan(there, { draft, images: [], direct: [], model: 'm' }).place).toBe('高山草甸步道，远处雪山');
+    expect(buildPlan(written, { draft, images: [], direct: [], model: 'm' }).place).toBeUndefined();
+  });
   it('a plan without group photos is as before', () => {
     const draft = defaultDraft(DEMO_MATERIAL, commute);
     const plan = buildPlan(written, { draft, images: [], direct: [], model: 'm' });
@@ -227,5 +238,38 @@ describe('close-up cards (10-15)', () => {
     expect(cells[1]).toMatchObject({ photo: 'M42' });
     expect(cells[2]).toMatchObject({ icon: true });
     expect(cells[2].photo).toBeUndefined();
+  });
+});
+
+describe('the closer and the SKU models (10-16)', () => {
+  const six = ['落霞橙', '爱马仕橙', '未来白', '北欧蓝', '石苔灰', '黑色'];
+  it('gives every place in the group its colour, the main colour in the middle of the front row', () => {
+    const line = crowdLine(six.map(name => ({ name })), '参考图7');
+    expect(line).toContain('前排从左到右「爱马仕橙」「落霞橙」「未来白」，后排从左到右「北欧蓝」「石苔灰」「黑色」');
+    expect(line).toContain('6 种颜色各出现一次');
+    expect(line).toContain('参考图7里的男生和女生都在');
+    expect(line).not.toContain('排成一排');
+    expect(crowdLine([{ name: '北欧蓝', hex: '#1f2a44' }, { name: '黑色', hex: '#151515' }, { name: '白色' }], '定妆照')).toContain('从左到右「黑色」（#151515）「北欧蓝」（#1f2a44）「白色」');
+    expect(crowdLine([{ name: '黑色' }, { name: '藏青' }], '定妆照')).toContain('前排从左到右「黑色」「藏青」，后排从左到右「黑色」「藏青」');
+    expect(crowdLine([{ name: '黑色' }, { name: '藏青' }, { name: '白色' }], '定妆照')).toContain('从左到右「藏青」「黑色」「白色」');
+  });
+  it('the masters\' closers are shot at the set\'s place, the sample lending only its band', () => {
+    const fill = { title: '团体定制 · 6色可选', sub: '宽松', tags: [], facts: [], cells: [], color: six[0], colors: six.map(name => ({ name, hex: '#000' })), all: six.map(name => ({ name, hex: '#000' })), light: false, who: '', badge: '', castRef: 7, place: '高山草甸步道' };
+    for (const master of ['M1', 'M2', 'M3', 'M4']) {
+      const spec = SPECS[master].收口!;
+      const prompt = specPrompt({ master, task: '收口', taskLabel: '收口', n: 5, total: 5, spec, fill, garment: ['立领'], logo: null, refs: { garment: fill.colors, cast: 7, sample: 8 } });
+      expect(prompt).toContain('实景合影：高山草甸步道');
+      expect(prompt).toContain('站位和姿势不照示例图');
+      expect(prompt).not.toContain('没有户外场景');
+    }
+    expect(SPECS.M1.收口!.background({ ...fill, place: undefined })).toContain(DEFAULT_PLACE);
+  });
+  it('a SKU model stands where the set is shot, the pose turning with the colour', () => {
+    const at = (pose: number, place?: string) => skuModelPrompt({ color: '北欧蓝', garment: ['立领'], lead: '男', who: 'lead', halves: false, logo: null, place, pose });
+    expect(at(0, '高山草甸步道')).toContain('场景实拍：高山草甸步道');
+    expect(at(0)).toContain(`场景实拍：${DEFAULT_PLACE}`);
+    expect(at(0)).not.toContain('纯浅灰色无缝背景');
+    expect(at(0)).not.toBe(at(1));
+    expect(at(0)).toContain('从头顶拍到膝盖');
   });
 });

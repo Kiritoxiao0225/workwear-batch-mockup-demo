@@ -25,12 +25,14 @@ export type SkuCard = SkuText & {
   tag?: string | null;
 };
 
-const FONT = { regular: 'PuHui Regular', bold: 'PuHui Bold', heavy: 'PuHui Heavy' };
+/** `serif`: the title's (Noto Serif SC Black, GB2312 level one only; OFL, public/fonts/NotoSerifSC-OFL.txt). */
+const FONT = { regular: 'PuHui Regular', bold: 'PuHui Bold', heavy: 'PuHui Heavy', serif: 'Listing Serif Black' };
 let fontsReady = false;
 function ensureFonts() {
   if (fontsReady) return;
   for (const [file, family] of [['Regular', FONT.regular], ['Bold', FONT.bold], ['Heavy', FONT.heavy]] as const)
     if (!GlobalFonts.registerFromPath(path.join(process.cwd(), `public/fonts/AlibabaPuHuiTi-${file}.ttf`), family)) throw new Error(`后台普惠体（${file}）加载失败`);
+  if (!GlobalFonts.registerFromPath(path.join(process.cwd(), 'public/fonts/NotoSerifSC-Black-GB2312.otf'), FONT.serif)) throw new Error('后台宋体加载失败');
   fontsReady = true;
 }
 
@@ -198,8 +200,16 @@ export async function renderSkuCard(c: SkuCard): Promise<Buffer> {
     ctx.drawImage(logo, L, y, logo.width * scale, logo.height * scale);
     y += logo.height * scale + 50;
   } else y += 40;
-  ctx.fillStyle = INK; ctx.textBaseline = 'alphabetic';
-  for (const t of c.title.slice(0, 2)) { fitText(ctx, t, FONT.heavy, 66, W); ctx.fillText(t, L, y + 56); y += 80; }
+  ctx.textBaseline = 'alphabetic';
+  // A heavy serif title under a small spaced English line (10-16: the black sans read as a sale sign).
+  if (c.kicker) {
+    ctx.fillStyle = '#8c8c8c'; ctx.font = `20px "${FONT.regular}"`; ctx.letterSpacing = '6px';
+    ctx.fillText(c.kicker, L + 2, y + 6); ctx.letterSpacing = '0px'; y += 22;
+  }
+  ctx.fillStyle = INK;
+  for (const t of c.title.slice(0, 2)) {
+    ctx.letterSpacing = '4px'; fitText(ctx, t, FONT.serif, 64, W); ctx.fillText(t, L, y + 56); ctx.letterSpacing = '0px'; y += 82;
+  }
   if (c.tag) {
     // Under the title, in place of its short bar.
     ctx.font = `30px "${FONT.heavy}"`;

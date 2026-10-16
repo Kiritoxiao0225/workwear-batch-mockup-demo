@@ -50,3 +50,10 @@ describe('modelPhotoFor and liners', () => {
     expect(modelPhotoFor(images, 'M4', '黑色', '男')).toBe('M80');
   });
 });
+
+describe('the SKU title (10-16)', () => {
+  it('has a small English line over it', () => {
+    expect(skuCardText({ name: '6610#立领薄款', category: 'workwear', points: [] })).toMatchObject({ kicker: 'PREMIUM CUSTOM', title: ['高端定制', '支持印绣'] });
+    expect(skuCardText({ name: 'T恤', category: 'generic', points: [] }).kicker).toBe('PREMIUM QUALITY');
+  });
+});

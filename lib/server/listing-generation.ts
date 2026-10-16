@@ -504,6 +504,7 @@ export async function specShot(o: { stored: StoredPlan; projectId: string; input
     color: used[0]?.name ?? colors[0].name, colors: used, all: colors, light: luma(used[0]?.hex ?? '#ffffff') > 150,
     who: o.layout.templates.首图.square.people >= 2 && task === '首图' ? `参考图${cast}里的一男一女并排站，男生在左、身体朝右微侧，女生在右` : `参考图${cast}里的${lead}`,
     ...(task === '首图' ? { act: c.act, scene: c.scene || undefined } : {}), badge: c.badge ?? '',
+    castRef: cast, place: o.stored.place,
   };
   const prompt = specPrompt({ master: o.layout.id, task, taskLabel: TASK_LABEL[task], n: o.input.n, total: o.input.total, spec, fill, garment: o.stored.garment,
     logo: spec.fabric ? null : o.logo?.line ?? null, refs: { garment: spec.fabric ? used.slice(0, 1) : used, cast, logo, sample } });
@@ -616,8 +617,9 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         const source = assetId && (await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [assetId])).rows[0];
         if (label && !source) throw new CatalogHttpError(404, '找不到这个颜色的模特图（原始素材可能已在最后一次出图 30 天后清理）');
         const photo = source ? await fileOf(source.file_id) : outputs.has(`skumodel:${input.sku}`) ? await output(`skumodel:${input.sku}`) : null;
-        // The material's photo is usually a scene: the analysis model finds the model's head and knees on it.
-        const frame = source && photo ? await findFrame(photo, recognize) : null;
+        // A photo in a scene (the material's, or a SKU model drawn where the set is shot since 10-16): the
+        // analysis model finds the model's head and knees on it. A drawn one on plain grey is measured instead.
+        const frame = photo && (source || stored.place) ? await findFrame(photo, recognize) : null;
         const text = skuCardText({ name: m.name, category: d.category, points: d.points });
         await succeed(await renderSkuCard({
           ...text, rows: [...text.rows, colorRow(color.name)], logo: (await shopSettings(job.tenant_id)).logo, fabric: await fabricCrop(product),
@@ -633,7 +635,8 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         const cast = halves ? (input.pair ? GENDERS.map(g => `cast:${g}`) : [`cast:${d.model.lead}`]) : ['cast'];
         references = [await output(`product:${input.sku}`), ...await Promise.all(cast.map(output))];
         if (logoBytes && logoLine) references.push(logoBytes);
-        prompt = skuModelPrompt({ color: colorOf(input.sku).name, garment, lead: d.model.lead, who: input.pair ? 'pair' : 'lead', halves, logo: logoLine, logoRef: logoBytes && logoLine ? references.length : undefined });
+        prompt = skuModelPrompt({ color: colorOf(input.sku).name, garment, lead: d.model.lead, who: input.pair ? 'pair' : 'lead', halves, logo: logoLine, logoRef: logoBytes && logoLine ? references.length : undefined,
+          place: stored.place, pose: colors.findIndex(c => c.sku === input.sku) });
         ratio = 'portrait';
       } else if (input.kind === 'product') {
         const assetId = stored.images.find(i => i.label === input.sku)?.assetId;
@@ -706,7 +709,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         await withPartPhotos(stored, job.project_id, content.cells, references);
         prompt = mainPrompt({ ratio, task: input.index >= 0 ? TASK_LABEL[d.slots[input.index].task as Task] : '长图', template: t, layout, content,
           used, all: colors, garment, lead: d.model.lead, fromSku: multi, cast, n: input.ratio === 'long' ? undefined : input.n, total: input.total,
-          logo: shows ? logoLine : null, logoRef, fabric });
+          logo: shows ? logoLine : null, logoRef, fabric, place: stored.place });
       }
     }
     if (input.note) prompt += `\n\n补充要求：${input.note}`;
