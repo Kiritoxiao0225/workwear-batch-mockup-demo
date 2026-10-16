@@ -20,7 +20,7 @@ const objectStore = storage.backend === 'oss' ? catalogObjectStore() : storage.b
 let stop!: () => void;
 const stopped = new Promise<void>(resolve => { stop = resolve; });
 process.once('SIGTERM', stop); process.once('SIGINT', stop);
-const { createAdmissionGate } = await import('../batch-mockup/runtime/resource-guard.mjs');
+const { createAdmissionGate, idleRecycle } = await import('../batch-mockup/runtime/resource-guard.mjs');
 const admission = createAdmissionGate();
 const worker = await startBatchWorker({ admission });
 const { startListingWorker } = await import('../lib/server/listing-jobs');
@@ -36,5 +36,21 @@ const health = process.env.PORT ? createServer((_request, response) => {
     stabilityRelease: process.env.STABILITY_RELEASE_SHA256 ?? null, logicVersion: WORKWEAR_LOGIC_VERSION, commit: process.env.WORKWEAR_BUILD_COMMIT ?? null, objectStore }));
 }).listen(Number(process.env.PORT), '0.0.0.0') : undefined;
 console.log('[batch-worker] ready:', worker.status().scope, 'legacy worker disabled');
-try { await stopped; await Promise.all([worker.close(), listingWorker.close(), backup.close()]); }
+// Memory that stays above the resume line while nothing runs is only released by a new process;
+// exiting lets Zeabur start one instead of the worker sitting paused (2026-10-15 night).
+let recycling = false;
+const recycleDue = idleRecycle({ admission, busy: () => worker.status().running > 0 || listingWorker.running() > 0 || backup.status().running });
+const recycleTimer = setInterval(() => {
+  if (recycling || !recycleDue()) return;
+  recycling = true;
+  console.warn('[batch-worker] 内存降不下来且没有任务，重启进程', JSON.stringify(admission.status()));
+  stop();
+}, 15_000);
+// Customers' work is served by the external worker; the main worker keeps watch so a stall shows
+// up in the logs even when the external worker itself is the one stuck.
+const { queueAlarm } = await import('../lib/server/queue-health');
+const alarm = worker.status().scope === 'main' ? queueAlarm() : null;
+const alarmTimer = alarm ? setInterval(() => { void alarm().catch(error => console.error('[queue-alarm] check failed', error?.name)); }, 60_000) : undefined;
+try { await stopped; clearInterval(recycleTimer); clearInterval(alarmTimer); await Promise.all([worker.close(), listingWorker.close(), backup.close()]); }
 finally { health?.close(); await closeCatalogDatabase(); }
+if (recycling) process.exit(75);

@@ -9,6 +9,13 @@ import { after } from 'next/server';
 
 const SERVERLESS_IDLE_SECONDS = 5;
 const POOL_RECLAIM_DELAY_MS = (SERVERLESS_IDLE_SECONDS + 1) * 1000;
+// A long-running server shares one pool between page requests, picture reads and the health probe;
+// five connections ran out on 2026-10-15. Serverless instances stay small.
+function poolSize(environment: Record<string, string | undefined>) {
+  const configured = Number(environment.CATALOG_DATABASE_POOL_MAX);
+  if (Number.isInteger(configured) && configured >= 1 && configured <= 50) return configured;
+  return environment.VERCEL === '1' ? 5 : 10;
+}
 
 export function catalogDatabaseConfig(environment: Record<string, string | undefined> = process.env) {
   const connectionString = environment.CATALOG_DATABASE_URL;
@@ -23,7 +30,7 @@ export function catalogDatabaseConfig(environment: Record<string, string | undef
   const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
   if (!local && !certificate && url.searchParams.get('sslmode') !== 'verify-full') throw new Error(`远程数据库 ${url.hostname} 必须配置 CA 证书或 sslmode=verify-full`);
   return {
-    connectionString, max: 5, connect_timeout: 10, idle_timeout: environment.VERCEL === '1' ? SERVERLESS_IDLE_SECONDS : 30,
+    connectionString, max: poolSize(environment), connect_timeout: 10, idle_timeout: environment.VERCEL === '1' ? SERVERLESS_IDLE_SECONDS : 30,
     connection: { application_name: 'workwear-mockup', search_path: 'garment_catalog,public', statement_timeout: 30000,
       // A database-side fallback also runs when a serverless instance is suspended.
       // This only expires sessions outside transactions; image uploads run outside transactions.

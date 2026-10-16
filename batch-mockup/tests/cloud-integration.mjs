@@ -9,7 +9,8 @@ import sharp from 'sharp';
 import {migrateCatalog,catalogDatabase,closeCatalogDatabase} from '../../lib/server/catalog-database.ts';
 import {backupCatalog,restoreCatalog} from '../../lib/server/catalog-backup.ts';
 import {cloudStorage,CLOUD_ROOT} from '../adapters/cloud-files.mjs';
-import {atomicFile,jsonFile,saveJSON,readBytes,assetPath,listDirectories,checkpoint} from '../adapters/a-files.mjs';
+import {atomicFile,jsonFile,saveJSON,readBytes,assetPath,assetDigest,hash,listDirectories,checkpoint} from '../adapters/a-files.mjs';
+import {assetResponse} from '../runtime/asset-response.mjs';
 import {enqueueWpsSync,readWpsSyncStatus} from '../runtime/sync-scheduler.mjs';
 const root=await mkdtemp(join(tmpdir(),'batch-cloud-test-')),probe=createServer();await new Promise(ok=>probe.listen(0,'127.0.0.1',ok));const port=probe.address().port;await new Promise(ok=>probe.close(ok));
 const password=randomBytes(24).toString('hex');process.env.CATALOG_DATABASE_URL=`postgresql://batch_test:${password}@127.0.0.1:${port}/postgres`;process.env.CATALOG_LOCAL_OBJECT_ROOT=join(root,'objects');
@@ -19,6 +20,12 @@ try{
  await cloudStorage(()=>saveJSON(file,{revision:1,text:'第一版'}));await closeCatalogDatabase();assert.deepEqual(await cloudStorage(()=>jsonFile(file)),{revision:1,text:'第一版'});
  const png=await sharp({create:{width:20,height:20,channels:4,background:'red'}}).png().toBuffer();await cloudStorage(()=>atomicFile(assetPath(CLOUD_ROOT,'assets/test.png'),png));assert.deepEqual(await cloudStorage(()=>readBytes(assetPath(CLOUD_ROOT,'assets/test.png'))),png);
  await assert.rejects(()=>cloudStorage(()=>atomicFile(assetPath(CLOUD_ROOT,'assets/test.png'),Buffer.from('wrong'))));
+ // The fingerprint comes from batch_assets without fetching the picture; a preview is made once and kept.
+ assert.equal(await cloudStorage(()=>assetDigest(assetPath(CLOUD_ROOT,'assets/test.png'))),hash(png));
+ assert.equal(await cloudStorage(()=>assetDigest(assetPath(CLOUD_ROOT,'assets/none.png'))),null);
+ const preview=await cloudStorage(()=>assetResponse(CLOUD_ROOT,'assets/test.png',{preview:true}));assert.equal(preview.headers['Content-Type'],'image/webp');
+ assert.ok(await cloudStorage(()=>assetDigest(assetPath(CLOUD_ROOT,'assets/test.png.preview.webp'))),'preview kept in cloud storage');
+ assert.equal((await cloudStorage(()=>assetResponse(CLOUD_ROOT,'assets/test.png',{ifNoneMatch:`"${hash(png)}"`}))).status,304);
  let continueFirst,readFirst;const firstRead=new Promise(ok=>readFirst=ok),resume=new Promise(ok=>continueFirst=ok);
  const first=cloudStorage(async()=>{await jsonFile(file);readFirst();await resume;await saveJSON(file,{revision:2,text:'旧页面'});});await firstRead;
  await cloudStorage(async()=>{await jsonFile(file);await saveJSON(file,{revision:2,text:'新页面'});});continueFirst();await assert.rejects(first,/其他页面/);

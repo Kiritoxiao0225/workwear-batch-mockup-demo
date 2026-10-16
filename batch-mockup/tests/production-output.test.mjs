@@ -170,3 +170,14 @@ test('计费 · 生图路线的 2K：试用期只收生图，放大不另收', a
   assert.deepEqual(r.steps.map(s => s.name), ['generate', 'upscale-1']);
   assert.deepEqual(billed(r), [['generate', true]]);
 });
+
+test('存储 · 4K：成品仍是无损 PNG，修补用原图存无损 WebP，放大中间图不入库', async t => {
+  const { root, job } = await enhanceFixture(t, 1100, 1100, '4K');
+  const r = await executeProduction(root, job.id, { enhance: doubler([]) });
+  assert.equal(r.upscale.passes, 2);
+  assert.match(r.final.asset, /final-4096\.png$/);
+  assert.match(r.raw.asset, /raw-4096\.webp$/);
+  assert.equal((await sharp(await readFile(resolve(root, 'public', r.raw.asset))).metadata()).format, 'webp');
+  const stored = await (await import('node:fs/promises')).readdir(resolve(root, 'public/production-results', job.id));
+  assert.deepEqual(stored.filter(f => f.startsWith('upscale-input')), []);
+});

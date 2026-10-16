@@ -448,6 +448,7 @@ export async function startListingWorker({ canAccept = () => true, concurrency =
   const timer = setInterval(() => void tick(), 2000);
   void tick();
   return {
+    running: () => running.size,
     close: async () => {
       closed = true; clearInterval(timer); clearInterval(beatTimer); await Promise.all(running);
       await db().query(`UPDATE listing_workers SET heartbeat_at=now()-interval '1 day' WHERE id=$1`, [owner]);

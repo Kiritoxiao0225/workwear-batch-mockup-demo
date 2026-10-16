@@ -30,3 +30,13 @@ describe('cloud catalog connection boundaries', () => {
     for (const prefix of ['', '../other', '/other', 'other/', 'other//folder', 'other?folder']) expect(() => catalogObjectPrefix(prefix)).toThrow('CATALOG_OSS_PREFIX');
   });
 });
+
+describe('database pool size', () => {
+  it('gives a long-running server room for pages, pictures and the health probe, keeps serverless small', () => {
+    const local = { CATALOG_DATABASE_URL: 'postgresql://app:secret@127.0.0.1:5432/mockup' };
+    expect(catalogDatabaseConfig(local).max).toBe(10);
+    expect(catalogDatabaseConfig({ ...local, VERCEL: '1' }).max).toBe(5);
+    expect(catalogDatabaseConfig({ ...local, CATALOG_DATABASE_POOL_MAX: '16' }).max).toBe(16);
+    expect(catalogDatabaseConfig({ ...local, CATALOG_DATABASE_POOL_MAX: 'lots' }).max).toBe(10);
+  });
+});

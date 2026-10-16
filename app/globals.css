@@ -1680,6 +1680,8 @@ button.catalog-card-image { width: 100%; padding: 0; border: 0; cursor: zoom-in;
 .admin-modal > div { width: min(440px,100%); padding: 24px; background: var(--panel); border-radius: 14px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 14px; }
 .admin-modal h2 { margin: 0; font-size: 17px; }
 .admin-modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.admin-queue { margin: 0; font-size: 12px; color: var(--muted); }
+.admin-queue.stuck { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--danger); color: var(--danger); font-weight: 600; }
 .admin-badge { margin-left: 6px; padding: 1px 6px; border-radius: 9px; background: var(--warning); color: #fff; font-size: 11px; }
 .admin-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .admin-filters input, .admin-filters select, .admin-card select { padding: 6px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink); font: inherit; font-size: 13px; }

@@ -31,7 +31,7 @@
     "external": {
       "service": "6ab12c781e75dc0f4f4a8c8a",
       "concurrency": 3,
-      "rssPauseMB": 768,
+      "rssPauseMB": 1536,
       "hostReserveMB": 1024
     }
   }

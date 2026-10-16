@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { resolve,extname } from 'node:path';
+import { resolve } from 'node:path';
 import { NextResponse } from 'next/server';
 import { catalogUser } from '@/lib/server/catalog-auth';
 import { tenantScope, isInternalTenant } from '@/lib/server/tenant-scope';
@@ -8,7 +8,7 @@ import { assertPageAccess } from '@/lib/server/page-access';
 import { cloudStorage,CLOUD_ROOT,queueHealth,queueActivity } from '@/batch-mockup/adapters/cloud-files.mjs';
 import { service } from '@/batch-mockup/runtime/service.mjs';
 import { enqueueWpsSync,readWpsSyncStatus } from '@/batch-mockup/runtime/sync-scheduler.mjs';
-import { readBytes,assetPath } from '@/batch-mockup/adapters/a-files.mjs';
+import { assetResponse } from '@/batch-mockup/runtime/asset-response.mjs';
 export const dynamic='force-dynamic';
 export const runtime='nodejs';
 export const maxDuration=300;
@@ -42,7 +42,11 @@ async function handle(request,context){
   }
   if(!write&&!path.startsWith('api/')&&!path.endsWith('.json')){
    if(!/^(assets|confirmed-assets|production-assets|production-results|supplements|wps-assets|mockup-assets|mockup-results)\/[a-zA-Z0-9_./-]+$/.test(path)||path.includes('..'))return NextResponse.json({error:'图片地址无效'},{status:404});
-   const bytes=await cloudStorage(()=>readBytes(assetPath(CLOUD_ROOT,path)),{workspace});const ext=extname(path);let offset=0;const stream=new ReadableStream({pull(controller){if(offset>=bytes.length){controller.close();return;}const end=Math.min(offset+65536,bytes.length);controller.enqueue(new Uint8Array(bytes.subarray(offset,end)));offset=end;}});return new Response(stream,{headers:{'Content-Type':ext==='.png'?'image/png':ext==='.webp'?'image/webp':'image/jpeg','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
+   // Pages show ?preview=1 (a small display copy); download and editing fetch the original.
+   const asset=await cloudStorage(()=>assetResponse(CLOUD_ROOT,path,{preview:url.searchParams.get('preview')==='1',ifNoneMatch:request.headers.get('if-none-match')}),{workspace});
+   if(asset.status===404)return NextResponse.json({error:'图片尚未保存'},{status:404});
+   if(asset.status===304)return new Response(null,{status:304,headers:asset.headers});
+   const bytes=asset.bytes;let offset=0;const stream=new ReadableStream({pull(controller){if(offset>=bytes.length){controller.close();return;}const end=Math.min(offset+65536,bytes.length);controller.enqueue(new Uint8Array(bytes.subarray(offset,end)));offset=end;}});return new Response(stream,{headers:asset.headers});
   }
   // Sync and adopt read and write the customer's real WPS table.
   if(write&&['api/wps/sync','api/wps/adopt'].includes(path)&&!internal&&process.env.WPS_WRITE_INTERNAL_ONLY!=='0')

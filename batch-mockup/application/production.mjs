@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { resolve, extname } from 'node:path';
-import { hash, jsonFile, saveJSON, atomicFile, assetPath, fail, readBytes, materialize, listDirectories, checkpoint } from '../adapters/a-files.mjs';
+import { hash, jsonFile, saveJSON, atomicFile, assetPath, fail, readBytes, materialize, scratchFile, listDirectories, checkpoint } from '../adapters/a-files.mjs';
 import { requirementWorkbench, validateRequirementDraft } from './requirements.mjs';
 import { productionPolicy, inspectPixels, withoutFaintSpecks, hardenInteriorAlpha, flattenOnWhite } from '../adapters/production-images.mjs';
 import { readRepairState } from './production-repair.mjs';
@@ -131,16 +131,20 @@ export async function executeProduction(root,id,providers,onProgress=()=>{}) {
     const width=Math.round(job.final.width*scale),height=Math.round(job.final.height*scale);
     const transparent=job.final.transparentPixels>0;
     let colour=transparent?await flattenOnWhite(finalBytes):finalBytes,fallback=null;
+    // The upscaler's inputs are only needed during the call, so they stay in scratch files.
     for(let n=1;n<=passes&&!fallback;n++){
-      const asset=assetPath(root,`production-results/${id}/upscale-input-${n}.png`);await atomicFile(asset,colour);
-      try{colour=await step(`upscale-${n}`,async dir=>providers.enhance({path:await materialize(asset)},dir));}
+      const input=await scratchFile(colour,'.png');
+      try{colour=await step(`upscale-${n}`,async dir=>providers.enhance({path:input},dir));}
       catch(e){fallback=errorText(e,'放大');}
     }
-    const sized=await sharp(colour,limit).removeAlpha().resize(width,height,{fit:'fill',kernel:'lanczos3'}).png().toBuffer();
+    // Delivered as lossless PNG packed tighter (about 30% smaller, identical pixels). The raw only
+    // serves 局部修补, so it is lossless WebP, about 60% smaller than PNG.
+    const tight={compressionLevel:9,adaptiveFiltering:true};
+    const sized=await sharp(colour,limit).removeAlpha().resize(width,height,{fit:'fill',kernel:'lanczos3'}).png(transparent?{}:tight).toBuffer();
     const finalOut=transparent
-      ?await sharp(sized,limit).joinChannel(await sharp(finalBytes,limit).ensureAlpha().extractChannel(3).resize(width,height,{fit:'fill',kernel:'lanczos3'}).png().toBuffer()).png().toBuffer()
+      ?await sharp(sized,limit).joinChannel(await sharp(finalBytes,limit).ensureAlpha().extractChannel(3).resize(width,height,{fit:'fill',kernel:'lanczos3'}).png().toBuffer()).png(tight).toBuffer()
       :sized;
-    const rawOut=await sharp(rawBytes,limit).resize(width,height,{fit:'fill',kernel:'lanczos3'}).png().toBuffer();
+    const rawOut=await sharp(rawBytes,limit).resize(width,height,{fit:'fill',kernel:'lanczos3'}).webp({lossless:true}).toBuffer();
     job.base={raw:job.raw,final:job.final};
     job.raw=await publish(rawOut,`raw-${long}`);job.final=await publish(finalOut,`final-${long}`);
     job.upscale={resolution,width,height,passes,...(fallback?{fallback}:{})};

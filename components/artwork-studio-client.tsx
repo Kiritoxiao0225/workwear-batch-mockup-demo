@@ -11,6 +11,7 @@ import {
   batchAPI,
   chargeLabel,
   copyImage,
+  previewURL,
   resultFile,
   statusText,
   uploadImages,
@@ -952,7 +953,7 @@ export function ArtworkStudioClient() {
                 <div className={"thumb stage-" + stage}>
                   {file ? (
                     <>
-                      <img src={assetURL(file.asset)} alt="制作结果" className={upscaling ? "pending-hd" : undefined} />
+                      <img src={previewURL(file.asset)} alt="制作结果" className={upscaling ? "pending-hd" : undefined} />
                       {upscaling && hdSize && (
                         <div className="stage-wait" role="status">
                           <div>
@@ -994,7 +995,7 @@ export function ArtworkStudioClient() {
                           onClick={() => setPick(j.id)}
                         >
                           {f ? (
-                            <img src={assetURL(f.asset)} alt={`第 ${n + 1} 张`} />
+                            <img src={previewURL(f.asset)} alt={`第 ${n + 1} 张`} />
                           ) : pending(j) ? (
                             <i className="spin" aria-hidden="true" />
                           ) : (
@@ -1105,7 +1106,7 @@ export function ArtworkStudioClient() {
                   >
                     <div className="thumb">
                       {f ? (
-                        <img src={assetURL(f.asset)} alt="" loading="lazy" />
+                        <img src={previewURL(f.asset)} alt="" loading="lazy" />
                       ) : busyCase ? (
                         <i className="spin" aria-hidden="true" />
                       ) : (

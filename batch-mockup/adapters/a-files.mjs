@@ -10,8 +10,17 @@ export const checkpoint = () => storage.getStore()?.flush() ?? Promise.resolve()
 export async function readBytes(path) { return storage.getStore() ? storage.getStore().readBytes(resolve(path)) : readFile(path); }
 export async function materialize(path) {
   if (!storage.getStore()) return path;
-  const bytes = await readBytes(path), local = resolve(tmpdir(), 'workwear-batch-assets', hash(bytes)+extname(path));
+  return scratchFile(await readBytes(path), extname(path));
+}
+// A local copy for a provider that needs a file path. It is never stored with the job.
+export async function scratchFile(bytes, ext) {
+  const local = resolve(tmpdir(), 'workwear-batch-assets', hash(bytes)+ext);
   await mkdir(dirname(local), { recursive: true }); const temp=local+'.'+randomUUID()+'.tmp';await writeFile(temp,bytes,{mode:0o600});await rename(temp,local);return local;
+}
+// A stored picture's fingerprint without fetching it, so a browser can revalidate with a 304.
+export async function assetDigest(path) {
+  if (storage.getStore()) return storage.getStore().assetDigest(resolve(path));
+  return readFile(path).then(hash, e => { if (e.code === 'ENOENT') return null; throw e; });
 }
 export async function listDirectories(path) {
   if (storage.getStore()) return storage.getStore().listDirectories(resolve(path));

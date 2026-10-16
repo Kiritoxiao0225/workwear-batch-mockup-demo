@@ -146,6 +146,8 @@ export const labels = [
   "输出",
 ] as const;
 export const assetURL = (asset: string) => "/api/batch/" + asset;
+/** A display copy (at most 1600 px) for showing results; download and editing use assetURL. */
+export const previewURL = (asset: string) => assetURL(asset) + "?preview=1";
 export async function batchAPI<T = Record<string, unknown>>(
   path: string,
   body?: unknown,

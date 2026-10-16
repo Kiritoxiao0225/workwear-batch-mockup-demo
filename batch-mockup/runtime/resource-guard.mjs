@@ -19,11 +19,16 @@ export function createAdmissionGate({
  draining = () => existsSync('/tmp/batch-worker-drain'),
  rssMiB = positive(process.env.BATCH_WORKER_RSS_PAUSE_MB, 1536),
  reserveMiB = positive(process.env.BATCH_WORKER_HOST_RESERVE_MB, 1024),
+ log = (message, detail) => console.warn(message, JSON.stringify(detail)),
 } = {}) {
  let memoryPaused = false, status = { paused: false, reason: null };
+ // A pause used to be silent: the worker kept its heartbeat and simply stopped claiming work.
+ const logChange = previous => { if (previous.paused !== status.paused || previous.reason !== status.reason)
+  log(status.paused ? '[batch-worker] 暂停领单' : '[batch-worker] 恢复领单', status); };
  return {
   check() {
-   if (draining()) return status = { ...status, paused: true, reason: 'deployment_drain' };
+   const previous = status;
+   if (draining()) { status = { ...status, paused: true, reason: 'deployment_drain' }; logChange(previous); return status; }
    try {
     const { available, total, rss } = sample();
     const reserve = Math.max(reserveMiB * MiB, total * .15);
@@ -32,8 +37,24 @@ export function createAdmissionGate({
     status = { paused: memoryPaused, reason: memoryPaused ? 'memory_pressure' : null,
      rssMiB: Math.round(rss / MiB), availableMiB: Math.round(available / MiB), reserveMiB: Math.round(reserve / MiB), rssPauseMiB: rssMiB };
    } catch { status = { ...status, paused: true, reason: 'memory_sample_unavailable' }; }
+   logChange(previous);
    return status;
   },
   status: () => status,
+ };
+}
+
+/**
+ * Node rarely hands memory back, so an RSS pause can outlast the work that caused it: on
+ * 2026-10-15 the external worker stayed paused all night while its heartbeat looked healthy.
+ * Once the pause is about RSS and nothing has run for `idleMs`, only a fresh process recovers.
+ */
+export function idleRecycle({ admission, busy, idleMs = 60_000, now = Date.now }) {
+ let idleSince = null;
+ return () => {
+  const s = admission.status();
+  const stuck = s.reason === 'memory_pressure' && s.rssMiB > s.rssPauseMiB * .8 && !busy();
+  idleSince = stuck ? idleSince ?? now() : null;
+  return stuck && now() - idleSince >= idleMs;
  };
 }

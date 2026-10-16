@@ -44,6 +44,11 @@ export async function cloudStorage(action, { workspace = workspaceId(), lease } 
       }
       const value=await load(key);return value?.encoding==='base64' ? Buffer.from(value.value,'base64') : Buffer.from(JSON.stringify(value));
     },
+    assetDigest: async path => {
+      const key=keyFor(path);
+      if(!key.startsWith('public/'))return null;
+      return (await db.query('SELECT sha256 FROM batch_assets WHERE workspace=$1 AND path=$2',[workspace,key])).rows[0]?.sha256??null;
+    },
     writeBytes: async (path,bytes) => {
       const key=keyFor(path);
       if(key.startsWith('public/')) {

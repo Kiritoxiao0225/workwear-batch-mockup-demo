@@ -62,6 +62,8 @@ function rangeStart(range: Range) {
   return new Date('2020-01-01T00:00:00Z');
 }
 
+type QueueStatus = { queued: number; running: number; oldestQueuedMinutes: number | null; externalWorkerSeenSecondsAgo: number | null; stuck: boolean };
+
 async function postJson(url: string, body: unknown) {
   const response = await fetch(url, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -88,6 +90,7 @@ export function AdminClient() {
   const [prices, setPrices] = useState<Price[]>([]);
   const [costs, setCosts] = useState<Record<string, string>>({});
   const [multiplier, setMultiplier] = useState('2');
+  const [queue, setQueue] = useState<QueueStatus | null>(null);
 
   const load = useCallback(async () => {
     const query = new URLSearchParams({ from: rangeStart(range).toISOString(), to: new Date().toISOString() });
@@ -110,6 +113,15 @@ export function AdminClient() {
       catch (loadError) { setError(loadError instanceof Error ? loadError.message : String(loadError)); }
     })();
   }, [load]);
+
+  // Customers' queue, refreshed every minute; a failed read leaves the rest of the page alone.
+  useEffect(() => {
+    const read = () => fetch('/api/admin/queue', { cache: 'no-store' })
+      .then(response => response.ok ? response.json() as Promise<QueueStatus> : null).then(setQueue, () => setQueue(null));
+    void read();
+    const timer = setInterval(read, 60_000);
+    return () => clearInterval(timer);
+  }, []);
 
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
@@ -176,6 +188,13 @@ export function AdminClient() {
             tabs={TABS.map(([key, label]) => [key, key === 'disputes' && disputes.length > 0 ? <>{label}<span className="admin-badge">{disputes.length}</span></> : label] as const)} />
         </PageHeader>
         {error && <p className="login-error" role="alert">{error}</p>}
+        {queue && (
+          <p className={queue.stuck ? 'admin-queue stuck' : 'admin-queue'} role={queue.stuck ? 'alert' : undefined}>
+            客户任务队列：{queue.stuck ? `有 ${queue.queued} 个任务排队 ${queue.oldestQueuedMinutes} 分钟没人处理`
+              : queue.queued || queue.running ? `处理中 ${queue.running} 个，排队 ${queue.queued} 个` : '空闲'}
+            {(queue.externalWorkerSeenSecondsAgo ?? Infinity) > 60 ? '；外部 worker 没有心跳' : ''}
+          </p>
+        )}
 
         {tab !== 'disputes' && tab !== 'prices' && (
           <div className="admin-filters">
