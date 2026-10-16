@@ -53,7 +53,7 @@ const alarm = worker.status().scope === 'main' ? queueAlarm() : null;
 const alarmTimer = alarm ? setInterval(() => { void alarm().catch(error => console.error('[queue-alarm] check failed', error?.name)); }, 60_000) : undefined;
 // Day-old upload chunks are removed hourly by the main worker only.
 const { sweepUploadChunks } = await import('../batch-mockup/runtime/chunk-sweep.mjs');
-const sweep = () => void sweepUploadChunks().then(removed => { if (removed) console.info('[chunk-sweep] removed', removed); }, error => console.error('[chunk-sweep] failed', error?.name));
+const sweep = () => void sweepUploadChunks().then(removed => { if (removed) console.info('[chunk-sweep] removed', removed); }, error => console.error('[chunk-sweep] failed', error?.name, String(error?.message ?? '').slice(0, 200)));
 const sweepStart = worker.status().scope === 'main' ? setTimeout(sweep, 5 * 60_000) : undefined;
 const sweepTimer = worker.status().scope === 'main' ? setInterval(sweep, 3600_000) : undefined;
 try { await stopped; clearInterval(recycleTimer); clearInterval(alarmTimer); clearTimeout(sweepStart); clearInterval(sweepTimer); await Promise.all([worker.close(), listingWorker.close(), backup.close()]); }

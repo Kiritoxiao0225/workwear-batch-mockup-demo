@@ -29,7 +29,7 @@ test('上传分片：只删超过一天的三类分片，任务状态、清单�
     await put('t-a', 'production-jobs/job-1/state.json', 30);
     await put('t-a', 'manifest.json', 30);
     await put('t-a', 'requirements-state/A.json', 30);
-    assert.equal(await sweepUploadChunks({ db, batch: 2 }), 4, '分批删也能删完');
+    assert.equal(await sweepUploadChunks({ db, batch: 2, pauseMs: 0 }), 4, '分批删也能删完');
     const left = (await sql.unsafe('SELECT workspace, path FROM batch_documents ORDER BY workspace, path')).map(r => `${r.workspace}:${r.path}`);
     assert.deepEqual(left, ['t-a:intake-chunks/4444/0.json', 't-a:manifest.json', 't-a:production-jobs/job-1/state.json', 't-a:requirements-state/A.json']);
     assert.equal(await sweepUploadChunks({ db }), 0);

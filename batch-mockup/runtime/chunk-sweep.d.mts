@@ -1,1 +1,1 @@
-export function sweepUploadChunks(options?: { db?: { query(sql: string, values?: unknown[]): Promise<{ rowCount: number | null }> }; olderThanHours?: number; batch?: number; maxBatches?: number }): Promise<number>;
+export function sweepUploadChunks(options?: { db?: { query(sql: string, values?: unknown[]): Promise<{ rowCount: number | null }> }; olderThanHours?: number; batch?: number; maxBatches?: number; pauseMs?: number }): Promise<number>;
