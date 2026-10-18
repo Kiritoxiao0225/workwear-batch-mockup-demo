@@ -124,7 +124,7 @@ describe('the masters', () => {
     expect(at('M1').get('skumodel:M31')?.input).not.toHaveProperty('pair');
     expect(at('M1', { lead: '女', photos: { 女: 'M9' } }).get('skumodel:M31')?.depends).toEqual(['product:M31', 'cast:女']);
   });
-  const plan = (id: string, scene?: { place: string; sell: string }): StoredPlan => ({ ...stored(master(id)), draft: { ...stored(master(id)).draft, extra: [], ...(scene ? { scene } : {}) } });
+  const plan = (id: string, scene?: { place: string; sell: string; act?: number; look?: number }): StoredPlan => ({ ...stored(master(id)), draft: { ...stored(master(id)).draft, extra: [], ...(scene ? { scene } : {}) } });
   it('every 3:4 image is its square one laid out again; with people or the whole garment the colour\'s white image comes too', () => {
     const two = new Map(planJobs(plan('M4'), master('M4'), 2).map(j => [j.slot, j]));
     for (const k of [1, 2, 3, 4, 5]) expect(two.get(`portrait:${k}`)?.input).toMatchObject({ kind: 'relayout', from: `square:${k}` });
@@ -146,9 +146,24 @@ describe('the masters', () => {
     expect(planJobs(plan('M1'), master('M1'), 1).find(j => j.slot === 'square:2')?.input).toMatchObject({ image: 'A-light' });
   });
   it('the cover acts out its point where it is worn, only on masters shot on location and in places they allow', () => {
-    expect(coverOf(plan('M3', { place: '工地', sell: '防水' }).draft, master('M3'))).toMatchObject({ bg: expect.stringContaining('建筑工地'), person: expect.stringContaining('水珠') });
+    expect(coverOf(plan('M3', { place: '工地', sell: '防水' }).draft, master('M3'))).toMatchObject({ bg: expect.stringContaining('下着小雨的工地'), person: expect.stringContaining('水珠') });
     expect(coverOf(plan('M4', { place: '工地', sell: '防水' }).draft, master('M4'))).toBeNull();
     expect(coverOf(plan('M1', { place: '登山', sell: '防水' }).draft, master('M1'))).toBeNull();
+  });
+  it('the cover takes the act and look the plan picked; 暗黑科技 only low-key looks; its prompt keeps the sample\'s pose and light out', () => {
+    const at = (m: string, scene: { place: string; sell: string; act?: number; look?: number }) => coverOf(plan(m, scene).draft, master(m))!;
+    const looks = new Set([0, 1, 2].map(look => at('M1', { place: '4S店', sell: '防水', act: look, look }).bg));
+    expect(looks.size).toBe(3);
+    expect(at('M1', { place: '4S店', sell: '防水', act: 1, look: 0 }).person).toContain('车钥匙');
+    for (const look of [0, 1, 2, 3]) expect(at('M2', { place: '汽修', sell: '耐磨', look }).bg).toMatch(/偏暗|压暗|暗灰/);
+    const stored = plan('M1', { place: '4S店', sell: '防水', act: 2, look: 1 });
+    const c = contentOf(stored, { kind: 'main', index: 0, ratio: 'square', n: 1, total: 5, skus: [], colors: [], words: { title: '拒水', sub: '', tags: [], cells: [] } }, 'square:1', master('M1'), '');
+    expect(c.scene).toContain('不要 CG 渲染感');
+    const prompt = specPrompt({ master: 'M1', task: '首图', taskLabel: '首图', n: 1, total: 5, spec: SPECS.M1.首图!, garment: [], logo: null, refs: { garment: [{ name: '黑色' }], cast: 2, sample: 3 },
+      fill: { title: '拒水', sub: '', tags: [], facts: [], cells: [], color: '黑色', colors: [], all: [], light: false, who: '参考图2里的男生', badge: '', act: c.act, scene: c.scene } });
+    expect(prompt).toContain('人物的姿势、手的动作和机位不照参考图3');
+    expect(prompt).toContain('背景的颜色、光线和地点都不照参考图3');
+    expect(prompt).toContain('拒水');
   });
   const colors = [{ name: '爱马仕橙', hex: '#e8621d' }, { name: '石苔灰', hex: '#9a9c94' }];
   const content = { title: '轻量防水面料', sub: '', tags: ['90%锦纶'], cells: [], scene: '' };

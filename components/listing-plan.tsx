@@ -22,7 +22,7 @@ import { auditDraft, type AuditFix } from "@/lib/listing/audit";
 import { skuPhotos } from "@/lib/listing/sku-card";
 import { capacity, cellZones, mostCells, PEOPLE_LABEL, skuPair, type Layout } from "@/lib/listing/templates";
 import { SlotPreview, Wire } from "./listing-wire";
-import { bestSell, coverScene, masterInfo, PLACE_IDS, PLACES, SELLS, sellOf, type PlaceId, type Sell } from "@/lib/listing/scene";
+import { bestSell, coverPicks, coverScene, isSellTitle, masterInfo, PLACE_IDS, PLACES, seedOf, SELLS, sellOf, sellTitle, type PlaceId, type Sell } from "@/lib/listing/scene";
 import { useShopService } from "./listing-service";
 
 export const KINDS = ["颜色款图", "静物", "3D渲染", "模特实拍", "细节特写", "卖点图", "详情页", "海报", "尺码表", "无关"] as const;
@@ -44,13 +44,20 @@ export const lookMaster = (m: Materials, fallback: string) => m.look?.master ?? 
 function lookScene(d: Draft, layout: Layout, look: Materials["look"]): Draft {
   const info = masterInfo(layout.id), place = look?.place;
   if (info.cover !== "实景" || !place || info.deny[place]) return withScene(d, layout);
-  const sell = look.sell && (PLACES[place].fits as readonly Sell[]).includes(look.sell) ? look.sell : undefined;
-  return sell ? sellWords({ ...d, scene: { place, sell } }, sell) : withScene({ ...d, scene: { place, sell: "" } }, layout);
+  // The AI's point is one of those taken in turn, so fifty jackets do not all lead with 防水 (10-17).
+  const first = look.sell && (PLACES[place].fits as readonly Sell[]).includes(look.sell) ? look.sell : undefined;
+  const sell = bestSell(place, ticked(d), planSeed(d), first) ?? "防水";
+  return sellWords({ ...d, scene: sceneAt(d, place, sell) }, sell);
 }
 /** Where each on-location master shoots its cover when the AI did not say. */
 const DEFAULT_PLACE: Record<string, PlaceId> = { M1: "4S店", M2: "物业", M3: "工地" };
-/** The cover's big words follow its point: 防水 → 「防水」「冲锋衣定制」. */
-const sellWords = (d: Draft, sell: Sell): Draft => ({ ...d, slots: d.slots.map((x, i) => i === 0 ? { ...x, title: SELLS[sell].big, sub: SELLS[sell].side } : x) });
+const ticked = (d: Draft) => d.points.filter(p => p.on).map(p => p.text);
+/** The plan's seed: its product (the material's points and colours), so one product keeps its picks and the next differs. */
+const planSeed = (d: Draft) => seedOf([d.category, ...d.points.filter(p => p.source === "素材").map(p => p.text), ...d.colors.map(c => c.name)].join("|"));
+/** The cover's scene with its act and look picked by the seed. */
+const sceneAt = (d: Draft, place: string, sell: string) => ({ place, sell, ...coverPicks(planSeed(d), place, sell) });
+/** The cover's big words follow its point, one of its words by the seed: 防水 → 「拒水」「团体定制」. */
+const sellWords = (d: Draft, sell: Sell): Draft => { const w = sellTitle(sell, planSeed(d)); return { ...d, slots: d.slots.map((x, i) => i === 0 ? { ...x, title: w.title, sub: w.sub } : x) }; };
 /**
  * A master whose cover is shot on location keeps a place it can use (or its default) and a point:
  * the one chosen if the place can act it out, else the ticked point that fits the place best. Other
@@ -62,16 +69,17 @@ export function withScene(d: Draft, layout: Layout): Draft {
   const keep = d.scene && d.scene.place in PLACES && !info.deny[d.scene.place as PlaceId] ? d.scene.place as PlaceId : undefined;
   const place = keep ?? (DEFAULT_PLACE[layout.id] && !info.deny[DEFAULT_PLACE[layout.id]] ? DEFAULT_PLACE[layout.id] : PLACE_IDS.find(p => !info.deny[p])!);
   const had = d.scene?.sell && d.scene.sell in SELLS ? d.scene.sell as Sell : null;
-  if (keep && had) return d;
+  // A place chosen on the page comes without picks: it takes the seed's.
+  if (keep && had) return d.scene!.act === undefined ? { ...d, scene: sceneAt(d, keep, had) } : d;
   const fits = had && (PLACES[place].fits as readonly Sell[]).includes(had);
-  const sell = fits ? had : bestSell(place, d.points.filter(p => p.on).map(p => p.text)) ?? had ?? "防水";
-  const next = { ...d, scene: { place, sell } };
+  const sell = fits ? had : bestSell(place, ticked(d), planSeed(d)) ?? had ?? "防水";
+  const next = { ...d, scene: sceneAt(d, place, sell) };
   return sell === had ? next : sellWords(next, sell);
 }
-/** The cover's title was written by hand: neither a point's big word nor the point the cover leads with. */
+/** The cover's title was written by hand: neither a point's cover word nor the point the cover leads with. */
 const handWritten = (d: Draft) => {
   const t = d.slots[0]?.title.trim() ?? "", lead = d.points.find(p => p.id === d.slots[0]?.lead)?.text.trim();
-  return !!t && t !== lead && !Object.values(SELLS).some(s => s.big === t);
+  return !!t && t !== lead && !isSellTitle(t);
 };
 /**
  * Lay the images out again on a master, as if the plan had started on it: the images, the place
@@ -432,22 +440,23 @@ export function PlanDialog({ name, materials, sources, draft, layouts, prices, o
           <SlotPreview template={t} texts={texts} active={active} width={220} /><small className="ppl">右边鼠标移到哪一项，这里对应的位置会亮</small></div>
         <div className="lp-fields">
           {i === 0 && draft.scene && (() => {
-            const place = draft.scene.place as PlaceId, sell = draft.scene.sell as Sell, sc = coverScene(place, sell);
+            const place = draft.scene.place as PlaceId, sell = draft.scene.sell as Sell, sc = coverScene(place, sell, draft.scene, layout.id);
+            const other = () => change({ ...draft, scene: { ...draft.scene!, act: (draft.scene!.act ?? 0) + 1, look: (draft.scene!.look ?? 0) + 1 } });
             const ticked = [...new Set(draft.points.filter(p => p.on).map(p => sellOf(p.text)).filter((x): x is Sell => !!x))];
             const choices = ticked.length ? ticked : (Object.keys(SELLS) as Sell[]);
             return (<>
               <label>地点</label><span className="lp-small">{PLACES[place].name} <button type="button" className="lp-btn link" onClick={() => go(2)}>改</button></span>
               <label>首图卖点<small>画面演这个</small></label><div className="lp-chips">{choices.map(x => {
                 const fits = (PLACES[place].fits as readonly string[]).includes(x);
-                return <button type="button" key={x} className={"lp-chip" + (x === sell ? " on" : "") + (fits ? "" : " warn")} onClick={() => change(sellWords({ ...draft, scene: { place, sell: x } }, x))}>{x}{fits ? "" : " !"}</button>;
+                return <button type="button" key={x} className={"lp-chip" + (x === sell ? " on" : "") + (fits ? "" : " warn")} onClick={() => change(sellWords({ ...draft, scene: sceneAt(draft, place, x) }, x))}>{x}{fits ? "" : " !"}</button>;
               })}</div>
-              <label>画面</label><div className="lp-scene"><p>{sc.line}</p>{sc.hint && <p className="hint">{sc.hint}</p>}</div>
+              <label>画面</label><div className="lp-scene"><p>{sc.line} <button type="button" className="lp-btn link" onClick={other}>换一个</button></p>{sc.hint && <p className="hint">{sc.hint}</p>}</div>
             </>);
           })()}
           {t.zones.some(z => z.kind === "badge") && <><label>工牌</label><span className="lp-small">{shop?.items.some(x => x.on && x.title === "免费印绣") ? "挂工牌，写「免费印绣」" : "挂工牌，不写字"} <span className="lp-muted">（看店铺有没有勾免费印绣）</span></span></>}
           <label>大标题</label><div className="lp-title" {...hl(zoneIds("title"))}><input className="big" value={s.title} maxLength={LIMITS.title} onChange={e => setSlot(i, { title: e.target.value })} />
             {s.task !== "首图" && titles.length > 0 && <select value="" aria-label="换一句" onChange={e => e.target.value && setSlot(i, { title: e.target.value })}><option value="">换一句…</option>{titles.map(x => <option key={x}>{x}</option>)}</select>}</div>
-          {i === 0 && draft.scene && draft.scene.sell in SELLS && !s.title.includes(SELLS[draft.scene.sell as Sell].big) && <><span /><div className="lp-scene"><p className="hint">大标题没讲首图卖点「{draft.scene.sell}」，画面演的是它 <button type="button" className="lp-btn link" onClick={() => change(sellWords(draft, draft.scene!.sell as Sell))}>改成「{SELLS[draft.scene.sell as Sell].big}」</button></p></div></>}
+          {i === 0 && draft.scene && draft.scene.sell in SELLS && !SELLS[draft.scene.sell as Sell].titles.some(w => s.title.includes(w)) && <><span /><div className="lp-scene"><p className="hint">大标题没讲首图卖点「{draft.scene.sell}」，画面演的是它 <button type="button" className="lp-btn link" onClick={() => change(sellWords(draft, draft.scene!.sell as Sell))}>改成「{sellTitle(draft.scene.sell as Sell, planSeed(draft)).title}」</button></p></div></>}
           {room.sub && <><label>小字</label><input {...hl(zoneIds("sub"))} value={s.sub} maxLength={LIMITS.sub} placeholder={i === 0 ? "首图可以不写小字" : "一句说明，可空"} onChange={e => setSlot(i, { sub: e.target.value })} /></>}
           {acts.length > 0 && <><label>模特演示</label><select {...hl(zoneIds("person"))} value={s.act ?? ""} onChange={e => setSlot(i, { act: e.target.value || null })}><option value="">只穿着，不演示</option>{acts.map(a => <option key={a.id} value={a.id}>{leadPoint!.text}：{a.name}</option>)}</select></>}
           {s.cells.map((c, n) => {
@@ -513,7 +522,7 @@ export function PlanDialog({ name, materials, sources, draft, layouts, prices, o
           <div className="what">
             <b>{s.shopService ? "店铺服务图" : `${TASK_LABEL[s.task]}${s.title.trim() ? `　「${s.title}」` : ""}`}</b>
             {s.shopService ? <small>用店铺存好的那张，免费 · <button type="button" className="lp-btn link" onClick={onService}>去店铺设置看看</button></small>
-              : <small>{cover ? coverScene(draft.scene!.place as PlaceId, draft.scene!.sell as Sell).line : words || s.sub}{s.colors.length > 0 && <span className="lp-muted"> · {s.colors.join("、")}</span>}</small>}
+              : <small>{cover ? coverScene(draft.scene!.place as PlaceId, draft.scene!.sell as Sell, draft.scene!, layout.id).line : words || s.sub}{s.colors.length > 0 && <span className="lp-muted"> · {s.colors.join("、")}</span>}</small>}
             {notes.map(n => <small key={n} className="note">! {n}</small>)}
           </div>
           {notes.length > 0 && <button type="button" className="lp-btn sm" onClick={() => jump(k + 1)}>去改</button>}

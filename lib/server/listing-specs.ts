@@ -77,8 +77,8 @@ const script = (en: string) => en ? en[0] + en.slice(1).toLowerCase() : '';
 
 /** The English word some masters print over a point (「WATERPROOF」), from its words; none when it says something else. */
 export function enOf(text: string) {
-  const rules: [RegExp, string][] = [[/防水|拒水|泼水|防雨/, 'WATERPROOF'], [/防风|挡风/, 'WINDPROOF'], [/透气|透湿|呼吸|排汗/, 'BREATHABLE'], [/耐磨|撕裂|结实/, 'DURABLE'],
-    [/保暖|锁温|内胆|御寒/, 'WARM'], [/轻量|轻薄|超轻/, 'LIGHTWEIGHT'], [/防污|易打理|易清洗/, 'EASY CARE'], [/抗皱/, 'ANTI-WRINKLE'], [/弹力|伸展/, 'STRETCH']];
+  const rules: [RegExp, string][] = [[/防水|拒水|泼水|防雨/, 'WATERPROOF'], [/防风|挡风/, 'WINDPROOF'], [/透气|透湿|呼吸|排汗/, 'BREATHABLE'], [/耐磨|撕裂|结实|耐造/, 'DURABLE'],
+    [/保暖|锁温|内胆|御寒/, 'WARM'], [/轻量|轻薄|超轻|轻盈/, 'LIGHTWEIGHT'], [/防污|耐脏|易打理|易清洗/, 'EASY CARE'], [/抗皱/, 'ANTI-WRINKLE'], [/弹力|伸展/, 'STRETCH']];
   return rules.find(([re]) => re.test(text))?.[1] ?? '';
 }
 
@@ -306,7 +306,13 @@ const PHOTO = '照片质感：真实的商业摄影，像全画幅相机 50mm �
 
 /** A main image's prompt from its master's spec, in the samples' own order and words. */
 export function specPrompt(i: SpecInput) {
-  const { spec, fill, refs } = i, cover = i.task === '首图', style = SPEC_STYLE[i.master], f: Fill = { ...fill, logoRef: refs.logo };
+  const { spec, fill, refs } = i, cover = i.task === '首图', style = SPEC_STYLE[i.master];
+  // A cover shot somewhere took the sample's pose and its bright showroom along with its layout (10-17): those are ours.
+  const own = cover && spec.photo && !!fill.scene;
+  const f: Fill = { ...fill, logoRef: refs.logo, ...(own ? {
+    act: `${fill.act ? `${fill.act}；` : ''}人物的姿势、手的动作和机位不照参考图${refs.sample}，按这里写的重新拍`,
+    scene: `${fill.scene}；背景的颜色、光线和地点都不照参考图${refs.sample}，按这里写的场景拍`,
+  } : {}) };
   const refLines = [
     ...refs.garment.map((g, k) => spec.fabric ? `参考图${k + 1}：这件衣服「${g.name}」面料的一小块特写，只用来确定面料的颜色和纹理。` : `参考图${k + 1}：「${g.name}」的白底产品图，衣服的颜色和款式以它为准。`),
     !!refs.cast && `参考图${refs.cast}：模特定妆照，只用来确定模特长什么样；姿势、${spec.own ? '' : '光线、'}背景、构图按下面重新做。`,

@@ -28,7 +28,7 @@ import { colorRow, modelPhotoFor, skuCardText, skuPhotos } from '../listing/sku-
 import { renderSkuCard } from './listing-sku-card';
 import { enOf, sampleBytes, specFor, specPrompt, type Fill } from './listing-specs';
 import { removeFlatArtworkBackground } from './artwork-image-processing';
-import { coverScene, fabricColor, masterInfo, PLACES, SELLS, type PlaceId, type Sell } from '../listing/scene';
+import { coverScene, fabricColor, masterInfo, PLACES, REAL_PLACE, SELLS, type PlaceId, type Sell } from '../listing/scene';
 import { SERVICE_IMAGES, type ServiceImageId } from '../listing/service';
 import type { SubmittedDraft } from '../listing/draft-schema';
 import { proofById, recipeOf } from '../listing/proofs';
@@ -452,7 +452,7 @@ async function sideBySide(halves: Buffer[]) {
 export function coverOf(d: StoredPlan['draft'], layout: Layout) {
   const place = d.scene?.place as PlaceId | undefined, sell = d.scene?.sell as Sell | undefined;
   if (masterInfo(layout.id).cover !== '实景' || !place || !(place in PLACES) || !sell || !(sell in SELLS) || place in masterInfo(layout.id).deny) return null;
-  return coverScene(place, sell);
+  return coverScene(place, sell, d.scene!, layout.id);
 }
 /** What a main image's zones show: words, each card's picture, the models' demonstration and the scene; `badge`: the words on the lanyard badge. */
 export function contentOf(stored: StoredPlan, input: Extract<JobInput, { kind: 'main' }>, slot: string, layout: Layout, badge: string): Content {
@@ -470,7 +470,8 @@ export function contentOf(stored: StoredPlan, input: Extract<JobInput, { kind: '
   let scene = stored.scenes[slot.split('+')[0]] ?? stored.scenes[`${input.ratio}:1`] ?? '';
   let act = s?.act ? proofById(s.act)?.recipe : undefined;
   const cover = (input.index === 0 || input.index < 0) ? coverOf(d, layout) : null;
-  if (cover) { scene = `${cover.bg}。这是场景实拍：画面要把「${d.scene!.sell}」这个卖点演出来，光线跟着场景和天气走${scene ? `；${scene}` : ''}`; act = cover.person; }
+  // The look carries its own light and weather: the writing step's light for the cover would fight it.
+  if (cover) { scene = `${cover.bg}。这是场景实拍：画面要把「${d.scene!.sell}」这个卖点演出来，光线跟着场景和天气走；${REAL_PLACE}`; act = cover.person; }
   // The square and 3:4 covers frame the model the master's way; the long image shows the whole person.
   const crop = input.index === 0 ? masterInfo(layout.id).crop : undefined;
   if (crop) act = act ? `${act}；${crop}` : crop;

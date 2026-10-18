@@ -64,8 +64,11 @@ export type Draft = {
   slots: Slot[]; long: { title: string }; layout: string; counts: Counts; extra: { color: string; layout: string }[]; model: Model;
   /** Left from the trial of 2026-10-12 (images by the AI's themes of points); no longer used. */
   themes?: unknown[];
-  /** Masters whose cover is shot on location: where (scene.ts PLACES) and the point the picture acts out (SELLS). */
-  scene?: { place: string; sell: string };
+  /**
+   * Masters whose cover is shot on location: where (scene.ts PLACES), the point the picture acts out
+   * (SELLS), and which of the place's acts and looks it takes (coverPicks; none before 10-17: the first).
+   */
+  scene?: { place: string; sell: string; act?: number; look?: number };
   /** What the chest shows: nothing, the word 「LOGO」, or the customer's LOGO (an uploaded image's label). */
   logo?: { mode: '不印' | 'LOGO' | '客户'; label?: string };
 };
