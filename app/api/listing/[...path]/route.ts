@@ -5,6 +5,7 @@ import { CatalogHttpError } from '@/lib/server/catalog-auth';
 import { assertPageAccess } from '@/lib/server/page-access';
 import { addReference, addSourceImage, chooseVersion, createProject, deleteProject, listProjects, MAX_SOURCE_BYTES, projectDetail, readListingAsset } from '@/lib/server/listing-store';
 import { addExtraImage, imagePrices, planPrice, requestPlan, submitDraft } from '@/lib/server/listing-jobs';
+import { copyProject } from '@/lib/server/listing-copy';
 import { addSet, downloadZip, editSlot, recast, redoSkus, redoSlot, redrawSlot, slotStates, startVerticals } from '@/lib/server/listing-generation';
 import { makeServices, saveShop, saveShopLogo, shopState } from '@/lib/server/listing-shop';
 import { limitUploads, LISTING_UPLOAD_WINDOWS } from '@/lib/server/upload-limit';
@@ -78,6 +79,7 @@ export async function POST(request: NextRequest, context: Context) {
     if (path[0] === 'projects' && path[2] === 'plan') return json(await requestPlan(tenant, user.id, path[1]));
     if (path[0] === 'projects' && path[2] === 'start') return json(await submitDraft(tenant, user.id, path[1], body));
     if (path[0] === 'projects' && path[2] === 'sets') return json(await addSet(tenant, user.id, path[1], body));
+    if (path[0] === 'projects' && path[2] === 'copies') return json(await copyProject(tenant.id, user.id, path[1], body));
     if (path[0] === 'projects' && path[2] === 'redo') return json(await redoSlot(tenant, user.id, path[1], String(body.slot ?? ''), String(body.note ?? '')));
     if (path[0] === 'projects' && path[2] === 'skus') return json(await redoSkus(tenant, user.id, path[1]));
     if (path[0] === 'projects' && path[2] === 'verticals') return json(await startVerticals(tenant, user.id, path[1]));

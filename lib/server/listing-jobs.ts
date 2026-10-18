@@ -8,7 +8,7 @@ import { catalogDatabase, catalogTransaction } from './catalog-database';
 import { CatalogHttpError } from './catalog-auth';
 import { readCatalogFile } from './catalog-files';
 import { currentPrices, holdCredits, microToCents, priceOf, releaseHold, settleHold } from './credits';
-import { directKeys, draftImages, pickProblems, usedSlots } from '../listing/draft';
+import { directKeys, draftImages, pickProblems, reusedSlots, usedSlots, type Reuse } from '../listing/draft';
 import { draftSchema, type SubmittedDraft } from '../listing/draft-schema';
 import { skuPhotos } from '../listing/sku-card';
 import { skuPair } from '../listing/templates';
@@ -202,10 +202,14 @@ export async function executePlan(job: JobRow, provider: Provider = (request, ho
   }
 }
 
-/** The sorted material of a product and the program's picks; `draft`: the plan the user started generating from. */
+/**
+ * The sorted material of a product and the program's picks; `draft`: the plan the user started generating from.
+ * A copy (「再出一套」, listing-copy): `from` the first product, its `baseName`, the copy's `variant` (its plan's seed) and what it `reuse`s.
+ */
 export type Materials = {
   category: string; categoryWhy: string; checks: Organized['checks']; titles: Organized['titles']; themes?: Organized['themes']; look?: Organized['look'];
   sorted: Omit<Organized, 'look'>; chosen: ReturnType<typeof chooseMaterials>; duplicates: [string, string][]; model: string; images: { label: string; assetId: string }[]; draft?: SubmittedDraft & { runId: string };
+  from?: string; baseName?: string; variant?: number; reuse?: Reuse;
 };
 
 /**
@@ -254,7 +258,7 @@ export async function submitDraft(tenant: Tenant, user: string, projectId: strin
     const direct = new Set(directKeys(draft.colors, m.sorted.images));
     // Round one is held now; 「出竖版」 holds round two.
     const photos = new Set(Object.keys(skuPhotos(draft, m.sorted.images, skuPair(layout))));
-    const runId = await holdRun(c, tenant, projectId, draftImages(draft, layout, direct, photos).filter(i => i.round === 1), prices);
+    const runId = await holdRun(c, tenant, projectId, draftImages(draft, layout, direct, photos, reusedSlots(draft, m.reuse)).filter(i => i.round === 1), prices);
     await c.query(`UPDATE listing_projects SET status='writing',layout=$2,counts=$3,materials=materials || $4::jsonb,error=NULL,updated_at=now() WHERE id=$1`,
       [projectId, draft.layout, draft.counts, { draft: { ...draft, runId } }]);
     await c.query(`INSERT INTO listing_jobs(id,tenant_id,project_id,created_by,step) VALUES($1,$2,$3,$4,'write')`, [randomUUID(), tenant.id, projectId, user]);
@@ -330,7 +334,8 @@ export async function executeWrite(job: JobRow, provider: Provider = (request, h
     });
     await db().query(`UPDATE listing_attempts SET status='succeeded',receipt=$2,finished_at=now() WHERE id=$1`, [attemptId, { model: call.model, usage: call.usage, durationMs: call.durationMs }]);
     const stored = buildPlan(call.content, { draft, images: m.images, direct: directKeys(draft.colors, m.sorted.images), photos: skuPhotos(draft, m.sorted.images, skuPair(layout)), sorted: m.sorted.images, model: call.model });
-    const jobs = planJobs(stored, layout, 1);
+    // A copy's carried-over white images and cast are kept, not drawn again (listing-copy).
+    const reused = reusedSlots(draft, m.reuse), jobs = planJobs(stored, layout, 1).filter(j => !reused.has(j.slot));
     await catalogTransaction(async c => {
       const hold = (await c.query('SELECT state FROM credit_holds WHERE id=$1 AND tenant_id=$2 FOR UPDATE', [runHold(draft.runId), job.tenant_id])).rows[0];
       if (hold?.state !== 'held') throw new Error('出图的积分冻结已失效');

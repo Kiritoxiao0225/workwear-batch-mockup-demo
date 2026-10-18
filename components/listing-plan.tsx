@@ -13,7 +13,7 @@ import { assetUrl } from "@/lib/listing/client-api";
 import { CATEGORIES, categoryById, GROUP_HINT, GROUP_LABEL, TASK_HINT, TASK_LABEL } from "@/lib/listing/category";
 import {
   checkDraft, CLOSER_MAX, colorize, colorKeys, defaultDraft, directKeys, draftImages, FRONT, LIMITS, notesOf, placesFor, priceLines, proofsFor, renamePoint, replan, showsGarment, structureHint, sumCredits, syncCloser,
-  templateFor, takeOff, putOn, usageOf, usedSlots, fitProof, fillParts, fillModel, modelPhotos, castFromPhotos, GENDERS, missingParts, partOf, wantsCast, hasPart, noPhotoProof,
+  templateFor, takeOff, putOn, usageOf, usedSlots, fitProof, fillParts, fillModel, modelPhotos, castFromPhotos, GENDERS, missingParts, partOf, wantsCast, hasPart, noPhotoProof, reusedSlots,
   type Counts, type Draft, type Point, type PriceLine, type Slot,
 } from "@/lib/listing/draft";
 import { isComponent, isGroup } from "@/lib/listing/garment-role";
@@ -36,7 +36,8 @@ export const layoutOf = (layouts: LayoutCard[], id: string): Layout => layouts.f
 
 /** The AI's plan as the starting point; `category` overrides the AI's call. */
 export function startDraft(m: Materials, layout: Layout, counts?: Counts, category = m.category): Draft {
-  return lookScene(fillModel(fillParts(defaultDraft({ category, categoryWhy: m.categoryWhy, checks: m.checks, titles: m.titles, points: m.sorted.points, colors: m.chosen.colors, parts: m.chosen.parts }, layout, counts), m.sorted.images), m.sorted.images), layout, m.look);
+  const d = fillModel(fillParts(defaultDraft({ category, categoryWhy: m.categoryWhy, checks: m.checks, titles: m.titles, points: m.sorted.points, colors: m.chosen.colors, parts: m.chosen.parts }, layout, counts), m.sorted.images), m.sorted.images);
+  return lookScene(m.variant ? { ...d, seed: m.variant } : d, layout, m.look);
 }
 /** The master the AI picked from the material; an unknown one (or none, on older material) falls back to `fallback`. */
 export const lookMaster = (m: Materials, fallback: string) => m.look?.master ?? fallback;
@@ -52,8 +53,11 @@ function lookScene(d: Draft, layout: Layout, look: Materials["look"]): Draft {
 /** Where each on-location master shoots its cover when the AI did not say. */
 const DEFAULT_PLACE: Record<string, PlaceId> = { M1: "4S店", M2: "物业", M3: "工地" };
 const ticked = (d: Draft) => d.points.filter(p => p.on).map(p => p.text);
-/** The plan's seed: its product (the material's points and colours), so one product keeps its picks and the next differs. */
-const planSeed = (d: Draft) => seedOf([d.category, ...d.points.filter(p => p.source === "素材").map(p => p.text), ...d.colors.map(c => c.name)].join("|"));
+/**
+ * The plan's seed: its product (the material's points and colours), so one product keeps its picks and
+ * the next differs; a copy's number (「再出一套」) is added, so the copies take the points in turn.
+ */
+const planSeed = (d: Draft) => (seedOf([d.category, ...d.points.filter(p => p.source === "素材").map(p => p.text), ...d.colors.map(c => c.name)].join("|")) + (d.seed ?? 0)) >>> 0;
 /** The cover's scene with its act and look picked by the seed. */
 const sceneAt = (d: Draft, place: string, sell: string) => ({ place, sell, ...coverPicks(planSeed(d), place, sell) });
 /** The cover's big words follow its point, one of its words by the seed: 防水 → 「拒水」「团体定制」. */
@@ -114,7 +118,7 @@ function recolor(d: Draft, layout: Layout): Draft {
 /** The two rounds' images and credits: round one at 「开始出图」, round two at 「出竖版」. */
 export function draftPrice(d: Draft, m: Materials, layout: Layout, prices: Prices) {
   const direct = new Set(directKeys(d.colors, m.sorted.images));
-  const items = draftImages(d, layout, direct, photosOf(d, m, layout));
+  const items = draftImages(d, layout, direct, photosOf(d, m, layout), reusedSlots(d, m.reuse));
   const round = (r: 1 | 2) => { const lines = priceLines(items.filter(i => i.round === r), prices.image, prices.multi); return { lines, images: lines.reduce((n, l) => n + l.count, 0), credits: sumCredits(lines) }; };
   return { now: round(1), later: round(2) };
 }

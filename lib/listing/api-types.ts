@@ -3,7 +3,7 @@
  * local demo data in ./demo); the server answers in the same shapes.
  */
 import type { Task } from './category';
-import type { Check, Draft, SortedPoint } from './draft';
+import type { Check, Counts, Draft, Reuse, SortedPoint } from './draft';
 import type { PlaceId, Sell } from './scene';
 import type { Box, Layout, ZoneKind } from './templates';
 
@@ -14,6 +14,9 @@ export type Summary = {
   slots: number; made: number; broken: number; created_at: string; updated_at: string;
   /** Rounds started: 1 after 「开始出图」, 2 after 「出竖版」. */
   round: 0 | 1 | 2;
+  counts?: Counts;
+  /** When the uploaded images were cleared (SOURCE_KEEP_DAYS after the last image): no more copies then. */
+  sources_cleared_at?: string | null;
 };
 export type Sorted = { id: string; kind: string; color: string; front: boolean; detail: string; text: boolean; logo: boolean; same: string;
   /** Who is in the picture (男 / 女 / 男女 / 多人) and whether a face is clear enough to draw from; missing on material sorted before 10-11. */
@@ -30,6 +33,8 @@ export type Materials = {
   sorted: { images: Sorted[]; colors: { name: string; hex: string; from: string[] }[]; points: SortedPoint[]; notes: string[] };
   chosen: { colors: { name: string; hex: string; pick: string | null; candidates: string[] }[]; parts: { part: string; pick: string | null; candidates: string[] }[] };
   duplicates: [string, string][]; images: { label: string; assetId: string }[];
+  /** A copy (「再出一套」): its number, which moves the plan's seed, and the images it carries over. */
+  variant?: number; reuse?: Reuse;
 };
 export type Source = { id: string; label: string; name: string; path: string; shape: string };
 

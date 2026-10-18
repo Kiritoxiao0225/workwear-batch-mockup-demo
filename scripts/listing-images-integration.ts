@@ -29,7 +29,7 @@ const routes = await import('../app/api/listing/[...path]/route');
 const { executePlan, executeWrite, startListingWorker } = await import('../lib/server/listing-jobs');
 const { clearOldSources } = await import('../lib/server/listing-store');
 const { executeImage } = await import('../lib/server/listing-generation');
-const { defaultDraft, draftImages, fillParts, usedSlots } = await import('../lib/listing/draft');
+const { defaultDraft, draftImages, fillParts, reusedSlots, usedSlots } = await import('../lib/listing/draft');
 const { BUILT_IN_LAYOUTS } = await import('../lib/listing/templates');
 const { LEGACY_LAYOUTS } = await import('../lib/listing/legacy-layouts');
 const { TASK_LABEL, TASKS } = await import('../lib/listing/category');
@@ -419,6 +419,47 @@ try {
   const zip3 = await JSZip.loadAsync(Buffer.from(await (await call(0, `projects/${third}/download`)).arrayBuffer()));
   for (const n of ['换色首图-藏青/1比1主图-01-首图.jpg', '换色首图-藏青/3比4主图-01-首图.jpg', '换色首图-藏青/2比3长图.jpg']) assert.ok(Object.keys(zip3.files).includes(n), n);
   pass('加一套首图：只多出这个颜色的首图，可换版式；之后出竖版时这套也出 3:4 和长图；同一个颜色、主推色不能重复加；下载分文件夹');
+
+  // ---- 用这份素材再出一套：不重新上传、不再收整理费，白底图和定妆照沿用，出图照常 ----
+  const bytesUsed = async () => Number((await db().query('SELECT bytes_used FROM tenant_usage WHERE tenant_id=$1', [tenants[0]])).rows[0].bytes_used);
+  const [balanceBeforeCopy, bytesBeforeCopy] = [await balance(tenants[0]), await bytesUsed()];
+  await call(1, `projects/${third}/copies`, { layouts: ['M1'] }, 404);
+  await call(0, `projects/${third}/copies`, { layouts: [] }, 400);
+  await call(0, `projects/${third}/copies`, { layouts: ['no-such-layout'] }, 400);
+  type Copy = { id: string; name: string; layout: string };
+  const copies = (await (await call(0, `projects/${third}/copies`, { layouts: ['M1', 'M4'] })).json()).projects as Copy[];
+  const short = (id: string) => (config.layouts as Layout[]).find(l => l.id === id)!.name.split(' · ')[0];
+  assert.deepEqual(copies.map(x => [x.name, x.layout]), [[`两色款 · ${short('M1')}`, 'M1'], [`两色款 · ${short('M4')}`, 'M4']]);
+  assert.deepEqual([await balance(tenants[0]), await bytesUsed()], [balanceBeforeCopy, bytesBeforeCopy]);
+  const c1 = await detailOf(copies[0].id), m3 = (await detailOf(third)).materials as Materials;
+  assert.deepEqual([c1.status, c1.images, c1.materials.look.master, c1.materials.variant], ['materials', 2, 'M1', 1]);
+  assert.deepEqual(c1.sources.map((x: { label: string; path: string }) => `${x.label}|${x.path}`), d3.sources.map((x: { label: string; path: string }) => `${x.label}|${x.path}`));
+  assert.ok(c1.materials.images.every((i: { assetId: string }) => c1.sources.some((x: { id: string }) => x.id === i.assetId) && !m3.images.some(o => o.assetId === i.assetId)));
+  const carried = [`product:${BLACK}`, `product:${NAVY}`, 'cast'];
+  assert.deepEqual(c1.slots.map((x: { slot: string }) => x.slot).sort(), [...carried].sort());
+  assert.ok(c1.slots.every((x: { status: string; image: string | null }) => x.status === 'succeeded' && x.image));
+  // A copy of a copy is named from the first product and numbered after the copies before it.
+  const again = (await (await call(0, `projects/${copies[0].id}/copies`, { layouts: ['M5'] })).json()).projects as Copy[];
+  assert.equal(again[0].name, `两色款 · ${short('M5')}`); assert.equal((await detailOf(again[0].id)).materials.variant, 3);
+  // Started on M1: the white images and the cast are not held, not queued and not drawn again; the cover uses the carried cast.
+  const M1L = BUILT_IN_LAYOUTS.find(l => l.id === 'M1')!, dc = draftFrom(c1.materials, M1L, counts(1, 0, 0));
+  const reusedNow = reusedSlots(dc, c1.materials.reuse);
+  assert.deepEqual([...reusedNow].sort(), [...carried].sort());
+  const firstCopy = roundOf(dc, M1L, 1).filter(i => !reusedNow.has(i.slot));
+  const balanceAtCopyStart = await balance(tenants[0]);
+  await call(0, `projects/${copies[0].id}/start`, dc);
+  await executeWrite(await latest(copies[0].id, 'write'), async (_r, hooks) => { await hooks.beforeSubmit(); return reply({ product: { name: '两色款', garment: ['立领'] }, scenes: [] }); });
+  const copyJobs = await imageJobs(copies[0].id, true);
+  assert.deepEqual(copyJobs.map(j => j.slot).sort(), firstCopy.map(i => i.slot).sort());
+  const callsBeforeCopy = seen.length;
+  for (const j of copyJobs) await make(j);
+  assert.ok(seen.length > callsBeforeCopy && seen.slice(callsBeforeCopy).every(x => !x.slot.startsWith('product:') && !x.slot.startsWith('cast')));
+  assert.equal((await detailOf(copies[0].id)).status, 'square');
+  assert.equal(prompt('square:1').refs, 3); // white image, the carried cast, the sample
+  assert.equal(balanceAtCopyStart - await balance(tenants[0]), costOf(firstCopy));
+  const zipCopy = await JSZip.loadAsync(Buffer.from(await (await call(0, `projects/${copies[0].id}/download`)).arrayBuffer()));
+  assert.ok(Object.keys(zipCopy.files).some(n => n.startsWith('白底产品图/')) && Object.keys(zipCopy.files).some(n => n.startsWith('模特定妆照')));
+  pass('再出一套：一次多个版式，不重新上传、不再收整理费、不多占空间；白底图和定妆照沿用（不冻结、不重画、下载里有）；套中套按第一款起名、序号接着排；别人复制不了');
 
   // ---- 店铺服务图：设置存在账号上；确认一次出 4 张，改了服务只重画变了的字 ----
   const octet = { 'content-type': 'application/octet-stream', 'x-file-name': 'logo.png' };

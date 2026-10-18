@@ -13,6 +13,7 @@ import { api, assetUrl, downloadUrl, isDemo, post } from "@/lib/listing/client-a
 import { checkDraft, DEFAULT_COUNTS, fillParts, type Counts, type Draft, type PriceLine } from "@/lib/listing/draft";
 import { BUILT_IN_LAYOUTS } from "@/lib/listing/templates";
 import { draftPrice, layoutOf, lookMaster, PlanDialog, PriceInfo, startDraft, type Prices } from "./listing-plan";
+import { CopyDialog } from "./listing-copy";
 import { ResultsPanel } from "./listing-results";
 import { ServiceTip, ShopPage } from "./listing-service";
 import "./listing-images.css";
@@ -136,6 +137,7 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
   const [over, setOver] = useState(false);
   const [planning, setPlanning] = useState<string | null>(null);
   const [viewing, setViewing] = useState<string | null>(null);
+  const [copying, setCopying] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("全部");
   const [toast, setToast] = useState("");
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -266,6 +268,31 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
     } catch (error) { say((error as Error).message); }
     finally { setZipping(false); }
   };
+  /**
+   * 「用这份素材再出一套」: the server makes a product per master from this one's material; with
+   * `direct` each starts at once on its default plan (as 「按 AI 方案全部开始出图」 would), except
+   * one whose plan has a red problem, which waits at 「定方案」.
+   */
+  const copy = async (id: string, picked: string[], direct: boolean) => {
+    const source = projects.find(x => x.id === id);
+    try {
+      const made = (await post<{ projects: { id: string; name: string; layout: string }[] }>(`projects/${id}/copies`, { layouts: picked })).projects;
+      let started = 0;
+      const wait: string[] = [];
+      if (direct) for (const x of made) {
+        try {
+          const d = await api<Detail>("projects/" + x.id);
+          const draft = startDraft(d.materials!, plain(x.layout), source?.counts ?? settings.counts);
+          if (checkDraft(draft, plain(draft.layout), d.materials!.sorted.images).red.length) { wait.push(x.name); continue; }
+          await post(`projects/${x.id}/start`, draft); started++;
+        } catch (error) { wait.push(`${x.name}（${(error as Error).message}）`); }
+      }
+      setCopying(null);
+      await refresh();
+      say(!direct ? `再出了 ${made.length} 套，在列表里点「定方案」看一眼再出图`
+        : wait.length ? `再出了 ${made.length} 套，${started} 套已开始出图；${wait.join("、")}要先在「定方案」里处理` : `再出了 ${made.length} 套，都已开始出图，做好的会陆续出现`, 8000);
+    } catch (error) { say((error as Error).message, 8000); await refresh(); }
+  };
   const remove = async (p: Summary) => {
     if (!window.confirm(`删除「${p.name}」？上传的图片和出好的图都会删掉。`)) return;
     try { await api("projects/" + p.id, { method: "DELETE" }); await refresh(); } catch (error) { say((error as Error).message); }
@@ -340,6 +367,7 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
                 {p.status === "generating" && <button type="button" className="lp-btn sm" onClick={() => void open(p.id)}>看进度</button>}
                 {p.status === "square" && <button type="button" className="lp-btn sm primary" onClick={() => void open(p.id)}>看图</button>}
                 {p.status === "done" && <><button type="button" className="lp-btn sm primary" onClick={() => void open(p.id)}>看图</button><a className="lp-btn sm" href={downloadUrl(p.id)} onClick={e => { if (isDemo()) { e.preventDefault(); say("演示页不能下载"); } }}>下载</a></>}
+                {["materials", "square", "done"].includes(p.status) && !p.sources_cleared_at && !isDemo() && <button type="button" className="lp-btn sm" onClick={() => setCopying(p.id)}>再出一套</button>}
                 {!running(p) && <button type="button" className="lp-btn sm ghost" onClick={() => void remove(p)}>删除</button>}
               </div>
             </div>);
@@ -361,6 +389,8 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
       {viewing && viewDetail && <ResultsPanel detail={viewDetail} layouts={layouts} prices={prices}
         onRedo={(slot, label) => void redo(viewing, slot, label)}
         onDone={async message => { say(message); await refresh(); }} onError={say} onClose={() => setViewing(null)} />}
+      {copying && <CopyDialog name={projects.find(p => p.id === copying)?.name ?? ""} current={draftOf(copying)?.layout ?? projects.find(p => p.id === copying)?.layout ?? ""}
+        layouts={layouts} onCopy={(picked, direct) => copy(copying, picked, direct)} onClose={() => setCopying(null)} />}
       {toast && <div className="lp-toast" role="status">{toast}</div>}
     </>
   );
