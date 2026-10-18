@@ -21,6 +21,7 @@ import {
   type Case,
   type Job,
   type ArtworkOutput,
+  type ImageProvider,
 } from "@/lib/client/saas-workbench";
 import {
   readArtworkHandoff,
@@ -46,7 +47,25 @@ type Reference = {
 type Stage = "checker" | "white" | "dark";
 // What AI read from the request: one entry per picture, waiting for the author to confirm.
 type Plan = { caseId: string; items: { key: string; name: string; text: string }[] };
-type Submit = { name: string; prompt: string; route: Artwork["route"]; transparentBackground: boolean; output?: ArtworkOutput };
+type Submit = { name: string; prompt: string; route: Artwork["route"]; transparentBackground: boolean; output?: ArtworkOutput; provider?: ImageProvider };
+// 出图通道, so authors can compare the Codex relay with EvoLink while the relay is on trial.
+const PROVIDERS = [
+  ["cliproxy", "新通道"],
+  ["evolink", "原通道"],
+] as const;
+const PROVIDER_KEY = "mockfits.studio.provider";
+const providerOf = (j?: Job) => {
+  if (j?.route !== "generate") return null;
+  const p = j.provider ?? j.policy?.generation?.provider;
+  return p === "cliproxy" || p === "evolink" ? p : null;
+};
+/** Which route drew the picture and how long the drawing itself took. */
+function channelText(j?: Job) {
+  const p = providerOf(j);
+  if (!p) return "";
+  const drawn = [...(j?.steps || [])].reverse().find((s) => s.name === "generate" && s.status === "returned");
+  return PROVIDERS.find(([key]) => key === p)![1] + (drawn?.elapsedMs ? ` · 出图 ${Math.round(drawn.elapsedMs / 1000)} 秒` : "");
+}
 const specLabel = (o: ArtworkOutput) => `${o.ratio === "original" ? "原比例" : o.ratio} · ${o.resolution}`;
 const ROUTES = [
   ["generate", "生图", "按要求生成或修改图片。"],
@@ -104,6 +123,7 @@ export function ArtworkStudioClient() {
     [refs, setRefs] = useState<Reference[]>([]),
     [route, setRoute] = useState<Artwork["route"]>("generate"),
     [transparentBackground, setTransparentBackground] = useState(false),
+    [provider, setProvider] = useState<ImageProvider>("cliproxy"),
     [mode, setMode] = useState<"text" | "seven">("text"),
     [selected, setSelected] = useState<string | null>(null),
     [notice, setNotice] = useState(""),
@@ -149,6 +169,18 @@ export function ArtworkStudioClient() {
       setRefs([{ key: "garment-logo", index: 1, name: arrived.replace.label, url: arrived.replace.refUrl }]);
     /* eslint-enable react-hooks/set-state-in-effect */
   }, []);
+  // The route last picked on this browser.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(PROVIDER_KEY);
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage exists only after mount.
+      if (saved === "cliproxy" || saved === "evolink") setProvider(saved);
+    } catch { /* first visit or storage blocked */ }
+  }, []);
+  const pickProvider = (next: ImageProvider) => {
+    setProvider(next);
+    try { localStorage.setItem(PROVIDER_KEY, next); } catch { /* optional */ }
+  };
   const retarget = (ownerId: string | null, placement?: MockupPlacement) => {
     if (!handoff) return;
     const next = retargetHandoff(handoff, ownerId, placement);
@@ -230,6 +262,7 @@ export function ArtworkStudioClient() {
     setRoute(art?.route || "generate");
     setRatio(art?.output?.ratio ?? "original");
     setResolution(art?.output?.resolution ?? "1K");
+    if (art?.provider) setProvider(art.provider);
     // A request still waiting for its pictures to be confirmed starts like a new one.
     setTransparentBackground(art?.transparentBackground ?? (split ? !!handoff : true));
     setRefs(next);
@@ -346,6 +379,7 @@ export function ArtworkStudioClient() {
         route: a.route,
         transparentBackground: a.transparentBackground,
         ...(a.output ? { output: a.output } : {}),
+        ...(a.provider ? { provider: a.provider } : {}),
         prompt: a.prompt,
         imageIds: c.images.map((i) => i.id),
         applications: [],
@@ -395,6 +429,7 @@ export function ArtworkStudioClient() {
           route,
           transparentBackground,
           output: route === "generate" ? { ratio, resolution } : null,
+          provider: route === "generate" ? provider : null,
           refs: refs.map((r) => r.key),
         }),
         split = multiple && route === "generate" && mode === "text";
@@ -415,7 +450,7 @@ export function ArtworkStudioClient() {
         await reload();
         return;
       }
-      const single: Submit = { name: "独立图稿", prompt, route, transparentBackground, ...(route === "generate" ? { output: { ratio, resolution } } : {}) };
+      const single: Submit = { name: "独立图稿", prompt, route, transparentBackground, ...(route === "generate" ? { output: { ratio, resolution }, provider } : {}) };
       if (!split) return await submit(c, [single]);
       organized.current = { caseId: c.caseId, refs: refsKey(refs) };
       if (!(c.analysis?.mode === "plan" && c.analysis.status === "returned")) {
@@ -460,6 +495,7 @@ export function ArtworkStudioClient() {
           route: "generate",
           transparentBackground,
           output: { ratio, resolution },
+          provider,
         })),
       );
     } catch (e) {
@@ -487,7 +523,8 @@ export function ArtworkStudioClient() {
         );
       setSelected(c.caseId);
       await submit(c, [
-        { name: art.name, prompt: art.prompt, route: art.route, transparentBackground: !!art.transparentBackground, ...(art.output ? { output: art.output } : {}) },
+        { name: art.name, prompt: art.prompt, route: art.route, transparentBackground: !!art.transparentBackground, ...(art.output ? { output: art.output } : {}),
+          ...(art.route === "generate" ? { provider: art.provider ?? provider } : {}) },
       ]);
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e));
@@ -815,6 +852,21 @@ export function ArtworkStudioClient() {
               {route === "generate" && (
                 <>
                   <div className="field-label">
+                    <span>出图通道</span>
+                  </div>
+                  <div className="seg full" role="group" aria-label="出图通道">
+                    {PROVIDERS.map(([key, label]) => (
+                      <button key={key} aria-pressed={provider === key} disabled={working} onClick={() => pickProvider(key)}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="sub">
+                    {provider === "cliproxy"
+                      ? "新通道正在试用，结果旁会显示出图用了几秒；慢或出错时可换原通道再试。"
+                      : "原来一直在用的通道。"}
+                  </p>
+                  <div className="field-label">
                     <span>输出规格</span>
                   </div>
                   <div className="seg full ratio-seg" role="group" aria-label="比例">
@@ -885,7 +937,7 @@ export function ArtworkStudioClient() {
                 )}
                 <span className="tiny muted">
                   {file?.width && file?.height
-                    ? `${file.width} × ${file.height}${hdSize ? ` → ${hdSize.width} × ${hdSize.height}` : ""}${job?.transparentBackground ? " · 透明 PNG" : ""}`
+                    ? `${file.width} × ${file.height}${hdSize ? ` → ${hdSize.width} × ${hdSize.height}` : ""}${job?.transparentBackground ? " · 透明 PNG" : ""}${channelText(job) ? ` · ${channelText(job)}` : ""}`
                     : ""}
                 </span>
               </div>
@@ -1121,6 +1173,7 @@ export function ArtworkStudioClient() {
                         </span>
                         {j?.output && <span>{specLabel(j.output)}</span>}
                         {j?.transparentBackground && <span>透明</span>}
+                        {channelText(j) && <span>{channelText(j)}</span>}
                         <span>{when(j?.createdAt)}</span>
                       </div>
                     </div>

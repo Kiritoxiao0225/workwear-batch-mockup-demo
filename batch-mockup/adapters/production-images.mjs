@@ -4,15 +4,19 @@ import { parseEnv } from 'node:util';
 import { spawn } from 'node:child_process';
 import sharp from 'sharp';
 import { saveJSON, atomicFile, checkpoint } from './a-files.mjs';
-import { evolinkGenerate, evolinkKey, costRates } from './evolink.mjs';
+import { evolinkGenerate, evolinkKey, costRates, referenceImages, TRANSPARENT_NOTE } from './evolink.mjs';
+import { drawSize } from '../../lib/artwork-output-size.ts';
 
 const repo = process.cwd();
 const GENERATION = {
-  cliproxy: { provider: 'cliproxy', model: 'gpt-image-2', size: 'auto', quality: 'medium', background: 'auto', output_format: 'png', response_format: 'b64_json', n: 1 },
+  // The Codex relay returns transparency directly too, but ignores `size`: the proportion goes in the prompt.
+  cliproxy: { provider: 'cliproxy', model: 'gpt-image-2', size: 'auto', quality: 'medium', background: 'transparent', output_format: 'png', response_format: 'b64_json', n: 1, references: 'artwork', aspect: 'prompt' },
   // Sunburst returns the transparent artwork directly and only receives the images the artwork uses.
   evolink: { provider: 'evolink', model: 'gpt-image-2.5-sunburst', size: 'auto', quality: 'medium', background: 'transparent', output_format: 'png', n: 1, references: 'artwork' },
 };
-export const productionPolicyFor = (env = process.env) => ({ version: 1, generation: GENERATION[env.ARTWORK_IMAGE_PROVIDER === 'evolink' ? 'evolink' : 'cliproxy'], enhancement: { provider: 'mediakit', tool_version: 'standard', multiple: 2 }, cutout: { provider: 'meitu', command: 'image-cutout', model_type: 2 } });
+/** The route an artwork is drawn on: the one picked on the page (新通道 / 原通道), else the configured default. */
+export const imageProviderFor = (chosen, env = process.env) => (chosen ?? env.ARTWORK_IMAGE_PROVIDER) === 'evolink' ? 'evolink' : 'cliproxy';
+export const productionPolicyFor = (env = process.env, chosen) => ({ version: 1, generation: GENERATION[imageProviderFor(chosen, env)], enhancement: { provider: 'mediakit', tool_version: 'standard', multiple: 2 }, cutout: { provider: 'meitu', command: 'image-cutout', model_type: 2 } });
 export const productionPolicy = productionPolicyFor();
 export async function inspectPixels(bytes) {
   const { data, info } = await sharp(bytes, { limitInputPixels: 50_000_000, failOn: 'error' }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -88,12 +92,36 @@ export async function hardenInteriorAlpha(bytes) {
 }
 /** Opaque copy on white: the "before cut-out" source that fill and keep strokes restore from. */
 export const flattenOnWhite = bytes => sharp(bytes, { limitInputPixels: 50_000_000, failOn: 'error' }).flatten({ background: '#ffffff' }).png().toBuffer();
+// The Codex relay ignores `size` (1024x1536 and 880x1184 alike came back 1254x1254, 2026-10-18)
+// but draws the proportion the prompt names, at about 1.5 MP.
+const ORIENTATION = (w, h) => w > h ? '横版' : w < h ? '竖版' : '方形';
+export function aspectLine(aspect) {
+  const [w, h] = String(aspect || '').split(':').map(Number);
+  return w > 0 && h > 0 ? `画面比例：${ORIENTATION(w, h)} ${w}:${h}。\n` : '';
+}
+/**
+ * The relay's picture at the exact 1K drawing size the page showed. Its proportion is the asked one
+ * to within rounding (the drawing size is in multiples of 16), so the edges lose a sliver at most.
+ * A picture drawn in another proportion is kept in its own, at the same area, with a warning,
+ * rather than cut or stretched.
+ */
+export async function fitDrawing(bytes, size, aspect) {
+  const [width, height] = String(size || '').split('x').map(Number);
+  if (!(width > 0 && height > 0)) return { bytes };
+  const image = sharp(bytes, { limitInputPixels: 50_000_000, failOn: 'error' }), m = await image.metadata();
+  if (m.width === width && m.height === height) return { bytes };
+  const near = Math.abs(Math.log(m.width / m.height / (width / height))) <= 0.03;
+  const own = near ? { width, height } : drawSize(m.width / m.height);
+  const fitted = await image.resize(own.width, own.height, { fit: 'cover', kernel: 'lanczos3' }).png().toBuffer();
+  return near ? { bytes: fitted } : { bytes: fitted, warning: `模型这次没按 ${aspect || `${width}:${height}`} 出图，交付的是 ${own.width}×${own.height}，需要该比例请重做` };
+}
 export async function configuredProduction() {
   const e = process.env.A_ANALYSIS_ENV_FILE ? { ...parseEnv(await readFile(process.env.A_ANALYSIS_ENV_FILE, 'utf8')), ...process.env } : process.env;
   const provider = e.ARTWORK_IMAGE_PROVIDER;
   if (provider === 'evolink') evolinkKey(e);
   else if (provider !== 'cliproxy' || !e.CLIPROXY_API_KEY) throw new Error('当前生图配置不是已选CLIProxy或EvoLink，未调用其他供应商');
-  const base = provider === 'cliproxy' ? new URL(e.CLIPROXY_API_BASE_URL) : null;
+  // The other route stays available when its key is set, for artworks that pick it on the page.
+  const base = e.CLIPROXY_API_KEY && e.CLIPROXY_API_BASE_URL ? new URL(e.CLIPROXY_API_BASE_URL) : null;
   if (base && (base.protocol !== 'https:' || base.username || base.password || base.search || base.hash || base.pathname.replace(/\/$/u, '') !== '/v1')) throw new Error('生图接口配置无效');
   const rates = costRates(e);
   const secrets = ['CLIPROXY_API_KEY','EVOLINK_API_KEY','MEDIAKIT_API_KEY','MEITU_OPENAPI_ACCESS_KEY','MEITU_OPENAPI_SECRET_KEY'].map(k => e[k]).filter(Boolean);
@@ -106,27 +134,32 @@ export async function configuredProduction() {
     return Buffer.from(await r.arrayBuffer());
   }
   async function generate(input, dir) {
-    if (provider === 'evolink') return evolinkGenerate(input, dir, { env: e });
-    const options = { ...GENERATION.cliproxy }; delete options.provider;
-    if(input.transparentBackground===true)options.background='transparent';
+    const chosen = imageProviderFor(input.provider, e);
+    if (chosen === 'evolink' ? !e.EVOLINK_API_KEY?.trim() : !base) throw Object.assign(new Error(`${chosen === 'evolink' ? '原通道' : '新通道'}暂未开通，没有发出请求，请换另一个通道`), { definiteFailure: true });
+    if (chosen === 'evolink') return evolinkGenerate(input, dir, { env: e });
+    const options = { ...GENERATION.cliproxy }; delete options.provider; delete options.references; delete options.aspect;
+    // As with Sunburst: transparent unless the artwork turned it off, and only the images it uses.
+    options.background = input.transparentBackground === false ? 'opaque' : 'transparent';
     if(input.size)options.size=input.size;
     if(input.quality==='high')options.quality='high';
-    const images = input.images; if (images.length > 16) throw new Error('素材超过接口支持的16张，未丢图或改编号');
+    const { used: images, note } = referenceImages(input); if (images.length > 16) throw new Error('素材超过接口支持的16张，未丢图或改编号');
+    const prompt = aspectLine(input.aspect) + note + input.prompt + (options.background === 'transparent' ? TRANSPARENT_NOTE : '');
     let body; const headers = { Authorization: `Bearer ${e.CLIPROXY_API_KEY}` };
     if (images.length) {
-      const f = new FormData(); Object.entries(options).forEach(([k,v]) => f.set(k, String(v))); f.set('prompt', input.prompt);
+      const f = new FormData(); Object.entries(options).forEach(([k,v]) => f.set(k, String(v))); f.set('prompt', prompt);
       for (const i of images) {
         const bytes = await readFile(i.path); const m = await sharp(bytes).metadata();
         f.append('image[]', new Blob([bytes], { type: `image/${m.format}` }), `image-${i.index}.${m.format}`);
       } body = f;
-    } else { headers['Content-Type'] = 'application/json'; body = JSON.stringify({ ...options, prompt: input.prompt }); }
-    await saveJSON(resolve(dir, 'request.json'), { endpoint: '/images/' + (images.length ? 'edits' : 'generations'), ...options, prompt: input.prompt, images: images.map(i => ({ id:i.id,index:i.index,sha256:i.sha256,bytes:i.bytes,asset:i.asset })) });
+    } else { headers['Content-Type'] = 'application/json'; body = JSON.stringify({ ...options, prompt }); }
+    await saveJSON(resolve(dir, 'request.json'), { endpoint: '/images/' + (images.length ? 'edits' : 'generations'), ...options, prompt, images: images.map(i => ({ id:i.id,index:i.index,sha256:i.sha256,bytes:i.bytes,asset:i.asset })) });
     const r = await fetch(base.href.replace(/\/$/u,'')+'/images/'+(images.length?'edits':'generations'), { method:'POST',headers,body,redirect:'error',signal:AbortSignal.timeout(600000) });
     const raw = await r.text(); await record(dir,'response.json',raw);
     await saveJSON(resolve(dir,'http.json'),{status:r.status,requestId:r.headers.get('x-request-id')});
     if (!r.ok) throw Object.assign(new Error(`生图接口HTTP ${r.status}；没有自动重试`), { definiteFailure:r.status>=400&&r.status<500 });
     const result=JSON.parse(raw); if(result.data?.length!==1||typeof result.data[0].b64_json!=='string') throw new Error('生图返回不完整；回执已保存，没有自动重试');
-    return { bytes: Buffer.from(result.data[0].b64_json,'base64'), cost: { provider: 'codex', cny: 0, method: 'subscription' } };
+    const fitted = await fitDrawing(Buffer.from(result.data[0].b64_json,'base64'), input.size, input.aspect);
+    return { ...fitted, cost: { provider: 'codex', cny: 0, method: 'subscription' }, transparentRequested: options.background === 'transparent' };
   }
   async function enhance(input, dir) {
     if(!e.MEDIAKIT_API_KEY) throw new Error('火山高清凭据未配置');

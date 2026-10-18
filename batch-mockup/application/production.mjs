@@ -3,10 +3,10 @@ import { mkdir } from 'node:fs/promises';
 import { resolve, extname } from 'node:path';
 import { hash, jsonFile, saveJSON, atomicFile, assetPath, fail, readBytes, materialize, scratchFile, listDirectories, checkpoint } from '../adapters/a-files.mjs';
 import { requirementWorkbench, validateRequirementDraft } from './requirements.mjs';
-import { productionPolicy, inspectPixels, withoutFaintSpecks, hardenInteriorAlpha, flattenOnWhite } from '../adapters/production-images.mjs';
+import { productionPolicy, productionPolicyFor, imageProviderFor, inspectPixels, withoutFaintSpecks, hardenInteriorAlpha, flattenOnWhite } from '../adapters/production-images.mjs';
 import { readRepairState } from './production-repair.mjs';
 import { artworkNetworkFailure } from '../../lib/server/artwork-network-error.ts';
-import { drawSize, ratioValue } from '../../lib/artwork-output-size.ts';
+import { drawSize, ratioValue, ratioLabel } from '../../lib/artwork-output-size.ts';
 
 const stamp=()=>new Date().toISOString();
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -38,9 +38,12 @@ const application=x=>({style:x.style,color:x.color,position:x.position,
 const UNREADABLE=/无法[^，。；\n]{0,8}(辨认|辨别|识别|确认|确定)|看不清|待[^，。；\n]{0,6}补入/u;
 export const unreadText=prompt=>prompt.includes('□')||UNREADABLE.test(prompt.match(/^文字：([^]*?)^字体：/mu)?.[1]||'');
 export function productionInput(c,a,quality=a.quality) {
+  // Settled when the job is made, so the worker draws on the route the author saw.
+  const provider=a.route==='generate'?imageProviderFor(a.provider):null;
   return {schema:'production-input-v1',caseId:c.caseId,artworkId:a.id,name:a.name,revision:c.revision,
     supplementRevision:c.supplement.revision,prompt:a.prompt,promptSHA256:hash(a.prompt),route:a.route,
-    applications:a.applications.map(application),imageIds:a.imageIds,images:c.images,readingIssues:c.draft.readingIssues.map(x=>({scope:x.scope,issue:x.issue})),policy:productionPolicy,
+    applications:a.applications.map(application),imageIds:a.imageIds,images:c.images,readingIssues:c.draft.readingIssues.map(x=>({scope:x.scope,issue:x.issue})),policy:provider?productionPolicyFor(process.env,provider):productionPolicy,
+    ...(provider?{provider}:{}),
     ...(a.transparentBackground===undefined?{}:{transparentBackground:a.transparentBackground}),...(quality==='high'?{quality}:{}),
     ...(a.route!=='reuse'&&a.output?{output:{ratio:a.output.ratio,resolution:a.output.resolution}}:{})};
 }
@@ -85,7 +88,7 @@ export async function reserveProduction(root,manifest,requests) {
       const job={id,caseId:c.caseId,artworkId:a.id,name:a.name,revision:c.revision,supplementRevision:c.supplement.revision,promptSHA256:input.promptSHA256,route:a.route,
         createdAt:stamp(),status:blocked?'blocked':'queued',error:blocked,steps:[],qualityStatus:'not_reviewed',policy:productionPolicy,
         ...(input.transparentBackground===undefined?{}:{transparentBackground:input.transparentBackground}),...(input.quality?{quality:input.quality}:{}),
-        ...(input.output?{output:input.output}:{})};
+        ...(input.output?{output:input.output}:{}),...(input.provider?{provider:input.provider}:{})};
       await saveJSON(resolve(dir,'state.json'),job);jobs.push(job);
     }
   }return jobs;
@@ -97,7 +100,7 @@ export async function drawingSize(input,images){
   if(first){const m=await import('sharp').then(x=>x.default(first.path).metadata());reference=(m.orientation||1)>=5?{width:m.height,height:m.width}:{width:m.width,height:m.height};}
   const ratio=ratioValue(input.output.ratio,reference);
   if(!ratio)return{};
-  const size=drawSize(ratio);return{size:`${size.width}x${size.height}`};
+  const size=drawSize(ratio);return{size:`${size.width}x${size.height}`,aspect:input.output.ratio==='original'?ratioLabel(ratio):input.output.ratio};
 }
 export async function executeProduction(root,id,providers,onProgress=()=>{}) {
   const dir=dirFor(root,id),job=await jsonFile(resolve(dir,'state.json'));if(job.status!=='queued')return job;
@@ -105,7 +108,7 @@ export async function executeProduction(root,id,providers,onProgress=()=>{}) {
   const save=async()=>{await saveJSON(resolve(dir,'state.json'),job);await checkpoint();onProgress(job);};
   // Set once a paid service may have been reached; a failure before that is certain and free.
   let contacted=false;
-  async function step(name,action){for(let attempt=1;;attempt++){job.phase=name;const s={name,attemptId:randomUUID(),status:'running',startedAt:stamp()};job.steps.push(s);contacted=true;await save();try{const value=await action(resolve(dir,name));const result=value&&!Buffer.isBuffer(value)&&value.bytes?value:null;if(result?.cost)s.cost=result.cost;if(result?.transparentRequested)s.transparentRequested=true;s.status='returned';s.elapsedMs=Date.now()-Date.parse(s.startedAt);await save();return result?result.bytes:value;}catch(e){const unsent=notSent(e);s.status=e.definiteFailure||unsent?'failed':'unknown';s.error=errorText(e,STAGES[name]);s.elapsedMs=Date.now()-Date.parse(s.startedAt);
+  async function step(name,action){for(let attempt=1;;attempt++){job.phase=name;const s={name,attemptId:randomUUID(),status:'running',startedAt:stamp()};job.steps.push(s);contacted=true;await save();try{const value=await action(resolve(dir,name));const result=value&&!Buffer.isBuffer(value)&&value.bytes?value:null;if(result?.cost)s.cost=result.cost;if(result?.transparentRequested)s.transparentRequested=true;if(result?.warning)s.warning=result.warning;s.status='returned';s.elapsedMs=Date.now()-Date.parse(s.startedAt);await save();return result?result.bytes:value;}catch(e){const unsent=notSent(e);s.status=e.definiteFailure||unsent?'failed':'unknown';s.error=errorText(e,STAGES[name]);s.elapsedMs=Date.now()-Date.parse(s.startedAt);
     // A connection that never opened sent nothing, so it is tried again a couple of times.
     if(unsent&&attempt<3){await save();await sleep(1000*attempt);continue;}throw e;}}}
   // Reading the job's own pictures back is free and repeatable.
@@ -185,6 +188,9 @@ export async function executeProduction(root,id,providers,onProgress=()=>{}) {
       }
     }
     }
+    // The generator kept its own proportion instead of the one asked for (the Codex relay can).
+    const drawn=input.route==='generate'&&!job.resumeCutout?job.steps.findLast(x=>x.name==='generate')?.warning:null;
+    if(drawn)job.warning=(job.warning?job.warning+'；':'')+drawn;
     if(input.output&&input.output.resolution!=='1K'&&!job.upscale)await enlarge(input.output.resolution);
     job.status='returned';job.phase='done';job.error=null;
   }catch(e){job.status=job.raw?'partial':e.definiteFailure||notSent(e)||!contacted?'failed':'unknown';job.error=errorText(e,contacted?STAGES[job.phase]||'制作':'读取素材');}

@@ -36,6 +36,21 @@ export function drawSize(ratio: number): Size {
 }
 
 /**
+ * A width ÷ height as the simplest "w:h" within 1% (1280×2272 → 9:16), clamped like the drawing.
+ * The Codex relay ignores the requested size and follows the proportion written in the prompt.
+ */
+export function ratioLabel(ratio: number): string {
+  const r = Math.min(MAX_RATIO, Math.max(1 / MAX_RATIO, ratio));
+  let best = '1:1', bestOff = Infinity;
+  for (let h = 1; h <= 32; h++) {
+    const w = Math.max(1, Math.round(r * h)), off = Math.abs(Math.log(w / h / r));
+    if (off <= 0.01) return `${w}:${h}`;
+    if (off < bestOff) { best = `${w}:${h}`; bestOff = off; }
+  }
+  return best;
+}
+
+/**
  * Final size delivered, or null when the model chooses (原比例 with no reference image). 2K and 4K
  * keep the 1K drawing's proportions with the long edge at 2048 or 4096 px.
  */

@@ -1,6 +1,8 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 export type ArtworkOutput = { ratio: import("../artwork-output-size").OutputRatio; resolution: import("../artwork-output-size").OutputResolution };
+/** 出图通道: cliproxy is 新通道 (Codex relay), evolink 原通道. */
+export type ImageProvider = "cliproxy" | "evolink";
 export type Artwork = {
   id: string;
   name: string;
@@ -8,6 +10,8 @@ export type Artwork = {
   transparentBackground?: boolean;
   /** 输出规格; absent on artworks made before it existed (the model chose the size). */
   output?: ArtworkOutput;
+  /** Absent: the configured default route. */
+  provider?: ImageProvider;
   prompt: string;
   imageIds: string[];
   applications: { style: string; color: string; position: string }[];
@@ -38,6 +42,10 @@ export type Job = {
   repair?: { file: ResultFile };
   output?: ArtworkOutput;
   warning?: string;
+  provider?: ImageProvider;
+  /** Jobs made before 出图通道 existed record their route only here. */
+  policy?: { generation?: { provider?: string } };
+  steps?: { name: string; status: string; elapsedMs?: number }[];
 };
 export type Case = {
   caseId: string;

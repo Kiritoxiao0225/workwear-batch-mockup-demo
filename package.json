@@ -22,7 +22,7 @@
     "test:intake": "tsx --test batch-mockup/tests/intake.test.mjs",
     "production:dev": "node scripts/start-production-local.mjs",
     "artwork:worker": "tsx scripts/artwork-worker.ts",
-    "test:requirements": "tsx --test batch-mockup/tests/production.test.mjs batch-mockup/tests/production-output.test.mjs batch-mockup/tests/evolink-production.test.mjs batch-mockup/tests/production-edit.test.mjs batch-mockup/tests/automatic-flow.test.mjs batch-mockup/tests/wps-sync.test.mjs batch-mockup/tests/requirements-editor.test.mjs batch-mockup/tests/mockup-save.test.mjs batch-mockup/tests/workbench-snapshot.test.mjs batch-mockup/tests/asset-response.test.mjs batch-mockup/tests/chunk-sweep.test.mjs",
+    "test:requirements": "tsx --test batch-mockup/tests/production.test.mjs batch-mockup/tests/production-output.test.mjs batch-mockup/tests/evolink-production.test.mjs batch-mockup/tests/cliproxy-production.test.mjs batch-mockup/tests/production-edit.test.mjs batch-mockup/tests/automatic-flow.test.mjs batch-mockup/tests/wps-sync.test.mjs batch-mockup/tests/requirements-editor.test.mjs batch-mockup/tests/mockup-save.test.mjs batch-mockup/tests/workbench-snapshot.test.mjs batch-mockup/tests/asset-response.test.mjs batch-mockup/tests/chunk-sweep.test.mjs",
     "test:batch-claim": "tsx scripts/batch-claim-integration.mjs",
     "test:batch-cloud": "tsx batch-mockup/tests/cloud-integration.mjs",
     "test:listing": "node --import ./scripts/no-network.mjs --import tsx scripts/listing-images-integration.ts",

@@ -11,6 +11,8 @@ const artworkSchema = z.object({
   id: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/), name: z.string().min(1).max(200),
   route: z.enum(['generate', 'enhance', 'reuse']),
   transparentBackground: z.boolean().optional(),
+  // 出图通道 picked on the page: cliproxy is 新通道 (Codex relay), evolink 原通道. Absent: the configured default.
+  provider: z.enum(['cliproxy', 'evolink']).optional(),
   // 图稿生成「输出规格」: drawn at 1K in this ratio, then enlarged to 2K/4K. Absent on older drafts (model decides).
   output: z.object({ ratio: z.enum(OUTPUT_RATIOS.map(([key]) => key)), resolution: z.enum(OUTPUT_RESOLUTIONS) }).strict().optional(),
   // Only redrawing unclear or calligraphic Chinese needs the dearer quality; medium garbled such strokes.
