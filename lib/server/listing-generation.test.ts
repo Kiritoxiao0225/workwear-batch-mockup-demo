@@ -7,7 +7,7 @@ import { SERVICE_IMAGES } from '../listing/service';
 import { BUILT_IN_LAYOUTS as MASTERS, FLAT_EXAMPLE, fitTemplate, type Layout } from '../listing/templates';
 import { contentOf, coverOf, fabricCrop, planJobs, wordsOf, zipEntryName } from './listing-generation';
 import { buildPlan } from './listing-write';
-import { castOnePrompt, castPrompt, editPrompt, longPrompt, mainPrompt, redrawPrompt, servicePrompt, serviceWordsPrompt, skuModelPrompt, skuPrompt } from './listing-prompts';
+import { castOnePrompt, castPrompt, editPrompt, longPrompt, mainPrompt, productPrompt, redrawPrompt, servicePrompt, serviceWordsPrompt, skuModelPrompt, skuPrompt } from './listing-prompts';
 import { crowdLine, DEFAULT_PLACE } from './listing-crowd';
 import { SPECS, specPrompt } from './listing-specs';
 import type { StoredPlan } from './listing-store';
@@ -19,6 +19,15 @@ const stored = (layout = commute): StoredPlan => {
   return { draft, garment: ['立领'], scenes: { 'square:1': '写字楼大堂' }, sku: { tag: '男女同款', fabric: '三防面料' },
     colors: draft.colors.map(c => ({ name: c.name, hex: c.hex, sku: c.pick! })), direct: ['M31'], images: [], model: 'm', round: 1 };
 };
+
+describe('the garment\'s own marks (10-19)', () => {
+  it('the white image and the cast keep the badges and words the garment carries, adding none', () => {
+    for (const p of [productPrompt({ color: '乌梅紫', garment: ['立领'] }), castPrompt({ color: '乌梅紫', garment: ['立领'] }), castOnePrompt({ color: '乌梅紫', garment: ['立领'], who: '男', photo: true })]) {
+      expect(p).toContain('衣服本身带的袖标、织标、印字和图案照参考图原样保留');
+      expect(p).not.toMatch(/不要任何文字、标签、logo|没有任何文字、标签、logo/);
+    }
+  });
+});
 
 describe('castOnePrompt', () => {
   it('draws one person from their photo without what they wear, or makes one up', () => {
@@ -262,8 +271,23 @@ describe('the closer and the SKU models (10-16)', () => {
     const line = crowdLine(six.map(name => ({ name })), '参考图7');
     expect(line).toContain('前排从左到右「爱马仕橙」「落霞橙」「未来白」，后排从左到右「北欧蓝」「石苔灰」「黑色」');
     expect(line).toContain('6 种颜色各出现一次');
-    expect(line).toContain('参考图7里的男生和女生都在');
+    expect(line).toContain('参考图7里的男生和女生各出现一次');
     expect(line).not.toContain('排成一排');
+  });
+  it('gives the others besides the cast faces of their own, and keeps every hand in the picture (10-19)', () => {
+    const line = crowdLine(six.map(name => ({ name })), '参考图7');
+    // Six people: the cast's two and four others, men and women in turn, no two alike.
+    const others = [...line.matchAll(/一位([^；]+?)的(男|女)生，([^；]+)/g)];
+    expect(others.map(m => m[2])).toEqual(['男', '女', '男', '女']);
+    expect(new Set(others.map(m => m[3])).size).toBe(4);
+    expect(line).toContain('同一张图里不能出现两张相同的脸');
+    expect(line).not.toContain('举手');
+    expect(line).toContain('不把手举过头顶');
+    // Another product gets another team; two colours still make four people, two of them others.
+    const looks = (l: string) => [...l.matchAll(/一位([^；]+)/g)].map(m => m[1]).join('|');
+    const products = [six, ['藏青', '卡其', '军绿', '酒红', '燕麦', '石墨灰'], ['曜石黑', '阳光橙', '深咖色', '灰绿色', '米白色'], ['黑拼白', '骑士黑', '冰雾粉', '卡其色'], ['银灰', '岩壳绿', '红色', '青灰'], ['黑色', '乌梅紫', '深咖色', '黑白']];
+    expect(new Set(products.map(p => looks(crowdLine(p.map(name => ({ name })), '参考图7')))).size).toBeGreaterThanOrEqual(3);
+    expect([...crowdLine([{ name: '黑色' }, { name: '藏青' }], '定妆照').matchAll(/一位/g)]).toHaveLength(2);
     expect(crowdLine([{ name: '北欧蓝', hex: '#1f2a44' }, { name: '黑色', hex: '#151515' }, { name: '白色' }], '定妆照')).toContain('从左到右「黑色」（#151515）「北欧蓝」（#1f2a44）「白色」');
     expect(crowdLine([{ name: '黑色' }, { name: '藏青' }], '定妆照')).toContain('前排从左到右「黑色」「藏青」，后排从左到右「黑色」「藏青」');
     expect(crowdLine([{ name: '黑色' }, { name: '藏青' }, { name: '白色' }], '定妆照')).toContain('从左到右「藏青」「黑色」「白色」');

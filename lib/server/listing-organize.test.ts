@@ -172,3 +172,27 @@ describe('liners, group photos and colours seen (10-15)', () => {
     expect(() => parseSorted('这是结果：```json\n{"images":[]}\n```', ['M1'])).toThrow('整理结果不是完整的 JSON');
   });
 });
+
+describe('a colour\'s reference faces the camera, and a still life in a scene is not its white image (10-19)', () => {
+  it('takes the model facing the camera before a bigger photo of one turned half away', () => {
+    const sorted = {
+      images: [img('M414', { color: '乌梅紫', front: true, person: '男', facing: '侧身' }), img('M90', { color: '乌梅紫', front: true, person: '男', facing: '正对' })],
+      colors: [{ name: '乌梅紫', hex: '#4b2a40', from: [] }], points: [], notes: [],
+    };
+    const chosen = chooseMaterials(sorted, [{ id: 'M414', width: 4000, height: 6000 }, { id: 'M90', width: 1200, height: 1800 }]);
+    expect(chosen.colors[0].pick).toBe('M90');
+    // Material sorted before 10-19 has no facing: the bigger photo, as before.
+    const old = { ...sorted, images: sorted.images.map(i => ({ ...i, facing: undefined })) };
+    expect(chooseMaterials(old, [{ id: 'M414', width: 4000, height: 6000 }, { id: 'M90', width: 1200, height: 1800 }]).colors[0].pick).toBe('M414');
+    expect(parseSorted(JSON.stringify({ images: [{ id: 'M1', kind: '模特实拍', facing: '正对' }, { id: 'M2', kind: '模特实拍', facing: '斜着' }] }), ['M1', 'M2']).map(i => i.facing)).toEqual(['正对', undefined]);
+  });
+  it('a still life in a scene is not used as it is, and a white one comes before it', () => {
+    expect(usableAsIs(img('A', { kind: '静物', front: true, plain: false }))).toBe(false);
+    expect(usableAsIs(img('B', { kind: '静物', front: true, plain: true }))).toBe(true);
+    const sorted = {
+      images: [img('M219', { kind: '静物', color: '藏青', front: true, plain: false }), img('M220', { kind: '静物', color: '藏青', front: true, plain: true })],
+      colors: [{ name: '藏青', hex: '#1d2a44', from: [] }], points: [], notes: [],
+    };
+    expect(chooseMaterials(sorted, [{ id: 'M219', width: 3000, height: 3000 }, { id: 'M220', width: 800, height: 800 }]).colors[0].pick).toBe('M220');
+  });
+});

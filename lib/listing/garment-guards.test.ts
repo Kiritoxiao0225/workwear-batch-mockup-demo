@@ -61,6 +61,10 @@ describe('taped seams want a photo of the tape', () => {
     expect(partOf({ text: '接缝全压胶', part: '内侧压胶' })).toBe('内侧压胶');
     expect(partOf({ text: '贴腕袖口', part: '袖口' })).toBe('袖口');
   });
+  it('a 压胶 zip is a zip, not taped seams (10-19: drawn from the seam-tape photo)', () => {
+    expect(partOf({ text: '压胶缝工艺拉链', part: '门襟拉链' })).toBe('门襟拉链');
+    expect(partOf({ text: '压胶拉链' })).toBe('压胶拉链');
+  });
   it('with only a photo of the outer seam, the card is drawn another way', () => {
     const d0 = defaultDraft(DEMO_MATERIAL, commute);
     const taped = { id: 'tape', text: '接缝全压胶', note: '', type: '做工' as const, concept: null, group: '必打' as const, source: '素材' as const, kind: '衣服' as const, on: true, proof: 'part', part: '接缝', why: '', evidence: '', from: [], score: 1 };

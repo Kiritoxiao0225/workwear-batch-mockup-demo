@@ -13,6 +13,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Task } from '../listing/category';
 import { crowdLine, DEFAULT_PLACE } from './listing-crowd';
+import { NO_CHEST, OWN_MARKS, SAME_STYLE } from './listing-lines';
 
 /** What a spec fills its open places with. */
 export type Fill = {
@@ -72,6 +73,8 @@ const ICON_WORDS: Record<string, [string, string, string]> = {
   DURABLE: ['防刮耐磨', '抗撕裂', '耐穿耐造'], WARM: ['锁住体温', '抵御寒风', '轻暖舒适'], LIGHTWEIGHT: ['轻盈无感', '活动自如', '便于收纳'],
   'EASY CARE': ['防油防污', '一擦即净', '好打理'], 'ANTI-WRINKLE': ['抗皱有型', '不易起褶', '挺括耐看'], STRETCH: ['弹力舒展', '活动自如', '不紧绷'],
 };
+/** The rack's garments left to right: every colour, at least four (colours repeat in turn). */
+const rack = (f: Fill) => Array.from({ length: Math.max(4, f.colors.length) }, (_, k) => f.colors[k % f.colors.length]?.name ?? '');
 /** A word as a script decoration (「Windproof」). */
 const script = (en: string) => en ? en[0] + en.slice(1).toLowerCase() : '';
 
@@ -272,13 +275,15 @@ export const SPECS: Record<string, Partial<Record<Task, Spec>>> = {
     细节: detailRows(rival('13-3')),
     收口: { sample: rival('98-2'), cells: 0, photo: true,
       zones: f => [
-        `左0% 上14% 宽100% 高66%：衣服：画面里没有人，${Math.max(4, f.colors.length)}件同款衣服挂在衣架杆上排成一排，${f.colors.map(c => c.name).join('、')}交替，前面一件正面朝前，后面几件侧着、互相略微叠压。`,
+        // A free-standing rack with both posts in the picture: told only to leave 5% each side, the end
+        // sleeves still ran off the edge (10-18, 05/10/15/20/25/45); the posts keep the garments in.
+        `左6% 上14% 宽88% 高66%：衣服：画面里没有人，${rack(f).length}件这款衣服挂在落地衣架的横杆上、两根立柱之间排成一排，从左到右依次是${rack(f).join('、')}，每件都正面朝前、等距挂好，彼此留一点空隙，不互相遮挡门襟和口袋；最左和最右两件的袖子离画面左右边缘至少 5%，整排衣服完整地在画面里。`,
         // The rack leaves room for the count only (「6色可选」), as on the sample.
         `左6% 上84% 宽46% 高9%：大标题「${f.title.replace(/^团体定制 · /, '')}」，深色粗黑体，字高约占画面 7%。`,
         `左54% 上84% 宽42% 高12%：${f.all.length} 个圆形色块 ${f.all.map(c => c.hex).join('、')}，各自下面一行深灰字${f.all.map(c => `「${c.name}」`).join('')}，字高约占画面 2.2%。`,
         '画面里没有任何人。',
       ],
-      background: () => '实景挂拍：浅灰色墙面（照这里写的浅灰，不照参考图的深灰竖条纹墙），一根金属衣架杆横穿画面上部，柔和顶光，衣服的影子落在墙上。' },
+      background: () => '实景挂拍：浅灰色墙面（照这里写的浅灰，不照参考图的深灰竖条纹墙），一个落地金属衣架：一根横杆架在左右两根立柱上，两根立柱和底座都完整在画面里，立柱离画面左右边缘各约 5%，横杆不伸出立柱；衣服都挂在两根立柱之间；柔和顶光，衣服的影子落在墙上。' },
   },
 };
 
@@ -322,8 +327,8 @@ export function specPrompt(i: SpecInput) {
   ];
   const what = spec.fabric ? `面料：${f.color}，细密织纹、柔和哑光，颜色和纹理照参考图1。`
     : `衣服（必须和产品图一模一样）：\n${bullet([...i.garment,
-      refs.garment.length > 1 ? `画面里每件衣服的颜色和对应参考图一致，款式都一样；只能出现这 ${refs.garment.length} 种颜色。` : `颜色：${f.color}，和参考图一致，不偏色。`,
-      i.logo ?? '衣服上不印任何字。'])}`;
+      refs.garment.length > 1 ? `画面里每件衣服的颜色和对应参考图一致，${SAME_STYLE}；只能出现这 ${refs.garment.length} 种颜色。` : `颜色：${f.color}，和参考图一致，不偏色。`,
+      i.logo ?? NO_CHEST, OWN_MARKS])}`;
   return `为淘宝制作一张冲锋衣团体定制商品主图，正方形 1:1。这是一套 ${i.total} 张里的第 ${i.n} 张：${i.taskLabel}。
 
 参考图分工：
@@ -337,7 +342,7 @@ ${bullet(spec.zones(f))}
 背景：${spec.background(f)}
 ${cover ? style.cover : `整体风格（整套 5 张都一样）：${spec.style ?? style.all}`}
 ${spec.own ? '' : `${TYPE}\n`}${spec.photo ? `${PHOTO}\n` : ''}
-${spec.own ? `不要：上面没写到的东西（不额外加${cover ? '' : '整件衣服、'}人、卡片、标签、图标）；任何真实品牌 logo、水印；「」以外的任何文字；背景里不要浅色大号英文水印字。所有中文逐字正确、笔画清晰。`
+${spec.own ? `不要：上面没写到的东西（不额外加${cover ? '' : '整件衣服、'}人、卡片、标签、图标）；另外加上的真实品牌 logo、水印；「」以外的任何文字；背景里不要浅色大号英文水印字。所有中文逐字正确、笔画清晰。`
     // The competitor's small things (corner words, icons, thin lines) are welcome; words of its own are not.
-    : `不要：上面没写到的文字和人${cover || spec.people ? '' : '、整件衣服'}（参考图里的字一律不要照搬，英文只用上面写到的）；任何真实品牌 logo、店名、水印；背景里大号英文水印字。所有中文逐字正确、笔画清晰。`}`;
+    : `不要：上面没写到的文字和人${cover || spec.people ? '' : '、整件衣服'}（参考图里的字一律不要照搬，英文只用上面写到的）；另外加上的真实品牌 logo、店名、水印；背景里大号英文水印字。所有中文逐字正确、笔画清晰。`}`;
 }

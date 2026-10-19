@@ -57,3 +57,40 @@ describe('the SKU title (10-16)', () => {
     expect(skuCardText({ name: 'T恤', category: 'generic', points: [] }).kicker).toBe('PREMIUM QUALITY');
   });
 });
+
+describe('the card never cuts words (10-19)', () => {
+  const lead = (text: string, note = '') => point('功能', text, note);
+  it('keeps whole the words the 75 sets showed cut: icons, titles and notes', () => {
+    const t = skuCardText({ name: '7716一体超柔石墨烯冲锋衣', category: 'workwear', points: [
+      lead('IP4.0防水层', '轻拭雨水自动滑落'), lead('双重防风'), lead('黑金石墨烯 呵护肩颈'), lead('防油污涂层'), lead('可拆卸摇粒内胆'),
+    ] });
+    expect(t.feature?.title).toBe('IP4.0防水层');
+    expect(t.feature?.icons.map(i => i.label)).toEqual(['双重防风', '黑金石墨烯', '防油污涂层']);
+    const units = skuCardText({ name: '318款单层冲锋衣', category: 'workwear', points: [lead('防水指数4000+MMH₂O', '滴水成珠'), lead('透气透湿', '透湿指数6500⁺ G/M²·24H')] });
+    expect(units.feature).toMatchObject({ title: '防水指数4000+MMH₂O', sub: '滴水成珠' });
+    expect(skuCardText({ name: 'x', category: 'workwear', points: [lead('滴水成珠', '防水指数40000⁺ MMH₂O')] }).feature?.sub).toBe('防水指数40000⁺ MMH₂O');
+  });
+  it('a word too long for its place gives way to the next one, and a bare figure is no icon', () => {
+    const t = skuCardText({ name: '6607#连帽薄款', category: 'workwear', points: [
+      lead('滴水成珠'), lead('透气透湿'), lead('40000+ MMH₂O'), lead('6000+ G/㎡·24H'), lead('防风'),
+      point('面料', '无氟面料是一种环保型纺织材料', '不含氟系化合物'), point('面料', '100%聚酯纤维'),
+    ] });
+    expect(t.feature?.icons.map(i => i.label)).toEqual(['透气透湿', '防风']);
+    expect(t.rows[1]).toMatchObject({ label: 'FABRIC/面料', value: '100%聚酯纤维' });
+    // A long note is left off rather than cut.
+    expect(skuCardText({ name: 'x', category: 'workwear', points: [point('面料', '三防面料', '轻拭雨水自动滑落，易清洁、易打理，不怕油污')] }).rows[0].sub).toBe('');
+  });
+  it('the fabric row is never the down filling, and two-colour words go only on a two-colour colour', () => {
+    const points = [point('面料', '纯净白鸭绒 90%', '触手可及的温暖'), point('面料', '石墨烯面料'), point('颜色款式', '撞色设计剪裁', '可商务可休闲'), point('做工', '魔术贴袖口', '收紧袖口防进风')];
+    expect(skuCardText({ name: 'x', category: 'workwear', points, color: '黑色' }).rows.map(r => r.value)).toEqual(['石墨烯面料', '魔术贴袖口']);
+    expect(skuCardText({ name: 'x', category: 'workwear', points, color: '红拼黑' }).rows.map(r => r.value)).toEqual(['石墨烯面料', '撞色设计剪裁']);
+    expect(colorRow('冰川蓝拼雾霾灰').value).toBe('冰川蓝拼雾霾灰');
+  });
+});
+
+describe('modelPhotoFor and the way the model faces (10-19)', () => {
+  it('takes the photo facing the camera before one turned away', () => {
+    const images = [{ id: 'M414', kind: '静物', color: '乌梅紫' }, { id: 'M1', kind: '模特实拍', color: '乌梅紫', person: '男', face: true, facing: '侧身' }, { id: 'M2', kind: '模特实拍', color: '乌梅紫', person: '男', face: true, facing: '正对' }];
+    expect(modelPhotoFor(images, 'M414', '乌梅紫', '男')).toBe('M2');
+  });
+});

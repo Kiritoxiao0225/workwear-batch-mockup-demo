@@ -44,6 +44,60 @@ function fitText(ctx: SKRSContext2D, text: string, family: string, size: number,
   return s;
 }
 
+/**
+ * Words with the unit marks the fonts lack (10-18: 「MMH₂O」 printed 「MMH」, 「4000⁺」 「4000」): ₂ is
+ * drawn as a small 2 below the line, ⁺ and ² as small marks above it, ㎡ as m².
+ */
+type Run = { t: string; at: 'line' | 'below' | 'above' };
+export function runs(text: string): Run[] {
+  const out: Run[] = [];
+  const push = (t: string, at: Run['at']) => { const last = out[out.length - 1]; if (last?.at === at) last.t += t; else out.push({ t, at }); };
+  for (const ch of text) {
+    if (ch === '₂') push('2', 'below');
+    else if (ch === '⁺') push('+', 'above');
+    else if (ch === '²') push('2', 'above');
+    else if (ch === '㎡') { push('m', 'line'); push('2', 'above'); }
+    else push(ch, 'line');
+  }
+  return out;
+}
+const runSize = (r: Run, size: number) => r.at === 'line' ? size : Math.round(size * 0.62);
+function measureRuns(ctx: SKRSContext2D, text: string, family: string, size: number) {
+  return runs(text).reduce((w, r) => { ctx.font = `${runSize(r, size)}px "${family}"`; return w + ctx.measureText(r.t).width; }, 0);
+}
+function drawRuns(ctx: SKRSContext2D, text: string, family: string, size: number, x: number, y: number, align: 'left' | 'center' = 'left') {
+  let at = align === 'center' ? x - measureRuns(ctx, text, family, size) / 2 : x;
+  const was = ctx.textAlign;
+  ctx.textAlign = 'left';
+  for (const r of runs(text)) {
+    ctx.font = `${runSize(r, size)}px "${family}"`;
+    ctx.fillText(r.t, at, y + (r.at === 'below' ? size * 0.18 : r.at === 'above' ? -size * 0.38 : 0));
+    at += ctx.measureText(r.t).width;
+  }
+  ctx.textAlign = was;
+}
+/**
+ * Words laid out to fit `max` pixels: one line from `size` down to `min`, else (with `lines` 2) two lines
+ * broken between words, never inside a run of letters and figures. Null when even that does not fit:
+ * nothing is cut (lib/listing/sku-card.ts keeps the words to what fits).
+ */
+function layoutText(ctx: SKRSContext2D, text: string, family: string, size: number, min: number, max: number, lines: 1 | 2 = 1): { size: number; lines: string[] } | null {
+  for (let s = size; s >= min; s--) if (measureRuns(ctx, text, family, s) <= max) return { size: s, lines: [text] };
+  if (lines < 2) return null;
+  const chars = [...text], tight = /[A-Za-z0-9.+⁺₂²]/;
+  let best: string[] | null = null, widest = Infinity;
+  for (let i = 1; i < chars.length; i++) {
+    if (tight.test(chars[i - 1]) && tight.test(chars[i])) continue;
+    const pair = [chars.slice(0, i).join('').trim(), chars.slice(i).join('').replace(/^[，、；\s]+/, '').trim()];
+    if (!pair[0] || !pair[1]) continue;
+    const w = Math.max(...pair.map(l => measureRuns(ctx, l, family, min)));
+    if (w < widest) { widest = w; best = pair; }
+  }
+  if (!best) return null;
+  for (let s = size; s >= min; s--) if (best.every(l => measureRuns(ctx, l, family, s) <= max)) return { size: s, lines: best };
+  return null;
+}
+
 function roundRect(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, r: number) {
   ctx.beginPath();
   ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r);
@@ -228,8 +282,10 @@ export async function renderSkuCard(c: SkuCard): Promise<Buffer> {
     ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(L + 40, top + 50, 42, 0, 2 * Math.PI); ctx.fill(); ctx.restore();
     drawIcon(ctx, row.icon, L + 40, top + 50, 24, INK);
     ctx.fillStyle = '#2b2b2b'; fitText(ctx, row.label, FONT.bold, 21, W - 110); ctx.fillText(row.label, L + 110, top + 24);
-    ctx.fillStyle = INK; fitText(ctx, row.value, FONT.heavy, 38, W - 110); ctx.fillText(row.value, L + 110, top + 68);
-    ctx.fillStyle = SOFT; fitText(ctx, row.sub, FONT.regular, 19, W - 110); ctx.fillText(row.sub, L + 110, top + 100);
+    const value = layoutText(ctx, row.value, FONT.heavy, 38, 22, W - 110) ?? { size: 18, lines: [row.value] };
+    ctx.fillStyle = INK; drawRuns(ctx, value.lines[0], FONT.heavy, value.size, L + 110, top + 68);
+    const sub = row.sub ? layoutText(ctx, row.sub, FONT.regular, 19, 15, W - 110) : null;
+    if (sub) { ctx.fillStyle = SOFT; drawRuns(ctx, sub.lines[0], FONT.regular, sub.size, L + 110, top + 100); }
     if (i < rows.length - 1) { ctx.fillStyle = '#c9c9c9'; ctx.fillRect(L - 8, top + pitch - 18, W + 10, 1.5); }
   });
 
@@ -249,14 +305,20 @@ export async function renderSkuCard(c: SkuCard): Promise<Buffer> {
   ctx.save(); ctx.strokeStyle = ink; ctx.lineWidth = 3;
   ctx.beginPath(); ctx.moveTo(card.x + 46, card.y + 22); ctx.lineTo(card.x + 70, card.y + 32); ctx.lineTo(card.x + 68, card.y + 56); ctx.lineTo(card.x + 46, card.y + 72); ctx.lineTo(card.x + 24, card.y + 56); ctx.lineTo(card.x + 22, card.y + 32); ctx.closePath(); ctx.stroke(); ctx.restore();
   drawIcon(ctx, iconFor(c.feature.title), card.x + 46, card.y + 47, 12, ink);
-  ctx.fillStyle = ink; fitText(ctx, c.feature.title, FONT.heavy, 40, card.w - 50); ctx.fillText(c.feature.title, card.x + 24, card.y + 138);
-  fitText(ctx, c.feature.sub, FONT.regular, 20, card.w - 50); ctx.fillText(c.feature.sub, card.x + 24, card.y + 172);
-  const icons = c.feature.icons.slice(0, 3), step = card.w / Math.max(3, icons.length);
+  // A two-line note lifts the title and the note one line, clear of the icons.
+  const sub = c.feature.sub ? layoutText(ctx, c.feature.sub, FONT.regular, 20, 16, card.w - 50, 2) : null, lift = sub && sub.lines.length > 1 ? 22 : 0;
+  const title = layoutText(ctx, c.feature.title, FONT.heavy, 40, 28, card.w - 50) ?? { size: 28, lines: [c.feature.title] };
+  ctx.fillStyle = ink; drawRuns(ctx, title.lines[0], FONT.heavy, title.size, card.x + 24, card.y + 138 - lift);
+  sub?.lines.forEach((line, k) => drawRuns(ctx, line, FONT.regular, sub.size, card.x + 24, card.y + 172 - lift + k * 24));
+  // Fewer than three icons sit in the middle of the card.
+  const icons = c.feature.icons.slice(0, 3), step = card.w / Math.max(3, icons.length), from = card.x + (card.w - step * icons.length) / 2;
   icons.forEach((it, k) => {
-    const cx = card.x + step * (k + 0.5), cy = card.y + 222;
+    const cx = from + step * (k + 0.5), cy = card.y + 222;
     ctx.save(); ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(cx, cy, 25, 0, 2 * Math.PI); ctx.stroke(); ctx.restore();
     drawIcon(ctx, it.icon, cx, cy, 14, ink);
-    ctx.fillStyle = ink; fitText(ctx, it.label, FONT.bold, 18, step - 10); ctx.textAlign = 'center'; ctx.fillText(it.label, cx, cy + 52); ctx.textAlign = 'left';
+    const label = layoutText(ctx, it.label, FONT.bold, 18, 15, step - 10, 2);
+    ctx.fillStyle = ink;
+    label?.lines.forEach((line, j) => drawRuns(ctx, line, FONT.bold, label.size, cx, cy + (label.lines.length > 1 ? 46 : 52) + j * 19, 'center'));
   });
   return sharp(await canvas.encode('png')).jpeg({ quality: 92 }).toBuffer();
 }

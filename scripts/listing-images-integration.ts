@@ -645,7 +645,10 @@ try {
   await call(0, `layouts/${lay}`, undefined, 200, 'DELETE');
   assert.ok(!(await (await call(0, 'config')).json()).layouts.some((l: { id: string }) => l.id === lay));
   await call(0, 'projects', { id: randomUUID(), name: '删了的版式', layout: lay, counts: counts(1) }, 400);
-  await upload(0, usesLayout, main, 'a.jpg');
+  // A still life on white (10-19: one in a scene is no longer the product image as it is).
+  const onWhite = await sharp({ create: { width: 800, height: 800, channels: 3, background: '#ffffff' } })
+    .composite([{ input: { create: { width: 400, height: 520, channels: 3, background: '#1f1f1f' } }, left: 200, top: 140 }]).jpeg().toBuffer();
+  await upload(0, usesLayout, onWhite, 'a.jpg');
   await call(0, `projects/${usesLayout}/plan`, {});
   const label = (await detailOf(usesLayout)).sources[0].label;
   const beforeUses = await balance(tenants[0]);
@@ -656,6 +659,7 @@ try {
   const usesPlan = await detailOf(usesLayout);
   assert.equal(usesPlan.status, 'generating');
   assert.deepEqual((await db().query('SELECT plan->\'direct\' d FROM listing_projects WHERE id=$1', [usesLayout])).rows[0].d, [label]);
+  assert.equal((await db().query(`SELECT materials->'sorted'->'images'->0->>'plain' p FROM listing_projects WHERE id=$1`, [usesLayout])).rows[0].p, 'true');
   // The clean still life is the product image itself: it costs nothing.
   const usesFirst = roundOf(written.draft, mine, 1, new Set([label]));
   assert.ok(usesFirst[0].free);

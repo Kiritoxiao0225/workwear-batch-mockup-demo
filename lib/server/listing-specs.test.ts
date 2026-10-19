@@ -61,3 +61,28 @@ describe('the masters\' specs', () => {
     expect([enOf('防风防水'), enOf('深度呼吸，远离闷燥'), enOf('德国SUPER-TEX')]).toEqual(['WATERPROOF', 'BREATHABLE', '']);
   });
 });
+
+describe('the 75-set review (10-19)', () => {
+  const prompt = (master: string, task: '首图' | '功能' | '细节' | '收口', garment: { name: string }[]) => {
+    const spec = SPECS[master][task]!;
+    return specPrompt({ master, task, taskLabel: task, n: 5, total: 5, spec, fill: { ...fill, cells: fill.cells.slice(0, spec.cells) }, garment: ['立领'], logo: null,
+      refs: { garment, cast: spec.people ? garment.length + 1 : undefined, sample: garment.length + (spec.people ? 2 : 1) } });
+  };
+  it('无模特\'s rack stands on the floor with both posts in the picture, nothing overlapping', () => {
+    const p = prompt('M5', '收口', [{ name: '黑色' }, { name: '象牙白' }]);
+    expect(p).toContain('落地衣架');
+    expect(p).toContain('两根立柱和底座都完整在画面里');
+    expect(p).toContain('从左到右依次是黑色、象牙白、黑色、象牙白');
+    expect(p).not.toMatch(/叠压|横穿画面/);
+  });
+  it('several colours keep each their own structure, and the garment\'s own marks stay', () => {
+    for (const master of ['M1', 'M2', 'M3', 'M4', 'M5']) {
+      const p = prompt(master, '收口', [{ name: '黑色' }, { name: '象牙白' }]);
+      expect(p, master).not.toContain('款式都一样');
+      expect(p, master).toContain('不同颜色之间的结构差异');
+      expect(p, master).toContain('衣服本身带的袖标、织标、印字和图案照参考图原样保留');
+      expect(p, master).not.toContain('任何真实品牌 logo');
+      expect(p, master).not.toContain('衣服上不印任何字');
+    }
+  });
+});

@@ -7,7 +7,8 @@
  * words. Only the shop's service images learn from a (washed) competitor sample.
  */
 import type { ServiceImageDef } from '../listing/service';
-import { crowdLine, DEFAULT_PLACE } from './listing-crowd';
+import { crowdLine, DEFAULT_PLACE, othersLine } from './listing-crowd';
+import { NO_CHEST, OWN_MARKS, SAME_STYLE } from './listing-lines';
 import type { Box, Display, Layout, StyleSheet, Template, Zone } from '../listing/templates';
 
 export type Color = { name: string; hex: string };
@@ -15,7 +16,7 @@ const lines = (items: string[]) => items.filter(Boolean).map(item => `- ${item}`
 const area = (b: Box) => `区域 左${b[0]}% 上${b[1]}% 宽${b[2]}% 高${b[3]}%`;
 /** The look of the set; only the cover gets the master's cover type, so the others never see it (a brush named anywhere spread to every image). */
 const style = (s: StyleSheet, cover = false) => `整体风格：标题字${cover && s.cover ? s.cover : s.title}；小字${s.text}；标签${s.tag}；卡片${s.card}；光线${s.light}；背景${s.background}。`;
-const NO_EXTRA = '不要出现：任何真实品牌 logo、店铺名、水印、道具上的文字，背景里浅色大号英文水印字，以及上面「」里以外的任何文字。上面没写到的位置不画标签、色块、文字框、空卡片，也不额外加人或整件衣服。所有中文逐字正确、笔画清晰，文字不挡住领口、拉链和口袋。';
+const NO_EXTRA = `不要出现：另外加上的真实品牌 logo、店铺名、水印、道具上的文字（${OWN_MARKS}），背景里浅色大号英文水印字，以及上面「」里以外的任何文字。上面没写到的位置不画标签、色块、文字框、空卡片，也不额外加人或整件衣服。所有中文逐字正确、笔画清晰，文字不挡住领口、拉链和口袋。`;
 const clamp = (v: number, lo: number, hi: number) => Math.round(Math.min(hi, Math.max(lo, v)) * 2) / 2;
 /**
  * How large a zone's words are, in percent of the image (the masters' rule: titles 6–8 %, small
@@ -37,7 +38,8 @@ export function productPrompt(input: { color: string; garment: string[]; group?:
   return `${pick}从参考图里把这件衣服单独提取出来，做成一张电商白底产品图，正方形 1:1。
 - 隐形模特效果（ghost mannequin）：衣服立体地“穿”在看不见的人身上，正面朝前，拉链或扣子合上，两只袖子自然下垂。
 - 纯白背景，柔和均匀的棚拍光，只有一点点地面投影。
-- 画面里只有这件衣服：不要人、不要手、不要任何文字、标签、logo、水印、图标和道具。
+- 画面里只有这件衣服：不要人、不要手、不要道具；不额外加任何文字、标签、logo、水印或图标。
+- ${OWN_MARKS}。
 衣服必须和参考图一模一样：
 ${lines(input.garment)}
 - 颜色：${input.color}，和参考图里的衣服颜色完全一致，不偏色、不变浅。`;
@@ -57,7 +59,7 @@ ${lines(input.garment)}
 - 男生短黑发、利落干净；女生黑色长发披肩。两人的脸正对镜头、表情自然微笑，五官、发型、肤色清楚。
 - 从头顶拍到大腿中部，头顶离画面上沿约 5%。
 - 纯浅灰色背景，柔和均匀的棚拍光，没有道具。
-- 画面里没有任何文字、标签、logo 和水印。`;
+- 画面里不额外加任何文字、标签、logo 和水印；${OWN_MARKS}。`;
 }
 
 /**
@@ -78,7 +80,7 @@ ${lines(input.garment)}
 - ${pronoun}穿这件衣服，拉链拉到胸口，里面是白色圆领 T 恤，下身深灰色休闲裤；不戴帽子和墨镜，正面站立，脸正对镜头、表情自然。
 - 从头顶拍到大腿中部，头顶离画面上沿约 5%。
 - 纯浅灰色背景，柔和均匀的棚拍光，没有道具。
-- 画面里没有任何文字、标签、logo 和水印。`;
+- 画面里不额外加任何文字、标签、logo 和水印；${OWN_MARKS}。`;
 }
 
 /**
@@ -121,7 +123,7 @@ export function skuModelPrompt(input: { color: string; garment: string[]; lead: 
 衣服（必须和参考图1一模一样）：
 ${lines(input.garment)}
 - 颜色：${input.color}，和参考图1完全一致，不偏色、不变浅，不要画成定妆照里衣服的颜色。
-- ${input.logo ?? '衣服上不印任何字。'}
+- ${input.logo ?? NO_CHEST}
 
 画面：
 ${who}，拉链拉到胸口，里面是白色圆领 T 恤，下身深灰色休闲裤；不戴帽子和墨镜。
@@ -129,7 +131,7 @@ ${who}，拉链拉到胸口，里面是白色圆领 T 恤，下身深灰色休�
 - 姿势自然放松：${pose}；脸朝镜头、表情自然微笑；衣服正面（门襟拉链、口袋、领子）清楚完整，不被手臂挡住。
 - 取景固定：从头顶拍到膝盖，膝盖正好在画面下沿；头顶离画面上沿约 5%；${pair ? '两人整体' : '人'}在画面正中间${pair ? '；两人加起来的宽度不超过画面宽度的 85%，左右两边都露出背景，手臂和肩膀不能碰到画面边缘' : '，左右两边都露出背景'}。
 - 真实的商业摄影质感，皮肤有真实纹理、不磨皮，衣服有真实的褶皱和垂坠；不要 HDR、不要过饱和。
-- 画面里没有任何文字、标签和水印。`;
+- 画面里不额外加任何文字、标签和水印；${OWN_MARKS}。`;
 }
 
 /** Who is on an image: the cast's people, by how many the template has room for. */
@@ -137,7 +139,7 @@ function people(t: Template, lead: '男' | '女', cast: number) {
   const ref = `参考图${cast}`;
   if (t.people === 1) return `只有一位模特：${ref}里的${lead === '男' ? '男生' : '女生'}，脸型、五官、发型、肤色、身材都和${ref}一模一样；${ref}里的另一个人不出现。`;
   if (t.people === 2) return `一男一女两位模特：就是${ref}里的两个人，长相、发型都和${ref}一样。`;
-  return `几位模特并排：${ref}里的一男一女都在，长相不变；其余的人男女交替。`;
+  return `几位模特并排：${othersLine(ref, t.people, ref)}。`;
 }
 
 /** What fills an image's zones. Cells and tags in reading order; `act`: what the models do; `scene`: background and action details the writing step added. */
@@ -165,7 +167,7 @@ export function mainPrompt(input: {
     : used.length > 1 ? used.map((x, i) => `参考图${i + 1}是「${x.name}」的${input.fromSku ? ' SKU 图' : '白底产品图'}`).join('，') : `参考图1是这件衣服的白底产品图`;
   const refs = `${garmentRefs}${input.fabric ? '' : '，衣服的颜色和款式以它为准'}${input.cast ? `；参考图${input.cast}是这套图的模特定妆照，只用来确定模特长什么样，姿势、场景、构图按下面重新做，不照搬它的背景和站姿` : ''}${input.logoRef ? `；参考图${input.logoRef}是客户的 LOGO，只用来印在衣服胸口` : ''}。`;
   const colorRule = used.length > 1
-    ? `- 画面里每件衣服的颜色和对应参考图一致，款式都一样；只能出现这 ${used.length} 种颜色，每人一种。`
+    ? `- 画面里每件衣服的颜色和对应参考图一致，${SAME_STYLE}；只能出现这 ${used.length} 种颜色，每人一种。`
     : `- 颜色：${used[0]?.name ?? all[0]?.name}，和参考图一致，不偏色；画面里只有这一种衣服颜色。`;
   let cell = 0, tag = 0;
   // The fabric fills the whole image (面料铺底): round icons on it, and the fabric itself is the picture.
@@ -199,7 +201,7 @@ export function mainPrompt(input: {
     }
   };
   const head = input.n ? `整套 ${input.total} 张中的第 ${input.n} 张：${input.task}。` : '';
-  const logo = input.logo ? `- ${input.logo}` : '- 衣服上不印任何字。';
+  const logo = input.logo ? `- ${input.logo}` : `- ${NO_CHEST}`;
   const garment = input.fabric ? `面料：${used[0]?.name ?? all[0]?.name}，颜色和纹理照参考图1；这张图只拍面料，不画整件衣服，看不到领口、帽子、袖子、拉链、口袋。`
     : `衣服（必须和参考图一模一样）：\n${lines(input.garment)}\n${colorRule}\n${logo}`;
   // Several colours on people are photographed together where the set is shot, whatever the master's tone (10-16).
@@ -240,7 +242,7 @@ export function skuPrompt(input: { layout: Layout; color: string; tag: string; f
 衣服（必须和参考图1 一模一样）：
 ${lines(input.garment)}
 - 颜色：画面里只有「${input.color}」这一种衣服颜色，和参考图1 完全一致。
-- ${input.logo ?? '衣服上不印任何字。'}${input.logoRef ? `（参考图${input.logoRef}是客户的 LOGO）` : ''}
+- ${input.logo ?? NO_CHEST}${input.logoRef ? `（参考图${input.logoRef}是客户的 LOGO）` : ''}
 
 版式（位置用画面百分比）：
 ${lines(t.zones.map(zone).filter((x): x is string => !!x))}

@@ -18,6 +18,7 @@ import { buildPlan, writeRequest } from './listing-write';
 import { colourSources, planViews, type PlanSource, type PlanView } from './listing-plan-views';
 import { assertListingProviderConfigured, callPlanModel, LISTING_PLAN_MODEL, listingPlanProvider, listingWorkerConcurrency, type PlanCall } from './listing-provider';
 import { addSourceImage, clearOldSources, sourceImages } from './listing-store';
+import { markPlain } from './listing-plain';
 import { sweepExpiredReservations } from './quota';
 import sharp from 'sharp';
 import { executeImage, failBlocked, finishRun, holdRun, insertJobs, planJobs, runHold, type JobInput, type Upscale } from './listing-generation';
@@ -171,8 +172,9 @@ export async function executePlan(job: JobRow, provider: Provider = (request, ho
     const certain = attempts.find(a => a.status === 'succeeded');
     if (certain) await settleHold(holdId(job.id), job.tenant_id, [{ action: 'listing_plan', billable: true, certain: true, attemptId: certain.id }]);
     else await releaseHold(holdId(job.id), job.tenant_id, '整理全部用了之前存下的结果').catch(() => {});
-    const { look, ...rest } = organized;
     const keptSources = sources.filter(s => !duplicates.has(s.id));
+    organized = { ...organized, images: await markPlain(organized.images, keptSources) };
+    const { look, ...rest } = organized;
     const materials: Materials = { category: organized.category, categoryWhy: organized.categoryWhy, checks: organized.checks, titles: organized.titles, themes: organized.themes, look,
       sorted: rest, chosen: chooseMaterials(organized, keptSources), duplicates: [...duplicates], model: lastModel || model, images: map };
     await db().query(`UPDATE listing_projects SET status='materials',materials=$2,plan=NULL,error=NULL,updated_at=now() WHERE id=$1`, [job.project_id, materials]);

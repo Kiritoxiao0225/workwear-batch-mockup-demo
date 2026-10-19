@@ -423,7 +423,11 @@ export function staleMentions(slot: Pick<Slot, 'title' | 'sub' | 'tags'>, gone: 
  * stitching is not one of them (10-15: 「接缝全压胶」 drawn from an outer seam), so the claim wants a
  * photo of the tape itself.
  */
-export const partOf = (p: { part?: string; text: string }) => /压胶/.test(p.text + (p.part ?? '')) && !/压胶|胶条/.test(p.part ?? '') ? '压胶条' : p.part || p.text;
+export const partOf = (p: { part?: string; text: string }) => {
+  // A 压胶拉链 is a zip with sealed teeth, not taped seams (10-18: 「压胶缝工艺拉链」 drawn from the seam-tape photo).
+  const taped = /压胶/.test(p.text + (p.part ?? '')) && !/拉链/.test(p.text + (p.part ?? ''));
+  return taped && !/压胶|胶条/.test(p.part ?? '') ? '压胶条' : p.part || p.text;
+};
 /** The structure image of a part (its label), if the plan has one. */
 export const partPick = (d: Pick<Draft, 'parts'>, part: string) => d.parts.find(x => x.pick && (x.part === part || part.includes(x.part) || x.part.includes(part)))?.pick ?? null;
 export const hasPart = (d: Pick<Draft, 'parts'>, part: string) => !!partPick(d, part);
@@ -712,10 +716,13 @@ export function priceLines(items: ImageItem[], unit: number, multiUnit: number):
 }
 export const sumCredits = (lines: PriceLine[]) => lines.reduce((n, l) => n + l.credits, 0);
 
-/** A clean front still life or render of the garment, without a logo, is the product image as it is. */
-export const usableAsIs = (image: { kind: string; front: boolean; logo: boolean } | undefined) => !!image && (image.kind === '静物' || image.kind === '3D渲染') && image.front && !image.logo;
+/**
+ * A clean front still life or render of the garment, without a logo, on white, is the product image as
+ * it is (`plain` false: in a scene, 10-18; material sorted before 10-19 is not marked).
+ */
+export const usableAsIs = (image: { kind: string; front: boolean; logo: boolean; plain?: boolean } | undefined) => !!image && (image.kind === '静物' || image.kind === '3D渲染') && image.front && !image.logo && image.plain !== false;
 /** The colours (by key, colorKeys) whose own clean still life is their white-background image as it is; never a photo of several garments. */
-export function directKeys(colors: { pick: string | null }[], images: (PickSource & { kind: string; front: boolean; logo: boolean })[]): string[] {
+export function directKeys(colors: { pick: string | null }[], images: (PickSource & { kind: string; front: boolean; logo: boolean; plain?: boolean })[]): string[] {
   const byId = new Map(images.map(i => [i.id, i])), keys = colorKeys(colors);
   const shared = (pick: string) => colors.filter(c => c.pick === pick).length > 1;
   return colors.flatMap((c, k) => c.pick && usableAsIs(byId.get(c.pick)) && !isGroup(byId.get(c.pick)) && !shared(c.pick) ? [keys[k]!] : []);

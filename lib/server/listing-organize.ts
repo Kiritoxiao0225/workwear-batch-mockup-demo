@@ -23,6 +23,13 @@ export const FRONT = '正面全身';
 const MAX_PARTS = 8;
 
 const ROLE = '你是淘宝服装店的素材整理员。';
+/** How squarely the garment faces the camera; images sorted before 10-19 have none. */
+export const FACINGS = ['', '正对', '微侧', '侧身', '背面'] as const;
+/**
+ * A colour's reference is drawn from: a squarer view first. 10-18: 「front」 alone let a model turned
+ * half away (one sleeve and its badge hidden) win on resolution over the ones facing the camera.
+ */
+export const facingScore = (i: { facing?: string }) => ({ 正对: 2, 微侧: 1, 侧身: 0, 背面: -2 } as Record<string, number>)[i.facing ?? ''] ?? 0;
 /** Every image's rules: kind, colour, front, part, words, LOGO, people, face, copies. */
 const IMAGE_RULES = `每张图（images，一张不漏，按编号）：
 - kind：颜色款图（用来区分颜色款的图，通常一个颜色一张、带颜色名）/ 静物（平铺、挂拍、人台、白底产品图）/ 3D渲染 / 模特实拍（没有加文字的模特照片）/ 细节特写（局部近拍）/ 卖点图（做好的主图或营销图，上面有卖点文字）/ 详情页（详情页切片，长图或图文排版）/ 海报 / 尺码表 / 无关（二维码、聊天截图、价格说明、空白图、别的商品等）。
@@ -30,6 +37,7 @@ const IMAGE_RULES = `每张图（images，一张不漏，按编号）：
 - colorsSeen：画面里清楚看到的每一件主体衣服的颜色名（多人合照逐件列，同色只列一次）；名字照抄颜色清单的写法，清单里没有的按看到的起常见名；内胆、内搭、裤子的颜色不算；没有主体衣服留空数组。
 - color：画面里这件衣服的颜色名，和 colors 里的名字一致；图上写了颜色名就一字不改地照抄，没写就按你看到的起一个常见颜色名；一张图里有多种颜色或看不出时留空。
 - front：衣服是否完整、正面朝前地出现（领口到下摆都在画面里，没被手、包、文字挡住主体）。没人穿的图（静物、3D渲染、颜色款图）还要衣服合拢、门襟拉链拉上：敞开的、露出内胆或里布的、翻过来的、斜挂着的都写 false。
+- facing：穿着的人（或衣服）朝向镜头的角度：正对（身体正面对着镜头，左右两侧衣身和两只袖子的外侧都看得到）/ 微侧（转身不到约 30 度，两只袖子仍都看得到）/ 侧身（转得更多，一侧袖子或一侧衣身被挡住或看不到）/ 背面；画面里没有整件衣服留空。
 - detail：如果是局部特写，拍的是这件衣服的哪个部位，用这件衣服实际有的东西来叫，2–6 个字（如 连帽、帽檐调节、立领、门襟拉链、袖口、下摆抽绳、口袋、腋下透气拉链、内胆、面料、背面）；看清楚再叫，帽子就写帽子相关的名字，不要叫成领口。同一个部位在不同图里用同一个叫法。不是特写留空。整件衣服的背面照片 detail 也写“背面”。
 - parts：画面里能看清特写的所有部位（详情页、卖点图常常一张拼了好几个部位的特写，比如门襟拉链和口袋、袖口在同一张里，都写上），叫法和 detail 一样；没有就空数组。
 - text：画面上有没有能读出的卖点文字（面料、功能、工艺、服务等）。
@@ -49,7 +57,7 @@ const WHOLE_RULES = `整款：
 - checks：下面"卖点类别"里属于衣服功能的每一类（不含服务类），看这件衣服的图判断它像不像有：seen 写 有 / 看不出 / 不像；why 一句话依据（不超过 30 个字），如“单层薄款，没看到内胆或加绒”。素材里已经讲到的类别也要判断。
 - titles：给每类主图各写 2–3 句候选大标题（4–10 个字，概括这类图要讲的，口语、有力，如“细节经得起看”“三防面料 雨天不怕”），类别：${TASKS.filter(t => t !== '收口').join('、')}。只能根据素材里有的卖点写，不编造参数和承诺。
 - look：这款用哪套母版、首图在哪儿拍、首图主打哪个卖点。先看素材里有没有写给谁穿、什么行业（如 4S 店、物业、工地、餐饮、团建），写了就照着选；没写就看衣服本身：颜色深浅、功能卖点多不多、偏商务还是偏户外。master：从下面"母版"里选一个编号；M4 只在素材讲男女同款、情侣或年轻团队时选；M5 是给不想用模特、想省积分的店铺自己换的，不要选；素材里没有模特图不要紧，出图时模特是另画的。place：首图地点编号，只有首图是实景的母版才写，不能选这套母版不能拍的地点，否则留空。sell：首图主打的卖点，从下面"首图卖点"里选一个，要是 points 里讲到的、并且在这个地点演得出来的（看地点后面列的）；都不沾留空。why：一句话理由（不超过 40 个字），如“三防卖点多、深色款，选暗黑科技；素材写了物业保安，在小区门口拍”。`;
-const IMAGE_SHAPE = '{ "id": "M1", "kind": "", "role": "", "colorsSeen": [], "color": "", "front": false, "detail": "", "parts": [], "text": false, "logo": false, "person": "", "face": false, "same": "" }';
+const IMAGE_SHAPE = '{ "id": "M1", "kind": "", "role": "", "colorsSeen": [], "color": "", "front": false, "facing": "", "detail": "", "parts": [], "text": false, "logo": false, "person": "", "face": false, "same": "" }';
 const WHOLE_SHAPE = `"colors": [{ "name": "", "hex": "", "from": ["M1"] }],
   "points": [{ "type": "", "text": "", "note": "", "from": ["M1"], "why": "", "concept": null, "proof": "", "part": "" }],
   "notes": [""], "category": "", "categoryWhy": "", "checks": [{ "concept": "", "seen": "", "why": "" }], "titles": { "功能": [""] },
@@ -169,6 +177,9 @@ const imageSchema = z.object({
   id: z.string(), kind: z.enum(MATERIAL_KINDS).catch('无关'), color: z.string().default(''), front: z.boolean().default(false),
   detail: z.string().trim().max(12).catch(''), parts: z.array(z.string().trim().max(12)).max(8).catch([]).default([]), text: z.boolean().default(false), logo: z.boolean().default(false), same: z.string().default(''),
   person: z.enum(['', '男', '女', '男女', '多人']).catch('').default(''), face: z.boolean().catch(false).default(false),
+  facing: z.enum(FACINGS).optional().catch(undefined),
+  /** Set by the program, not the model: a still life that is really on white (listing-plain). */
+  plain: z.boolean().optional().catch(undefined),
   role: z.enum(GARMENT_ROLES).optional().catch(undefined), colorsSeen: z.array(z.string().trim().min(1).max(12)).max(12).optional().catch(undefined),
 });
 const organizeSchema = z.object({
@@ -327,12 +338,12 @@ export function chooseMaterials(sorted: Pick<Organized, 'images' | 'colors'>, si
     // With no whole front view, the garment itself open on a hanger (10-15: each 3-in-1 jacket showed its
     // liner; the liner alone was the only front view) is drawn closed rather than the colour left without one.
     const fronts = own.filter(i => i.front), candidates = fronts.length ? fronts : own.filter(i => i.role === '主体');
-    return { name: c.name, hex: c.hex, pick: best(candidates, i => (colourRank[i.kind] ?? 0) * 2 + (i.logo ? 0 : 1) - (isGroup(i) ? 3 : 0)), candidates: candidates.map(i => i.id) };
+    return { name: c.name, hex: c.hex, pick: best(candidates, i => (colourRank[i.kind] ?? 0) * 2 + facingScore(i) + (i.logo ? 0 : 1) - (isGroup(i) ? 3 : 0) - (i.plain === false ? 1 : 0)), candidates: candidates.map(i => i.id) };
   });
   // A full front view shows one garment: an image with one colour, ideally a colour's own pick.
   const picked = new Set(colors.map(c => c.pick));
   const fronts = usable.filter(i => !isComponent(i) && i.front && i.color && colourRank[i.kind]);
-  const front = { part: FRONT, pick: best(fronts, i => (picked.has(i.id) ? 10 : 0) + (colourRank[i.kind] ?? 0)), candidates: fronts.map(i => i.id) };
+  const front = { part: FRONT, pick: best(fronts, i => (picked.has(i.id) ? 10 : 0) + (colourRank[i.kind] ?? 0) + facingScore(i)), candidates: fronts.map(i => i.id) };
   const named = new Map<string, SortedImage[]>();
   // A part counts from an image sorted as it, and from a detail page that shows it among others (`parts`).
   for (const i of usable) for (const x of new Set([i.detail, ...(i.parts ?? [])])) if (x && x !== '其他') named.set(x, [...(named.get(x) ?? []), i]);

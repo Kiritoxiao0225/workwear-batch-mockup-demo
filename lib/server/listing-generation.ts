@@ -414,8 +414,8 @@ export type Upscale = typeof upscaleListingImage;
 type Recognize = (request: object) => Promise<PlanCall>;
 
 async function fileOf(fileId: string) { return (await readCatalogFile(fileId)).bytes; }
-/** At most this many photos of parts go with one main image. */
-const PART_PHOTOS = 3;
+/** At most this many photos of parts go with one main image: one per card (10-18: with three, a four-card image's last card had none and the model made its buckle up). */
+const PART_PHOTOS = 4;
 /**
  * The material's own photos of the parts a main image's cards show close up, after its other
  * references; each card says which one it is drawn from. Drawn from the white-background image alone,
@@ -621,7 +621,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         // A photo in a scene (the material's, or a SKU model drawn where the set is shot since 10-16): the
         // analysis model finds the model's head and knees on it. A drawn one on plain grey is measured instead.
         const frame = photo && (source || stored.place) ? await findFrame(photo, recognize) : null;
-        const text = skuCardText({ name: m.name, category: d.category, points: d.points });
+        const text = skuCardText({ name: m.name, category: d.category, points: d.points, color: color.name });
         await succeed(await renderSkuCard({
           ...text, rows: [...text.rows, colorRow(color.name)], logo: (await shopSettings(job.tenant_id)).logo, fabric: await fabricCrop(product),
           photo: photo ? { bytes: photo, cutout: false, frame } : { bytes: await removeFlatArtworkBackground(product, { r: 255, g: 255, b: 255 }), cutout: true },
