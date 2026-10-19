@@ -4,7 +4,7 @@ import { NextResponse } from 'next/server';
 import { catalogUser } from '@/lib/server/catalog-auth';
 import { tenantScope, isInternalTenant } from '@/lib/server/tenant-scope';
 import { catalogBody } from '@/lib/server/catalog-http';
-import { assertPageAccess } from '@/lib/server/page-access';
+import { assertPageAccess,artworkRouteOf } from '@/lib/server/page-access';
 import { cloudStorage,CLOUD_ROOT,queueHealth,queueActivity } from '@/batch-mockup/adapters/cloud-files.mjs';
 import { service } from '@/batch-mockup/runtime/service.mjs';
 import { enqueueWpsSync,readWpsSyncStatus } from '@/batch-mockup/runtime/sync-scheduler.mjs';
@@ -26,6 +26,8 @@ async function handle(request,context){
  const workspace=tenant.workspace;
  const internal=isInternalTenant(tenant);
  const wpsOnly=internal&&request.headers.get('x-wps-workbench')==='1';
+ // The 出图通道 an administrator set for this account (null: it picks on the page); production holds to it.
+ const route=await artworkRouteOf(scope.user.id);
   const params=await context.params,path=params.path.join('/'),url=new URL(request.url);
   if(!write&&staticFiles[path]){
    let raw=await readFile(resolve(process.cwd(),'batch-mockup',staticFiles[path]),'utf8');
@@ -55,9 +57,9 @@ async function handle(request,context){
   // Upload chunks are kept in batch_documents outside the storage quota; they are rate limited per workspace instead.
   if(write&&['api/cases/image','api/supplements/chunk','api/production/edit/chunk'].includes(path))await limitUploads('upload-chunk:'+workspace,CHUNK_WINDOWS);
   const body=write?JSON.parse((await catalogBody(request,4*1024*1024)).toString('utf8')):Object.fromEntries(url.searchParams);
-  const result=await cloudStorage(async adapter=>{if(!['api/mockups','api/mockups/prepare','api/garments','api/wps/sync'].includes(path))await adapter.preload();return service(CLOUD_ROOT,'/'+path,request.method,body,{enqueue:task=>adapter.enqueue(task),scheduleSync:()=>enqueueWpsSync(),workspace,wpsOnly});},{workspace});
+  const result=await cloudStorage(async adapter=>{if(!['api/mockups','api/mockups/prepare','api/garments','api/wps/sync'].includes(path))await adapter.preload();return service(CLOUD_ROOT,'/'+path,request.method,body,{enqueue:task=>adapter.enqueue(task),scheduleSync:()=>enqueueWpsSync(),workspace,wpsOnly,route});},{workspace});
   if(path==='api/requirements'){
-   result.storage='cloud';[result.workerOnline,result.activity,result.wpsSync]=await Promise.all([queueHealth(workspace),queueActivity(workspace),internal?readWpsSyncStatus():null]);
+   result.storage='cloud';result.imageRoute=route;[result.workerOnline,result.activity,result.wpsSync]=await Promise.all([queueHealth(workspace),queueActivity(workspace),internal?readWpsSyncStatus():null]);
    if(wpsOnly){const ids=new Set(result.cases.map(item=>item.caseId));result.activity=result.activity.filter(item=>item.kind==='sync'||ids.has(item.caseId));}
   }
   return NextResponse.json(result,{headers:{'Cache-Control':'private, no-store'}});

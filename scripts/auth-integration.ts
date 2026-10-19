@@ -597,6 +597,20 @@ try {
   check(grantLedger.rows[0].operator_id === adminId, '流水记录了操作人');
   check(grantLedger.rows[0].reason === '追加内测额度', '流水记录了原因');
 
+  // ---- 图稿出图通道：管理员按账号定（038），没定的账号照旧在页面上自己选 ----
+  check(applied.includes('038_artwork_route.sql'), '038 迁移已执行');
+  const { POST: adminAccountRoute } = await import('../app/api/admin/accounts/[id]/route');
+  const { artworkRouteOf } = await import('../lib/server/page-access');
+  const routeOf = () => artworkRouteOf(signedIn.user.id);
+  const setRoute = (token: string, artworkRoute: unknown) => adminAccountRoute(
+    new NextRequest(`${origin}/api/admin/accounts/${signedIn.user.id}`, { method: 'POST', headers: { origin, cookie: `catalog_session=${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ artworkRoute }) }),
+    { params: Promise.resolve({ id: signedIn.user.id }) });
+  check(await routeOf() === null, '没定通道的账号由自己选');
+  check((await setRoute(signedIn.token, 'evolink')).status === 403, '普通账号不能给自己定通道');
+  check((await setRoute(adminLogin.token, 'ark')).status === 400 && await routeOf() === null, '只能定新通道或原通道');
+  check((await setRoute(adminLogin.token, 'evolink')).status === 200 && await routeOf() === 'evolink', '管理员定了原通道就按原通道');
+  check((await setRoute(adminLogin.token, null)).status === 200 && await routeOf() === null, '改回由账号自己选');
+
   // ---- 交付保护：任何新租户都不得占用 main ----
   const workspaces = await db.query("SELECT count(*)::int AS n FROM tenants WHERE workspace='main'");
   check(workspaces.rows[0].n === 1, '全库只有一个 main 工作区');

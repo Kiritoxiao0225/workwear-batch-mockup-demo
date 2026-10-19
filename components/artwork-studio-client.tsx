@@ -123,7 +123,7 @@ export function ArtworkStudioClient() {
     [refs, setRefs] = useState<Reference[]>([]),
     [route, setRoute] = useState<Artwork["route"]>("generate"),
     [transparentBackground, setTransparentBackground] = useState(false),
-    [provider, setProvider] = useState<ImageProvider>("cliproxy"),
+    [picked, setProvider] = useState<ImageProvider>("cliproxy"),
     [mode, setMode] = useState<"text" | "seven">("text"),
     [selected, setSelected] = useState<string | null>(null),
     [notice, setNotice] = useState(""),
@@ -142,6 +142,9 @@ export function ArtworkStudioClient() {
     [firstRefSize, setFirstRefSize] = useState<Size | null>(null),
     [stage, setStage] = useState<Stage>("checker"),
     [handoff, setHandoff] = useState<ArtworkHandoff | null>(null);
+  // An administrator may hold this account to one route: then that one is used and there is no choice.
+  const locked = data?.imageRoute ?? null,
+    provider = locked ?? picked;
   const input = useRef<HTMLInputElement>(null),
     textarea = useRef<HTMLTextAreaElement>(null),
     request = useRef<{ snapshot: string; id: string } | null>(null),
@@ -524,7 +527,7 @@ export function ArtworkStudioClient() {
       setSelected(c.caseId);
       await submit(c, [
         { name: art.name, prompt: art.prompt, route: art.route, transparentBackground: !!art.transparentBackground, ...(art.output ? { output: art.output } : {}),
-          ...(art.route === "generate" ? { provider: art.provider ?? provider } : {}) },
+          ...(art.route === "generate" ? { provider: locked ?? art.provider ?? provider } : {}) },
       ]);
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e));
@@ -851,21 +854,25 @@ export function ArtworkStudioClient() {
               </p>
               {route === "generate" && (
                 <>
-                  <div className="field-label">
-                    <span>出图通道</span>
-                  </div>
-                  <div className="seg full" role="group" aria-label="出图通道">
-                    {PROVIDERS.map(([key, label]) => (
-                      <button key={key} aria-pressed={provider === key} disabled={working} onClick={() => pickProvider(key)}>
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="sub">
-                    {provider === "cliproxy"
-                      ? "新通道正在试用，结果旁会显示出图用了几秒；慢或出错时可换原通道再试。"
-                      : "原来一直在用的通道。"}
-                  </p>
+                  {!locked && (
+                    <>
+                      <div className="field-label">
+                        <span>出图通道</span>
+                      </div>
+                      <div className="seg full" role="group" aria-label="出图通道">
+                        {PROVIDERS.map(([key, label]) => (
+                          <button key={key} aria-pressed={provider === key} disabled={working} onClick={() => pickProvider(key)}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="sub">
+                        {provider === "cliproxy"
+                          ? "新通道正在试用，结果旁会显示出图用了几秒；慢或出错时可换原通道再试。"
+                          : "原来一直在用的通道。"}
+                      </p>
+                    </>
+                  )}
                   <div className="field-label">
                     <span>输出规格</span>
                   </div>

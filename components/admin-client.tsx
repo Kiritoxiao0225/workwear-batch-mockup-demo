@@ -13,6 +13,7 @@ type Account = {
   tenant: { id: string; name: string; internal: boolean; exempt: boolean; members: number };
   balanceCents: number; heldCents: number; spentCents: number; spendByPage: Record<string, number>;
   dailyCapCents: number | null;
+  artworkRoute: 'cliproxy' | 'evolink' | null;
 };
 type Price = { action: string; costMicroCents: number; multiplierMilli: number; effectiveFrom: string; uses30d: number };
 type Dispute = { id: string; tenantId: string; kind: string; jobRef: string; amountCents: number; createdAt: string };
@@ -26,6 +27,8 @@ type Tab = (typeof TABS)[number][0];
 const RANGES = [['7d', '近 7 天'], ['30d', '近 30 天'], ['month', '本月'], ['all', '全部']] as const;
 type Range = (typeof RANGES)[number][0];
 const ROLES: [Role, string][] = [['admin', '管理员'], ['editor', '普通'], ['viewer', '只看']];
+// 图稿生成's 出图通道 per account: '' leaves both on the page for the account to pick.
+const ARTWORK_ROUTES = [['', '两个都给，自己选'], ['cliproxy', '只用新通道'], ['evolink', '只用原通道']] as const;
 // Pages that can carry a charge; the rest never spend credits.
 const SPEND_PAGES = [['/artwork-studio', '图稿生成'], ['/listing-images', '电商主图'], ['/garment-mockup', '成衣效果图（已下线）'], ['/batch', '批量生成（已下线）'], ['other', '其他']] as const;
 // Columns for retired pages only show while the chosen period still has charges from them.
@@ -254,10 +257,10 @@ export function AdminClient() {
         {tab === 'access' && (
           <section className="admin-card">
             <h2>每个账号能看到哪些页面</h2>
-            <p className="muted-note">勾选后立即生效。新注册账号默认全部开通（WPS 只给内部账号）；管理员始终全部可见。“我的账户”所有人都能进。</p>
+            <p className="muted-note">勾选后立即生效。新注册账号默认全部开通（WPS 只给内部账号）；管理员始终全部可见。“我的账户”所有人都能进。图稿通道：选了“只用”某个通道，这个账号的图稿生成页就不再显示通道切换，出图都走它。</p>
             <table>
               <thead>
-                <tr><th>账号</th><th>角色</th>{APP_PAGES.map(page => <th key={page.href} className="center">{page.label}</th>)}<th /></tr>
+                <tr><th>账号</th><th>角色</th>{APP_PAGES.map(page => <th key={page.href} className="center">{page.label}</th>)}<th>图稿通道</th><th /></tr>
               </thead>
               <tbody>
                 {shown.map(account => (
@@ -275,6 +278,12 @@ export function AdminClient() {
                           onChange={() => togglePage(account, page.href)} />
                       </td>
                     ))}
+                    <td>
+                      <select aria-label={`${account.displayName} 图稿通道`} value={account.artworkRoute ?? ''} disabled={busy}
+                        onChange={event => void update(account, { artworkRoute: event.target.value || null })}>
+                        {ARTWORK_ROUTES.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                      </select>
+                    </td>
                     <td className="nowrap">
                       {account.allowedPages !== null && account.role !== 'admin' && (
                         <button className="button" disabled={busy} onClick={() => void update(account, { allowedPages: null })}>恢复默认</button>

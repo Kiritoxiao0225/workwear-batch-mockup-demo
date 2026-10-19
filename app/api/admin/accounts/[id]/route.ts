@@ -4,6 +4,7 @@ import { catalogError, catalogJson } from '@/lib/server/catalog-http';
 import { adminScope } from '@/lib/server/admin-guard';
 import { accountDetail, updateAccount } from '@/lib/server/admin-accounts';
 import { APP_PAGES, type AppPage } from '@/lib/app-pages';
+import { ARTWORK_ROUTES } from '@/lib/server/page-access';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -18,6 +19,8 @@ const input = z.object({
   role: z.enum(['admin', 'editor', 'viewer']).optional(),
   disabled: z.boolean().optional(),
   dailyCapCents: z.number().int().min(0).max(100_000_000).nullable().optional(),
+  // null shows both routes on 图稿生成 and lets the account pick.
+  artworkRoute: z.enum(ARTWORK_ROUTES).nullable().optional(),
 }).strict();
 
 export async function GET(request: NextRequest, context: Context) {

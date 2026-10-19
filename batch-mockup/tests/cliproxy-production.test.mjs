@@ -93,13 +93,13 @@ test('原比例按图1换算成比例交给出图；模型没按比例时提示�
 });
 
 // 出图通道: the author picks 新通道 (relay) or 原通道 (EvoLink) per picture to compare their speed.
-async function studioJob(t, artwork) {
+async function studioJob(t, artwork, route) {
   const root = await mkdtemp(resolve(tmpdir(), 'cliproxy-provider-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const prompt = '【图稿】\n\n主体：圆形徽章。\n\n文字：安全第一\n\n字体：黑体。\n\n颜色：蓝色。\n\n排版：居中。\n\n尺寸：未指定。\n\n输出：独立图稿。';
   const draft = { artworks: [{ id: 'a1', name: '图稿', route: 'generate', applications: [], imageIds: [], prompt, ...artwork }], readingIssues: [] };
   await saveJSON(resolve(root, 'requirements-state/T.json'), { revision: 1, draft, draftSupplementRevision: 0, analyses: [], confirmations: [] });
-  const [job] = await reserveProduction(root, { run: {}, cases: [{ caseId: 'T', sourceText: '原文', images: [] }] }, [{ caseId: 'T', revision: 1, supplementRevision: 0 }]);
+  const [job] = await reserveProduction(root, { run: {}, cases: [{ caseId: 'T', sourceText: '原文', images: [] }] }, [{ caseId: 'T', revision: 1, supplementRevision: 0 }], { route });
   const input = JSON.parse(await (await import('node:fs/promises')).readFile(resolve(root, 'production-jobs', job.id, 'input.json'), 'utf8'));
   return { job, input };
 }
@@ -118,6 +118,21 @@ test('通道在下单时定下：选了原通道就记原通道，没选按默�
   assert.notEqual(picked.job.id, plain.job.id);
   const enlarged = await studioJob(t, { route: 'reuse' });
   assert.equal(enlarged.input.provider, undefined, '不出图的方式没有通道');
+});
+
+test('管理员给账号定了通道：页面上选的、默认的都不算，按定的出', async t => {
+  const before = process.env.ARTWORK_IMAGE_PROVIDER;
+  t.after(() => { if (before === undefined) delete process.env.ARTWORK_IMAGE_PROVIDER; else process.env.ARTWORK_IMAGE_PROVIDER = before; });
+  process.env.ARTWORK_IMAGE_PROVIDER = 'cliproxy';
+  const held = await studioJob(t, { provider: 'cliproxy' }, 'evolink');
+  assert.equal(held.input.provider, 'evolink');
+  assert.equal(held.input.policy.generation.provider, 'evolink');
+  assert.equal(held.job.provider, 'evolink');
+  assert.equal((await studioJob(t, {}, 'evolink')).input.provider, 'evolink');
+  assert.equal((await studioJob(t, { provider: 'evolink' }, 'cliproxy')).input.provider, 'cliproxy');
+  // Not held: the page's pick, as before.
+  assert.equal((await studioJob(t, { provider: 'evolink' }, null)).input.provider, 'evolink');
+  assert.equal((await studioJob(t, { route: 'reuse' }, 'evolink')).input.provider, undefined, '不出图的方式没有通道');
 });
 
 test('页面只能选这两个通道', async () => {

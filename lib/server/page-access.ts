@@ -16,6 +16,16 @@ export async function userPages(userId: string): Promise<AppPage[]> {
   return pagesOf(found.rows[0] as AccessRow);
 }
 
+/** 图稿生成's 出图通道: cliproxy is 新通道 (Codex relay), evolink 原通道 (lib/client/saas-workbench.ts). */
+export const ARTWORK_ROUTES = ['cliproxy', 'evolink'] as const;
+export type ArtworkRoute = (typeof ARTWORK_ROUTES)[number];
+
+/** The route an administrator holds this account to, or null: the account picks it on the page. */
+export async function artworkRouteOf(userId: string): Promise<ArtworkRoute | null> {
+  const route = (await catalogDatabase().query('SELECT artwork_route FROM users WHERE id=$1', [userId])).rows[0]?.artwork_route;
+  return (ARTWORK_ROUTES as readonly string[]).includes(route) ? route as ArtworkRoute : null;
+}
+
 /** API gate: the account must hold at least one of the pages that use this endpoint. */
 export async function assertPageAccess(userId: string, pages: readonly AppPage[]) {
   const allowed = await userPages(userId);

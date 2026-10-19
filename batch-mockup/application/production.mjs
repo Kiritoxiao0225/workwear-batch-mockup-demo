@@ -37,9 +37,10 @@ const application=x=>({style:x.style,color:x.color,position:x.position,
 // The workbench page marks the same wording red (requirements.html, UNREADABLE).
 const UNREADABLE=/无法[^，。；\n]{0,8}(辨认|辨别|识别|确认|确定)|看不清|待[^，。；\n]{0,6}补入/u;
 export const unreadText=prompt=>prompt.includes('□')||UNREADABLE.test(prompt.match(/^文字：([^]*?)^字体：/mu)?.[1]||'');
-export function productionInput(c,a,quality=a.quality) {
+// `route`: the 出图通道 an administrator holds the account to; it wins over the one picked on the page.
+export function productionInput(c,a,quality=a.quality,route) {
   // Settled when the job is made, so the worker draws on the route the author saw.
-  const provider=a.route==='generate'?imageProviderFor(a.provider):null;
+  const provider=a.route==='generate'?imageProviderFor(route??a.provider):null;
   return {schema:'production-input-v1',caseId:c.caseId,artworkId:a.id,name:a.name,revision:c.revision,
     supplementRevision:c.supplement.revision,prompt:a.prompt,promptSHA256:hash(a.prompt),route:a.route,
     applications:a.applications.map(application),imageIds:a.imageIds,images:c.images,readingIssues:c.draft.readingIssues.map(x=>({scope:x.scope,issue:x.issue})),policy:provider?productionPolicyFor(process.env,provider):productionPolicy,
@@ -59,7 +60,7 @@ export function sourceFor(input) {
   if(!source)throw fail('复用／高清路线未明确唯一内容原图，需要调整素材关联后制作');
   return source;
 }
-export async function reserveProduction(root,manifest,requests) {
+export async function reserveProduction(root,manifest,requests,{route}={}) {
   if(!Array.isArray(requests)||!requests.length||requests.length>100)throw fail('请选择本批要制作的需求');
   const data=await requirementWorkbench(root,manifest), jobs=[];
   for(const request of requests) {
@@ -69,7 +70,7 @@ export async function reserveProduction(root,manifest,requests) {
     validateRequirementDraft(c.draft,c.images);
     if(request.quality!==undefined&&request.quality!=='high')throw fail('生成质量无效');
     for(const a of c.draft.artworks.filter(a=>!request.artworkId||request.artworkId===a.id)) {
-      const input=productionInput(c,a,request.quality||a.quality),id=hash(JSON.stringify(input)),dir=dirFor(root,id);
+      const input=productionInput(c,a,request.quality||a.quality,route),id=hash(JSON.stringify(input)),dir=dirFor(root,id);
       const existing=await jsonFile(resolve(dir,'state.json'),null);if(existing){jobs.push(existing);continue;}
       let blocked=c.sourceChanged?'WPS原稿已变化，请先载入最新原稿再识别':c.sourceReadError?'原始素材读取不完整，未启动制作':null;
       if(c.needsReanalysis||c.analysis?.status==='running')blocked='素材已变化或需求仍在识别，未启动制作';

@@ -102,7 +102,9 @@ export type CaseCost = {
   totalCNY: number;
   pending: boolean;
 };
-export type Workbench = { cases: Case[]; workerOnline: boolean; costSummary?: { day: string; todayCNY: number; todayCases: number } };
+export type Workbench = { cases: Case[]; workerOnline: boolean; costSummary?: { day: string; todayCNY: number; todayCases: number };
+  /** The route an administrator holds this account to; null or absent: the account picks it. */
+  imageRoute?: ImageProvider | null };
 
 // Same wording as the WPS workbench: muted text, breakdown in the tooltip.
 export const yuan = (v: number) => "¥" + (v < 0.1 ? v.toFixed(3) : v.toFixed(2));

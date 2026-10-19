@@ -2,6 +2,7 @@ import { gunzipSync } from 'node:zlib';
 import { pagesFor, type AppPage } from '@/lib/app-pages';
 import { CatalogHttpError, INTERNAL_TENANT_ID } from './catalog-auth';
 import { catalogDatabase, catalogTransaction } from './catalog-database';
+import type { ArtworkRoute } from './page-access';
 
 /**
  * Where a charge came from. 成衣效果图 and 批量生成 moved to the offline app but their past charges
@@ -43,7 +44,7 @@ const iso = (value: unknown) => (value ? (value as Date).toISOString() : null);
 export async function listAccounts(range: { from: Date; to: Date }) {
   const [users, spend] = await Promise.all([
     catalogDatabase().query(
-      `SELECT u.id, u.email, u.display_name, u.role, u.disabled, u.created_at, u.admin_note, u.allowed_pages,
+      `SELECT u.id, u.email, u.display_name, u.role, u.disabled, u.created_at, u.admin_note, u.allowed_pages, u.artwork_route,
               u.tenant_id, t.name AS tenant_name, t.workspace, t.billing_mode, t.disabled AS tenant_disabled, t.daily_spend_cap_cents,
               c.balance_cents, c.held_cents,
               (SELECT count(*)::int FROM users x WHERE x.tenant_id = u.tenant_id) AS members,
@@ -84,6 +85,7 @@ export async function listAccounts(range: { from: Date; to: Date }) {
       note: row.admin_note as string,
       allowedPages: row.allowed_pages as string[] | null,
       pages: pagesFor({ role: row.role as string, internal, allowed: row.allowed_pages as string[] | null }),
+      artworkRoute: (row.artwork_route ?? null) as ArtworkRoute | null,
       tenant: {
         id: row.tenant_id as string, name: row.tenant_name as string, internal,
         exempt: row.billing_mode === 'exempt', members: Number(row.members),
@@ -138,6 +140,8 @@ export type AccountPatch = {
   disabled?: boolean;
   /** Spend cap per Beijing day for the account's wallet; null removes the cap. */
   dailyCapCents?: number | null;
+  /** 图稿生成's 出图通道 for this account only; null lets it pick on the page. */
+  artworkRoute?: ArtworkRoute | null;
 };
 
 export async function updateAccount(userId: string, patch: AccountPatch, operatorId: string) {
@@ -150,6 +154,7 @@ export async function updateAccount(userId: string, patch: AccountPatch, operato
     if (patch.note !== undefined) await client.query('UPDATE users SET admin_note = $2 WHERE id = $1', [userId, patch.note.trim()]);
     if (patch.allowedPages !== undefined) await client.query('UPDATE users SET allowed_pages = $2 WHERE id = $1', [userId, patch.allowedPages]);
     if (patch.role !== undefined) await client.query('UPDATE users SET role = $2 WHERE id = $1', [userId, patch.role]);
+    if (patch.artworkRoute !== undefined) await client.query('UPDATE users SET artwork_route = $2 WHERE id = $1', [userId, patch.artworkRoute]);
     if (patch.dailyCapCents !== undefined) {
       await client.query('UPDATE tenants SET daily_spend_cap_cents = $2 WHERE id = (SELECT tenant_id FROM users WHERE id = $1)', [userId, patch.dailyCapCents]);
     }

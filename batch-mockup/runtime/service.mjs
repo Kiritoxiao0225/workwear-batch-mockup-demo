@@ -129,7 +129,7 @@ export async function service(root,path,method,body={},options={}){
    return {id:reserved.analysis.id,status:reserved.analysis.status};
   }
   if(path==='/api/production'){
-   const jobs=await reserveProduction(root,manifest,body.requests);
+   const jobs=await reserveProduction(root,manifest,body.requests,{route:options.route});
    for(const job of jobs){
     if(job.status!=='queued')continue;
     await queue({id:job.id,kind:'production',payload:{jobId:job.id,caseId:job.caseId}});
