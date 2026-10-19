@@ -85,6 +85,10 @@ describe('the 75-set review (10-19)', () => {
       expect(p, master).not.toContain('衣服上不印任何字');
     }
   });
+  it('双人棚拍\'s cover asks for easy faces, not a stare into the lens', () => {
+    const p = prompt('M4', '首图', [{ name: '黑色' }]);
+    expect(p).toMatch(/两人脸部清楚；两人站姿放松，表情自然亲和、嘴角微微带笑，眼神柔和平静地看镜头[^。]*不要瞪着镜头/);
+  });
 });
 
 describe('the words fit their boxes (10-19)', () => {

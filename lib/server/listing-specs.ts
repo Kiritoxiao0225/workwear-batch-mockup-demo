@@ -68,6 +68,8 @@ const two = (s: string) => { const [a, ...b] = s.trim().split(/\s+/); return b.l
 const dots = (f: Fill) => `一个竖向的浅色细描边圆角胶囊框，里面上下排 ${f.all.length} 个小圆点，颜色依次是 ${f.all.map(c => c.hex).join('、')}，不写字`;
 /** A competitor's sample, washed of its brand (trial11/wash.py). */
 const rival = (ref: string) => `/listing-images/rivals/${ref}.jpg`;
+/** Two people facing the lens in the studio: at ease, like the cast photo, never staring (the user's pick, 10-19). */
+const EASY_FACES = '两人站姿放松，表情自然亲和、嘴角微微带笑，眼神柔和平静地看镜头，像平常拍合影那样；不要瞪着镜头、不要把眼睛睁得很大、不要板着脸';
 /** The English words of an image's cards, once each. */
 const ens = (f: Fill) => [...new Set(f.cells.map(c => c.en).filter(Boolean))];
 /** A point's note in two short lines (「帽围自由调节 挡风遮雨」), as the samples print it. */
@@ -278,7 +280,8 @@ export const SPECS: Record<string, Partial<Record<Task, Spec>>> = {
   M4: {
     首图: { sample: rival('1-1'), cells: 0, people: true, photo: true,
       zones: f => [
-        `左0% 上0% 宽100% 高100%：人物：${f.who}，两人都穿这件${f.color}的衣服，拉链拉到胸口；从头顶拍到臀部，两人脸部清楚。`,
+        // With nothing said of their faces, the two stared blank-faced into the lens, close up (10-19).
+        `左0% 上0% 宽100% 高100%：人物：${f.who}，两人都穿这件${f.color}的衣服，拉链拉到胸口；从头顶拍到臀部，两人脸部清楚；${EASY_FACES}。`,
         two(f.title)[1] ? `左68% 上8% 宽29% 高18%：两行深色粗黑体大字，右对齐：第一行「${two(f.title)[0]}」，第二行「${two(f.title)[1]}」；每个字高约占画面 ${H(longer(two(f.title)[0], two(f.title)[1]), 29, 7)}%。`
           : `左68% 上8% 宽29% 高18%：深色粗黑体大字「${f.title}」，右对齐，每个字高约占画面 ${H(f.title, 29, 7)}%。`,
         f.tags[0] && `左72% 上28% 宽24% 高5%：绿色圆角胶囊，里面白字「${f.tags[0]}」，字高约占画面 ${pill(f.tags[0], 24, 2.5)}%。`,
