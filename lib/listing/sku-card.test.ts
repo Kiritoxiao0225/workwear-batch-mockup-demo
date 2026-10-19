@@ -94,3 +94,12 @@ describe('modelPhotoFor and the way the model faces (10-19)', () => {
     expect(modelPhotoFor(images, 'M414', '乌梅紫', '男')).toBe('M2');
   });
 });
+
+describe('icons say a point\'s short name (10-19)', () => {
+  it('a long point on an icon says its short name, a point without one its first words', () => {
+    const lead = { ...point('功能', '高防水透气膜', '') }, long = { ...point('功能', '可呼吸冲锋衣透气面料'), short: '透气面料' };
+    expect(skuCardText({ name: 'x', category: 'workwear', points: [lead, point('功能', '严密防风'), long, point('功能', '持续保暖')] }).feature?.icons.map(i => i.label)).toEqual(['严密防风', '透气面料', '持续保暖']);
+    expect(skuCardText({ name: 'x', category: 'workwear', points: [lead, point('功能', '严密防风'), { ...long, short: undefined }] }).feature?.icons.map(i => i.label)).toEqual(['严密防风', '可呼吸冲锋衣透气面料']);
+  });
+});
+

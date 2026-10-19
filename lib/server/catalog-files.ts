@@ -68,9 +68,11 @@ export async function saveCatalogFile(bytes: Buffer, originalName: string, purpo
     inspected = await inspectCatalogImage(bytes);
     const key = `${config.backend !== 'local' ? `${catalogObjectPrefix()}/` : ''}${purpose === 'production' ? 'production/' : ''}objects/${hash.slice(0, 2)}/${hash}`;
     // Commit the pending identity before contacting OSS. Even if the process
-    // stops after PUT, retries can still find that object.
+    // stops after PUT, retries can still find that object. The same bytes sent twice at once both
+    // land on the one row: any unique key (sha256 or object key) is a conflict (10-19: a duplicate
+    // photo uploaded alongside its twin failed on the object key).
     await catalogDatabase().query(`INSERT INTO files(id,backend,bucket,object_key,sha256,mime_type,width,height,byte_length,has_alpha,original_name,status)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending') ON CONFLICT(backend,bucket,sha256) DO NOTHING`,
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending') ON CONFLICT DO NOTHING`,
     [randomUUID(), config.backend, config.bucket, key, hash, inspected.mimeType, inspected.width, inspected.height, inspected.byteLength, inspected.hasAlpha, originalName]);
   }
   const owner = randomUUID(), deadline = Date.now() + 150_000;

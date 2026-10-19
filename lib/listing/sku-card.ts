@@ -5,6 +5,7 @@
  */
 import { colorKeys, type Point } from './draft';
 import { isComponent } from './garment-role';
+import { textUnits } from './point-words';
 
 export type SkuIcon = 'style' | 'fabric' | 'color' | 'water' | 'breathe' | 'wear' | 'wind' | 'warm' | 'light' | 'zip' | 'scene' | 'dot';
 export type SkuRow = { label: string; value: string; sub: string; icon: SkuIcon };
@@ -20,8 +21,7 @@ export function iconFor(text: string): SkuIcon {
 }
 
 const words = (s: string) => s.split(/[、，,；;\s/|]+/).map(x => x.trim()).filter(Boolean);
-/** How wide a line is, in Chinese characters: Latin letters, digits and the unit marks are about half one. */
-export const textUnits = (s: string) => [...s.trim()].reduce((n, ch) => n + (/[\x00-\x7f⁺₂²]/.test(ch) ? 0.55 : 1), 0);
+export { textUnits };
 /**
  * The longest each place takes, in textUnits, at the smallest size the card prints it (listing-sku-card):
  * a row's big words, its small line, the card's title, an icon's words (two lines). Words that do not
@@ -42,7 +42,7 @@ export const colorRow = (name: string): SkuRow => ({ label: 'COLOR/颜色', valu
  * style number (the part of the product's name before 「#」), fabric, fit, workmanship, where it is
  * worn. The card: the first function point, split into a short title and up to three icons.
  */
-export function skuCardText(input: { name: string; category: string; points: Pick<Point, 'text' | 'note' | 'type' | 'on' | 'source'>[]; color?: string }): SkuText {
+export function skuCardText(input: { name: string; category: string; points: (Pick<Point, 'text' | 'note' | 'type' | 'on' | 'source'> & { short?: string })[]; color?: string }): SkuText {
   const own = input.points.filter(p => p.source === '素材' && p.type !== '定位' && p.text.trim());
   type Own = (typeof own)[number];
   const all = (type: string, ok: (p: Own) => boolean = () => true) => [...own.filter(p => p.type === type && p.on && ok(p)), ...own.filter(p => p.type === type && !p.on && ok(p))];
@@ -68,7 +68,8 @@ export function skuCardText(input: { name: string; category: string; points: Pic
   if (lead) {
     const parts = words(lead.text);
     // An icon's words name a point: a bare figure (「40000+」) is not one.
-    const labels = [...new Set([...(parts.length > 1 ? parts : []), ...functions.slice(1).map(p => words(p.text)[0])].filter(x => x && fits(x, SKU_FIT.label) && /[\u4e00-\u9fff]/.test(x)))].slice(0, 3);
+    // Another point's icon says its short name (2–6 characters, 10-19) when the analysis gave one, else its first words.
+    const labels = [...new Set([...(parts.length > 1 ? parts : []), ...functions.slice(1).map(p => p.short || words(p.text)[0])].filter(x => x && fits(x, SKU_FIT.label) && /[\u4e00-\u9fff]/.test(x)))].slice(0, 3);
     const title = [parts.length > 1 ? parts[0] + parts[1] : '', lead.text, parts[0]].find(t => t && fits(t, parts.length > 1 && t === parts[0] + parts[1] ? 8 : SKU_FIT.title));
     feature = title ? {
       title: title.trim(),

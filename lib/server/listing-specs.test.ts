@@ -86,3 +86,30 @@ describe('the 75-set review (10-19)', () => {
     }
   });
 });
+
+describe('the words fit their boxes (10-19)', () => {
+  it('a long fact word is set smaller than the sample\'s size, a short one keeps it', () => {
+    const spec = SPECS.M5.功能!;
+    const prompt = (word: string) => specPrompt({ master: 'M5', task: '功能', taskLabel: '功能', n: 3, total: 5, spec, fill: { ...fill, facts: [{ label: '面料科技', word }] }, garment: ['立领'], logo: null,
+      refs: { garment: [{ name: '黑色' }], sample: 2 } });
+    expect(prompt('高防水')).toContain('大号粗体字「高防水」，一行写完、不换行，字高约占画面 7%');
+    const long = /大号粗体字「德国SUPER-TEX」，一行写完、不换行，字高约占画面 ([\d.]+)%/.exec(prompt('德国SUPER-TEX'));
+    expect(Number(long?.[1])).toBeLessThan(7);
+  });
+  it('a fact word that would shrink a lot takes two lines at 7 %, and the next fact moves down for it', () => {
+    const spec = SPECS.M5.功能!;
+    const prompt = (facts: Fill['facts']) => specPrompt({ master: 'M5', task: '功能', taskLabel: '功能', n: 3, total: 5, spec, fill: { ...fill, facts }, garment: ['立领'], logo: null,
+      refs: { garment: [{ name: '黑色' }], sample: 2 } });
+    const tops = (p: string) => [...p.matchAll(/左4% 上(\d+)% 宽44% 高(\d+)%：/g)].map(m => ({ top: Number(m[1]), height: Number(m[2]) }));
+    const short = prompt([{ label: '面料科技', word: '德国SUPER-TEX' }, { label: '面料特点', word: '高防水透气膜' }]);
+    const long = prompt([{ label: '面料科技', word: '石墨烯远红外蓄热纤维' }, { label: '面料特点', word: '高防水透气膜' }]);
+    expect(long).toContain('大号粗体字「石墨烯远红外蓄热纤维」，太长就分两行写，在词与词之间断开、不把一个词拆到两行，每行字高约占画面 7%');
+    expect(tops(long)[1].top).toBeGreaterThan(tops(short)[1].top);
+    // Both facts end above the icons.
+    for (const p of [short, long]) for (const z of tops(p)) expect(z.top + z.height).toBeLessThanOrEqual(76);
+    // Two long words: the second has no room for two lines and stays on one, smaller.
+    const both = prompt([{ label: '面料科技', word: '石墨烯远红外蓄热纤维' }, { label: '面料特点', word: '双经双纬T400D面料' }]);
+    expect(both).toMatch(/大号粗体字「双经双纬T400D面料」，一行写完、不换行/);
+    for (const z of tops(both)) expect(z.top + z.height).toBeLessThanOrEqual(76);
+  });
+});

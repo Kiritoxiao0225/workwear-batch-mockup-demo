@@ -5,8 +5,13 @@
 import { z } from 'zod';
 import { POINT_TYPES, TASKS } from './category';
 import { CLOSER_MAX, LIMITS, type Draft } from './draft';
+import { tagFits } from './point-words';
 
 const words = (max: number) => z.string().trim().max(max).default('');
+/** A tag: plain words up to LIMITS.tag, or a fact 「label｜word」 counted by its two parts (point-words FACT). */
+const tag = z.string().trim().min(1).superRefine((t, ctx) => {
+  if (!tagFits(t, LIMITS.tag)) ctx.addIssue({ code: 'too_big', origin: 'string', maximum: LIMITS.tag, inclusive: true, input: t, message: '标签太长了' });
+});
 export const countsSchema = z.object({
   square: z.number().int().min(1).max(5),
   portrait: z.number().int().min(0).max(5),
@@ -18,11 +23,11 @@ const pointSchema = z.object({
   concept: z.string().max(40).nullable(), group: z.string().max(8), source: z.enum(['素材', '品类']), kind: z.enum(['衣服', '服务']), on: z.boolean(),
   seen: z.enum(['有', '看不出', '不像']).optional(), seenWhy: z.string().max(120).optional(), folded: z.boolean().optional(),
   proof: z.string().max(40), part: z.string().max(12).default(''), why: z.string().max(200).default(''), evidence: z.string().max(200).default(''),
-  from: z.array(z.string().max(12)).max(40).default([]), score: z.number(), must: z.boolean().optional(),
+  from: z.array(z.string().max(12)).max(40).default([]), score: z.number(), must: z.boolean().optional(), short: z.string().max(12).optional(),
 });
 const slotSchema = z.object({
   task: z.enum(TASKS as [string, ...string[]]), lead: z.string().max(40).nullable(), title: words(LIMITS.title), sub: words(LIMITS.sub),
-  tags: z.array(z.string().trim().min(1).max(LIMITS.tag)).max(4).default([]),
+  tags: z.array(tag).max(4).default([]),
   cells: z.array(z.object({ point: z.string().min(1).max(40), proof: z.string().min(1).max(40) })).max(6).default([]),
   act: z.string().max(40).nullable().default(null), colors: z.array(z.string()).max(CLOSER_MAX).default([]), manual: z.boolean().optional(), why: z.string().max(80).optional(), shopService: z.string().max(20).optional(), theme: z.string().max(12).optional(), score: z.number().default(0),
 });

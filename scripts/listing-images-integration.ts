@@ -715,6 +715,16 @@ try {
   await upload(1, full, held, '额度/已有-再传.jpg');
   await db().query('UPDATE tenants SET storage_quota_bytes=10000000 WHERE id=$1', [tenants[1]]);
   pass('额度：用满后新图和参考图都在写入存储前被拒（413），存储里不多出文件；已有的同一张图重传照常');
+
+  // ---- 同一张图同时传几次（素材里一张图和它的副本，网页 4 张并行上传）：都成功，只存一份。10-19 跑批时撞上存储路径约束报过 500，
+  // 那个瞬间在这里撞不出来；修法（冲突不限约束）见 catalog-files.ts ----
+  const twinProject = randomUUID();
+  await call(0, 'projects', { id: twinProject, name: '同图并发', layout: 'M3', counts: counts(1) });
+  const twin = await image(640, 480, '#3c6e47');
+  const twins = await Promise.all(Array.from({ length: 8 }, (_, k) => `双胞胎/${k + 1}.jpg`).map(path => call(0, `projects/${twinProject}/images`, twin, 200, 'POST', { 'content-type': 'application/octet-stream', 'x-file-name': encodeURIComponent(path.split('/').at(-1)!), 'x-file-path': encodeURIComponent(path) })));
+  assert.equal(new Set((await Promise.all(twins.map(r => r.json()))).map((x: { id: string }) => x.id)).size, 1);
+  assert.equal((await db().query(`SELECT count(*)::int n FROM files f JOIN listing_assets a ON a.file_id=f.id WHERE a.project_id=$1`, [twinProject])).rows[0].n, 1);
+  pass('同一张图同时传几次：都成功，存储里只有一份');
   console.log(`COMPLETE ${checks} checks; no external provider called`);
 } finally {
   await closeCatalogDatabase(); await database.stop().catch(() => {}); await rm(root, { recursive: true, force: true });

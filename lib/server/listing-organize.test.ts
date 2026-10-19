@@ -196,3 +196,25 @@ describe('a colour\'s reference faces the camera, and a still life in a scene is
     expect(chooseMaterials(sorted, [{ id: 'M219', width: 3000, height: 3000 }, { id: 'M220', width: 800, height: 800 }]).colors[0].pick).toBe('M220');
   });
 });
+
+describe('a full front view when none is whole and closed (10-19)', () => {
+  it('takes the first colour\'s own image, so the plan can start', () => {
+    const sorted = {
+      images: [img('M4', { kind: '静物', color: '黑色', front: false, facing: '正对', role: '主体' }), img('M1', { kind: '静物', color: '牛仔蓝', front: false, facing: '正对', role: '主体' }), img('M75', { kind: '静物', color: '黑色', front: true, role: '内胆' })],
+      colors: [{ name: '黑色', hex: '#111', from: [] }, { name: '牛仔蓝', hex: '#345', from: [] }], points: [], notes: [],
+    };
+    const chosen = chooseMaterials(sorted, []);
+    expect(chosen.colors.map(c => c.pick)).toEqual(['M4', 'M1']);
+    expect(chosen.parts[0]).toMatchObject({ part: '正面全身', pick: 'M4' });
+  });
+});
+
+describe('the reading writes a short name for each point (10-19)', () => {
+  it('keeps it, and an answer without one still reads', () => {
+    const images = [img('M1', { kind: '卖点图' })];
+    const read = (points: object[]) => parseRead(JSON.stringify({ colors: [], points, notes: [], category: 'workwear', categoryWhy: '', checks: [], titles: {}, recolor: {} }), images);
+    expect(read([{ type: '功能', text: '可呼吸冲锋衣透气面料', short: '透气面料', from: ['M1'] }]).points[0].short).toBe('透气面料');
+    expect(read([{ type: '功能', text: '防风', from: ['M1'] }]).points[0].short).toBe('');
+  });
+});
+

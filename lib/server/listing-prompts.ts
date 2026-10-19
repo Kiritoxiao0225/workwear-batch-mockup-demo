@@ -9,6 +9,7 @@
 import type { ServiceImageDef } from '../listing/service';
 import { crowdLine, DEFAULT_PLACE, othersLine } from './listing-crowd';
 import { NO_CHEST, OWN_MARKS, SAME_STYLE } from './listing-lines';
+import { bigWords, bigWordsLine, fitHeight, textUnits } from '../listing/point-words';
 import type { Box, Display, Layout, StyleSheet, Template, Zone } from '../listing/templates';
 
 export type Color = { name: string; hex: string };
@@ -20,13 +21,18 @@ const NO_EXTRA = `不要出现：另外加上的真实品牌 logo、店铺名、
 const clamp = (v: number, lo: number, hi: number) => Math.round(Math.min(hi, Math.max(lo, v)) * 2) / 2;
 /**
  * How large a zone's words are, in percent of the image (the masters' rule: titles 6–8 %, small
- * words about 3 %, never under 2.5 %). A zone taller than wide is written top to bottom.
+ * words about 3 %, never under 2.5 %). A zone taller than wide is written top to bottom. The words
+ * also have to fit the zone's width (or, written top to bottom, its height): longer words are set
+ * smaller rather than run out of their box (10-19).
  */
-function size(z: Zone) {
-  const [, , w, h] = z.box, vertical = h > w * 1.2 && (z.kind === 'title' || z.kind === 'sub');
-  if (vertical) return `竖排，从上到下一列，每个字高约占画面 ${z.kind === 'title' ? clamp(w * 0.55, 5, 12) : clamp(w * 0.35, 2.5, 6)}%`;
+function size(z: Zone, text = '') {
+  const [, , w, h] = z.box, vertical = h > w * 1.2 && (z.kind === 'title' || z.kind === 'sub'), n = Math.max(1, textUnits(text));
+  if (vertical) {
+    const base = z.kind === 'title' ? clamp(w * 0.55, 5, 12) : clamp(w * 0.35, 2.5, 6);
+    return `竖排，从上到下一列，每个字高约占画面 ${text ? Math.min(base, Math.max(z.kind === 'title' ? 3 : 2, Math.floor((h * 0.92) / n * 2) / 2)) : base}%`;
+  }
   const pct = z.kind === 'title' ? clamp(h * 0.75, 5, 16) : z.kind === 'sub' ? clamp(h * 0.7, 2.5, 6) : clamp(h * 0.6, 2.5, 4);
-  return `字高约占画面 ${pct}%`;
+  return `字高约占画面 ${text ? fitHeight(text, w, pct, z.kind === 'title' ? 3 : 1.8) : pct}%`;
 }
 const DISPLAY: Record<Display, string> = { 平铺: '平铺在台面上，正面朝上，袖子自然展开', 挂拍: '挂在衣架上，正面朝前', 隐形人台: '立体地“穿”在看不见的人身上（隐形人台），正面朝前' };
 const RATIO_NAME = { square: '正方形 1:1', portrait: '竖版 3:4', long: '竖版 2:3' } as const;
@@ -174,23 +180,23 @@ export function mainPrompt(input: {
   const sheet = !!input.fabric && t.zones.some(z => z.kind === 'fabric');
   const zone = (z: Template['zones'][number]) => {
     switch (z.kind) {
-      case 'title': return c.title && `大标题「${c.title}」：${area(z.box)}，${size(z)}。`;
-      case 'sub': return c.sub && `小字「${c.sub}」：${area(z.box)}，${size(z)}。`;
+      case 'title': return c.title && `大标题「${c.title}」：${area(z.box)}，${size(z, c.title)}。`;
+      case 'sub': return c.sub && `小字「${c.sub}」：${area(z.box)}，${size(z, c.sub)}。`;
       case 'tag': {
         const text = c.tags[tag++];
         if (!text) return '';
         // A fact (「面料科技｜德国SUPER-TEX」): a small label over a big word, straight on the background, no box.
         const [label, word] = text.includes('｜') ? text.split('｜') : [null, text];
-        return label ? `参数：${area(z.box)}；上面一行细黑体小字「${label}」（字高约占画面 2.5%），下面紧跟一行粗黑体大字「${word}」（字高约占画面 6%），左对齐，直接写在背景上，不加框和色块。`
-          : `标签「${text}」：${area(z.box)}，${size(z)}。`;
+        return label ? `参数：${area(z.box)}；上面一行细黑体小字「${label}」（字高约占画面 ${fitHeight(label, z.box[2], 2.5)}%），下面紧跟粗黑体大字「${word}」（${bigWordsLine(bigWords(word, z.box[2], 6, z.box[3] - 4))}），左对齐，直接写在背景上，不加框和色块。`
+          : `标签「${text}」：${area(z.box)}，${size(z, text)}。`;
       }
       case 'card': case 'icon': {
         const x = c.cells[cell++];
         if (!x) return '';
-        if (sheet && z.kind === 'icon') return `图标：${area(z.box)}；一个细线圆框，框里一个简洁的线描图标，圆框下面一行字「${x.text}」（字高约占画面 3%）；不加方形卡片底，直接在面料上。`;
+        if (sheet && z.kind === 'icon') return `图标：${area(z.box)}；一个细线圆框，框里一个简洁的线描图标，圆框下面一行字「${x.text}」（字高约占画面 ${fitHeight(x.text, z.box[2], 3)}%）；不加方形卡片底，直接在面料上。`;
         // An icon card shows no garment: one with a strip of tape behind a taped-seam icon made the tape up (10-16).
-        return z.kind === 'icon' || x.icon ? `图标卡片：${area(z.box)}；一个简洁的线描图标配一行字「${x.text}」，字高约占画面 2.8%；卡片底是干净的纯色，不画衣服、面料、胶条或任何结构。`
-          : `卡片：${area(z.box)}；卡片里画：${x.recipe}；卡片底部一行字「${x.text}」，字高约占画面 3%。`;
+        return z.kind === 'icon' || x.icon ? `图标卡片：${area(z.box)}；一个简洁的线描图标配一行字「${x.text}」，字高约占画面 ${fitHeight(x.text, z.box[2], 2.8)}%；卡片底是干净的纯色，不画衣服、面料、胶条或任何结构。`
+          : `卡片：${area(z.box)}；卡片里画：${x.recipe}；卡片底部一行字「${x.text}」，字高约占画面 ${fitHeight(x.text, z.box[2], 3)}%。`;
       }
       case 'person': return `人物：${area(z.box)}；${group ? `${crowdLine(used, input.cast ? `参考图${input.cast}` : '定妆照')}。` : input.cast ? people(t, input.lead, input.cast) : '模特穿着这件衣服。'}${c.act ? `动作：${c.act}。` : ''}`;
       case 'garment': return `衣服：${area(z.box)}；画面里没有人，衣服${DISPLAY[t.display ?? '平铺']}。`;

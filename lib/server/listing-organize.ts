@@ -49,7 +49,7 @@ const IMAGE_RULES = `每张图（images，一张不漏，按编号）：
 const WHOLE_RULES = `整款：
 - colors：这款衣服的全部颜色，每张图 colorsSeen 里的颜色都要算上（只在多人合照里出现的颜色也是这款的颜色）；单独拍的内胆、配件的颜色不算。名字严格照抄颜色图、色卡、详情页上写的颜色名，一个字都不改（带品牌词的如“爱马仕橙”也照抄，不要换说法、不要自己起更好听的名字）；素材上完全没写颜色名的，才按你看到的颜色起一个常见名；hex 是你看到的颜色；from 写能看到这个颜色衣服的图的编号（最多 5 个）。色卡或文字里提到、但素材里没有这个颜色衣服图的，也要列出来，from 留空。同一个颜色在不同地方写法不一样（字的顺序不同，如“黑拼白”和“黑白拼”；或多一个“色”字），算一个颜色，只列一次，名字用颜色图或色卡上的写法。
 - points：卖点，只能来自图上的文字或清楚可见的演示（如水珠滚落），不要编造；text 只做提炼：用素材原文里的字和说法（品牌名、型号、数字都照原样保留），不改写、不换说法、不美化；原文超过 16 个字时只截取其中最关键的连续部分；note 是素材里专门解释这条卖点本身的说明，同样只提炼原文（如卖点“防水三级以上”配“防水指数三级以上 雨天外出更安心”），不超过 16 个字，不带句末标点。讲的是另一个部位、另一个功能或另一种材料的字，哪怕排在旁边也不能用（比如卖点“防风保暖”旁边写着“帽围自由调节”，那是在讲帽子；卖点是衣身成分，旁边写的是包边条成分），这时 note 留空；type 是 定位/功能/面料/做工/实用/颜色款式/人群场景/服务定制 之一；from 写出处编号。最多 16 条，按重要性从高到低排，排第一、第二的会放上首图。重要性看两点：① 商家有多强调——在素材里反复出现、放在显眼位置（大标题、首屏）讲的更重要；② 买家有多在乎——买这类衣服的人做决定时最先看的更重要。why 用一句话（不超过 30 个字）说明排在这里的理由，如“主图和详情页 5 处都在讲，冲锋衣买家最先看防水”。
-- 每条卖点还要写：concept（它属于下面"卖点类别"里的哪一类，写类别编号；哪一类都不是就写 null）；proof（这条卖点在图上怎么证明，从下面"画法"里选一个编号；做工、实用类讲的是衣服某个部位的，选 part）；part（选了 part 或讲的是某个部位时，写部位名，用 images 里 detail 的叫法，如“袖口”）。
+- 每条卖点还要写：concept（它属于下面"卖点类别"里的哪一类，写类别编号；哪一类都不是就写 null）；proof（这条卖点在图上怎么证明，从下面"画法"里选一个编号；做工、实用类讲的是衣服某个部位的，选 part）；part（选了 part 或讲的是某个部位时，写部位名，用 images 里 detail 的叫法，如“袖口”）；short（这条卖点放进小图标、标签时的短说法，最多 6 个汉字宽，英文和数字两个算一个字：只从 text 里删掉字得到，不换词、不加 text 里没有的字，要读得通、意思不变；先删“设计”“工艺”“效应”“采用”这类可有可无的字，型号、数字、品牌名和最能区分它的词留下，比如“可呼吸冲锋衣透气面料”写“透气面料”，“可拆卸摇粒内胆”写“可拆内胆”，“IP4.0防水层”写“IP4.0防水”，“压胶缝工艺拉链”写“压胶拉链”，“荷叶滚珠效应”写“荷叶滚珠”；text 本身放得下就照抄 text）。
 - notes：你发现的问题，比如“色卡里有藏青，但没有藏青的衣服图”“没有背面图”，没有就空数组。
 
 整款还要写：
@@ -59,7 +59,7 @@ const WHOLE_RULES = `整款：
 - look：这款用哪套母版、首图在哪儿拍、首图主打哪个卖点。先看素材里有没有写给谁穿、什么行业（如 4S 店、物业、工地、餐饮、团建），写了就照着选；没写就看衣服本身：颜色深浅、功能卖点多不多、偏商务还是偏户外。master：从下面"母版"里选一个编号；M4 只在素材讲男女同款、情侣或年轻团队时选；M5 是给不想用模特、想省积分的店铺自己换的，不要选；素材里没有模特图不要紧，出图时模特是另画的。place：首图地点编号，只有首图是实景的母版才写，不能选这套母版不能拍的地点，否则留空。sell：首图主打的卖点，从下面"首图卖点"里选一个，要是 points 里讲到的、并且在这个地点演得出来的（看地点后面列的）；都不沾留空。why：一句话理由（不超过 40 个字），如“三防卖点多、深色款，选暗黑科技；素材写了物业保安，在小区门口拍”。`;
 const IMAGE_SHAPE = '{ "id": "M1", "kind": "", "role": "", "colorsSeen": [], "color": "", "front": false, "facing": "", "detail": "", "parts": [], "text": false, "logo": false, "person": "", "face": false, "same": "" }';
 const WHOLE_SHAPE = `"colors": [{ "name": "", "hex": "", "from": ["M1"] }],
-  "points": [{ "type": "", "text": "", "note": "", "from": ["M1"], "why": "", "concept": null, "proof": "", "part": "" }],
+  "points": [{ "type": "", "text": "", "note": "", "from": ["M1"], "why": "", "concept": null, "proof": "", "part": "", "short": "" }],
   "notes": [""], "category": "", "categoryWhy": "", "checks": [{ "concept": "", "seen": "", "why": "" }], "titles": { "功能": [""] },
   "look": { "master": "", "place": "", "sell": "", "why": "" }`;
 
@@ -186,7 +186,7 @@ const organizeSchema = z.object({
   images: z.array(imageSchema),
   colors: z.array(z.object({ name: z.string().trim().min(1).max(12), hex: z.string().default(''), from: z.array(z.string()).default([]) })),
   points: z.array(z.object({ type: z.string().default(''), text: z.string().trim().min(1).max(20), note: z.string().trim().max(30).default(''), from: z.array(z.string()).default([]), why: z.string().max(80).default(''),
-    concept: z.string().max(40).nullable().catch(null).default(null), proof: z.string().max(40).catch('').default(''), part: z.string().trim().max(12).catch('').default('') })).default([]),
+    concept: z.string().max(40).nullable().catch(null).default(null), proof: z.string().max(40).catch('').default(''), part: z.string().trim().max(12).catch('').default(''), short: z.string().trim().max(12).catch('').default('') })).default([]),
   notes: z.array(z.string()).default([]),
   category: z.string().max(40).catch('generic').default('generic'), categoryWhy: z.string().max(120).catch('').default(''),
   checks: z.array(z.object({ concept: z.string().max(40), seen: z.enum(['有', '看不出', '不像']).catch('看不出'), why: z.string().max(80).catch('').default('') })).catch([]).default([]),
@@ -343,7 +343,10 @@ export function chooseMaterials(sorted: Pick<Organized, 'images' | 'colors'>, si
   // A full front view shows one garment: an image with one colour, ideally a colour's own pick.
   const picked = new Set(colors.map(c => c.pick));
   const fronts = usable.filter(i => !isComponent(i) && i.front && i.color && colourRank[i.kind]);
-  const front = { part: FRONT, pick: best(fronts, i => (picked.has(i.id) ? 10 : 0) + (colourRank[i.kind] ?? 0) + facingScore(i)), candidates: fronts.map(i => i.id) };
+  // None whole and closed (10-19: 552's hanger shots, every jacket open): the first colour's own image, as
+  // the colours themselves fall back to it, rather than a plan that cannot start until one is picked.
+  const front = { part: FRONT, pick: best(fronts, i => (picked.has(i.id) ? 10 : 0) + (colourRank[i.kind] ?? 0) + facingScore(i)) ?? colors.find(c => c.pick)?.pick ?? null,
+    candidates: fronts.length ? fronts.map(i => i.id) : colors.flatMap(c => c.pick ? [c.pick] : []) };
   const named = new Map<string, SortedImage[]>();
   // A part counts from an image sorted as it, and from a detail page that shows it among others (`parts`).
   for (const i of usable) for (const x of new Set([i.detail, ...(i.parts ?? [])])) if (x && x !== '其他') named.set(x, [...(named.get(x) ?? []), i]);

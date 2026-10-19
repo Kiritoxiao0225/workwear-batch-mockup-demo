@@ -14,6 +14,7 @@ import path from 'node:path';
 import type { Task } from '../listing/category';
 import { crowdLine, DEFAULT_PLACE } from './listing-crowd';
 import { NO_CHEST, OWN_MARKS, SAME_STYLE } from './listing-lines';
+import { bigWords, bigWordsLine, fitHeight } from '../listing/point-words';
 
 /** What a spec fills its open places with. */
 export type Fill = {
@@ -54,6 +55,15 @@ export type Spec = {
   style?: string;
 };
 
+/**
+ * The words' height in a box `width` percent wide: the sample's size when they fit, smaller when they
+ * would run out of the box (10-19); a pill's padding takes about a sixth of its width.
+ */
+const H = (text: string, width: number, max: number) => fitHeight(text, width, max);
+const pill = (text: string, width: number, max: number) => fitHeight(text, width * 0.84, max);
+/** Written top to bottom: each character's height so the column fits `height` percent. */
+const V = (text: string, height: number, max: number) => Math.min(max, Math.max(2, Math.floor((height * 0.92) / Math.max(1, [...text.replace(/\s/g, '')].length) * 2) / 2));
+const longer = (a: string, b: string) => ([...a].length >= [...b].length ? a : b);
 const two = (s: string) => { const [a, ...b] = s.trim().split(/\s+/); return b.length ? [a, b.join('')] : [s.trim(), '']; };
 const dots = (f: Fill) => `一个竖向的浅色细描边圆角胶囊框，里面上下排 ${f.all.length} 个小圆点，颜色依次是 ${f.all.map(c => c.hex).join('、')}，不写字`;
 /** A competitor's sample, washed of its brand (trial11/wash.py). */
@@ -101,16 +111,36 @@ export const SPEC_STYLE: Record<string, { all: string; cover: string }> = {
 
 /** The fabric of fabric-only images on the light masters: words dark on light fabric, white on dark. */
 const ink = (f: Fill) => f.light ? '深色' : '白色', soft = (f: Fill) => f.light ? '深灰' : '白色';
+/**
+ * The facts on the fabric (上40% down to the icons at 上78%): a small label over big words, the big words on
+ * one line or, when long, two at the sample's size (bigWords); the next fact moves down by what the
+ * one before takes, and a fact goes back to one smaller line when two would not leave room.
+ */
+function factZones(f: Fill) {
+  const facts = f.facts.slice(0, 2), END = 76, height = (lines: 1 | 2, size: number) => lines === 2 ? Math.ceil(size * 2.2) : 9, gap = (lines: 1 | 2) => lines === 2 ? 3 : 5;
+  const one = facts.map(x => bigWords(x.word, 44, 7, 0)), sized = [...one];
+  const total = () => sized.reduce((n, b, k) => n + 4 + height(b.lines, b.size) + (k < sized.length - 1 ? gap(b.lines) : 0), 0);
+  facts.forEach((x, k) => { const two = bigWords(x.word, 44, 7); if (two.lines === 2) { const keep = sized[k]; sized[k] = two; if (40 + total() > END) sized[k] = keep; } });
+  let y = 40;
+  return facts.flatMap((x, k) => {
+    const b = sized[k], h = height(b.lines, b.size), top = y;
+    y += 4 + h + gap(b.lines);
+    return [
+      k > 0 && `左4% 上${top - 3}% 宽36% 高1%：两组参数之间一条${soft(f)}细虚线。`,
+      `左4% 上${top}% 宽24% 高3%：${soft(f)}细黑体「${x.label}」，字高约占画面 ${H(x.label, 24, 2.5)}%。`,
+      `左4% 上${top + 4}% 宽44% 高${h}%：${ink(f)}大号粗体字「${x.word}」，${bigWordsLine(b)}。`,
+    ].filter(Boolean);
+  });
+}
 /** 面料铺底 + 参数 + 图标行 (双人棚拍, 无模特; sample 67-3): the tag, title, two lines, two facts, four round icons. */
 const fabricSheet = (sample: string): Spec => ({
   sample, cells: 4, fabric: true,
   zones: f => [
-    f.tags[0] && `左4% 上7% 宽30% 高5%：${f.light ? '深灰' : '白色'}细描边圆角胶囊，里面${ink(f)}字「${f.tags[0]}」，字高约占画面 2.5%。`,
-    `左4% 上13% 宽58% 高9%：大标题「${f.title}」，${ink(f)}粗黑体，字高约占画面 7%；标题下面一条${soft(f)}短横线。`,
-    f.sub && `左4% 上25% 宽50% 高7%：${soft(f)}细黑体「${f.sub}」，字高约占画面 3%。`,
-    ...f.facts.slice(0, 2).flatMap((x, i) => [`左4% 上${40 + i * 18}% 宽24% 高3%：${soft(f)}细黑体「${x.label}」，字高约占画面 2.5%。`, `左4% 上${44 + i * 18}% 宽44% 高9%：${ink(f)}大号粗体字「${x.word}」，字高约占画面 7%。`]),
-    f.facts.length > 1 && `左4% 上55% 宽36% 高1%：两组参数之间一条${soft(f)}细虚线。`,
-    ...f.cells.map((c, i) => `左${[5, 29, 52, 76][i]}% 上78% 宽21% 高20%：${ink(f)}线描圆形图标，下方${ink(f)}字「${c.text}」，字高约占画面 2.8%${short(c.note) ? `；再下面一行${soft(f)}小字「${c.note}」，字高约占画面 1.8%` : ''}。`),
+    f.tags[0] && `左4% 上7% 宽30% 高5%：${f.light ? '深灰' : '白色'}细描边圆角胶囊，里面${ink(f)}字「${f.tags[0]}」，字高约占画面 ${pill(f.tags[0], 30, 2.5)}%。`,
+    `左4% 上13% 宽58% 高9%：大标题「${f.title}」，${ink(f)}粗黑体，字高约占画面 ${H(f.title, 58, 7)}%；标题下面一条${soft(f)}短横线。`,
+    f.sub && `左4% 上25% 宽50% 高7%：${soft(f)}细黑体「${f.sub}」，字高约占画面 ${H(f.sub, 50, 3)}%。`,
+    ...factZones(f),
+    ...f.cells.map((c, i) => `左${[5, 29, 52, 76][i]}% 上78% 宽21% 高20%：${ink(f)}线描圆形图标，下方${ink(f)}字「${c.text}」，字高约占画面 ${H(c.text, 21, 2.8)}%${short(c.note) ? `；再下面一行${soft(f)}小字「${c.note}」，字高约占画面 ${H(c.note, 21, 1.8)}%` : ''}。`),
     '左4% 上78% 宽92% 高20%：四个图标之间用细细的竖线隔开。',
     '画面里没有任何人。',
   ],
@@ -120,10 +150,10 @@ const fabricSheet = (sample: string): Spec => ({
 const detailGrid = (sample: string, dark: boolean): Spec => ({
   sample, cells: 4,
   zones: f => [
-    `左6% 上3% 宽64% 高9%：大标题「${f.title}」，${dark ? '白色' : '深色'}中粗黑体，字高约占画面 5.5%。`,
+    `左6% 上3% 宽64% 高9%：大标题「${f.title}」，${dark ? '白色' : '深色'}中粗黑体，字高约占画面 ${H(f.title, 64, 5.5)}%。`,
     `左78% 上4% 宽18% 高6%：右上角右对齐：${dark ? '琥珀色' : '深灰'}细体大写英文「CUSTOMIZE」（字高约占画面 1.6%），下面一行同色小箭头「>>>」。`,
     ...f.cells.map((c, i) => `左${[4, 52, 4, 52][i]}% 上${[15, 15, 57, 57][i]}% 宽46% 高${[36, 36, 35, 35][i]}%：格子：${c.recipe}${dark ? '，深色背景，衣服边缘有冷白高光' : ''}。`),
-    ...f.cells.map((c, i) => `左${[4, 52, 4, 52][i]}% 上${[52, 52, 93, 93][i]}% 宽46% 高${[4, 4, 5, 5][i]}%：${['左上', '右上', '左下', '右下'][i]}格下方居中的${dark ? '浅灰' : '深灰'}细黑体「${short(c.note) ? `${c.text}，${c.note}` : c.text}」，字高约占画面 2.6%，清楚好读。`),
+    ...f.cells.map((c, i) => `左${[4, 52, 4, 52][i]}% 上${[52, 52, 93, 93][i]}% 宽46% 高${[4, 4, 5, 5][i]}%：${['左上', '右上', '左下', '右下'][i]}格下方居中的${dark ? '浅灰' : '深灰'}细黑体「${short(c.note) ? `${c.text}，${c.note}` : c.text}」，字高约占画面 ${H(short(c.note) ? `${c.text}，${c.note}` : c.text, 46, 2.6)}%，清楚好读。`),
     '画面里没有任何人。',
   ],
   background: () => dark ? '深炭灰底，四个格子是稍浅一点的深灰圆角卡片，部位图贴满卡片（色调照这套母版的暗色，不照参考图的浅色）。' : '浅灰白纯色底，四个部位特写格子是圆角图片。',
@@ -132,13 +162,13 @@ const detailGrid = (sample: string, dark: boolean): Spec => ({
 const detailRows = (sample: string): Spec => ({
   sample, cells: 3,
   zones: f => [
-    `左6% 上3% 宽40% 高8%：大标题「${f.title}」，深灰黑中粗黑体，字高约占画面 5%。`,
-    `左62% 上3% 宽32% 高8%：右上角右对齐的角标：深灰细体大写英文「DETAIL DISPLAY」（字高约占画面 1.8%），下面一行深灰细黑体「${f.sub || '品质细节看得见'}」（字高约占画面 1.8%），角标右边一条深色细竖线。`,
+    `左6% 上3% 宽40% 高8%：大标题「${f.title}」，深灰黑中粗黑体，字高约占画面 ${H(f.title, 40, 5)}%。`,
+    `左62% 上3% 宽32% 高8%：右上角右对齐的角标：深灰细体大写英文「DETAIL DISPLAY」（字高约占画面 1.8%），下面一行深灰细黑体「${f.sub || '品质细节看得见'}」（字高约占画面 ${H(f.sub || '品质细节看得见', 32, 1.8)}%），角标右边一条深色细竖线。`,
     ...f.cells.flatMap((c, i) => {
       const note = lines(c.note);
       return [
         `左5% 上${14 + i * 29}% 宽90% 高26%：第 ${i + 1} 张白色圆角卡片，有很轻的投影；卡片左边 38% 是白底文字区，右边 62% 是部位图，图片贴满卡片右半边。`,
-        `左10% 上${19 + i * 29}% 宽26% 高16%：卡片左边文字：深灰黑中粗黑体「${c.text}」（字高约占画面 3.5%）${note.length ? `，下面${note.length}行深灰细黑体${note.map(x => `「${x}」`).join('')}（每行字高约占画面 2.3%）` : ''}。`,
+        `左10% 上${19 + i * 29}% 宽26% 高16%：卡片左边文字：深灰黑中粗黑体「${c.text}」（字高约占画面 ${H(c.text, 26, 3.5)}%）${note.length ? `，下面${note.length}行深灰细黑体${note.map(x => `「${x}」`).join('')}（每行字高约占画面 ${H(note.reduce(longer), 26, 2.3)}%）` : ''}。`,
         `左43% 上${14 + i * 29}% 宽52% 高26%：部位图：${c.recipe}，浅灰白背景，柔和光。`,
       ];
     }),
@@ -157,8 +187,8 @@ const closer = (sample: string, band: string, words: string, style?: string): Sp
     !!f.logoRef && `左3% 上3% 宽18% 高10%：左上角放客户的 LOGO（照参考图${f.logoRef}），深灰单色，小小的。`,
     `左89% 上3% 宽6% 高${Math.min(30, 5 + f.all.length * 4)}%：${dots(f)}。`,
     `左2% 上73% 宽96% 高19%：横条：${band}，压在人物腿部前面。`,
-    `左10% 上75% 宽80% 高9%：横条里水平居中的大标题「${f.title}」，白色${words}粗黑体，字高约占画面 6%。`,
-    f.sub && `左14% 上86% 宽72% 高4%：大标题下面水平居中的一条白色细线和白色细黑体「${f.sub}」，字距略拉开，字高约占画面 2.6%；横条里的字整体居中，左右留白对称。`,
+    `左10% 上75% 宽80% 高9%：横条里水平居中的大标题「${f.title}」，白色${words}粗黑体，字高约占画面 ${H(f.title, 80, 6)}%。`,
+    f.sub && `左14% 上86% 宽72% 高4%：大标题下面水平居中的一条白色细线和白色细黑体「${f.sub}」，字距略拉开，字高约占画面 ${H(f.sub, 72 * 0.85, 2.6)}%；横条里的字整体居中，左右留白对称。`,
   ],
   background: f => `实景合影：${f.place || DEFAULT_PLACE}；背景有自然的景深虚化，人物和背景在同一种光下，不能像抠图拼上去。`, style,
 });
@@ -169,18 +199,18 @@ export const SPECS: Record<string, Partial<Record<Task, Spec>>> = {
       zones: f => [
         `左0% 上0% 宽100% 高100%：人物：${f.who}穿着这件衣服，拉链拉到胸口，内搭白色 T 恤${f.act ? `；${f.act}` : ''}。`,
         `左48% 上52% 宽11% 高22%：工牌：脖子上挂一条浅灰挂绳，胸前垂一张竖向白色工牌卡，${f.badge ? `卡上印「${f.badge}」${f.badge.length}个深色字` : '卡上只有简单色块和线条，不写字'}。`,
-        `左76% 上58% 宽17% 高22%：竖排粗宋体大标题「${f.title}」，深灰黑，从上到下一列，每个字高约占画面 9%。`,
+        `左76% 上58% 宽17% 高22%：竖排粗宋体大标题「${f.title}」，深灰黑，从上到下一列，每个字高约占画面 ${V(f.title, 22, 9)}%。`,
         enOf(f.title) && `左84% 上55% 宽14% 高6%：竖排大标题右上方一行细细的深灰英文手写花体「${script(enOf(f.title))}」，比大字小很多，只当装饰。`,
-        f.sub && `左79% 上80% 宽8% 高18%：竖排粗宋体「${f.sub}」，深灰黑，从上到下一列，每个字高约占画面 4.5%。`,
+        f.sub && `左79% 上80% 宽8% 高18%：竖排粗宋体「${f.sub}」，深灰黑，从上到下一列，每个字高约占画面 ${V(f.sub, 18, 4.5)}%。`,
         enOf(f.title) && `左90% 上78% 宽3% 高20%：竖排一行极小的深灰细体大写英文「${enOf(f.title)} WORK JACKET」，字距拉开，字高约占画面 1.2%。`,
       ],
       background: f => f.scene ?? '实景：明亮的写字楼大堂，玻璃幕墙和前台大面积虚化、偏白。' },
     功能: { sample: rival('6-3'), cells: 4, photo: true,
       zones: f => [
         `左0% 上0% 宽100% 高42%：大演示格（下沿左右圆角）：纯黑底，镜头贴近这件衣服的肩部和帽子边缘，不画整件衣服；${f.cells[0].recipe}，冷白硬光。`,
-        `左4% 上4% 宽40% 高8%：大标题「${f.title}」，白色细宋体（横细竖粗、优雅，不要粗黑体），字高约占画面 6.5%。`,
+        `左4% 上4% 宽40% 高8%：大标题「${f.title}」，白色细宋体（横细竖粗、优雅，不要粗黑体），字高约占画面 ${H(f.title, 40, 6.5)}%。`,
         ens(f).length > 0 && `左4% 上13% 宽44% 高3%：标题下面一条白色短横线，线下一行白色极小的细体大写英文「${ens(f).join(' · ')}」，字距拉开，字高约占画面 1.1%。`,
-        f.sub && `左4% 上17% 宽40% 高4%：白色细黑体「${f.sub}」，字高约占画面 2.4%。`,
+        f.sub && `左4% 上17% 宽40% 高4%：白色细黑体「${f.sub}」，字高约占画面 ${H(f.sub, 40, 2.4)}%。`,
         `左2% 上45% 宽47% 高27%：圆角演示格：${f.cells[1].recipe}；格子左上角深灰宋体「${f.cells[1].text}」（字高约占画面 3.5%）${f.cells[1].en ? `，下面深灰极小大写英文「${f.cells[1].en}」（字高约占画面 1.1%）` : ''}。`,
         `左51% 上45% 宽47% 高53%：圆角演示格：${f.cells[2].recipe}；格子左下角深灰宋体「${f.cells[2].text}」（字高约占画面 3.5%）${f.cells[2].en ? `，下面深灰极小大写英文「${f.cells[2].en}」（字高约占画面 1.1%）` : ''}；右下角一个小小的白色斜线图标。`,
         `左2% 上74% 宽47% 高24%：圆角演示格：${f.cells[3].recipe}；格子左上角深灰宋体「${f.cells[3].text}」（字高约占画面 3.5%）${f.cells[3].en ? `，下面深灰极小大写英文「${f.cells[3].en}」（字高约占画面 1.1%）` : ''}。`,
@@ -190,10 +220,10 @@ export const SPECS: Record<string, Partial<Record<Task, Spec>>> = {
     细节: { sample: rival('12-3'), cells: 4,
       zones: f => [
         '左4% 上3% 宽16% 高4%：深灰实底圆角小胶囊，里面一个白色放大镜小图标和白色细体大写英文「DETAILS」，字高约占画面 1.6%。',
-        `左4% 上9% 宽60% 高8%：大标题「${f.title}」，深灰黑中粗黑体，字高约占画面 6%。`,
-        f.sub && `左4% 上19% 宽50% 高4%：深灰细黑体「${f.sub}」，字距拉开，字高约占画面 3%。`,
-        `左4% 上26% 宽92% 高44%：大图：${f.cells[0].recipe}；左下角深灰实底小方标、白字「${f.cells[0].text}」，字高约占画面 2.8%。`,
-        ...f.cells.slice(1).map((c, i) => `左${[4, 36, 68][i]}% 上72% 宽${[29, 29, 28][i]}% 高27%：小格：${c.recipe}；格子底部深灰实底小方标、白字「${c.text}」，字高约占画面 2.5%。`),
+        `左4% 上9% 宽60% 高8%：大标题「${f.title}」，深灰黑中粗黑体，字高约占画面 ${H(f.title, 60, 6)}%。`,
+        f.sub && `左4% 上19% 宽50% 高4%：深灰细黑体「${f.sub}」，字距拉开，字高约占画面 ${H(f.sub, 50 * 0.85, 3)}%。`,
+        `左4% 上26% 宽92% 高44%：大图：${f.cells[0].recipe}；左下角深灰实底小方标、白字「${f.cells[0].text}」，字高约占画面 ${pill(f.cells[0].text, 40, 2.8)}%。`,
+        ...f.cells.slice(1).map((c, i) => `左${[4, 36, 68][i]}% 上72% 宽${[29, 29, 28][i]}% 高27%：小格：${c.recipe}；格子底部深灰实底小方标、白字「${c.text}」，字高约占画面 ${pill(c.text, [29, 29, 28][i], 2.5)}%。`),
         '画面里没有任何人。',
       ],
       background: () => '浅灰纯色底。' },
@@ -226,18 +256,18 @@ export const SPECS: Record<string, Partial<Record<Task, Spec>>> = {
     首图: { sample: rival('49-1'), cells: 0, people: true, photo: true,
       zones: f => [
         `左0% 上0% 宽100% 高100%：人物：${f.who}穿着这件衣服，拉链拉到胸口，像抓拍、不看镜头${f.act ? `；${f.act}` : ''}。`,
-        `左3% 上68% 宽38% 高22%：白色书法大字「${f.title}」：行书毛笔字，笔画粗细对比强、有连笔和尖锐的出锋，飘逸不粗笨，带很淡的投影，每个字高约占画面 14%。`,
+        `左3% 上68% 宽38% 高22%：白色书法大字「${f.title}」：行书毛笔字，笔画粗细对比强、有连笔和尖锐的出锋，飘逸不粗笨，带很淡的投影，每个字高约占画面 ${H(f.title, 38, 14)}%。`,
         enOf(f.title) && `左8% 上80% 宽30% 高6%：大字下面压着一行半透明的浅铜棕色英文手写花体「${script(enOf(f.title))}」，比大字小很多，只当装饰。`,
         enOf(f.title) && `左6% 上88% 宽26% 高6%：两行白色细体大写英文「${enOf(f.title)}」「WORK JACKET」，字距拉开，字高约占画面 1.8%。`,
-        f.sub && `左42% 上74% 宽52% 高9%：白色粗黑体「${f.sub}」，字高约占画面 7%。`,
-        f.tags[0] && `左42% 上85% 宽52% 高5%：一条白色细横线，线下白色细黑体「${f.tags[0]}」，字距拉得很开${/\s/.test(f.tags[0].trim()) ? '，两组词之间用细斜杠隔开' : ''}，字高约占画面 2.3%。`,
+        f.sub && `左42% 上74% 宽52% 高9%：白色粗黑体「${f.sub}」，字高约占画面 ${H(f.sub, 52, 7)}%。`,
+        f.tags[0] && `左42% 上85% 宽52% 高5%：一条白色细横线，线下白色细黑体「${f.tags[0]}」，字距拉得很开${/\s/.test(f.tags[0].trim()) ? '，两组词之间用细斜杠隔开' : ''}，字高约占画面 ${H(f.tags[0], 52 * 0.7, 2.3)}%。`,
       ],
       background: f => f.scene ?? '实景：工作现场。' },
     功能: { sample: rival('2-3'), cells: 4, fabric: true, photo: true,
       zones: f => [
         ...f.cells.map((c, i) => {
           const ink = i === 3 ? '深灰' : '白色', icons = ICON_WORDS[c.en];
-          return `左${[0, 50, 0, 50][i]}% 上${[0, 0, 50, 50][i]}% 宽50% 高50%：${['左上', '右上', '左下', '右下'][i]}格（${['暗处，冷白侧光，背景压暗', '明亮的阴天户外柔光，背景虚化成灰绿山野', '暗调，暖色侧光', '明亮的自然光'][i]}）：${c.recipe}；左上角${c.en ? `${ink}中粗无衬线大写英文「${c.en}」（字高约占画面 3.5%），下面一行${ink}细黑体「${c.text}」（字高约占画面 2.6%）` : `${ink}粗黑体「${c.text}」（字高约占画面 3.5%）`}${icons ? `；格子下部一排三个${ink}细线描小图标，各自下面${ink}小字${icons.map(w => `「${w}」`).join('')}（字高约占画面 1.7%）` : ''}。`;
+          return `左${[0, 50, 0, 50][i]}% 上${[0, 0, 50, 50][i]}% 宽50% 高50%：${['左上', '右上', '左下', '右下'][i]}格（${['暗处，冷白侧光，背景压暗', '明亮的阴天户外柔光，背景虚化成灰绿山野', '暗调，暖色侧光', '明亮的自然光'][i]}）：${c.recipe}；左上角${c.en ? `${ink}中粗无衬线大写英文「${c.en}」（字高约占画面 3.5%），下面一行${ink}细黑体「${c.text}」（字高约占画面 ${H(c.text, 40, 2.6)}%）` : `${ink}粗黑体「${c.text}」（字高约占画面 ${H(c.text, 40, 3.5)}%）`}${icons ? `；格子下部一排三个${ink}细线描小图标，各自下面${ink}小字${icons.map(w => `「${w}」`).join('')}（字高约占画面 1.7%）` : ''}。`;
         }),
         '画面里没有任何人。',
       ],
@@ -249,9 +279,9 @@ export const SPECS: Record<string, Partial<Record<Task, Spec>>> = {
     首图: { sample: rival('1-1'), cells: 0, people: true, photo: true,
       zones: f => [
         `左0% 上0% 宽100% 高100%：人物：${f.who}，两人都穿这件${f.color}的衣服，拉链拉到胸口；从头顶拍到臀部，两人脸部清楚。`,
-        two(f.title)[1] ? `左68% 上8% 宽29% 高18%：两行深色粗黑体大字，右对齐：第一行「${two(f.title)[0]}」，第二行「${two(f.title)[1]}」；每个字高约占画面 7%。`
-          : `左68% 上8% 宽29% 高18%：深色粗黑体大字「${f.title}」，右对齐，每个字高约占画面 7%。`,
-        f.tags[0] && `左72% 上28% 宽24% 高5%：绿色圆角胶囊，里面白字「${f.tags[0]}」，字高约占画面 2.5%。`,
+        two(f.title)[1] ? `左68% 上8% 宽29% 高18%：两行深色粗黑体大字，右对齐：第一行「${two(f.title)[0]}」，第二行「${two(f.title)[1]}」；每个字高约占画面 ${H(longer(two(f.title)[0], two(f.title)[1]), 29, 7)}%。`
+          : `左68% 上8% 宽29% 高18%：深色粗黑体大字「${f.title}」，右对齐，每个字高约占画面 ${H(f.title, 29, 7)}%。`,
+        f.tags[0] && `左72% 上28% 宽24% 高5%：绿色圆角胶囊，里面白字「${f.tags[0]}」，字高约占画面 ${pill(f.tags[0], 24, 2.5)}%。`,
       ],
       background: () => '浅灰棚拍纯色底，从上到下轻微渐变，没有场景。' },
     功能: fabricSheet(rival('67-3')),
@@ -264,10 +294,10 @@ export const SPECS: Record<string, Partial<Record<Task, Spec>>> = {
     首图: { sample: '/listing-images/masters/M5-1.jpg', own: true, cells: 0,
       zones: f => [
         '左20% 上6% 宽72% 高90%：衣服：画面里没有人，这件衣服立体地“穿”在看不见的人身上（隐形人台），拉链拉开一点，帽子立起，略微侧转。',
-        two(f.title)[1] ? `左3% 上12% 宽32% 高13%：两行大标题：第一行「${two(f.title)[0]}」用衣服主色 ${f.colors[0]?.hex ?? ''}，第二行「${two(f.title)[1]}」深色；粗黑体，每行字高约占画面 6%。`
-          : `左3% 上12% 宽32% 高13%：大标题「${f.title}」，深色粗黑体，字高约占画面 6%。`,
-        f.tags[0] && `左3% 上28% 宽26% 高7%：深色粗黑体「${f.tags[0]}」，字高约占画面 5%。`,
-        ...f.tags.slice(1, 3).map((t, i) => `左3% 上${42 + i * 16}% 宽14% 高13%：深色线描圆形图标，下方深灰字「${t}」，字高约占画面 2.8%。`),
+        two(f.title)[1] ? `左3% 上12% 宽32% 高13%：两行大标题：第一行「${two(f.title)[0]}」用衣服主色 ${f.colors[0]?.hex ?? ''}，第二行「${two(f.title)[1]}」深色；粗黑体，每行字高约占画面 ${H(longer(two(f.title)[0], two(f.title)[1]), 32, 6)}%。`
+          : `左3% 上12% 宽32% 高13%：大标题「${f.title}」，深色粗黑体，字高约占画面 ${H(f.title, 32, 6)}%。`,
+        f.tags[0] && `左3% 上28% 宽26% 高7%：深色粗黑体「${f.tags[0]}」，字高约占画面 ${H(f.tags[0], 26, 5)}%。`,
+        ...f.tags.slice(1, 3).map((t, i) => `左3% 上${42 + i * 16}% 宽14% 高13%：深色线描圆形图标，下方深灰字「${t}」，字高约占画面 ${H(t, 14, 2.8)}%。`),
         '画面里没有任何人。',
       ],
       background: () => '纯白底，衣服下方有淡淡的落地投影。' },
@@ -279,8 +309,8 @@ export const SPECS: Record<string, Partial<Record<Task, Spec>>> = {
         // sleeves still ran off the edge (10-18, 05/10/15/20/25/45); the posts keep the garments in.
         `左6% 上14% 宽88% 高66%：衣服：画面里没有人，${rack(f).length}件这款衣服挂在落地衣架的横杆上、两根立柱之间排成一排，从左到右依次是${rack(f).join('、')}，每件都正面朝前、等距挂好，彼此留一点空隙，不互相遮挡门襟和口袋；最左和最右两件的袖子离画面左右边缘至少 5%，整排衣服完整地在画面里。`,
         // The rack leaves room for the count only (「6色可选」), as on the sample.
-        `左6% 上84% 宽46% 高9%：大标题「${f.title.replace(/^团体定制 · /, '')}」，深色粗黑体，字高约占画面 7%。`,
-        `左54% 上84% 宽42% 高12%：${f.all.length} 个圆形色块 ${f.all.map(c => c.hex).join('、')}，各自下面一行深灰字${f.all.map(c => `「${c.name}」`).join('')}，字高约占画面 2.2%。`,
+        `左6% 上84% 宽46% 高9%：大标题「${f.title.replace(/^团体定制 · /, '')}」，深色粗黑体，字高约占画面 ${H(f.title.replace(/^团体定制 · /, ''), 46, 7)}%。`,
+        `左54% 上84% 宽42% 高12%：${f.all.length} 个圆形色块 ${f.all.map(c => c.hex).join('、')}，各自下面一行深灰字${f.all.map(c => `「${c.name}」`).join('')}，字高约占画面 ${H(f.all.map(c => c.name).reduce(longer, ''), 42 / Math.max(1, f.all.length), 2.2)}%。`,
         '画面里没有任何人。',
       ],
       background: () => '实景挂拍：浅灰色墙面（照这里写的浅灰，不照参考图的深灰竖条纹墙），一个落地金属衣架：一根横杆架在左右两根立柱上，两根立柱和底座都完整在画面里，立柱离画面左右边缘各约 5%，横杆不伸出立柱；衣服都挂在两根立柱之间；柔和顶光，衣服的影子落在墙上。' },

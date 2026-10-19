@@ -11,12 +11,13 @@
  */
 import { BUILDS, categoryById, groupOf, evidenceOf, type Category, type PointGroup, type PointType, type Task } from './category';
 import { isComponent, isGroup } from './garment-role';
+import { cleanWords, conciseTag, FACT, shortName } from './point-words';
 import { proofById, type Proof } from './proofs';
 import { MASTER_INFO, SELLS, sellOf } from './scene';
 import { capacity, fitTemplate, mostCells, needsCast, type Layout, type Ratio, type Template } from './templates';
 
 /** A point as the AI read it from the material: `text` and `note` are the material's own words. */
-export type SortedPoint = { text: string; note?: string; type: string; concept?: string | null; proof?: string; part?: string; why?: string; from: string[] };
+export type SortedPoint = { text: string; note?: string; type: string; concept?: string | null; proof?: string; part?: string; why?: string; short?: string; from: string[] };
 /** The AI's look at a kind of point the material does not mention: does the garment look like having it. */
 export type Seen = '有' | '看不出' | '不像';
 export type Check = { concept: string; seen: Seen; why: string };
@@ -33,6 +34,8 @@ export type Point = {
   /** Extra points only: how the garment looks to the AI, and why. Folded: offered under "more". */
   seen?: Seen; seenWhy?: string; folded?: boolean;
   proof: string; part: string; why: string; evidence: string; from: string[]; score: number;
+  /** 2–6 characters for an icon or a tag, from the analysis (point-words shortName); none on older plans. */
+  short?: string;
   /** The user wants it on an image whatever its weight: it takes a card first, squeezing the image up to six cards. */
   must?: boolean;
 };
@@ -123,9 +126,12 @@ function fabricWords(fabric: Point[], room: number): string[] {
   const ordered = [...fabric].sort((a, b) => Number(made.test(b.text)) - Number(made.test(a.text)));
   const [pill, ...rest] = ordered;
   if (!pill) return [];
-  const facts = [...rest.map(p => `${made.test(p.text) ? '面料成分' : '面料科技'}｜${p.text}`),
+  // Each the point's most telling words that fit (10-19: 「面料科技｜高防水透气膜 德国SUPER-TEX」 stopped the plan).
+  const word = (p: Point) => conciseTag(p.text, FACT.word) ?? p.short ?? null;
+  const facts = [...rest.flatMap(p => { const w = word(p); return w ? [`${made.test(p.text) ? '面料成分' : '面料科技'}｜${w}`] : []; }),
     ...ordered.map(p => p.note.trim()).filter(n => n && len(n) <= 8 && !/[，。,；;]/.test(n)).map(n => `面料特点｜${n}`)];
-  return [pill.text, ...facts].slice(0, room);
+  const top = conciseTag(pill.text, LIMITS.tag);
+  return [...(top ? [top] : []), ...facts].slice(0, room);
 }
 /** Does a heading speak of this point (two characters in a row in common)? */
 /** The garment part a heading names, if any, as the word its card's point says it with (立领 → 领). */
@@ -158,10 +164,14 @@ export function reviewPoints(m: Pick<MaterialsForPlan, 'points' | 'checks'>, cat
   const own: Point[] = m.points.map((p, i) => {
     const concept = p.concept && byId.has(p.concept) ? p.concept : null, c = concept ? byId.get(concept) : undefined;
     const type = (p.type as PointType) || c?.type || '功能';
+    // The material's words, its typos put right and a field name in front taken off (10-19); the page says what changed.
+    const text = cleanWords(p.text), note = cleanWords(p.note ?? '', false), fixed = [...text.fixed, ...note.fixed];
     return {
-      id: `m${i + 1}`, text: p.text.trim(), note: (p.note ?? '').trim(), type, concept, group: type === '定位' ? '定位' : groupOf(c), source: '素材',
+      id: `m${i + 1}`, text: text.text, note: note.text, type, concept, group: type === '定位' ? '定位' : groupOf(c), source: '素材',
       kind: type === '服务定制' ? '服务' : '衣服', on: true, proof: p.proof && proofById(p.proof) ? p.proof : defaultProof(type, c?.proofs), part: p.part ?? '',
-      why: p.why ?? '', evidence: evidenceOf(c, category), from: p.from, score: type === '定位' ? 2 : 0.6 * (1 - i / Math.max(1, m.points.length)) + 0.4 * market(concept),
+      why: [p.why ?? '', fixed.length ? `已改错字：${[...new Set(fixed)].join('、')}` : ''].filter(Boolean).join('；'),
+      evidence: evidenceOf(c, category), from: p.from, score: type === '定位' ? 2 : 0.6 * (1 - i / Math.max(1, m.points.length)) + 0.4 * market(concept),
+      ...(shortName(p.short ?? '', text.text) ? { short: shortName(p.short ?? '', text.text) } : {}),
     };
   });
   const covered = new Set(own.flatMap(p => p.concept ? [p.concept, ...(byId.get(p.concept)?.includes ?? [])] : []));
@@ -283,7 +293,7 @@ export function planSlots(points: Point[], category: Category, layout: Layout, c
   middle.sort((a, b) => tasks.indexOf(a.task) - tasks.indexOf(b.task));
   const last: Slot = colorNames.length > 1
     ? { task: '收口', lead: null, title: closerTitle(colorNames.length), sub: closerSub(on) || (closer[0]?.text ?? ''), tags: [], cells: [], act: null, colors: [], score: 0 }
-    : { task: '收口', lead: closer[0]?.id ?? null, title: closer[0]?.text ?? '', sub: closer[0]?.note ?? '', tags: closer.slice(1, 2).map(p => p.text), cells: [], act: null, colors: [], score: 0 };
+    : { task: '收口', lead: closer[0]?.id ?? null, title: closer[0]?.text ?? '', sub: closer[0]?.note ?? '', tags: closer.slice(1).flatMap(p => conciseTag(p.text, LIMITS.tag) ?? p.short ?? []).slice(0, 1), cells: [], act: null, colors: [], score: 0 };
   const first: Slot = { task: '首图', lead: named ? named.from?.id ?? null : cover?.id ?? null, title, sub: named ? '' : cover?.note ?? '', tags: coverTags, cells: [], act: null, colors: [], score: 99 };
   let slots = [first, ...middle, last];
   for (const p of on.filter(x => x.must)) if (!shownOn(slots, p)) slots = squeezeIn(slots, p, points, category, layout);
@@ -353,9 +363,11 @@ export function placesFor(d: Draft, pointId: string, layout: Layout): Place[] {
     const cell = { point: p.id, proof: fitProof(p, base, category) };
     if (room.cells > s.cells.length) places.push({ slot: i, label: `${n} · 加一格`, mine, empty: true, apply: setSlot({ cells: [...s.cells, cell] }) });
     else if (s.cells.length && mostCells(base) > s.cells.length) places.push({ slot: i, label: `${n} · 挤一格（格子变小）`, mine, empty: false, apply: setSlot({ cells: [...s.cells, cell] }) });
-    if (room.tags > s.tags.length) places.push({ slot: i, label: `${n} · 加成标签`, mine, empty: true, apply: setSlot({ tags: [...s.tags, p.text] }) });
+    // A point as a tag: its words that fit a tag, or not offered as one.
+    const tag = conciseTag(p.text, LIMITS.tag) ?? p.short ?? null;
+    if (tag && room.tags > s.tags.length) places.push({ slot: i, label: `${n} · 加成标签`, mine, empty: true, apply: setSlot({ tags: [...s.tags, tag] }) });
     s.cells.forEach((c, m) => places.push({ slot: i, label: `${n} · 换掉格 ${m + 1}「${d.points.find(x => x.id === c.point)?.text ?? ''}」`, mine, empty: false, apply: setSlot({ cells: s.cells.map((y, j) => j === m ? cell : y) }) }));
-    s.tags.forEach((t, m) => places.push({ slot: i, label: `${n} · 换掉标签「${t}」`, mine, empty: false, apply: setSlot({ tags: s.tags.map((y, j) => j === m ? p.text : y) }) }));
+    if (tag) s.tags.forEach((t, m) => places.push({ slot: i, label: `${n} · 换掉标签「${t}」`, mine, empty: false, apply: setSlot({ tags: s.tags.map((y, j) => j === m ? tag : y) }) }));
   });
   return places.sort((a, b) => Number(b.mine) - Number(a.mine) || Number(b.empty) - Number(a.empty));
 }
