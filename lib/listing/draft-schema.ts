@@ -46,7 +46,7 @@ export const draftSchema = z.object({
   model: z.object({ lead: z.enum(['男', '女']), photos: z.object({ 男: z.string().max(12).optional(), 女: z.string().max(12).optional() }).optional() }),
   scene: z.object({ place: z.string().max(12), sell: z.string().max(12), act: z.number().int().min(0).max(9999).optional(), look: z.number().int().min(0).max(9999).optional() }).optional(),
   skuPeople: z.enum(SKU_PEOPLE).optional(),
-  logo: z.object({ mode: z.enum(['不印', 'LOGO', '客户']), label: z.string().max(12).optional() }).optional(),
+  logo: z.object({ mode: z.enum(['不印', 'LOGO', '样例', '客户']), label: z.string().max(12).optional() }).optional(),
   seed: z.number().int().min(0).max(1000000).optional(),
 });
 /** A checked plan has the page's shape. */

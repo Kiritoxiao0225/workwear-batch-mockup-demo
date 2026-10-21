@@ -80,8 +80,8 @@ export type Draft = {
    * them or both. None (plans before 10-21): 实拍.
    */
   skuPeople?: SkuPeople;
-  /** What the chest shows: nothing, the word 「LOGO」, or the customer's LOGO (an uploaded image's label). */
-  logo?: { mode: '不印' | 'LOGO' | '客户'; label?: string };
+  /** What the chest shows: nothing, the word 「LOGO」, the shop's sample LOGO (店铺设置, 10-21), or this product's customer LOGO (an uploaded image's label). */
+  logo?: { mode: '不印' | 'LOGO' | '样例' | '客户'; label?: string };
   /** A copy's number (「再出一套」): it moves the plan's seed, so each copy leads with another point and scene. */
   seed?: number;
 };

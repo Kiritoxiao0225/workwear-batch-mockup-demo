@@ -491,7 +491,16 @@ try {
   assert.ok(prompt('service:A-dark').prompt.includes(`「${ticked[0].title}」「${ticked[0].note}」 换成 「${ticked[0].title}」「满意再付款」`));
   const shop2 = await (await call(0, 'shop')).json();
   assert.deepEqual([shop2.shop.made['A-dark'].words[0], shop2.shop.made['A-dark'].history.length, shop2.shop.made['D-warm'].history.length], [`${ticked[0].title}｜满意再付款`, 1, 0]);
-  pass('店铺服务图：设置存在账号上、不在商品列表里，别的账号看不到；勾满 4 条才能出；确认一次出 4 张（工艺图带样例 LOGO）；改了服务只重画变了字的那几张，只改那几处字');
+  // A new sample LOGO: the crafts image, drawn with the old one, is drawn again whole (10-21).
+  const relogo = await (await call(0, 'shop/logo', await image(200, 200, '#0000cc'), 200, 'POST', octet)).json();
+  assert.deepEqual(Object.entries(relogo.shop.made).filter(([, m]) => (m as { oldLogo?: boolean }).oldLogo).map(([id]) => id), ['D-warm']);
+  assert.equal((await (await call(0, 'shop/make', {})).json()).images, 1);
+  for (const j of await imageJobs(shop0.project, true)) await make(j);
+  assert.equal(prompt('service:D-warm').refs, 2); assert.match(prompt('service:D-warm').prompt, /多种印绣工艺/);
+  const shop3 = await (await call(0, 'shop')).json();
+  assert.equal(shop3.shop.made['D-warm'].oldLogo, undefined);
+  assert.equal(shop3.shop.made['D-warm'].history.length, 1);
+  pass('店铺服务图：设置存在账号上、不在商品列表里，别的账号看不到；勾满 4 条才能出；确认一次出 4 张（工艺图带样例 LOGO）；改了服务只重画变了字的那几张，只改那几处字；换了样例 LOGO，印绣工艺图整张重画');
 
   // ---- 第 2 张直接用店铺的服务图（免费），竖版照它重排；点图修改出候选，采用才换上 ----
   const fourth = randomUUID();
@@ -536,7 +545,7 @@ try {
   assert.equal((await (await call(0, 'projects')).json()).find((p: { id: string }) => p.id === fourth).cover, `/api/listing/assets/${sq1.image}`);
   await call(0, `projects/${fourth}/current`, { slot: 'square:1', asset: candidate.id });
   assert.equal((await slotOf(fourth, 'square:1')).image, candidate.id);
-  const svc = shop2.shop.made['D-warm'];
+  const svc = shop3.shop.made['D-warm'];
   const { job: svcJob } = await (await call(0, `projects/${shop0.project}/redraw`, { slot: 'service:D-warm', ask: '标题改成「多种工艺 任你选」' })).json();
   for (const j of await imageJobs(shop0.project, true)) await make(j);
   const svcVersion = (await slotOf(shop0.project, 'service:D-warm')).history.find((v: { job?: string }) => v.job === svcJob);
@@ -565,9 +574,12 @@ try {
   await call(0, `projects/${fifth}/plan`, {});
   const ORANGE5 = (await detailOf(fifth)).sources[0].label;
   await toGenerating(fifth, { images: [{ id: ORANGE5, kind: '颜色款图', color: '爱马仕橙', front: true }], colors: [{ name: '爱马仕橙', hex: '#e8621d', from: [ORANGE5] }], points: [], category: 'workwear' },
-    m => draftFrom(m, commute, counts(5, 5, 0)), { product: { name: '角标款', garment: ['连帽'] } });
+    m => ({ ...draftFrom(m, commute, counts(5, 5, 0)), logo: { mode: '样例' as const } }), { product: { name: '角标款', garment: ['连帽'] } });
   for (const j of await imageJobs(fifth, true)) await make(j);
   assert.match(prompt('square:1').prompt, /左上角空位，之后要贴店铺 LOGO/);
+  // The chest set to the shop's sample LOGO: it goes as the last reference image, printed on the chest (10-21).
+  assert.match(prompt('square:1').prompt, /胸口左侧印客户的 LOGO（照它的参考图），宽约 8–10 厘米/);
+  assert.match(prompt('square:1').prompt, new RegExp(`参考图${prompt('square:1').refs - 1}：客户的 LOGO，只用来印在衣服胸口，画面别处都不放`));
   const receiptOf = async (project: string, slot: string) => (await db().query(`SELECT t.receipt FROM listing_attempts t JOIN listing_jobs j ON j.id=t.job_id WHERE j.project_id=$1 AND j.slot=$2 AND t.status='succeeded' ORDER BY t.finished_at DESC LIMIT 1`, [project, slot])).rows[0]?.receipt;
   assert.equal((await receiptOf(fifth, 'square:1')).corner, true);
   assert.equal(await receiptOf(fifth, 'square:2'), undefined);
@@ -600,7 +612,7 @@ try {
   assert.doesNotMatch(prompt('square:3').prompt, /空位/); assert.equal((await receiptOf(fifth, 'square:3')).corner, undefined);
   // The credits this set took go back, so the checks after it start where they did.
   await db().query('UPDATE credit_accounts SET balance_cents=$2 WHERE tenant_id=$1', [tenants[0], beforeCorner]);
-  pass('店铺 LOGO：没传 LOGO 打不开；开了以后新出的方图左上角留空、看图和下载都贴上（深底变白）；第 2 张服务图不贴；竖版照着留空也贴；别人看不到；换 LOGO 马上换、关掉马上恢复原图，之后出的图不再留空');
+  pass('胸口印样例 LOGO：出图带上店铺设置里的样例 LOGO；店铺 LOGO：没传 LOGO 打不开；开了以后新出的方图左上角留空、看图和下载都贴上（深底变白）；第 2 张服务图不贴；竖版照着留空也贴；别人看不到；换 LOGO 马上换、关掉马上恢复原图，之后出的图不再留空');
 
   const run = async (provider: Parameters<typeof executePlan>[1]) => {
     const pid = randomUUID();

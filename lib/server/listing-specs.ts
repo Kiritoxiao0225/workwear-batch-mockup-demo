@@ -32,8 +32,6 @@ export type Fill = {
   who: string; act?: string; scene?: string;
   /** The words on the lanyard badge (车展工牌), or nothing. */
   badge: string;
-  /** The customer's LOGO reference number, when it is sent (the closer puts it in a corner too). */
-  logoRef?: number;
   /** The cast's reference number, and where the closer's group is shot (the plan's `place`). */
   castRef?: number; place?: string;
 };
@@ -187,7 +185,6 @@ const closer = (sample: string, band: string, words: string, style?: string): Sp
   sample, cells: 0, people: true, photo: true,
   zones: f => [
     `左0% 上12% 宽100% 高88%：人物：${crowdLine(f.colors, f.castRef ? `参考图${f.castRef}` : '定妆照')}；站位和姿势不照示例图，示例图只学横条和字。`,
-    !!f.logoRef && `左3% 上3% 宽18% 高10%：左上角放客户的 LOGO（照参考图${f.logoRef}），深灰单色，小小的。`,
     `左89% 上3% 宽6% 高${Math.min(30, 5 + f.all.length * 4)}%：${dots(f)}。`,
     `左2% 上73% 宽96% 高19%：横条：${band}，压在人物腿部前面。`,
     `左10% 上75% 宽80% 高9%：横条里水平居中的大标题「${f.title}」，白色${words}粗黑体，字高约占画面 ${H(f.title, 80, 6)}%。`,
@@ -336,7 +333,7 @@ export type SpecInput = {
   garment: string[]; logo: string | null;
   /** Reference numbers: the garment's (one per colour, or the piece of fabric), the cast, the customer's LOGO; the sample comes last. */
   refs: { garment: { name: string }[]; cast?: number; logo?: number; sample: number };
-  /** The top-left corner is kept for the shop's LOGO (corner.ts): the customer's LOGO then stays on the chest only. */
+  /** The top-left corner is kept for the shop's LOGO (corner.ts). */
   corner?: boolean;
 };
 const bullet = (xs: (string | false | null | undefined)[]) => xs.filter((x): x is string => !!x).map(x => `- ${x}`).join('\n');
@@ -350,14 +347,14 @@ export function specPrompt(i: SpecInput) {
   const { spec, fill, refs } = i, cover = i.task === '首图', style = SPEC_STYLE[i.master];
   // A cover shot somewhere took the sample's pose and its bright showroom along with its layout (10-17): those are ours.
   const own = cover && spec.photo && !!fill.scene;
-  const f: Fill = { ...fill, logoRef: i.corner ? undefined : refs.logo, ...(own ? {
+  const f: Fill = { ...fill, ...(own ? {
     act: `${fill.act ? `${fill.act}；` : ''}人物的姿势、手的动作和机位不照参考图${refs.sample}，按这里写的重新拍`,
     scene: `${fill.scene}；背景的颜色、光线和地点都不照参考图${refs.sample}，按这里写的场景拍`,
   } : {}) };
   const refLines = [
     ...refs.garment.map((g, k) => spec.fabric ? `参考图${k + 1}：这件衣服「${g.name}」面料的一小块特写，只用来确定面料的颜色和纹理。` : `参考图${k + 1}：「${g.name}」的白底产品图，衣服的颜色和款式以它为准。`),
     !!refs.cast && `参考图${refs.cast}：模特定妆照，只用来确定模特长什么样；姿势、${spec.own ? '' : '光线、'}背景、构图按下面重新做。`,
-    !!refs.logo && `参考图${refs.logo}：客户的 LOGO，只用来印在衣服胸口${spec.people && !cover && !i.corner ? '和放在左上角' : ''}。`,
+    !!refs.logo && `参考图${refs.logo}：客户的 LOGO，只用来印在衣服胸口，画面别处都不放。`,
     spec.own ? `参考图${refs.sample}：这套母版的示例图。版式、字体字号、配色、光影和背景的做法都照它；它是用别的衣服做的，图里的字、衣服颜色和款式、人物长相都不要照搬，一律以这次写的为准；卡片里画的衣服结构（夹层、填充、缝线、口袋、帽子等）也不要照它，只按产品图和给到的部位实拍画。`
       : `参考图${refs.sample}：一张同类商品卖得很好的主图（别家的店、别的衣服）。这一张就照它的做法：排版位置、字的大小和粗细层次（大标题、英文小字、说明小字、细线）、卡片和图标的质感、光影和照片质感都学它；图里的人、衣服、颜色和文字内容一律不要照搬，衣服结构（夹层、填充、缝线、口袋、帽子等）也不照它，以这次写的为准。`,
   ];

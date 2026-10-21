@@ -46,11 +46,12 @@ describe('the masters\' specs', () => {
     }
     expect(SPECS.M5.首图!.own).toBe(true);
   });
-  it('put the customer\'s LOGO in the closer\'s corner only when it is sent', () => {
+  it('print the customer\'s LOGO on the chest only, never in a corner (10-21)', () => {
     const prompt = (logo?: number) => specPrompt({ master: 'M3', task: '收口', taskLabel: '收口', n: 5, total: 5, spec: SPECS.M3.收口!, fill, garment: ['立领'], logo: logo ? '印客户 LOGO' : null,
       refs: { garment: [{ name: '黑色' }, { name: '象牙白' }], cast: 3, logo, sample: logo ? 5 : 4 } });
-    expect(prompt(4)).toContain('左上角放客户的 LOGO（照参考图4）');
-    expect(prompt()).not.toContain('左上角放客户的 LOGO');
+    expect(prompt(4)).toContain('参考图4：客户的 LOGO，只用来印在衣服胸口，画面别处都不放。');
+    expect(prompt(4)).not.toContain('左上角放客户的 LOGO');
+    expect(prompt()).not.toContain('客户的 LOGO');
   });
   it('print the small icon words of 门店上岗\'s feature image from the fixed list only', () => {
     const zones = SPECS.M3.功能!.zones({ ...fill, cells: [...fill.cells.slice(0, 3), { text: '版型利落', note: '', recipe: '面料特写', en: '' }] }).join('\n');

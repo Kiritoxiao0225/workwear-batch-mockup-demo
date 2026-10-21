@@ -324,8 +324,8 @@ describe('the closer and the SKU models (10-16)', () => {
   it('with the shop\'s LOGO in the corner, the corner is kept empty and the customer\'s LOGO stays on the chest only', () => {
     const fill = { title: '团体定制 · 6色可选', sub: '', tags: [], facts: [], cells: [], color: six[0], colors: six.map(name => ({ name, hex: '#000' })), all: six.map(name => ({ name, hex: '#000' })), light: false, who: '', badge: '', castRef: 7 };
     const closer = (corner: boolean) => specPrompt({ master: 'M1', task: '收口', taskLabel: '收口', n: 5, total: 5, spec: SPECS.M1.收口!, fill, garment: ['立领'], logo: '印客户 LOGO', refs: { garment: fill.colors, cast: 7, logo: 8, sample: 9 }, corner });
-    expect(closer(false)).toContain('左上角放客户的 LOGO'); expect(closer(false)).toContain('只用来印在衣服胸口和放在左上角');
-    expect(closer(true)).not.toContain('左上角放客户的 LOGO'); expect(closer(true)).toContain('只用来印在衣服胸口。');
+    for (const corner of [false, true]) { expect(closer(corner)).not.toContain('左上角放客户的 LOGO'); expect(closer(corner)).toContain('只用来印在衣服胸口，画面别处都不放。'); }
+    expect(closer(false)).not.toContain('左上角空位');
     expect(closer(true)).toContain('左0% 上0% 宽26% 高13%：左上角空位，之后要贴店铺 LOGO');
     const m4 = MASTERS.find(l => l.id === 'M4')!, one = [{ name: '落霞橙', hex: '#d98a1c' }];
     expect(mainPrompt({ ratio: 'square', task: '细节', template: m4.templates.细节.square, layout: m4, content: { title: '细节', sub: '', tags: [], cells: [], scene: '' }, used: one, all: one, garment: ['连帽'], lead: '男', fromSku: false, cast: null, corner: true }))

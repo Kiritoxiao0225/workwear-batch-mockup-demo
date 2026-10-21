@@ -7,7 +7,7 @@
  * acted out in its picture; ④ what is made and what it costs. A point's words are kept in one place,
  * the list; the images use them. Nothing is paid before 「开始出图」.
  */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { LayoutCard, Materials, Source } from "@/lib/listing/api-types";
 import { assetUrl } from "@/lib/listing/client-api";
 import { CATEGORIES, categoryById, GROUP_HINT, GROUP_LABEL, TASK_HINT, TASK_LABEL } from "@/lib/listing/category";
@@ -206,6 +206,8 @@ export function PlanDialog({ name, materials, sources, draft, layouts, prices, o
     else { const at = draft.parts.findIndex(x => x.part === f.part); if (at < 0) onChange({ ...draft, parts: [...draft.parts, { part: f.part, pick: null }] }); setTab("全部"); setTarget({ kind: "part", index: at < 0 ? draft.parts.length : at }); }
   };
   const logoMode = draft.logo?.mode ?? "LOGO";
+  // A shop with a sample LOGO prints it on the chest unless the plan says otherwise (10-21).
+  useEffect(() => { if (!draft.logo && shop?.logo) onChange({ ...draft, logo: { mode: "样例" } }); }, [draft, shop?.logo, onChange]);
   const step1 = (<>
     <div className="lp-catcard"><b>品类</b>
       <span className="lp-chips">{CATEGORIES.map(c => (
@@ -254,9 +256,11 @@ export function PlanDialog({ name, materials, sources, draft, layouts, prices, o
           <a key={i.label} className="it" href={i.url} target="_blank" rel="noreferrer"><img src={i.url} alt="" loading="lazy" /><span className="cat">{sorted.get(i.label)?.kind}{sorted.get(i.label)?.color ? "·" + sorted.get(i.label)!.color : ""}</span><small>{i.path}</small></a>))}</div>
     </details>
     <h4 className="lp-h">胸口印什么 <small>竞品首图几乎都在胸口印了标；只影响有人和整件衣服的图</small></h4>
-    <div className="lp-logo3">{([["不印", "衣服原样，不印任何字"], ["LOGO", "印一个小小的「LOGO」，告诉买家能印标"], ["客户", "印客户的 LOGO 做案例"]] as const).map(([mode, what]) => (
-      <button type="button" key={mode} className={"lp-pick" + (logoMode === mode ? " on" : "")} onClick={() => mode === "客户" && !draft.logo?.label ? logoUpload.current?.click() : set({ logo: { mode, label: draft.logo?.label } })}>
-        <b>{mode === "不印" ? "不印" : mode === "LOGO" ? "印「LOGO」" : "印客户 LOGO"}</b><span>{mode === "客户" && draft.logo?.label ? `已上传 ${draft.logo.label}，点这里用它` : what}</span></button>))}
+    <div className="lp-logo3">{([["样例", shop?.logo ? "店铺设置里的样例 LOGO，每款都能直接用" : "先去店铺设置传样例 LOGO"], ["客户", "这款单独传一个客户的 LOGO 做案例"], ["LOGO", "印一个「LOGO」字样，告诉买家能印标"], ["不印", "衣服原样，不印任何字"]] as const).map(([mode, what]) => (
+      <button type="button" key={mode} disabled={mode === "样例" && !shop?.logo} className={"lp-pick" + (logoMode === mode ? " on" : "")} onClick={() => mode === "客户" && !draft.logo?.label ? logoUpload.current?.click() : set({ logo: { mode, label: draft.logo?.label } })}>
+        <b>{mode === "不印" ? "不印" : mode === "LOGO" ? "印「LOGO」字样" : mode === "样例" ? "印样例 LOGO" : "印客户 LOGO"}</b>
+        {mode === "样例" && shop?.logo && <img src={shop.logo} alt="样例 LOGO" />}
+        <span>{mode === "客户" && draft.logo?.label ? `已上传 ${draft.logo.label}，点这里用它` : what}</span></button>))}
       <input ref={logoUpload} type="file" accept="image/*" hidden onChange={async e => {
         const file = e.target.files?.[0]; e.target.value = ""; if (!file) return;
         setBusy(true); try { const added = await onUpload(file); set({ logo: { mode: "客户", label: added.label } }); } catch { /* the page says why */ } finally { setBusy(false); }
@@ -528,7 +532,7 @@ export function PlanDialog({ name, materials, sources, draft, layouts, prices, o
   const credits = (n: number) => prices.exempt ? null : <span className="lp-muted">约 {n} 积分</span>;
   const confirmStep = (
     <div className="lp-confirm4">
-      <p className="lp-cfg"><span>母版 <b>{layout.name}</b></span><span>胸口 <b>{logoMode === "不印" ? "不印字" : logoMode === "LOGO" ? "印一个小「LOGO」字样，告诉买家能印标" : `印客户 LOGO（${draft.logo?.label ?? "还没上传"}）`}</b></span></p>
+      <p className="lp-cfg"><span>母版 <b>{layout.name}</b></span><span>胸口 <b>{logoMode === "不印" ? "不印字" : logoMode === "LOGO" ? "印「LOGO」字样，告诉买家能印标" : logoMode === "样例" ? "印店铺的样例 LOGO" : `印客户 LOGO（${draft.logo?.label ?? "还没上传"}）`}</b></span></p>
       <h4 className="lp-h">现在出 {cost.now.images} 张 {credits(cost.now.credits)} <small>出图约 3–5 分钟，可以关掉页面，做好的会陆续出现</small></h4>
       <ol className="lp-shots">{used.map((i, k) => {
         const s = draft.slots[i], notes = notesOf(draft, i, layout), cover = i === 0 && draft.scene;

@@ -47,6 +47,8 @@ export async function shopState(tenant: string, user: string) {
   const states = await slotStates(row.id);
   const made: ShopService['made'] = {}, making: ServiceImageId[] = [], failed: Partial<Record<ServiceImageId, string>> = {};
   const times = new Map(((await db().query(`SELECT id,created_at FROM listing_assets WHERE project_id=$1 AND slot IS NOT NULL`, [row.id])).rows as { id: string; created_at: Date }[]).map(r => [r.id, r.created_at.toISOString()]));
+  // When the sample LOGO was set: a crafts image drawn before it shows the old one (10-21).
+  const logoAt = row.shop.logo ? ((await db().query('SELECT created_at FROM listing_assets WHERE id=$1', [row.shop.logo])).rows[0]?.created_at as Date | undefined)?.toISOString() : undefined;
   for (const def of SERVICE_IMAGES) {
     const s = states.find(x => x.slot === serviceSlot(def.id));
     if (!s) continue;
@@ -56,6 +58,7 @@ export async function shopState(tenant: string, user: string) {
     const kept = s.history.filter(v => v.id !== s.image && !v.job);
     made[def.id] = {
       image: assetUrl(s.image), asset: s.image, words: s.words?.tags ?? [], madeAt: times.get(s.image) ?? '',
+      ...(def.kind === 'crafts' && logoAt && (times.get(s.image) ?? '') < logoAt ? { oldLogo: true } : {}),
       history: kept.reverse().map(v => ({ image: assetUrl(v.id), asset: v.id, madeAt: times.get(v.id) ?? '' })),
     } satisfies MadeService;
   }

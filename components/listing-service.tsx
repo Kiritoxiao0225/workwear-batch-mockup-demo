@@ -90,9 +90,14 @@ function ShopForm({ state, unit, exempt, onSay }: { state: ShopState; unit: numb
     const j = i + by; if (j < 0 || j >= shop.items.length) return;
     const items = [...shop.items]; [items[i], items[j]] = [items[j], items[i]]; change({ ...shop, items });
   };
-  const toggleCraft = (c: Craft) => change({ ...shop, crafts: shop.crafts.includes(c) ? shop.crafts.filter(x => x !== c) : [...shop.crafts, c] });
+  const toggleCraft = (c: Craft) => {
+    if (!shop.crafts.includes(c) && shop.crafts.length >= 3) { onSay("最多选 3 种工艺，先点掉一个"); return; }
+    change({ ...shop, crafts: shop.crafts.includes(c) ? shop.crafts.filter(x => x !== c) : [...shop.crafts, c] });
+  };
 
-  const pending = pendingOf(shop), blocked = blockedOf(shop);
+  const pending = pendingOf(shop), blocked = blockedOf(shop), newLogo = Object.values(shop.made).some(m => m?.oldLogo);
+  const uploadLogo = (f: File) => void api<ShopState>("shop/logo", { method: "POST", body: f, headers: { "Content-Type": "application/octet-stream", "x-file-name": encodeURIComponent(f.name) } })
+    .then(s => { keep(s); onSay(Object.values(s.shop.made).some(m => m?.oldLogo) ? "样例 LOGO 传好了：之后新开的款胸口默认印它；印绣工艺图点下面的「确认修改」重画" : "样例 LOGO 传好了：之后新开的款胸口默认印它，印绣工艺图也用它"); }).catch(error => onSay((error as Error).message));
   // The cost: a new image is one image; redrawing the changed words of one is one image too.
   const confirm = async () => {
     setAsking(true);
@@ -110,19 +115,24 @@ function ShopForm({ state, unit, exempt, onSay }: { state: ShopState; unit: numb
       ? <div className="lp-confirm-bar"><div><b>服务写好了？点确认，4 张服务图一起出</b><small>5 套母版共用这 4 张；出好后每款出图直接用，不再花钱</small></div>
           <button type="button" className="lp-btn primary" disabled={!!blocked || asking} onClick={() => void confirm()}>确认，生成 4 张服务图{credits(4) && ` · ${credits(4)}`}</button>{blocked && <span className="lp-warn">{blocked}</span>}</div>
       : pending.images
-        ? <div className="lp-confirm-bar y"><div><b>你改了服务，{pending.images} 张服务图上还是旧字</b><small>点确认只重画变了的字，其他地方不动；没确认之前，旧图照常能用</small></div>
+        ? <div className="lp-confirm-bar y"><div><b>{newLogo && !pending.stale.length ? "你换了样例 LOGO，印绣工艺图要重画" : `你改了服务，${pending.images} 张服务图要更新`}</b>
+            <small>{newLogo ? "印绣工艺图整张重画，换上新图案；" : ""}{pending.stale.length ? "其他的只重画变了的字；" : ""}没确认之前，旧图照常能用</small></div>
             <button type="button" className="lp-btn primary" disabled={!!blocked || asking} onClick={() => void confirm()}>确认修改{credits(pending.images) && ` · ${credits(pending.images)}`}</button>{blocked && <span className="lp-warn">{blocked}</span>}</div>
-        : <div className="lp-confirm-bar ok"><div><b>4 张服务图都是最新的</b><small>改了上面的服务以后，这里会提示确认修改</small></div></div>;
+        : <div className="lp-confirm-bar ok"><div><b>4 张服务图都是最新的</b><small>改了服务、工艺或样例 LOGO 以后，这里会提示确认修改</small></div></div>;
 
   const card = (def: ServiceImageDef) => {
     const made = shop.made[def.id], busy = making.includes(def.id), stale = staleOf(def.id, shop), failed = state.failed[def.id];
     return (
       <figure key={def.id} className="lp-svc-img">
         {made && !busy
-          ? <button type="button" className="pic" onClick={() => setEditing(def.id)} aria-label={`修改${def.name}`}><img src={made.image} alt={def.name} /><span className="edit-tag">点图修改</span>{stale.length > 0 && <span className="chip y">旧字</span>}</button>
+          ? <button type="button" className="pic" onClick={() => setEditing(def.id)} aria-label={`修改${def.name}`}><img src={made.image} alt={def.name} /><span className="edit-tag">点图修改</span>{made.oldLogo ? <span className="chip y">旧图案</span> : stale.length > 0 && <span className="chip y">旧字</span>}</button>
           : <div className={"pic empty" + (busy ? " busy" : "")}>{busy ? "生成中…" : failed ? "没出成，没扣积分" : "还没出"}</div>}
         <figcaption><b>{def.name}</b><small>用在：{def.masters.map(m => MASTER_NAMES[m]).join("、")}</small>
-          <small className="words">{wordsFor(def, shop).map(w => w.split("｜")[0]).join(" · ")}</small></figcaption>
+          {def.kind === "crafts" ? <div className="lp-crafts">
+            <small>三格布面各做一种工艺，选 {def.slots} 种：</small>
+            <div className="lp-chips">{CRAFTS.map(c => <button type="button" key={c} className={"lp-chip" + (shop.crafts.includes(c) ? " on" : "")} onClick={() => toggleCraft(c)}>{c}</button>)}</div>
+            <small>布面上的图案：{shop.logo ? "上面传的样例 LOGO" : "抽象图案（上面传了样例 LOGO 就用它）"}</small>
+          </div> : <small className="words">{wordsFor(def, shop).map(w => w.split("｜")[0]).join(" · ")}</small>}</figcaption>
       </figure>
     );
   };
@@ -133,7 +143,7 @@ function ShopForm({ state, unit, exempt, onSay }: { state: ShopState; unit: numb
     <div className="lp-shop">
       <div className="lp-shop-grid">
         <nav className="lp-snav" aria-label="店铺设置目录">
-          <a href="#lp-s-svc">服务卖点</a><a href="#lp-s-brand">店铺 LOGO</a><a href="#lp-s-craft">印绣工艺和样例 LOGO</a>
+          <a href="#lp-s-svc">服务卖点</a><a href="#lp-s-brand">LOGO</a>
           <a href="#lp-s-img">服务图{pending.images > 0 && Object.keys(shop.made).length > 0 && <span className="chip y">{pending.images} 张旧字</span>}</a>
         </nav>
         <div>
@@ -153,8 +163,11 @@ function ShopForm({ state, unit, exempt, onSay }: { state: ShopState; unit: numb
             </div>
           </section>
           <section className="lp-ann" id="lp-s-brand">
-            <div><h2>店铺 LOGO</h2><p>放在 1:1 和 3:4 主图的左上角，SKU 图左上角也用它；第 2 张服务图不放。</p><p className="lp-small">只放左上角，不印到衣服上。衣服胸口印什么，还在每款的方案里选。</p></div>
+            <div><h2>LOGO</h2><p>两个 LOGO，用处不一样：店铺 LOGO 是你们店的标，放在图的左上角；样例 LOGO 是印在衣服上做示范的标。</p><p className="lp-small">每款方案里胸口印什么还能改：样例 LOGO、这款单独传的客户 LOGO、「LOGO」字样或不印。</p></div>
+            <div className="lp-logos">
             <div className="lp-card lp-pad">
+              <h3>店铺 LOGO</h3>
+              <p className="lp-muted lp-small">放在 1:1 和 3:4 主图的左上角，SKU 图左上角也用它；第 2 张服务图不放。不印到衣服上。</p>
               <div className="lp-logo-up"><label className="box">{shop.brand ? <img src={shop.brand} alt="店铺 LOGO" /> : <span>上传店铺 LOGO</span>}
                 <input type="file" accept="image/*" hidden onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (!f) return;
                   void api<ShopState>("shop/brand", { method: "POST", body: f, headers: { "Content-Type": "application/octet-stream", "x-file-name": encodeURIComponent(f.name) } }).then(s => { keep(s); onSay(s.shop.corner ? "店铺 LOGO 换好了，留了位置的主图马上用新的" : "店铺 LOGO 传好了，选「放在左上角」就会用上"); }).catch(error => onSay((error as Error).message)); }} /></label>
@@ -163,19 +176,17 @@ function ShopForm({ state, unit, exempt, onSay }: { state: ShopState; unit: numb
                 <button type="button" key={name} className={"lp-pick" + (shop.corner === on ? " on" : "")} disabled={on && !shop.brand} onClick={() => { if (shop.corner !== on) setCorner(on); }}><b>{name}</b><span>{what}</span></button>))}</div>
               <p className="lp-muted lp-small">打开以后新出的主图才留位置，之前出的图不贴。关掉或换 LOGO，留了位置的图马上跟着变，不用重出。</p>
             </div>
-          </section>
-          <section className="lp-ann" id="lp-s-craft">
-            <div><h2>印绣工艺和样例 LOGO</h2><p>上岗实拍那套的服务图是印绣工艺图，选 3 种工艺；样例 LOGO 只印在工艺图的布面上做展示，不传就画抽象图案。</p></div>
             <div className="lp-card lp-pad">
-              <div className="lp-chips">{CRAFTS.map(c => <button type="button" key={c} className={"lp-chip" + (shop.crafts.includes(c) ? " on" : "")} onClick={() => toggleCraft(c)}>{c}</button>)}</div>
-              <div className="lp-logo-up"><label className="box">{shop.logo ? <img src={shop.logo} alt="样例 LOGO" /> : <span>上传 LOGO</span>}
-                <input type="file" accept="image/*" hidden onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (!f) return;
-                  void api<ShopState>("shop/logo", { method: "POST", body: f, headers: { "Content-Type": "application/octet-stream", "x-file-name": encodeURIComponent(f.name) } }).then(s => { keep(s); onSay("LOGO 传好了，下次出印绣工艺图时用上"); }).catch(error => onSay((error as Error).message)); }} /></label>
-                <p className="lp-muted lp-small">PNG 透明底最好。用客户的真实 LOGO 做案例展示时，确认是真实合作或已获授权。</p></div>
+              <h3>样例 LOGO</h3>
+              <p className="lp-muted lp-small">印在衣服上做示范，告诉买家能印标：每款方案的胸口默认印它；印绣工艺图三格布面上绣的、烫的、印的也是它。不传的话，胸口默认印「LOGO」字样，工艺图画抽象图案。</p>
+              <div className="lp-logo-up"><label className="box">{shop.logo ? <img src={shop.logo} alt="样例 LOGO" /> : <span>上传样例 LOGO</span>}
+                <input type="file" accept="image/*" hidden onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) uploadLogo(f); }} /></label>
+                <p className="lp-muted lp-small">传单独一个 LOGO，透明底 PNG 最好；不要传工艺效果拼图或产品照片，会被整张印到衣服上。用客户的真实 LOGO 做案例展示时，确认是真实合作或已获授权。</p></div>
+            </div>
             </div>
           </section>
           <section className="lp-ann" id="lp-s-img">
-            <div><h2>服务图</h2><p>每套母版配好了一种服务图，颜色和风格跟那套图一致，5 套母版共用 4 张。</p><p className="lp-small">出商品时，用哪套母版就自动放对应的那张，放在第 2 张，不用选，也不再花钱。</p></div>
+            <div><h2>服务图</h2><p>每套母版配好了一种服务图，颜色和风格跟那套图一致，5 套母版共用 4 张。</p><p className="lp-small">三张写的是上面勾的服务；印绣工艺那张的工艺在它下面直接选，布面图案用上面的样例 LOGO。</p><p className="lp-small">出商品时，用哪套母版就自动放对应的那张，放在第 2 张，不用选，也不再花钱。</p></div>
             <div className="lp-svc-imgs">
               {bar}
               <div className="grid">{SERVICE_IMAGES.map(card)}</div>

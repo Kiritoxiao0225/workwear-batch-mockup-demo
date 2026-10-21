@@ -48,8 +48,11 @@ export const SERVICE_IMAGES: ServiceImageDef[] = [
 ];
 export const serviceImageOf = (master: MasterId) => SERVICE_IMAGES.find(s => s.masters.includes(master))!;
 
-/** One made service image: the picture (and its asset id on the server), the words drawn on it, and the earlier versions. */
-export type MadeService = { image: string; asset?: string; words: string[]; madeAt: string; history: { image: string; asset?: string; madeAt: string }[] };
+/**
+ * One made service image: the picture (and its asset id on the server), the words drawn on it, and the
+ * earlier versions. `oldLogo`: the crafts image was drawn before the sample LOGO now set, so it is drawn again.
+ */
+export type MadeService = { image: string; asset?: string; words: string[]; madeAt: string; oldLogo?: boolean; history: { image: string; asset?: string; madeAt: string }[] };
 /**
  * `logo`: the sample LOGO printed on the crafts image. `brand`: the shop's own LOGO, put in the top-left
  * corner of its main images and on its SKU images while `corner` is on (corner.ts); never on a garment.
@@ -80,9 +83,9 @@ export function staleOf(id: ServiceImageId, shop: ShopService): number[] {
   const now = wordsFor(def, shop);
   return now.map((w, i) => w === made.words[i] ? -1 : i).filter(i => i >= 0);
 }
-/** What confirming does now: make the images never made, and redraw the changed words of the rest. */
+/** What confirming does now: make the images never made (or drawn with an old sample LOGO), and redraw the changed words of the rest. */
 export function pendingOf(shop: ShopService) {
-  const fresh = SERVICE_IMAGES.filter(s => !shop.made[s.id]);
-  const stale = SERVICE_IMAGES.map(s => ({ def: s, blocks: staleOf(s.id, shop) })).filter(x => x.blocks.length);
+  const fresh = SERVICE_IMAGES.filter(s => !shop.made[s.id] || shop.made[s.id]!.oldLogo);
+  const stale = SERVICE_IMAGES.filter(s => !fresh.includes(s)).map(s => ({ def: s, blocks: staleOf(s.id, shop) })).filter(x => x.blocks.length);
   return { fresh, stale, images: fresh.length + stale.length };
 }

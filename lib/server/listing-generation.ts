@@ -518,7 +518,8 @@ export async function specShot(o: { stored: StoredPlan; projectId: string; input
 /** What is printed on the chest, from the plan's choice; the customer's LOGO comes as a reference image. */
 // 10-21: 「小小的」 came out a few millimetres wide, hard to see; a real left-chest print is about a palm wide.
 const CHEST_SIZE = '宽约 8–10 厘米，约占左半边前胸宽度的一半，整张图缩小了也能一眼看清';
-export const LOGO_LINE = { LOGO: `衣服胸口左侧印一个白色「LOGO」字样，${CHEST_SIZE}，像真实印绣上去的`, 客户: `衣服胸口左侧印客户的 LOGO（照它的参考图），${CHEST_SIZE}，像真实印绣上去的` } as const;
+const CHEST_IMAGE = `衣服胸口左侧印客户的 LOGO（照它的参考图），${CHEST_SIZE}，像真实印绣上去的`;
+export const LOGO_LINE = { LOGO: `衣服胸口左侧印一个白色「LOGO」字样，${CHEST_SIZE}，像真实印绣上去的`, 样例: CHEST_IMAGE, 客户: CHEST_IMAGE } as const;
 /** A piece of the garment's fabric, for images that show only fabric: the left chest of the product image, away from the zip and pockets. */
 export async function fabricCrop(product: Buffer) {
   const { data, info } = await sharp(product).flatten({ background: '#ffffff' }).trim({ threshold: 12 }).png().toBuffer({ resolveWithObject: true });
@@ -615,10 +616,11 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
       const colors = stored.colors, garment = stored.garment, main = colors[0];
       const colorOf = (sku: string) => colors.find(c => c.sku === sku) ?? (() => { throw new CatalogHttpError(404, `颜色不存在：${sku}`); })();
       const hasCast = outputs.has('cast');
-      // What is printed on the chest; the customer's LOGO is sent as the last reference image.
+      // What is printed on the chest; a LOGO image (the shop's sample one, or this product's customer one) is sent as the last reference image.
       const logoMode = d.logo?.mode ?? 'LOGO', logoAsset = logoMode === '客户' ? stored.images.find(i => i.label === d.logo?.label)?.assetId : undefined;
-      const logoBytes = logoAsset ? await fileOf((await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [logoAsset])).rows[0].file_id) : null;
-      const logoLine = logoMode === '不印' || (logoMode === '客户' && !logoBytes) ? null : LOGO_LINE[logoMode];
+      const logoBytes = logoMode === '样例' ? (await shopSettings(job.tenant_id)).logo
+        : logoAsset ? await fileOf((await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [logoAsset])).rows[0].file_id) : null;
+      const logoLine = logoMode === '不印' || (logoMode !== 'LOGO' && !logoBytes) ? null : LOGO_LINE[logoMode];
       if (input.kind === 'sku' && input.card) {
         // The SKU image on the brand template: the colour's model photo (the material's own, else the drawn one), its fabric, the material's words. No model call.
         const m = (await db().query('SELECT name, materials FROM listing_projects WHERE id=$1', [job.project_id])).rows[0];
