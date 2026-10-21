@@ -1,5 +1,6 @@
 /**
- * 电商主图 shop services (店铺设置): what the shop offers, its crafts and sample LOGO, and its four
+ * 电商主图 shop services (店铺设置): what the shop offers, its crafts and sample LOGO, its own LOGO for
+ * the corner of its main images (lib/listing/corner.ts, 10-18), and its four
  * service images. They live on the tenant's hidden product row of kind 'shop' (035), so the images
  * go through the same jobs, credits and versions as a product's: slot service:<id>. Confirming
  * makes the images never made and redraws only the changed words of the rest; every product then
@@ -14,6 +15,7 @@ import {
 } from '../listing/service';
 import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './catalog-database';
 import { CatalogHttpError } from './catalog-auth';
+import { brandImage } from './listing-corner';
 import { readCatalogFile } from './catalog-files';
 import { currentPrices, type PriceSnapshot } from './credits';
 import { holdRun, insertJobs, slotStates, type JobInput } from './listing-generation';
@@ -21,8 +23,8 @@ import { addReference, assetUrl, latestOutputs } from './listing-store';
 import type { Tenant } from './tenant-scope';
 
 const db = () => catalogDatabase();
-/** What is stored on the shop's row; the LOGO is the asset id of an uploaded reference image. */
-type Settings = Omit<ShopService, 'made' | 'logo'> & { logo: string | null };
+/** What is stored on the shop's row; the LOGOs are asset ids of uploaded reference images (rows before 10-18 have no brand). */
+type Settings = Omit<ShopService, 'made' | 'logo' | 'brand' | 'corner'> & { logo: string | null; brand?: string | null; corner?: boolean };
 export const serviceSlot = (id: ServiceImageId) => `service:${id}`;
 
 /** The tenant's shop row, made the first time (services the AI read in uploaded products come ticked). */
@@ -32,7 +34,7 @@ async function shopRow(c: CatalogQueryClient, tenant: string, user: string) {
   const read = (await c.query(`SELECT DISTINCT p->>'text' AS text FROM listing_projects, jsonb_array_elements(materials->'sorted'->'points') p
     WHERE tenant_id=$1 AND kind='product' AND p->>'type'='服务定制' LIMIT 40`, [tenant])).rows.map(r => String(r.text));
   const start = defaultShop(defaultShop().items.filter(x => read.some(text => text.includes(x.title))).map(x => x.title));
-  const shop: Settings = { items: start.items, crafts: start.crafts, logo: null };
+  const shop: Settings = { items: start.items, crafts: start.crafts, logo: null, brand: null, corner: false };
   const id = randomUUID();
   await c.query(`INSERT INTO listing_projects(id,tenant_id,created_by,name,layout,counts,status,kind,plan,shop)
     VALUES($1,$2,$3,'店铺服务图','M1','{"square":1,"portrait":0,"long":0}','done','shop','{"round":2}',$4) ON CONFLICT DO NOTHING`, [id, tenant, user, shop]);
@@ -57,7 +59,8 @@ export async function shopState(tenant: string, user: string) {
       history: kept.reverse().map(v => ({ image: assetUrl(v.id), asset: v.id, madeAt: times.get(v.id) ?? '' })),
     } satisfies MadeService;
   }
-  const shop: ShopService = { ...row.shop, logo: row.shop.logo ? assetUrl(row.shop.logo) : null, made };
+  const shop: ShopService = { ...row.shop, logo: row.shop.logo ? assetUrl(row.shop.logo) : null,
+    brand: row.shop.brand ? assetUrl(row.shop.brand) : null, corner: !!row.shop.corner && !!row.shop.brand, made };
   return { project: row.id, shop, making, failed };
 }
 
@@ -70,7 +73,8 @@ export async function saveShop(tenant: string, user: string, input: unknown) {
   const b = settingsSchema.parse(input);
   await catalogTransaction(async c => {
     const row = await shopRow(c, tenant, user);
-    await c.query('UPDATE listing_projects SET shop=$2,updated_at=now() WHERE id=$1', [row.id, { ...row.shop, items: b.items, crafts: [...new Set(b.crafts)] }]);
+    // Merged, so the LOGOs and the corner switch, saved on their own, are kept.
+    await c.query('UPDATE listing_projects SET shop=shop||$2::jsonb,updated_at=now() WHERE id=$1', [row.id, { items: b.items, crafts: [...new Set(b.crafts)] }]);
   });
   return shopState(tenant, user);
 }
@@ -79,8 +83,44 @@ export async function saveShop(tenant: string, user: string, input: unknown) {
 export async function saveShopLogo(tenant: string, user: string, bytes: Buffer, name: string) {
   const row = await catalogTransaction(c => shopRow(c, tenant, user));
   const { asset } = await addReference(tenant, row.id, bytes, name);
-  await db().query('UPDATE listing_projects SET shop=$2,updated_at=now() WHERE id=$1', [row.id, { ...row.shop, logo: asset }]);
+  await db().query(`UPDATE listing_projects SET shop=shop||jsonb_build_object('logo',$2::text),updated_at=now() WHERE id=$1`, [row.id, asset]);
   return shopState(tenant, user);
+}
+
+/** The shop's own LOGO, for the corner of its main images and its SKU images. */
+export async function saveShopBrand(tenant: string, user: string, bytes: Buffer, name: string) {
+  const logo = await brandImage(bytes);
+  const row = await catalogTransaction(c => shopRow(c, tenant, user));
+  const { asset } = await addReference(tenant, row.id, logo, name);
+  await db().query(`UPDATE listing_projects SET shop=shop||jsonb_build_object('brand',$2::text),updated_at=now() WHERE id=$1`, [row.id, asset]);
+  return shopState(tenant, user);
+}
+
+/** 主图左上角放不放店铺 LOGO: from now on for images being made, at once for the ones that kept the corner. */
+export async function saveShopCorner(tenant: string, user: string, input: unknown) {
+  const { on } = z.object({ on: z.boolean() }).parse(input);
+  const row = await catalogTransaction(c => shopRow(c, tenant, user));
+  if (on && !row.shop.brand) throw new CatalogHttpError(400, '先上传店铺 LOGO');
+  await db().query(`UPDATE listing_projects SET shop=shop||jsonb_build_object('corner',$2::boolean),updated_at=now() WHERE id=$1`, [row.id, on]);
+  return shopState(tenant, user);
+}
+
+/**
+ * The shop's own LOGO while the switch is on: its asset id (images are shown with this one) and its
+ * bytes when they are needed. Null when the shop shows none.
+ */
+export async function shopBrand(tenant: string) {
+  const shop = (await db().query(`SELECT shop FROM listing_projects WHERE tenant_id=$1 AND kind='shop'`, [tenant])).rows[0]?.shop as Settings | undefined;
+  const id = shop?.corner && shop.brand ? shop.brand : null;
+  if (!id) return null;
+  return {
+    id,
+    bytes: async () => {
+      const file = (await db().query('SELECT file_id FROM listing_assets WHERE id=$1 AND tenant_id=$2', [id, tenant])).rows[0];
+      if (!file) throw new CatalogHttpError(404, '店铺 LOGO 找不到了，去店铺设置重新上传');
+      return (await readCatalogFile(file.file_id)).bytes;
+    },
+  };
 }
 
 /** 「确认」: hold the credits and make the service images never made; redraw only the changed words of the others. */

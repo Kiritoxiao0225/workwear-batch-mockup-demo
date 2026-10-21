@@ -6,6 +6,7 @@
  * image shows no garment), the cast (the models every image with people is drawn from) and these
  * words. Only the shop's service images learn from a (washed) competitor sample.
  */
+import { CORNER_BAND, CORNER_KEEP, CORNER_LINE, cornerStay, cornerTemplate } from '../listing/corner';
 import type { ServiceImageDef } from '../listing/service';
 import { crowdLine, DEFAULT_PLACE, othersLine } from './listing-crowd';
 import { NO_CHEST, OWN_MARKS, SAME_STYLE } from './listing-lines';
@@ -165,8 +166,10 @@ export function mainPrompt(input: {
   fabric?: boolean;
   /** Where the set's SKU models and its group of colours are shot (the plan's `place`). */
   place?: string;
+  /** The top-left corner is kept for the shop's LOGO (corner.ts). */
+  corner?: boolean;
 }) {
-  const { template: t, content: c, used, all } = input;
+  const { content: c, used, all } = input, kept = input.corner ? cornerTemplate(input.template) : null, t = kept?.template ?? input.template;
   // Several colours on several people: the team together, each place its colour (listing-crowd.ts).
   const group = used.length > 1 && t.people > 2;
   const garmentRefs = input.fabric ? `参考图1是这件衣服「${used[0]?.name ?? all[0]?.name}」面料的一小块特写，只用来确定面料的颜色和纹理`
@@ -218,7 +221,7 @@ ${refs}
 ${garment}
 
 版式（位置用画面百分比，按这里排，不要自己加东西）：
-${lines(t.zones.map(zone).filter((x): x is string => !!x))}
+${lines([...(kept ? [CORNER_LINE] : []), ...t.zones.map(zone).filter((x): x is string => !!x)])}${kept?.band ? `\n- ${CORNER_BAND}` : ''}
 ${t.people ? '' : c.cells.some(x => x.recipe.includes('手')) ? '- 画面里没有模特：只有卡片里写到的手可以出现，只露手，不露脸和身体。\n' : '- 画面里没有任何人：没有模特、没有手、没有人体的任何部位。\n'}${t.zones.some(z => z.kind === 'person' || z.kind === 'garment') ? '' : '- 这张图不画整件衣服：卡片和格子里只画写到的部位或面料，其余是字、图标和背景。\n'}- 场景和画面细节：${sheet ? fabricLook(c) : c.scene || '干净简洁，衬托衣服'}${together}
 ${style(input.layout.style, input.task === '首图')}
 
@@ -333,8 +336,8 @@ ${changes.map(c => `- ${say(c.from)} 换成 ${say(c.to)}`).join('\n')}
  * A 3:4 image from its finished square one (reference 1); `garment`: reference 2 is the colour's white
  * image, for the details of a garment shown whole (a close-up gets none: it made the model add a garment).
  */
-export function relayoutPrompt(garment = false) {
-  return `参考图1是一张做好的淘宝服装主图，正方形 1:1。把它重新排成竖版 3:4：内容、所有文字（逐字照抄）、照片、卡片、图标、颜色、字体和风格都和参考图1一样，只按竖图调整位置和比例，让画面上下撑满、不留空白条；${garment ? '人物和衣服在竖图里要完整自然，不被裁坏；参考图2是这件衣服的白底产品图，衣服的款式和细节以它为准，颜色照参考图1。' : ''}不要加任何新的字和元素。所有中文逐字正确、笔画清晰。`;
+export function relayoutPrompt(garment = false, corner = false) {
+  return `参考图1是一张做好的淘宝服装主图，正方形 1:1。把它重新排成竖版 3:4：内容、所有文字（逐字照抄）、照片、卡片、图标、颜色、字体和风格都和参考图1一样，只按竖图调整位置和比例，让画面上下撑满、不留空白条；${garment ? '人物和衣服在竖图里要完整自然，不被裁坏；参考图2是这件衣服的白底产品图，衣服的款式和细节以它为准，颜色照参考图1。' : ''}不要加任何新的字和元素。所有中文逐字正确、笔画清晰。${corner ? `\n\n${CORNER_KEEP}` : ''}`;
 }
 
 /**
@@ -354,9 +357,9 @@ ${input.garment ? '- 参考图2是这件衣服的白底产品图，衣服的款�
  * 「点图修改」: the current image (reference 1) is redrawn as the user asks; what they did not ask
  * about stays. Reference 2, when given, is the user's example of what they want.
  */
-export function redrawPrompt(input: { ratio: Ratio; ask: string; reference: boolean; style?: StyleSheet }) {
+export function redrawPrompt(input: { ratio: Ratio; ask: string; reference: boolean; style?: StyleSheet; corner?: boolean }) {
   return `参考图1是一张已经做好的淘宝服装主图，${RATIO_NAME[input.ratio]}。按下面的要求改它，没提到的地方（衣服的款式和颜色、模特的长相、其余文字、排版）保持原样。
 
 要求：${input.ask}
-${input.reference ? '参考图2是用户给的参考，只学它和要求有关的部分（比如背景、姿势、光线），不要照搬它上面的文字、logo 和人物长相。\n' : ''}${input.style ? `${style(input.style)}\n` : ''}所有中文逐字正确、笔画清晰；要求里写到的新字就用那几个字，除此之外不要加新的字。`;
+${input.reference ? '参考图2是用户给的参考，只学它和要求有关的部分（比如背景、姿势、光线），不要照搬它上面的文字、logo 和人物长相。\n' : ''}${input.style ? `${style(input.style)}\n` : ''}${input.corner ? `${cornerStay(input.ratio === 'portrait')}\n` : ''}所有中文逐字正确、笔画清晰；要求里写到的新字就用那几个字，除此之外不要加新的字。`;
 }

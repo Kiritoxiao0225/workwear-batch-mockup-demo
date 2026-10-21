@@ -12,8 +12,8 @@ import { useState } from "react";
 import type { Detail, LayoutCard, SlotState } from "@/lib/listing/api-types";
 import { assetUrl, downloadUrl, post, redrawImage } from "@/lib/listing/client-api";
 import { TASK_LABEL } from "@/lib/listing/category";
-import { colorKeys } from "@/lib/listing/draft";
-import { skuPhotos } from "@/lib/listing/sku-card";
+import { colorKeys, SKU_PEOPLE, type SkuPeople } from "@/lib/listing/draft";
+import { skuPhotos, skuWho } from "@/lib/listing/sku-card";
 import { skuPair } from "@/lib/listing/templates";
 import { EditDialog } from "./listing-edit";
 import { draftPrice, layoutOf, PriceInfo, type Prices } from "./listing-plan";
@@ -79,12 +79,19 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
     if (window.confirm(`${halves ? "重画模特：照素材里选的人重出定妆照" : "换一组模特：重出定妆照"}，并整张重画所有有人的图（共 ${n} 张${prices.exempt ? "" : `，约 ${n * prices.image} 积分`}）。改过的图也会整张重画，那些改动要重新做；旧版本都留着，可以换回。`)) void act("cast", {}, "开始换模特，有人的图会陆续重画");
   };
   const castSlot = detail.slots.find(s => s.slot === "cast");
-  /** 「全部重做」 the SKU images: the colours without their own model photo get their model drawn (paid), the cards are free. */
-  const redoSkus = () => {
-    const own = plan && detail.materials ? Object.keys(skuPhotos({ colors, model: plan.model }, detail.materials.sorted.images, skuPair(layout))).length : 0;
-    const n = colors.length - own, who = skuPair(layout) ? "定妆照里的男女两位" : "主模特";
-    if (window.confirm(`SKU 图全部重新生成：素材里有这个颜色模特图的直接用${n ? `，没有的 ${n} 个颜色照${who}重画（共 ${n} 张${prices.exempt ? "" : `，约 ${n * prices.image} 积分`}）` : ""}，再按模板重新拼，所有颜色的人一样大。旧版本都留着。`)) void act("skus", {}, "SKU 图开始重做，做好的会陆续换上");
+  /**
+   * 「全部重做」 the SKU images, showing whom the user picks: the material's own model photos (the colours
+   * without one get the cover's people drawn), or the cast drawn in every colour. Drawn ones are paid, the cards free.
+   */
+  const redoSkus = (people: SkuPeople) => {
+    const d = plan ? { colors, model: plan.model, skuPeople: people } : null;
+    const own = d && detail.materials ? Object.keys(skuPhotos(d, detail.materials.sorted.images, skuPair(layout))).length : 0;
+    const n = colors.length - own, by = d ? skuWho(d, skuPair(layout)) : "男女", who = by === "男女" ? "定妆照里的男女两位" : `定妆照里的${by === "男" ? "男生" : "女生"}`;
+    const cost = n ? `（共 ${n} 张${prices.exempt ? "" : `，约 ${n * prices.image} 积分`}）` : "";
+    const how = people === "实拍" ? `素材里有这个颜色模特图的直接用${n ? `，没有的 ${n} 个颜色照${who}重画${cost}` : ""}` : `每个颜色都照${who}重画${cost}`;
+    if (window.confirm(`SKU 图全部重新生成：${how}，再按模板重新拼，所有颜色的人一样大。旧版本都留着。`)) void act("skus", { people }, "SKU 图开始重做，做好的会陆续换上");
   };
+  const skuNow = plan?.skuPeople ?? "实拍";
   /** One redraw, waited for; the new version shows as new until the dialog closes. */
   const redraw = async (slot: string, ask: string, file: File | null) => {
     const made = await redrawImage(detail.id, slot, ask, file);
@@ -95,7 +102,8 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
   const edited = editing ? detail.slots.find(s => s.slot === editing && s.image) : undefined;
   const heavy: [string, () => void][] = generating ? [] : [
     ...(castSlot?.image ? [[halves ? "重画模特（有人的图全部重画）" : "换一组模特（有人的图全部重画）", recast] as [string, () => void]] : []),
-    ...(layout.sku.specCard && detail.slots.some(s => s.slot.startsWith("sku:")) ? [["SKU 图全部重新生成", redoSkus] as [string, () => void]] : []),
+    ...(layout.sku.specCard && detail.slots.some(s => s.slot.startsWith("sku:")) ? SKU_PEOPLE.map(p => [
+      `SKU 图全部重新生成 · ${p === "实拍" ? "用素材实拍" : p === "男女" ? "男女模特一起" : `${p}模特`}${p === skuNow ? "（现在）" : ""}`, () => redoSkus(p)] as [string, () => void]) : []),
   ];
   return (
     <div className="lp-modal" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>

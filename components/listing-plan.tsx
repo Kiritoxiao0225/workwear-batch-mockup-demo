@@ -14,12 +14,12 @@ import { CATEGORIES, categoryById, GROUP_HINT, GROUP_LABEL, TASK_HINT, TASK_LABE
 import {
   checkDraft, CLOSER_MAX, colorize, colorKeys, defaultDraft, directKeys, draftImages, FRONT, LIMITS, notesOf, placesFor, priceLines, proofsFor, renamePoint, replan, showsGarment, structureHint, sumCredits, syncCloser,
   templateFor, takeOff, putOn, usageOf, usedSlots, fitProof, fillParts, fillModel, modelPhotos, castFromPhotos, GENDERS, missingParts, partOf, wantsCast, hasPart, noPhotoProof, reusedSlots,
-  type Counts, type Draft, type Point, type PriceLine, type Slot,
+  SKU_PEOPLE, type Counts, type Draft, type Gender, type Point, type PriceLine, type Slot,
 } from "@/lib/listing/draft";
 import { isComponent, isGroup } from "@/lib/listing/garment-role";
 import { proofById } from "@/lib/listing/proofs";
 import { auditDraft, type AuditFix } from "@/lib/listing/audit";
-import { skuPhotos } from "@/lib/listing/sku-card";
+import { skuPhotos, skuWho } from "@/lib/listing/sku-card";
 import { capacity, cellZones, mostCells, PEOPLE_LABEL, skuPair, type Layout } from "@/lib/listing/templates";
 import { SlotPreview, Wire } from "./listing-wire";
 import { bestSell, coverPicks, coverScene, isSellTitle, masterInfo, PLACE_IDS, PLACES, seedOf, SELLS, sellOf, sellTitle, type PlaceId, type Sell } from "@/lib/listing/scene";
@@ -30,7 +30,7 @@ export type Prices = { image: number; multi: number; exempt: boolean };
 
 const live = (d: Draft) => d.colors.filter(c => c.pick);
 /** The colours (by image label) the material has its own model photo of, for their SKU images. */
-const photosOf = (d: Draft, m: Materials, layout: Layout) => new Set(Object.keys(skuPhotos({ colors: live(d), model: d.model }, m.sorted.images, skuPair(layout))));
+const photosOf = (d: Draft, m: Materials, layout: Layout) => new Set(Object.keys(skuPhotos({ colors: live(d), model: d.model, skuPeople: d.skuPeople }, m.sorted.images, skuPair(layout))));
 const len = (s: string) => [...s.trim()].length;
 export const layoutOf = (layouts: LayoutCard[], id: string): Layout => layouts.find(l => l.id === id) ?? layouts[0];
 
@@ -98,7 +98,7 @@ export function rearrange(d: Draft, layout: Layout, keepHand: boolean): Draft {
 /** Another category: its points and images afresh; the colours, parts, chest, model and counts the user set stay. */
 function withCategory(d: Draft, m: Materials, layout: Layout, category: string): Draft {
   const fresh = startDraft(m, layout, d.counts, category);
-  return rearrange({ ...fresh, colors: d.colors, main: d.main, parts: d.parts, logo: d.logo, model: d.model, extra: d.extra, scene: d.scene }, layout, false);
+  return rearrange({ ...fresh, colors: d.colors, main: d.main, parts: d.parts, logo: d.logo, model: d.model, skuPeople: d.skuPeople, extra: d.extra, scene: d.scene }, layout, false);
 }
 /** What changed on the cover when the master could not shoot where it was, said once. */
 function movedNote(before: Draft, after: Draft, layout: Layout): string {
@@ -268,6 +268,9 @@ export function PlanDialog({ name, materials, sources, draft, layouts, prices, o
   /* ② 版式、模特、张数 */
   const photos = photosOf(draft, materials, layout), cast = wantsCast(draft, layout, photos);
   const skuDrawn = layout.sku.specCard ? colorKeys(draft.colors).filter(k => k && !photos.has(k)).length : 0;
+  /** The colours the material has its own model photo of, whatever the SKU images are set to show. */
+  const skuReal = layout.sku.specCard ? photosOf({ ...draft, skuPeople: "实拍" }, materials, layout).size : 0;
+  const skuBy = draft.skuPeople ?? "实拍", skuDrawnWho = (w: Gender | "男女") => w === "男女" ? "定妆照里的男女两位" : `定妆照里的${w === "男" ? "男生" : "女生"}`;
   const modelShots = materials.sorted.images.filter(i => i.kind === "模特实拍" && !i.same).length;
   /** Draw the cast from the material: the clearest man and woman picked, or none yet. */
   const pickModelPhotos = () => {
@@ -324,8 +327,17 @@ export function PlanDialog({ name, materials, sources, draft, layouts, prices, o
         ? <>开始出图时，男女各出一张<b>模特定妆照</b>：照你选的人画，换上这件衣服、浅灰背景，照片里的衣服、帽子和背景不会带过去。分开画才像，所以多 1 张的钱；长相尽量照着画，不保证一模一样。后面所有有人的图都照它画，<b>是同一个人</b>。</>
         : <>开始出图时先出一张<b>模特定妆照</b>（一男一女，浅灰背景），后面所有有人的图都照它画，<b>是同一个人</b>。定妆照不满意，出图后可以「换一组模特」。</>}
         单人的图用上面选的主模特，双人的图一男一女，多人的图两位都在、其余男女交替。<br />这个版式有人的图：{category.tasks.filter(t => layout.templates[t].square.people > 0).map(t => TASK_LABEL[t]).join("、") || "无"}{layout.long.people ? "、长图" : ""}{layout.sku.people || layout.sku.specCard ? "、SKU 图" : ""}。
-        {layout.sku.specCard && <><br />SKU 图每个颜色都放模特：素材里有这个颜色的模特图就直接用，{skuDrawn ? <>没有的 {skuDrawn} 个颜色照{skuPair(layout) ? "定妆照里的男女两位" : "主模特"}画（每色 1 张的钱）</> : "这次每个颜色都有"}，{skuPair(layout) ? "和首图一样是男女两位，" : ""}所有颜色的人一样大。</>}</p>
+      </p>
     </div> : <p className="lp-say">这个版式所有图都没有人，不出模特定妆照，也不用选模特。</p>}
+    {layout.sku.specCard && <>
+      <h4 className="lp-h">SKU 图用谁 <small>每个颜色一张，买家切颜色时看；所有颜色的人一样大</small></h4>
+      <div className="lp-model"><div className="lp-chips">{SKU_PEOPLE.map(p => (
+        <label key={p} className={"lp-chip" + (skuBy === p ? " on" : "")}><input type="radio" name="skuPeople" hidden checked={skuBy === p} onChange={() => set({ skuPeople: p })} />
+          {p === "实拍" ? `素材实拍（${skuReal} 个颜色有）` : p === "男女" ? "男女模特一起" : `${p}模特`}</label>))}</div>
+        <p className="lp-say">{skuBy === "实拍"
+          ? <>素材里有这个颜色模特图的直接用{skuDrawn ? <>，没有的 {skuDrawn} 个颜色照{skuDrawnWho(skuWho(draft, skuPair(layout)))}画（每色 1 张的钱）</> : "，这次每个颜色都有"}。</>
+          : <>每个颜色都照{skuDrawnWho(skuBy)}画，不用素材里的照片（{skuDrawn} 个颜色，每色 1 张的钱）。</>}</p></div>
+    </>}
     <h4 className="lp-h">出几张 <small>先出 1:1，改满意了，再一键出 3:4 和 2:3（3:4 照着改好的 1:1 重排）。1:1 少于 5 张时，留讲得最多的那几张</small></h4>
     <div className="lp-counts">{([["square", "1:1 主图", 1, 5], ["portrait", "3:4 主图", 0, draft.counts.square], ["long", "2:3 长图", 0, 1]] as const).map(([key, label, min, max]) => (
       <span key={key} className="lp-cnt">{label}<span className="lp-stepper"><button type="button" aria-label={`${label}减少`} disabled={draft.counts[key] <= min} onClick={() => setCount(key, draft.counts[key] - 1)}>−</button><b>{draft.counts[key]}</b>

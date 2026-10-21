@@ -61,6 +61,8 @@ export type Counts = { square: number; portrait: number; long: number };
  */
 export type Model = { lead: '男' | '女'; photos?: { 男?: string; 女?: string } };
 export type Gender = '男' | '女';
+export const SKU_PEOPLE = ['实拍', '男', '女', '男女'] as const;
+export type SkuPeople = (typeof SKU_PEOPLE)[number];
 export const GENDERS: Gender[] = ['男', '女'];
 export type Draft = {
   category: string; categoryWhy: string; titles: Partial<Record<Task, string[]>>; points: Point[]; colors: PlanColor[]; main: string; parts: Part[];
@@ -72,6 +74,12 @@ export type Draft = {
    * (SELLS), and which of the place's acts and looks it takes (coverPicks; none before 10-17: the first).
    */
   scene?: { place: string; sell: string; act?: number; look?: number };
+  /**
+   * Who the SKU images (the template's, layout.sku.specCard) show: the material's own model photos
+   * (实拍, colours without one get the cover's people drawn), or the cast drawn in every colour, one of
+   * them or both. None (plans before 10-21): 实拍.
+   */
+  skuPeople?: SkuPeople;
   /** What the chest shows: nothing, the word 「LOGO」, or the customer's LOGO (an uploaded image's label). */
   logo?: { mode: '不印' | 'LOGO' | '客户'; label?: string };
   /** A copy's number (「再出一套」): it moves the plan's seed, so each copy leads with another point and scene. */

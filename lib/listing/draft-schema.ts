@@ -4,7 +4,7 @@
  */
 import { z } from 'zod';
 import { POINT_TYPES, TASKS } from './category';
-import { CLOSER_MAX, LIMITS, type Draft } from './draft';
+import { CLOSER_MAX, LIMITS, SKU_PEOPLE, type Draft } from './draft';
 import { tagFits } from './point-words';
 
 const words = (max: number) => z.string().trim().max(max).default('');
@@ -45,6 +45,7 @@ export const draftSchema = z.object({
   extra: z.array(z.object({ color: z.string(), layout: z.string().default('') })).max(11).default([]),
   model: z.object({ lead: z.enum(['男', '女']), photos: z.object({ 男: z.string().max(12).optional(), 女: z.string().max(12).optional() }).optional() }),
   scene: z.object({ place: z.string().max(12), sell: z.string().max(12), act: z.number().int().min(0).max(9999).optional(), look: z.number().int().min(0).max(9999).optional() }).optional(),
+  skuPeople: z.enum(SKU_PEOPLE).optional(),
   logo: z.object({ mode: z.enum(['不印', 'LOGO', '客户']), label: z.string().max(12).optional() }).optional(),
   seed: z.number().int().min(0).max(1000000).optional(),
 });

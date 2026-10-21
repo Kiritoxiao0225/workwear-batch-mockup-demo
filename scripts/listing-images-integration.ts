@@ -222,7 +222,7 @@ try {
   assert.match((await slotOf(id, 'square:2')).error, /没扣费/);
   let s1 = await slotOf(id, 'square:1');
   assert.equal(s1.task, cover.task); assert.deepEqual(s1.colors, ['黑色']);
-  assert.match(prompt('square:1').prompt, /胸口左侧印一个小小的白色「LOGO」/);
+  assert.match(prompt('square:1').prompt, /胸口左侧印一个白色「LOGO」字样，宽约 8–10 厘米/);
   const mainFile = (await db().query("SELECT a.width,a.height,f.mime_type FROM listing_assets a JOIN files f ON f.id=a.file_id WHERE a.project_id=$1 AND a.slot='square:1' ORDER BY a.created_at DESC LIMIT 1", [id])).rows[0];
   assert.deepEqual([mainFile.width, mainFile.height, mainFile.mime_type], [1440, 1440, 'image/jpeg']);
   pass('第一轮：白底图 → 定妆照 → SKU 图（按模板拼，不调模型不收费）→ 方图按依赖出；有人的图带上定妆照；供应商判定失败的那张不收费；出完停在方图，等用户出竖版');
@@ -544,6 +544,63 @@ try {
   await call(0, `projects/${shop0.project}/current`, { slot: 'service:D-warm', asset: svcVersion.id });
   assert.equal((await (await call(0, 'shop')).json()).shop.made['D-warm'].asset, svcVersion.id);
   pass('点图修改：别人改不了、没写要求或参考图不对拦住；按一张收费；底图 + 参考图 + 要求出新图，先当候选不替换、商品状态不变；采用后才换上；店铺服务图同样能改、采用后新商品用新的');
+
+  // ---- 店铺 LOGO：主图左上角留空、程序贴上（看图和下载都是）；第 2 张服务图不贴；关掉或换 LOGO 马上跟着变 ----
+  await call(0, 'shop/corner', { on: true }, 400);
+  const beforeCorner = await balance(tenants[0]);
+  // Three squares with gaps (not a solid block), so it is drawn white on a dark corner.
+  const square80 = (color: string) => sharp({ create: { width: 80, height: 80, channels: 4, background: color } }).png().toBuffer();
+  const brandPng = async (color: string) => sharp({ create: { width: 400, height: 120, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+    .composite(await Promise.all([20, 160, 300].map(async left => ({ input: await square80(color), left, top: 20 })))).png().toBuffer();
+  const branded = (await (await call(0, 'shop/brand', await brandPng('#1f2a44'), 200, 'POST', octet)).json()).shop;
+  assert.match(branded.brand, /^\/api\/listing\/assets\//); assert.equal(branded.corner, false);
+  assert.equal((await (await call(0, 'shop/corner', { on: true })).json()).shop.corner, true);
+  const shopNow = (await (await call(0, 'shop')).json()).shop;
+  await call(0, 'shop', { items: shopNow.items, crafts: shopNow.crafts });
+  const kept = (await (await call(0, 'shop')).json()).shop;
+  assert.deepEqual([kept.brand, kept.corner, kept.logo], [branded.brand, true, shopNow.logo]);
+  const fifth = randomUUID();
+  await call(0, 'projects', { id: fifth, name: '角标款', layout: 'M3', counts: counts(5, 5, 0) });
+  await upload(0, fifth, await image(600, 600, '#e8621d'), 'SKU图/爱马仕橙.jpg');
+  await call(0, `projects/${fifth}/plan`, {});
+  const ORANGE5 = (await detailOf(fifth)).sources[0].label;
+  await toGenerating(fifth, { images: [{ id: ORANGE5, kind: '颜色款图', color: '爱马仕橙', front: true }], colors: [{ name: '爱马仕橙', hex: '#e8621d', from: [ORANGE5] }], points: [], category: 'workwear' },
+    m => draftFrom(m, commute, counts(5, 5, 0)), { product: { name: '角标款', garment: ['连帽'] } });
+  for (const j of await imageJobs(fifth, true)) await make(j);
+  assert.match(prompt('square:1').prompt, /左上角空位，之后要贴店铺 LOGO/);
+  const receiptOf = async (project: string, slot: string) => (await db().query(`SELECT t.receipt FROM listing_attempts t JOIN listing_jobs j ON j.id=t.job_id WHERE j.project_id=$1 AND j.slot=$2 AND t.status='succeeded' ORDER BY t.finished_at DESC LIMIT 1`, [project, slot])).rows[0]?.receipt;
+  assert.equal((await receiptOf(fifth, 'square:1')).corner, true);
+  assert.equal(await receiptOf(fifth, 'square:2'), undefined);
+  // The fake image is dark grey: the LOGO's first square (58–122, 50–114 on 1440) comes out white, the rest of the corner stays.
+  const pixel = async (bytes: Buffer, x: number, y: number) => { const { data } = await sharp(bytes).extract({ left: x, top: y, width: 1, height: 1 }).raw().toBuffer({ resolveWithObject: true }); return data[0]; };
+  const sq5 = (await slotOf(fifth, 'square:1')).image;
+  const shown = await call(0, 'assets/' + sq5), shownBytes = Buffer.from(await shown.arrayBuffer()), tag = shown.headers.get('etag')!;
+  assert.equal(shown.headers.get('cache-control'), 'private, no-cache');
+  assert.ok(await pixel(shownBytes, 80, 80) > 200 && await pixel(shownBytes, 700, 700) < 80);
+  await call(0, 'assets/' + sq5, undefined, 304, 'GET', { 'if-none-match': tag });
+  assert.equal((await call(0, 'assets/' + (await slotOf(fifth, 'square:2')).image)).headers.get('cache-control'), 'private, max-age=31536000, immutable');
+  await call(1, 'assets/' + sq5, undefined, 404);
+  await call(0, `projects/${fifth}/verticals`, {});
+  for (const j of await imageJobs(fifth, true)) await make(j);
+  assert.match(prompt('portrait:1').prompt, /参考图1左上角留着一块空位/); assert.doesNotMatch(prompt('portrait:2').prompt, /空位/);
+  assert.equal((await receiptOf(fifth, 'portrait:1')).corner, true);
+  const zip5 = await JSZip.loadAsync(Buffer.from(await (await call(0, `projects/${fifth}/download`)).arrayBuffer()));
+  const entry = async (prefix: string) => Buffer.from(await zip5.file(Object.keys(zip5.files).find(n => n.startsWith(prefix))!)!.async('uint8array'));
+  assert.ok(await pixel(await entry('1比1主图-01'), 80, 80) > 200 && await pixel(await entry('3比4主图-01'), 80, 80) > 200);
+  assert.ok(await pixel(await entry('1比1主图-02'), 80, 80) === await pixel(await bytesOf((await slotOf(fifth, 'square:2')).image), 80, 80));
+  // Another LOGO shows at once (its own ETag); switched off, the image is shown as it was drawn, and nothing new keeps the corner.
+  await call(0, 'shop/brand', await brandPng('#f2f2f2'), 200, 'POST', octet);
+  const changed = await call(0, 'assets/' + sq5, undefined, 200, 'GET', { 'if-none-match': tag });
+  assert.notEqual(changed.headers.get('etag'), tag);
+  await call(0, 'shop/corner', { on: false });
+  const plain = Buffer.from(await (await call(0, 'assets/' + sq5)).arrayBuffer());
+  assert.ok(await pixel(plain, 80, 80) < 80);
+  await call(0, `projects/${fifth}/redo`, { slot: 'square:3', note: '' });
+  for (const j of await imageJobs(fifth, true)) await make(j);
+  assert.doesNotMatch(prompt('square:3').prompt, /空位/); assert.equal((await receiptOf(fifth, 'square:3')).corner, undefined);
+  // The credits this set took go back, so the checks after it start where they did.
+  await db().query('UPDATE credit_accounts SET balance_cents=$2 WHERE tenant_id=$1', [tenants[0], beforeCorner]);
+  pass('店铺 LOGO：没传 LOGO 打不开；开了以后新出的方图左上角留空、看图和下载都贴上（深底变白）；第 2 张服务图不贴；竖版照着留空也贴；别人看不到；换 LOGO 马上换、关掉马上恢复原图，之后出的图不再留空');
 
   const run = async (provider: Parameters<typeof executePlan>[1]) => {
     const pid = randomUUID();

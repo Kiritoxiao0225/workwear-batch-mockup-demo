@@ -1,10 +1,10 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- service images come from the listing API */
 /**
- * 电商主图 shop settings: the services the shop offers, its crafts and sample LOGO, and the four
- * service images made from them. Confirming makes the images never made and redraws only the changed
+ * 电商主图 shop settings: the services the shop offers, its own LOGO for the top-left corner of its main
+ * images (lib/listing/corner.ts), its crafts and sample LOGO, and the four service images made from them. Confirming makes the images never made and redraws only the changed
  * words of the rest; each image can then be changed on its own (click it). The shop is kept on the
- * server (GET/POST shop, shop/make, shop/logo); its images are versions of the shop's own row, so
+ * server (GET/POST shop, shop/make, shop/logo, shop/brand, shop/corner); its images are versions of the shop's own row, so
  * 「点图修改」 and 「采用」 work as on a product's images.
  */
 import { useEffect, useRef, useState } from "react";
@@ -83,6 +83,7 @@ function ShopForm({ state, unit, exempt, onSay }: { state: ShopState; unit: numb
     return () => clearInterval(t);
   }, [making.length, onSay]);
   const credits = (n: number) => exempt ? "" : `约 ${n * unit} 积分`;
+  const setCorner = (on: boolean) => void post<ShopState>("shop/corner", { on }).then(s => { keep(s); onSay(on ? "打开了：之后出的主图左上角放店铺 LOGO" : "关掉了：主图左上角不再放 LOGO"); }).catch(error => onSay((error as Error).message));
 
   const setItem = (i: number, patch: Partial<ServiceItem>) => change({ ...shop, items: shop.items.map((x, m) => m === i ? { ...x, ...patch } : x) });
   const move = (i: number, by: number) => {
@@ -132,7 +133,7 @@ function ShopForm({ state, unit, exempt, onSay }: { state: ShopState; unit: numb
     <div className="lp-shop">
       <div className="lp-shop-grid">
         <nav className="lp-snav" aria-label="店铺设置目录">
-          <a href="#lp-s-svc">服务卖点</a><a href="#lp-s-craft">印绣工艺和 LOGO</a>
+          <a href="#lp-s-svc">服务卖点</a><a href="#lp-s-brand">店铺 LOGO</a><a href="#lp-s-craft">印绣工艺和样例 LOGO</a>
           <a href="#lp-s-img">服务图{pending.images > 0 && Object.keys(shop.made).length > 0 && <span className="chip y">{pending.images} 张旧字</span>}</a>
         </nav>
         <div>
@@ -151,8 +152,20 @@ function ShopForm({ state, unit, exempt, onSay }: { state: ShopState; unit: numb
                 <span className="lp-muted lp-small">勾了 {shown} 条{unused.length ? `，还有 ${unused.length} 条常用服务没勾` : ""}</span></div>
             </div>
           </section>
+          <section className="lp-ann" id="lp-s-brand">
+            <div><h2>店铺 LOGO</h2><p>放在 1:1 和 3:4 主图的左上角，SKU 图左上角也用它；第 2 张服务图不放。</p><p className="lp-small">只放左上角，不印到衣服上。衣服胸口印什么，还在每款的方案里选。</p></div>
+            <div className="lp-card lp-pad">
+              <div className="lp-logo-up"><label className="box">{shop.brand ? <img src={shop.brand} alt="店铺 LOGO" /> : <span>上传店铺 LOGO</span>}
+                <input type="file" accept="image/*" hidden onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (!f) return;
+                  void api<ShopState>("shop/brand", { method: "POST", body: f, headers: { "Content-Type": "application/octet-stream", "x-file-name": encodeURIComponent(f.name) } }).then(s => { keep(s); onSay(s.shop.corner ? "店铺 LOGO 换好了，留了位置的主图马上用新的" : "店铺 LOGO 传好了，选「放在左上角」就会用上"); }).catch(error => onSay((error as Error).message)); }} /></label>
+                <p className="lp-muted lp-small">透明底 PNG 最好，横版更清楚；白底的会自动去掉白底。贴的时候按左上角的底色，自动用原色、白色或深色。</p></div>
+              <div className="lp-corner">{([[false, "不放", "主图照原样排，左上角不留位置"], [true, "放在左上角", shop.brand ? "之后出的主图在左上角留出位置，贴上这个 LOGO" : "先上传店铺 LOGO"]] as const).map(([on, name, what]) => (
+                <button type="button" key={name} className={"lp-pick" + (shop.corner === on ? " on" : "")} disabled={on && !shop.brand} onClick={() => { if (shop.corner !== on) setCorner(on); }}><b>{name}</b><span>{what}</span></button>))}</div>
+              <p className="lp-muted lp-small">打开以后新出的主图才留位置，之前出的图不贴。关掉或换 LOGO，留了位置的图马上跟着变，不用重出。</p>
+            </div>
+          </section>
           <section className="lp-ann" id="lp-s-craft">
-            <div><h2>印绣工艺和 LOGO</h2><p>上岗实拍那套的服务图是印绣工艺图，选 3 种工艺；样例 LOGO 印在工艺图上展示，不传就画抽象图案。</p></div>
+            <div><h2>印绣工艺和样例 LOGO</h2><p>上岗实拍那套的服务图是印绣工艺图，选 3 种工艺；样例 LOGO 只印在工艺图的布面上做展示，不传就画抽象图案。</p></div>
             <div className="lp-card lp-pad">
               <div className="lp-chips">{CRAFTS.map(c => <button type="button" key={c} className={"lp-chip" + (shop.crafts.includes(c) ? " on" : "")} onClick={() => toggleCraft(c)}>{c}</button>)}</div>
               <div className="lp-logo-up"><label className="box">{shop.logo ? <img src={shop.logo} alt="样例 LOGO" /> : <span>上传 LOGO</span>}

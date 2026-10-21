@@ -12,6 +12,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Task } from '../listing/category';
+import { CORNER_BAND, cornerZones } from '../listing/corner';
 import { crowdLine, DEFAULT_PLACE } from './listing-crowd';
 import { NO_CHEST, OWN_MARKS, SAME_STYLE } from './listing-lines';
 import { bigWords, bigWordsLine, fitHeight } from '../listing/point-words';
@@ -335,6 +336,8 @@ export type SpecInput = {
   garment: string[]; logo: string | null;
   /** Reference numbers: the garment's (one per colour, or the piece of fabric), the cast, the customer's LOGO; the sample comes last. */
   refs: { garment: { name: string }[]; cast?: number; logo?: number; sample: number };
+  /** The top-left corner is kept for the shop's LOGO (corner.ts): the customer's LOGO then stays on the chest only. */
+  corner?: boolean;
 };
 const bullet = (xs: (string | false | null | undefined)[]) => xs.filter((x): x is string => !!x).map(x => `- ${x}`).join('\n');
 /** Half of the competitors' polish: not every line in the heaviest type. */
@@ -347,14 +350,14 @@ export function specPrompt(i: SpecInput) {
   const { spec, fill, refs } = i, cover = i.task === '首图', style = SPEC_STYLE[i.master];
   // A cover shot somewhere took the sample's pose and its bright showroom along with its layout (10-17): those are ours.
   const own = cover && spec.photo && !!fill.scene;
-  const f: Fill = { ...fill, logoRef: refs.logo, ...(own ? {
+  const f: Fill = { ...fill, logoRef: i.corner ? undefined : refs.logo, ...(own ? {
     act: `${fill.act ? `${fill.act}；` : ''}人物的姿势、手的动作和机位不照参考图${refs.sample}，按这里写的重新拍`,
     scene: `${fill.scene}；背景的颜色、光线和地点都不照参考图${refs.sample}，按这里写的场景拍`,
   } : {}) };
   const refLines = [
     ...refs.garment.map((g, k) => spec.fabric ? `参考图${k + 1}：这件衣服「${g.name}」面料的一小块特写，只用来确定面料的颜色和纹理。` : `参考图${k + 1}：「${g.name}」的白底产品图，衣服的颜色和款式以它为准。`),
     !!refs.cast && `参考图${refs.cast}：模特定妆照，只用来确定模特长什么样；姿势、${spec.own ? '' : '光线、'}背景、构图按下面重新做。`,
-    !!refs.logo && `参考图${refs.logo}：客户的 LOGO，只用来印在衣服胸口${spec.people && !cover ? '和放在左上角' : ''}。`,
+    !!refs.logo && `参考图${refs.logo}：客户的 LOGO，只用来印在衣服胸口${spec.people && !cover && !i.corner ? '和放在左上角' : ''}。`,
     spec.own ? `参考图${refs.sample}：这套母版的示例图。版式、字体字号、配色、光影和背景的做法都照它；它是用别的衣服做的，图里的字、衣服颜色和款式、人物长相都不要照搬，一律以这次写的为准；卡片里画的衣服结构（夹层、填充、缝线、口袋、帽子等）也不要照它，只按产品图和给到的部位实拍画。`
       : `参考图${refs.sample}：一张同类商品卖得很好的主图（别家的店、别的衣服）。这一张就照它的做法：排版位置、字的大小和粗细层次（大标题、英文小字、说明小字、细线）、卡片和图标的质感、光影和照片质感都学它；图里的人、衣服、颜色和文字内容一律不要照搬，衣服结构（夹层、填充、缝线、口袋、帽子等）也不照它，以这次写的为准。`,
   ];
@@ -362,6 +365,7 @@ export function specPrompt(i: SpecInput) {
     : `衣服（必须和产品图一模一样）：\n${bullet([...i.garment,
       refs.garment.length > 1 ? `画面里每件衣服的颜色和对应参考图一致，${SAME_STYLE}；只能出现这 ${refs.garment.length} 种颜色。` : `颜色：${f.color}，和参考图一致，不偏色。`,
       i.logo ?? NO_CHEST, OWN_MARKS])}`;
+  const zones = spec.zones(f).filter((z): z is string => !!z), kept = i.corner ? cornerZones(zones) : null;
   return `为淘宝制作一张冲锋衣团体定制商品主图，正方形 1:1。这是一套 ${i.total} 张里的第 ${i.n} 张：${i.taskLabel}。
 
 参考图分工：
@@ -370,9 +374,9 @@ ${bullet(refLines)}
 ${what}
 
 版式（位置用画面百分比，按这里排）：
-${bullet(spec.zones(f))}
+${bullet(kept?.zones ?? zones)}
 
-背景：${spec.background(f)}
+背景：${spec.background(f)}${kept?.band ? CORNER_BAND : ''}
 ${cover ? style.cover : `整体风格（整套 5 张都一样）：${spec.style ?? style.all}`}
 ${spec.own ? '' : `${TYPE}\n`}${spec.photo ? `${PHOTO}\n` : ''}
 ${spec.own ? `不要：上面没写到的东西（不额外加${cover ? '' : '整件衣服、'}人、卡片、标签、图标）；另外加上的真实品牌 logo、水印；「」以外的任何文字；背景里不要浅色大号英文水印字。所有中文逐字正确、笔画清晰。`

@@ -23,8 +23,8 @@ import sharp from 'sharp';
 import { z } from 'zod';
 import type { CanvasEdit, Element, Words } from '../listing/api-types';
 import { TASK_LABEL, type Task } from '../listing/category';
-import { castFromPhotos, GENDERS, leadCard, partOf, partPick, usedSlots, wantsCast, type Gender } from '../listing/draft';
-import { colorRow, modelPhotoFor, skuCardText, skuPhotos } from '../listing/sku-card';
+import { castFromPhotos, GENDERS, leadCard, partOf, partPick, usedSlots, wantsCast, type Gender, type SkuPeople } from '../listing/draft';
+import { colorRow, modelPhotoFor, skuCardText, skuPhotos, skuWho } from '../listing/sku-card';
 import { renderSkuCard } from './listing-sku-card';
 import { enOf, sampleBytes, specFor, specPrompt, type Fill } from './listing-specs';
 import { removeFlatArtworkBackground } from './artwork-image-processing';
@@ -42,7 +42,8 @@ import { resolveLayout } from './listing-layouts';
 import { castOnePrompt, castPrompt, editPrompt, longPrompt, mainPrompt, productPrompt, redrawPrompt, relayoutPrompt, servicePrompt, serviceWordsPrompt, skuModelPrompt, skuPrompt, type Content, type Ratio } from './listing-prompts';
 import { callPlanModel, generateListingImage, LISTING_PLAN_MODEL, listingImageModel, listingImageProvider, type ImageCall, type PlanCall } from './listing-provider';
 import { frameRequest, parseFrame, parseRecognized, recognizeRequest, type Expected, type Frame } from './listing-recognize';
-import { shopServiceImage, shopSettings } from './listing-shop';
+import { shopBrand, shopServiceImage, shopSettings } from './listing-shop';
+import { cornerAssets, pasteShopLogo } from './listing-corner';
 import { latestOutputs, MAIN_SLOT, storeOutput, type StoredPlan } from './listing-store';
 import { upscaleListingImage } from './listing-upscale';
 import type { Tenant } from './tenant-scope';
@@ -61,7 +62,7 @@ export type JobInput = (
   /** A colour's SKU image; `card`: put together by the program on the brand template (free), else drawn by the model. */
   | { kind: 'sku'; sku: string; anchor?: string; card?: boolean }
   /** The cast wearing a colour, for that colour's SKU image on the template: both (`pair`) or the lead. */
-  | { kind: 'skuModel'; sku: string; pair?: boolean }
+  | { kind: 'skuModel'; sku: string; pair?: boolean; who?: Gender }
   | { kind: 'main'; ratio: Ratio; index: number; n: number; total: number; skus: string[]; colors: string[]; words: Words; layout?: string; edit?: EditInput }
   /** One of the shop's service images, its words in `words.tags`; `stale`: only the words that changed since `from` are redrawn on `base`. */
   | { kind: 'service'; image: ServiceImageId; words: Words; stale?: { base: string; from: string[] } }
@@ -108,8 +109,8 @@ export function planJobs(stored: StoredPlan, layout: Layout, round: 1 | 2, only?
   if (!main) throw new CatalogHttpError(409, '没有颜色，出不了图');
   const photos = stored.photos ?? {}, cast = wantsCast(d, layout, new Set(Object.keys(photos))), jobs: PlannedJob[] = [];
   // A drawn SKU model follows the cast's own halves when drawn from the material: one face per image to copy.
-  const pair = skuPair(layout), halves = castFromPhotos(d.model);
-  const castOf = halves ? (pair ? GENDERS.map(g => `cast:${g}`) : [`cast:${d.model.lead}`]) : ['cast'];
+  const skuBy = skuWho(d, skuPair(layout)), pair = skuBy === '男女', halves = castFromPhotos(d.model);
+  const castOf = halves ? (pair ? GENDERS.map(g => `cast:${g}`) : [`cast:${skuBy}`]) : ['cast'];
   /**
    * A 3:4 image from its square one. An image with people or the whole garment also gets the colour's
    * white image, for the garment's details; a close-up gets only the square image (a white image made
@@ -139,8 +140,8 @@ export function planJobs(stored: StoredPlan, layout: Layout, round: 1 | 2, only?
     } else if (cast) jobs.push({ slot: 'cast', step: 'image', input: { kind: 'cast' }, depends: [`product:${main}`], multi: false });
     for (const c of stored.colors) {
       if (layout.sku.specCard) {
-        // Every colour on a model: the material's own photo, else the cast's lead drawn in it.
-        if (!photos[c.sku]) jobs.push({ slot: `skumodel:${c.sku}`, step: 'image', input: { kind: 'skuModel', sku: c.sku, ...(pair ? { pair } : {}) }, depends: [`product:${c.sku}`, ...castOf], multi: false });
+        // Every colour on a model: the material's own photo, else the cast drawn in it (the plan's choice of who).
+        if (!photos[c.sku]) jobs.push({ slot: `skumodel:${c.sku}`, step: 'image', input: { kind: 'skuModel', sku: c.sku, ...(pair ? { pair } : skuBy === d.model.lead ? {} : { who: skuBy }) }, depends: [`product:${c.sku}`, ...castOf], multi: false });
         jobs.push({ slot: `sku:${c.sku}`, step: 'image', input: { kind: 'sku', sku: c.sku, card: true }, depends: [`product:${c.sku}`, ...(photos[c.sku] ? [] : [`skumodel:${c.sku}`])], multi: false, free: true });
         continue;
       }
@@ -288,7 +289,7 @@ export async function addSet(tenant: Tenant, user: string, projectId: string, in
  * (paid; the cast too when the product has none yet) and every card is put together again (free).
  * Products made before the models were drawn get them this way.
  */
-export async function redoSkus(tenant: Tenant, user: string, projectId: string, only?: string) {
+export async function redoSkus(tenant: Tenant, user: string, projectId: string, only?: string, people?: SkuPeople) {
   const prices = await currentPrices();
   return catalogTransaction(async c => {
     const { stored, layout } = await lockProject(c, tenant, projectId, ['square', 'done', 'generating'], '出过图之后才能重新生成 SKU 图');
@@ -296,7 +297,9 @@ export async function redoSkus(tenant: Tenant, user: string, projectId: string, 
     const latest = await latestJobs(c, projectId), busy = (j: { status: string }) => j.status === 'queued' || j.status === 'running';
     if (latest.some(j => (j.slot.startsWith('sku') || j.slot.startsWith('cast')) && busy(j))) throw new CatalogHttpError(409, 'SKU 图或定妆照还在出，等出完再重新生成');
     const m = (await c.query('SELECT materials FROM listing_projects WHERE id=$1', [projectId])).rows[0].materials;
-    const next: StoredPlan = { ...stored, photos: skuPhotos(stored.draft, m?.sorted?.images ?? [], skuPair(layout)) };
+    // 「SKU 图全部重新生成」 can change who the SKU images show (10-21).
+    const draft = people ? { ...stored.draft, skuPeople: people } : stored.draft;
+    const next: StoredPlan = { ...stored, draft, photos: skuPhotos(draft, m?.sorted?.images ?? [], skuPair(layout)) };
     const planned = planJobs(next, layout, 1), mine = (slot: string) => !only || slot.endsWith(`:${only}`);
     const jobs = planned.filter(j => (j.slot.startsWith('skumodel:') || j.slot.startsWith('sku:')) && mine(j.slot));
     // A product whose master had no people has no cast yet: it is made first.
@@ -485,7 +488,7 @@ type MainInput = Extract<JobInput, { kind: 'main' }>;
  * Null when the master has no spec for the image, or the plan gave it another number of cards.
  */
 export async function specShot(o: { stored: StoredPlan; projectId: string; input: MainInput; slot: string; layout: Layout; output: (slot: string) => Promise<Buffer>; cast: Buffer | null;
-  logo: { bytes: Buffer | null; line: string } | null; badge: () => Promise<string> }) {
+  logo: { bytes: Buffer | null; line: string } | null; badge: () => Promise<string>; corner?: boolean }) {
   const d = o.stored.draft, s = d.slots[o.input.index], task = s.task as Task;
   const spec = specFor(o.layout.id, task, o.input.words.cells.length);
   if (!spec || (spec.people && !o.cast)) return null;
@@ -508,12 +511,14 @@ export async function specShot(o: { stored: StoredPlan; projectId: string; input
     castRef: cast, place: o.stored.place,
   };
   const prompt = specPrompt({ master: o.layout.id, task, taskLabel: TASK_LABEL[task], n: o.input.n, total: o.input.total, spec, fill, garment: o.stored.garment,
-    logo: spec.fabric ? null : o.logo?.line ?? null, refs: { garment: spec.fabric ? used.slice(0, 1) : used, cast, logo, sample } });
+    logo: spec.fabric ? null : o.logo?.line ?? null, refs: { garment: spec.fabric ? used.slice(0, 1) : used, cast, logo, sample }, corner: o.corner });
   return { prompt, references };
 }
 
 /** What is printed on the chest, from the plan's choice; the customer's LOGO comes as a reference image. */
-export const LOGO_LINE = { LOGO: '衣服胸口左侧印一个小小的白色「LOGO」字样，像真实印绣上去的', 客户: '衣服胸口左侧印客户的 LOGO（照它的参考图），小小的，像真实印绣上去的' } as const;
+// 10-21: 「小小的」 came out a few millimetres wide, hard to see; a real left-chest print is about a palm wide.
+const CHEST_SIZE = '宽约 8–10 厘米，约占左半边前胸宽度的一半，整张图缩小了也能一眼看清';
+export const LOGO_LINE = { LOGO: `衣服胸口左侧印一个白色「LOGO」字样，${CHEST_SIZE}，像真实印绣上去的`, 客户: `衣服胸口左侧印客户的 LOGO（照它的参考图），${CHEST_SIZE}，像真实印绣上去的` } as const;
 /** A piece of the garment's fabric, for images that show only fabric: the left chest of the product image, away from the zip and pockets. */
 export async function fabricCrop(product: Buffer) {
   const { data, info } = await sharp(product).flatten({ background: '#ffffff' }).trim({ threshold: 12 }).png().toBuffer({ resolveWithObject: true });
@@ -557,6 +562,10 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
   let submitted = false;
   try {
     const input = job.input;
+    // Drawn with the top-left corner kept for the shop's LOGO (lib/listing/corner.ts): a square main image while
+    // the shop shows its LOGO, and what is made from one that did (its 3:4 image, 点图修改, 画板). Kept on the receipt.
+    let corner = false;
+    const kept = async (asset: string | undefined) => !!asset && (await cornerAssets(job.tenant_id, [asset])).size > 0;
     const succeed = async (bytes: Buffer, candidate = false) => {
       const asset = await storeOutput(job.tenant_id, job.project_id, job.slot, job.id, bytes, candidate);
       await db().query(`UPDATE listing_jobs SET status='succeeded',result_asset=$2,error=NULL,lease_until=NULL,updated_at=now() WHERE id=$1`, [job.id, asset]);
@@ -589,7 +598,8 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
     } else if (input.kind === 'relayout') {
       references = [await output(input.from), ...(input.product ? [await output(`product:${input.product}`)] : []), ...(input.cast ? [await output('cast')] : [])];
       ratio = input.ratio;
-      prompt = input.ratio === 'long' ? longPrompt({ garment: !!input.product, cast: input.cast ? references.length : null }) : relayoutPrompt(!!input.product);
+      corner = input.ratio === 'portrait' && await kept(outputs.get(input.from)?.id);
+      prompt = input.ratio === 'long' ? longPrompt({ garment: !!input.product, cast: input.cast ? references.length : null }) : relayoutPrompt(!!input.product, corner);
     } else if (input.kind === 'redraw') {
       references = [await versionAt1K(job.project_id, input.base)];
       if (input.reference) {
@@ -598,7 +608,8 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         references.push(await fileOf(ref.file_id));
       }
       ratio = input.ratio;
-      prompt = redrawPrompt({ ratio, ask: input.ask, reference: !!input.reference, style: layout?.style });
+      corner = await kept(input.base);
+      prompt = redrawPrompt({ ratio, ask: input.ask, reference: !!input.reference, style: layout?.style, corner });
     } else {
       if (!d || !layout) throw new CatalogHttpError(409, '还没有定方案');
       const colors = stored.colors, garment = stored.garment, main = colors[0];
@@ -623,7 +634,8 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         const frame = photo && (source || stored.place) ? await findFrame(photo, recognize) : null;
         const text = skuCardText({ name: m.name, category: d.category, points: d.points, color: color.name });
         await succeed(await renderSkuCard({
-          ...text, rows: [...text.rows, colorRow(color.name)], logo: (await shopSettings(job.tenant_id)).logo, fabric: await fabricCrop(product),
+          // The shop's own LOGO while it shows one (店铺设置); the sample LOGO is only for the crafts image.
+          ...text, rows: [...text.rows, colorRow(color.name)], logo: await (await shopBrand(job.tenant_id))?.bytes().catch(() => null) ?? null, fabric: await fabricCrop(product),
           photo: photo ? { bytes: photo, cutout: false, frame } : { bytes: await removeFlatArtworkBackground(product, { r: 255, g: 255, b: 255 }), cutout: true },
           // The material's own words (「男女同码」), else 「男女同款」 when it has model photos of both.
           tag: stored.sku?.tag?.includes('男女') ? stored.sku.tag : d.model.photos?.男 && d.model.photos?.女 ? '男女同款' : null,
@@ -632,11 +644,11 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
       }
       if (input.kind === 'skuModel') {
         // The cast's own halves when drawn from the material (one face per image), else the cast of two.
-        const halves = input.pair ? GENDERS.every(g => outputs.has(`cast:${g}`)) : outputs.has(`cast:${d.model.lead}`);
-        const cast = halves ? (input.pair ? GENDERS.map(g => `cast:${g}`) : [`cast:${d.model.lead}`]) : ['cast'];
+        const who = input.who ?? d.model.lead, halves = input.pair ? GENDERS.every(g => outputs.has(`cast:${g}`)) : outputs.has(`cast:${who}`);
+        const cast = halves ? (input.pair ? GENDERS.map(g => `cast:${g}`) : [`cast:${who}`]) : ['cast'];
         references = [await output(`product:${input.sku}`), ...await Promise.all(cast.map(output))];
         if (logoBytes && logoLine) references.push(logoBytes);
-        prompt = skuModelPrompt({ color: colorOf(input.sku).name, garment, lead: d.model.lead, who: input.pair ? 'pair' : 'lead', halves, logo: logoLine, logoRef: logoBytes && logoLine ? references.length : undefined,
+        prompt = skuModelPrompt({ color: colorOf(input.sku).name, garment, lead: who, who: input.pair ? 'pair' : 'lead', halves, logo: logoLine, logoRef: logoBytes && logoLine ? references.length : undefined,
           place: stored.place, pose: colors.findIndex(c => c.sku === input.sku) });
         ratio = 'portrait';
       } else if (input.kind === 'product') {
@@ -679,6 +691,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         const base = (await db().query('SELECT file_id FROM listing_assets WHERE id=$1 AND project_id=$2', [input.edit.base, job.project_id])).rows[0];
         if (!base) throw new CatalogHttpError(404, '找不到要改的那一版图');
         const original = await fileOf(base.file_id), small = await sharp(original).resize(1024, 1024, { fit: 'inside' }).png().toBuffer();
+        corner = await kept(input.edit.base);
         const meta = await sharp(small).metadata(), boxes = [pad(input.edit.box), ...(input.edit.to ? [pad(input.edit.to)] : [])];
         mask = await maskOf(boxes, meta.width!, meta.height!);
         references = [small];
@@ -686,8 +699,9 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         prompt = editPrompt({ ratio, box: input.edit.box, to: input.edit.to, what: editWhat(stored, input.edit, input.words, layout), style: layout.style });
         paste = { original, boxes };
       } else if (input.ratio === 'square' && input.index >= 0) {
+        corner = !!(await shopBrand(job.tenant_id));
         // A square image its master has a spec for: drawn the way the master's sample was.
-        const shot = await specShot({ stored, projectId: job.project_id, input, slot: job.slot, layout, output, cast: hasCast ? await output('cast') : null,
+        const shot = await specShot({ corner, stored, projectId: job.project_id, input, slot: job.slot, layout, output, cast: hasCast ? await output('cast') : null,
           logo: logoBytes && logoLine ? { bytes: logoBytes, line: logoLine } : logoLine ? { bytes: null, line: logoLine } : null,
           badge: async () => (await shopSettings(job.tenant_id)).settings?.items.some(x => x.on && x.title === '免费印绣') ? '免费印绣' : '' });
         if (shot) { references = shot.references; prompt = shot.prompt; ratio = 'square'; }
@@ -710,7 +724,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         await withPartPhotos(stored, job.project_id, content.cells, references);
         prompt = mainPrompt({ ratio, task: input.index >= 0 ? TASK_LABEL[d.slots[input.index].task as Task] : '长图', template: t, layout, content,
           used, all: colors, garment, lead: d.model.lead, fromSku: multi, cast, n: input.ratio === 'long' ? undefined : input.n, total: input.total,
-          logo: shows ? logoLine : null, logoRef, fabric, place: stored.place });
+          logo: shows ? logoLine : null, logoRef, fabric, place: stored.place, corner });
       }
     }
     if (input.note) prompt += `\n\n补充要求：${input.note}`;
@@ -731,7 +745,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         console.error('[listing] upscale', error instanceof Error ? error.message : error);
       }
     }
-    await db().query(`UPDATE listing_attempts SET status='succeeded',receipt=$2,finished_at=now() WHERE id=$1`, [attemptId, { taskId: call.taskId, credits: call.credits, durationMs: call.durationMs, upscaled }]);
+    await db().query(`UPDATE listing_attempts SET status='succeeded',receipt=$2,finished_at=now() WHERE id=$1`, [attemptId, { taskId: call.taskId, credits: call.credits, durationMs: call.durationMs, upscaled, ...(corner ? { corner } : {}) }]);
     const asset = await succeed(bytes, input.kind === 'redraw');
     if (input.kind === 'main' && input.edit && d && layout) {
       // A square image changed on the 画板 is what its 3:4 image is written from.
@@ -828,11 +842,16 @@ export async function slotStates(projectId: string) {
 const KIND_FILE: Record<string, string> = { square: '1比1主图', portrait: '3比4主图', long: '2比3长图' };
 // Colour names are typed by the user; inside the zip they stay one file name, never a path.
 export const zipEntryName = (name: string) => name.replace(/[\\/:*?"<>|\u0000-\u001f]/gu, '_').replace(/^\.+/u, '_') || '_';
-/** Current images named in Taobao order; product images and each extra colour's covers in their own folder. */
+/**
+ * Current images named in Taobao order; product images and each extra colour's covers in their own folder.
+ * The main images drawn with the corner kept get the shop's LOGO, as on the page (listing-corner.ts).
+ */
 export async function downloadZip(projectId: string) {
-  const p = (await db().query('SELECT name,plan FROM listing_projects WHERE id=$1', [projectId])).rows[0];
+  const p = (await db().query('SELECT name,plan,tenant_id FROM listing_projects WHERE id=$1', [projectId])).rows[0];
   const stored = p.plan as StoredPlan | null, colors = stored?.colors ?? [], nameOf = (sku: string) => zipEntryName(colors.find(c => c.sku === sku)?.name ?? sku);
   const states = await slotStates(projectId), outputs = await latestOutputs(projectId), zip = new JSZip();
+  const brand = await shopBrand(p.tenant_id), corner = brand ? await cornerAssets(p.tenant_id, [...outputs.values()].map(o => o.id)) : new Set<string>();
+  const logo = corner.size ? await brand!.bytes().catch(() => null) : null;
   for (const s of states) {
     const o = outputs.get(s.slot); if (!o) continue;
     const [kind, key] = s.slot.split(':'), [n, set] = (key ?? '').split('+');
@@ -841,7 +860,8 @@ export async function downloadZip(projectId: string) {
     const task = s.task ? TASK_LABEL[s.task as Task] : '';
     const main = kind === 'long' ? `${KIND_FILE.long}.${ext}` : `${KIND_FILE[kind]}-${n.padStart(2, '0')}-${task}.${ext}`;
     const name = kind === 'product' ? `白底产品图/${nameOf(key)}.${ext}` : kind === 'sku' ? `SKU-${nameOf(key)}.${ext}` : kind === 'skumodel' ? `SKU模特图/${nameOf(key)}.${ext}` : kind === 'cast' ? `模特定妆照.${ext}` : set ? `换色首图-${nameOf(set)}/${main}` : main;
-    zip.file(name, await fileOf(o.file_id));
+    const bytes = await fileOf(o.file_id);
+    zip.file(name, logo && corner.has(o.id) ? await pasteShopLogo(bytes, logo) : bytes);
   }
   if (!Object.keys(zip.files).length) throw new CatalogHttpError(409, '还没有出好的图');
   return { name: `${p.name}-电商主图.zip`, bytes: await zip.generateAsync({ type: 'nodebuffer', compression: 'STORE' }) };

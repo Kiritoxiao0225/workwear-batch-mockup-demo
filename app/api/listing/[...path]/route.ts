@@ -7,7 +7,9 @@ import { addReference, addSourceImage, chooseVersion, createProject, deleteProje
 import { addExtraImage, imagePrices, planPrice, requestPlan, submitDraft } from '@/lib/server/listing-jobs';
 import { copyProject } from '@/lib/server/listing-copy';
 import { addSet, downloadZip, editSlot, recast, redoSkus, redoSlot, redrawSlot, slotStates, startVerticals } from '@/lib/server/listing-generation';
-import { makeServices, saveShop, saveShopLogo, shopState } from '@/lib/server/listing-shop';
+import { makeServices, saveShop, saveShopBrand, saveShopCorner, saveShopLogo, shopBrand, shopState } from '@/lib/server/listing-shop';
+import { cornerAssets, pasteShopLogo } from '@/lib/server/listing-corner';
+import { SKU_PEOPLE } from '@/lib/listing/draft';
 import { limitUploads, LISTING_UPLOAD_WINDOWS } from '@/lib/server/upload-limit';
 import { addLayoutRef, createLayout, deleteLayout, layoutCards, layoutFile, layoutState, openLayouts, saveLayout, startLearning } from '@/lib/server/listing-layouts';
 
@@ -36,9 +38,17 @@ export async function GET(request: NextRequest, context: Context) {
     if (path[0] === 'projects' && path[1]) return json({ ...await projectDetail(tenant.id, path[1]), slots: await slotStates(path[1]) });
     if (path[0] === 'projects') return json(await listProjects(tenant.id));
     if (path[0] === 'assets' && path[1]) {
+      // A main image that kept the corner is shown with the shop's LOGO as it is now (off, or another LOGO later):
+      // the browser asks again each time and gets 304 while it has not changed. Any other asset ID always names the same bytes.
+      const brand = (await cornerAssets(tenant.id, [path[1]])).size ? await shopBrand(tenant.id) : undefined;
+      const tag = brand === undefined ? null : `"corner-1-${brand?.id ?? 'off'}"`;
+      if (tag && request.headers.get('if-none-match') === tag) return new NextResponse(null, { status: 304, headers: { ETag: tag, 'Cache-Control': 'private, no-cache' } });
       const file = await readListingAsset(tenant.id, path[1]);
-      // An asset ID always names the same bytes, so the browser may keep it.
-      return new NextResponse(new Uint8Array(file.bytes), { headers: { 'Content-Type': file.file.mime_type, 'Cache-Control': 'private, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff' } });
+      let bytes = file.bytes, pasted = !!brand;
+      // Without its LOGO for now (it could not be read) the image is shown as drawn, and not kept under the tag.
+      if (brand) try { bytes = await pasteShopLogo(file.bytes, await brand.bytes()); } catch (error) { pasted = false; console.error('[listing] corner logo', error instanceof Error ? error.message : error); }
+      const cache: Record<string, string> = !tag ? { 'Cache-Control': 'private, max-age=31536000, immutable' } : brand && !pasted ? { 'Cache-Control': 'no-store' } : { 'Cache-Control': 'private, no-cache', ETag: tag };
+      return new NextResponse(new Uint8Array(bytes), { headers: { 'Content-Type': file.file.mime_type, 'X-Content-Type-Options': 'nosniff', ...cache } });
     }
     throw new CatalogHttpError(404, '接口不存在');
   } catch (error) { return catalogError(error); }
@@ -48,7 +58,7 @@ export async function POST(request: NextRequest, context: Context) {
   try {
     const { tenant, user } = await tenantScope(request, true), { path } = await context.params;
     await assertPageAccess(user.id, ['/listing-images']);
-    const upload = (path[0] === 'layouts' && path[1] && path[2] === 'refs') || (path[0] === 'shop' && path[1] === 'logo')
+    const upload = (path[0] === 'layouts' && path[1] && path[2] === 'refs') || (path[0] === 'shop' && (path[1] === 'logo' || path[1] === 'brand'))
       || (path[0] === 'projects' && path[1] && ['refs', 'extra', 'images'].includes(path[2]));
     if (upload) await limitUploads(`upload:${tenant.id}`, LISTING_UPLOAD_WINDOWS);
     if (path[0] === 'layouts' && path[1] && path[2] === 'refs') {
@@ -62,6 +72,10 @@ export async function POST(request: NextRequest, context: Context) {
     if (path[0] === 'shop' && path[1] === 'logo') {
       const bytes = await catalogBody(request, MAX_SOURCE_BYTES);
       return json(await saveShopLogo(tenant.id, user.id, bytes, header(request, 'x-file-name') || 'LOGO'));
+    }
+    if (path[0] === 'shop' && path[1] === 'brand') {
+      const bytes = await catalogBody(request, MAX_SOURCE_BYTES);
+      return json(await saveShopBrand(tenant.id, user.id, bytes, header(request, 'x-file-name') || '店铺LOGO'));
     }
     if (path[0] === 'projects' && path[1] && path[2] === 'extra') {
       const bytes = await catalogBody(request, MAX_SOURCE_BYTES);
@@ -81,13 +95,14 @@ export async function POST(request: NextRequest, context: Context) {
     if (path[0] === 'projects' && path[2] === 'sets') return json(await addSet(tenant, user.id, path[1], body));
     if (path[0] === 'projects' && path[2] === 'copies') return json(await copyProject(tenant.id, user.id, path[1], body));
     if (path[0] === 'projects' && path[2] === 'redo') return json(await redoSlot(tenant, user.id, path[1], String(body.slot ?? ''), String(body.note ?? '')));
-    if (path[0] === 'projects' && path[2] === 'skus') return json(await redoSkus(tenant, user.id, path[1]));
+    if (path[0] === 'projects' && path[2] === 'skus') return json(await redoSkus(tenant, user.id, path[1], undefined, SKU_PEOPLE.find(p => p === body.people)));
     if (path[0] === 'projects' && path[2] === 'verticals') return json(await startVerticals(tenant, user.id, path[1]));
     if (path[0] === 'projects' && path[2] === 'cast') return json(await recast(tenant, user.id, path[1]));
     if (path[0] === 'projects' && path[2] === 'edit') return json(await editSlot(tenant, user.id, path[1], body));
     if (path[0] === 'projects' && path[2] === 'redraw') return json(await redrawSlot(tenant, user.id, path[1], body));
     if (path[0] === 'shop' && !path[1]) return json(await saveShop(tenant.id, user.id, body));
     if (path[0] === 'shop' && path[1] === 'make') return json(await makeServices(tenant, user.id));
+    if (path[0] === 'shop' && path[1] === 'corner') return json(await saveShopCorner(tenant.id, user.id, body));
     if (path[0] === 'projects' && path[2] === 'current') {
       await projectDetail(tenant.id, path[1]);
       return json(await chooseVersion(tenant.id, path[1], String(body.slot ?? ''), String(body.asset ?? '')));

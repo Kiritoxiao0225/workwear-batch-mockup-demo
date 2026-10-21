@@ -3,7 +3,7 @@
  * they say and which picture each colour gets. The words come only from the material: a row it has
  * nothing for gives way to the next one, so nothing is made up.
  */
-import { colorKeys, type Point } from './draft';
+import { colorKeys, type Gender, type Point, type SkuPeople } from './draft';
 import { isComponent } from './garment-role';
 import { textUnits } from './point-words';
 
@@ -98,8 +98,13 @@ export function modelPhotoFor(images: { id: string; kind: string; color: string;
   return images.filter(i => i.kind === '模特实拍' && !!i.person && !i.same && !isComponent(i) && (i.color === color || i.color === name)).sort((a, b) => rank(b) - rank(a))[0]?.id ?? null;
 }
 
-/** Each colour's own model photo, by the colour's key (colorKeys); colours without one are left out. */
-export function skuPhotos(d: { colors: { name: string; pick: string | null }[]; model: { lead: '男' | '女' } }, images: Parameters<typeof modelPhotoFor>[0], pair: boolean): Record<string, string> {
+/** Each colour's own model photo, by the colour's key (colorKeys); colours without one are left out, and all of them when the plan draws the models. */
+export function skuPhotos(d: { colors: { name: string; pick: string | null }[]; model: { lead: '男' | '女' }; skuPeople?: SkuPeople }, images: Parameters<typeof modelPhotoFor>[0], pair: boolean): Record<string, string> {
+  if (d.skuPeople && d.skuPeople !== '实拍') return {};
   const keys = colorKeys(d.colors);
   return Object.fromEntries(d.colors.flatMap((c, k) => { const label = c.pick ? modelPhotoFor(images, c.pick, c.name, d.model.lead, pair) : null; return label ? [[keys[k]!, label]] : []; }));
 }
+
+/** Who a drawn SKU model is: the plan's choice, else the cover's people (a man and a woman when it has two, else the lead). */
+export const skuWho = (d: { model: { lead: Gender }; skuPeople?: SkuPeople }, pair: boolean): Gender | '男女' =>
+  d.skuPeople && d.skuPeople !== '实拍' ? d.skuPeople : pair ? '男女' : d.model.lead;

@@ -136,7 +136,7 @@ setTimeout(() => { const p = projects.find(x => x.id === 'demo-planning'); if (p
 /** The shop's row, as on the server: its service images are the versions of its service:<id> slots. */
 const SHOP_ID = 'demo-shop';
 const start = defaultShop(['免费设计', '免费印绣', '一件起订', '现货速发']);
-const shopSettings: Omit<ShopService, 'made'> = { items: start.items, crafts: start.crafts, logo: null };
+const shopSettings: Omit<ShopService, 'made'> = { items: start.items, crafts: start.crafts, logo: null, brand: null, corner: false };
 projects.push({ ...project(SHOP_ID, '店铺服务图', 'done', 0, 0), slots: [] });
 const madeAt = new Map<string, string>();
 function shopState() {
@@ -210,6 +210,8 @@ export async function demoApi(path: string, init?: RequestInit): Promise<unknown
   if (a === 'shop') {
     if (!id && method === 'POST') Object.assign(shopSettings, { items: body.items, crafts: body.crafts });
     if (id === 'logo') shopSettings.logo = URL.createObjectURL(init!.body as Blob);
+    if (id === 'brand') shopSettings.brand = URL.createObjectURL(init!.body as Blob);
+    if (id === 'corner') shopSettings.corner = !!body.on && !!shopSettings.brand;
     if (id === 'make') { await wait(400); return makeShop(); }
     return shopState();
   }

@@ -50,11 +50,15 @@ export const serviceImageOf = (master: MasterId) => SERVICE_IMAGES.find(s => s.m
 
 /** One made service image: the picture (and its asset id on the server), the words drawn on it, and the earlier versions. */
 export type MadeService = { image: string; asset?: string; words: string[]; madeAt: string; history: { image: string; asset?: string; madeAt: string }[] };
-export type ShopService = { items: ServiceItem[]; crafts: Craft[]; logo: string | null; made: Partial<Record<ServiceImageId, MadeService>> };
+/**
+ * `logo`: the sample LOGO printed on the crafts image. `brand`: the shop's own LOGO, put in the top-left
+ * corner of its main images and on its SKU images while `corner` is on (corner.ts); never on a garment.
+ */
+export type ShopService = { items: ServiceItem[]; crafts: Craft[]; logo: string | null; brand: string | null; corner: boolean; made: Partial<Record<ServiceImageId, MadeService>> };
 
 /** A new shop: what the AI read in the products already uploaded comes ticked; nothing made yet. */
 export function defaultShop(fromMaterials: string[] = []): ShopService {
-  return { items: SERVICE_LIBRARY.map(x => ({ ...x, on: fromMaterials.includes(x.title), ai: fromMaterials.includes(x.title) })), crafts: ['刺绣', '高清烫画', '数码转印'], logo: null, made: {} };
+  return { items: SERVICE_LIBRARY.map(x => ({ ...x, on: fromMaterials.includes(x.title), ai: fromMaterials.includes(x.title) })), crafts: ['刺绣', '高清烫画', '数码转印'], logo: null, brand: null, corner: false, made: {} };
 }
 
 /** What an image writes, in its slots' order: the first ticked services, or the chosen crafts. */

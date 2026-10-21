@@ -1,13 +1,14 @@
 import sharp from 'sharp';
 import { describe, expect, it } from 'vitest';
 import { DEMO_MATERIAL } from '../listing/demo/material';
-import { defaultDraft } from '../listing/draft';
+import { defaultDraft, type Model, type SkuPeople } from '../listing/draft';
+import { skuPhotos } from '../listing/sku-card';
 import { LEGACY_LAYOUTS as BUILT_IN_LAYOUTS } from '../listing/legacy-layouts';
 import { SERVICE_IMAGES } from '../listing/service';
 import { BUILT_IN_LAYOUTS as MASTERS, FLAT_EXAMPLE, fitTemplate, type Layout } from '../listing/templates';
-import { contentOf, coverOf, fabricCrop, planJobs, wordsOf, zipEntryName } from './listing-generation';
+import { contentOf, coverOf, fabricCrop, LOGO_LINE, planJobs, wordsOf, zipEntryName } from './listing-generation';
 import { buildPlan } from './listing-write';
-import { castOnePrompt, castPrompt, editPrompt, longPrompt, mainPrompt, productPrompt, redrawPrompt, servicePrompt, serviceWordsPrompt, skuModelPrompt, skuPrompt } from './listing-prompts';
+import { castOnePrompt, castPrompt, editPrompt, longPrompt, mainPrompt, productPrompt, redrawPrompt, relayoutPrompt, servicePrompt, serviceWordsPrompt, skuModelPrompt, skuPrompt } from './listing-prompts';
 import { crowdLine, DEFAULT_PLACE } from './listing-crowd';
 import { SPECS, specPrompt } from './listing-specs';
 import type { StoredPlan } from './listing-store';
@@ -132,6 +133,23 @@ describe('the masters', () => {
     expect(at('M4', { lead: '男', photos: { 男: 'M9' } }).get('skumodel:M31')?.depends).toEqual(['product:M31', 'cast:男', 'cast:女']);
     expect(at('M1').get('skumodel:M31')?.input).not.toHaveProperty('pair');
     expect(at('M1', { lead: '女', photos: { 女: 'M9' } }).get('skumodel:M31')?.depends).toEqual(['product:M31', 'cast:女']);
+  });
+  it('the plan picks who the SKU images show (10-21): the material\'s photos, or the cast in every colour, one of them or both', () => {
+    const images = [{ id: 'M9', kind: '模特实拍', color: '深海蓝', person: '女' }, { id: 'M31', kind: '颜色款图', color: '深海蓝' }];
+    const d = { colors: [{ name: '深海蓝', pick: 'M31' }], model: { lead: '女' as const } };
+    expect(Object.values(skuPhotos(d, images, false))).toEqual(['M9']);
+    expect(skuPhotos({ ...d, skuPeople: '实拍' }, images, false)).not.toEqual({});
+    for (const p of ['男', '女', '男女'] as const) expect(skuPhotos({ ...d, skuPeople: p }, images, false)).toEqual({});
+    const at = (id: string, skuPeople: SkuPeople, model: Model = { lead: '女' }) => { const s = stored(master(id)); return new Map(planJobs({ ...s, photos: {}, draft: { ...defaultDraft(DEMO_MATERIAL, master(id)), extra: [], model, skuPeople } }, master(id), 1).map(j => [j.slot, j])); };
+    expect(at('M1', '男').get('skumodel:M31')).toMatchObject({ input: { kind: 'skuModel', who: '男' }, depends: ['product:M31', 'cast'] });
+    expect(at('M1', '女').get('skumodel:M31')?.input).not.toHaveProperty('who');
+    expect(at('M1', '男女').get('skumodel:M31')).toMatchObject({ input: { kind: 'skuModel', pair: true } });
+    expect(at('M4', '男').get('skumodel:M31')?.input).toMatchObject({ who: '男' });
+    expect(at('M4', '女').get('skumodel:M31')?.input).not.toHaveProperty('pair');
+    expect(at('M1', '男', { lead: '女', photos: { 女: 'M9' } }).get('skumodel:M31')?.depends).toEqual(['product:M31', 'cast:男']);
+  });
+  it('the chest LOGO is about a palm wide, not 「小小的」 (10-21)', () => {
+    for (const line of Object.values(LOGO_LINE)) { expect(line).toContain('宽约 8–10 厘米'); expect(line).not.toContain('小小的'); }
   });
   const plan = (id: string, scene?: { place: string; sell: string; act?: number; look?: number }): StoredPlan => ({ ...stored(master(id)), draft: { ...stored(master(id)).draft, extra: [], ...(scene ? { scene } : {}) } });
   it('every 3:4 image is its square one laid out again; with people or the whole garment the colour\'s white image comes too', () => {
@@ -302,6 +320,18 @@ describe('the closer and the SKU models (10-16)', () => {
       expect(prompt).not.toContain('没有户外场景');
     }
     expect(SPECS.M1.收口!.background({ ...fill, place: undefined })).toContain(DEFAULT_PLACE);
+  });
+  it('with the shop\'s LOGO in the corner, the corner is kept empty and the customer\'s LOGO stays on the chest only', () => {
+    const fill = { title: '团体定制 · 6色可选', sub: '', tags: [], facts: [], cells: [], color: six[0], colors: six.map(name => ({ name, hex: '#000' })), all: six.map(name => ({ name, hex: '#000' })), light: false, who: '', badge: '', castRef: 7 };
+    const closer = (corner: boolean) => specPrompt({ master: 'M1', task: '收口', taskLabel: '收口', n: 5, total: 5, spec: SPECS.M1.收口!, fill, garment: ['立领'], logo: '印客户 LOGO', refs: { garment: fill.colors, cast: 7, logo: 8, sample: 9 }, corner });
+    expect(closer(false)).toContain('左上角放客户的 LOGO'); expect(closer(false)).toContain('只用来印在衣服胸口和放在左上角');
+    expect(closer(true)).not.toContain('左上角放客户的 LOGO'); expect(closer(true)).toContain('只用来印在衣服胸口。');
+    expect(closer(true)).toContain('左0% 上0% 宽26% 高13%：左上角空位，之后要贴店铺 LOGO');
+    const m4 = MASTERS.find(l => l.id === 'M4')!, one = [{ name: '落霞橙', hex: '#d98a1c' }];
+    expect(mainPrompt({ ratio: 'square', task: '细节', template: m4.templates.细节.square, layout: m4, content: { title: '细节', sub: '', tags: [], cells: [], scene: '' }, used: one, all: one, garment: ['连帽'], lead: '男', fromSku: false, cast: null, corner: true }))
+      .toContain('左上角空位，之后要贴店铺 LOGO');
+    expect(relayoutPrompt(false, true)).toContain('参考图1左上角留着一块空位'); expect(relayoutPrompt(false)).not.toContain('空位');
+    expect(redrawPrompt({ ratio: 'portrait', ask: '背景换亮', reference: false, corner: true })).toContain('宽26% 高10% 只有背景');
   });
   it('a SKU model stands where the set is shot, the pose turning with the colour', () => {
     const at = (pose: number, place?: string) => skuModelPrompt({ color: '北欧蓝', garment: ['立领'], lead: '男', who: 'lead', halves: false, logo: null, place, pose });
