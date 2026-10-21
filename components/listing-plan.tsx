@@ -207,7 +207,11 @@ export function PlanDialog({ name, materials, sources, draft, layouts, prices, o
   };
   const logoMode = draft.logo?.mode ?? "LOGO";
   // A shop with a sample LOGO prints it on the chest unless the plan says otherwise (10-21).
-  useEffect(() => { if (!draft.logo && shop?.logo) onChange({ ...draft, logo: { mode: "样例" } }); }, [draft, shop?.logo, onChange]);
+  // A sample LOGO deleted since: the word 「LOGO」, as the shop page says.
+  useEffect(() => {
+    if (!draft.logo && shop?.logo) onChange({ ...draft, logo: { mode: "样例" } });
+    else if (shop && !shop.logo && draft.logo?.mode === "样例") onChange({ ...draft, logo: { mode: "LOGO" } });
+  }, [draft, shop, onChange]);
   const step1 = (<>
     <div className="lp-catcard"><b>品类</b>
       <span className="lp-chips">{CATEGORIES.map(c => (

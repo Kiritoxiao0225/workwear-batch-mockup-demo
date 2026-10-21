@@ -98,6 +98,11 @@ function ShopForm({ state, unit, exempt, onSay }: { state: ShopState; unit: numb
   const pending = pendingOf(shop), blocked = blockedOf(shop), newLogo = Object.values(shop.made).some(m => m?.oldLogo);
   const uploadLogo = (f: File) => void api<ShopState>("shop/logo", { method: "POST", body: f, headers: { "Content-Type": "application/octet-stream", "x-file-name": encodeURIComponent(f.name) } })
     .then(s => { keep(s); onSay(Object.values(s.shop.made).some(m => m?.oldLogo) ? "样例 LOGO 传好了：之后新开的款胸口默认印它；印绣工艺图点下面的「确认修改」重画" : "样例 LOGO 传好了：之后新开的款胸口默认印它，印绣工艺图也用它"); }).catch(error => onSay((error as Error).message));
+  const removeLogo = (which: "logo" | "brand") => {
+    const ask = which === "logo" ? "删除样例 LOGO？之后出的图胸口改印「LOGO」字样（每款方案里也能改）；印绣工艺图要重画成抽象图案。" : "删除店铺 LOGO？主图和 SKU 图左上角都不再放 LOGO，「放在左上角」会关掉。";
+    if (!window.confirm(ask)) return;
+    void api<ShopState>(`shop/${which}`, { method: "DELETE" }).then(s => { keep(s); onSay(which === "logo" ? "样例 LOGO 删掉了" : "店铺 LOGO 删掉了，左上角不再放"); }).catch(error => onSay((error as Error).message));
+  };
   // The cost: a new image is one image; redrawing the changed words of one is one image too.
   const confirm = async () => {
     setAsking(true);
@@ -171,7 +176,8 @@ function ShopForm({ state, unit, exempt, onSay }: { state: ShopState; unit: numb
               <div className="lp-logo-up"><label className="box">{shop.brand ? <img src={shop.brand} alt="店铺 LOGO" /> : <span>上传店铺 LOGO</span>}
                 <input type="file" accept="image/*" hidden onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (!f) return;
                   void api<ShopState>("shop/brand", { method: "POST", body: f, headers: { "Content-Type": "application/octet-stream", "x-file-name": encodeURIComponent(f.name) } }).then(s => { keep(s); onSay(s.shop.corner ? "店铺 LOGO 换好了，留了位置的主图马上用新的" : "店铺 LOGO 传好了，选「放在左上角」就会用上"); }).catch(error => onSay((error as Error).message)); }} /></label>
-                <p className="lp-muted lp-small">透明底 PNG 最好，横版更清楚；白底的会自动去掉白底。贴的时候按左上角的底色，自动用原色、白色或深色。</p></div>
+                <div><p className="lp-muted lp-small">透明底 PNG 最好，横版更清楚；白底的会自动去掉白底。贴的时候按左上角的底色，自动用原色、白色或深色。</p>
+                  {shop.brand && <p className="lp-small">点图换一张 · <button type="button" className="lp-btn link" onClick={() => removeLogo("brand")}>删除</button></p>}</div></div>
               <div className="lp-corner">{([[false, "不放", "主图照原样排，左上角不留位置"], [true, "放在左上角", shop.brand ? "之后出的主图在左上角留出位置，贴上这个 LOGO" : "先上传店铺 LOGO"]] as const).map(([on, name, what]) => (
                 <button type="button" key={name} className={"lp-pick" + (shop.corner === on ? " on" : "")} disabled={on && !shop.brand} onClick={() => { if (shop.corner !== on) setCorner(on); }}><b>{name}</b><span>{what}</span></button>))}</div>
               <p className="lp-muted lp-small">打开以后新出的主图才留位置，之前出的图不贴。关掉或换 LOGO，留了位置的图马上跟着变，不用重出。</p>
@@ -181,7 +187,8 @@ function ShopForm({ state, unit, exempt, onSay }: { state: ShopState; unit: numb
               <p className="lp-muted lp-small">印在衣服上做示范，告诉买家能印标：每款方案的胸口默认印它；印绣工艺图三格布面上绣的、烫的、印的也是它。不传的话，胸口默认印「LOGO」字样，工艺图画抽象图案。</p>
               <div className="lp-logo-up"><label className="box">{shop.logo ? <img src={shop.logo} alt="样例 LOGO" /> : <span>上传样例 LOGO</span>}
                 <input type="file" accept="image/*" hidden onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) uploadLogo(f); }} /></label>
-                <p className="lp-muted lp-small">传单独一个 LOGO，透明底 PNG 最好；不要传工艺效果拼图或产品照片，会被整张印到衣服上。用客户的真实 LOGO 做案例展示时，确认是真实合作或已获授权。</p></div>
+                <div><p className="lp-muted lp-small">传单独一个 LOGO，透明底 PNG 最好；不要传工艺效果拼图或产品照片，会被整张印到衣服上。用客户的真实 LOGO 做案例展示时，确认是真实合作或已获授权。</p>
+                  {shop.logo && <p className="lp-small">点图换一张 · <button type="button" className="lp-btn link" onClick={() => removeLogo("logo")}>删除</button></p>}</div></div>
             </div>
             </div>
           </section>

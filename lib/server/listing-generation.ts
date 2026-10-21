@@ -617,9 +617,10 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
       const colorOf = (sku: string) => colors.find(c => c.sku === sku) ?? (() => { throw new CatalogHttpError(404, `颜色不存在：${sku}`); })();
       const hasCast = outputs.has('cast');
       // What is printed on the chest; a LOGO image (the shop's sample one, or this product's customer one) is sent as the last reference image.
-      const logoMode = d.logo?.mode ?? 'LOGO', logoAsset = logoMode === '客户' ? stored.images.find(i => i.label === d.logo?.label)?.assetId : undefined;
-      const logoBytes = logoMode === '样例' ? (await shopSettings(job.tenant_id)).logo
-        : logoAsset ? await fileOf((await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [logoAsset])).rows[0].file_id) : null;
+      // The shop's sample LOGO deleted since the plan: the word 「LOGO」, as the shop page says.
+      const sample = d.logo?.mode === '样例' ? (await shopSettings(job.tenant_id)).logo : null;
+      const logoMode = d.logo?.mode === '样例' && !sample ? 'LOGO' : d.logo?.mode ?? 'LOGO', logoAsset = logoMode === '客户' ? stored.images.find(i => i.label === d.logo?.label)?.assetId : undefined;
+      const logoBytes = sample ?? (logoAsset ? await fileOf((await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [logoAsset])).rows[0].file_id) : null);
       const logoLine = logoMode === '不印' || (logoMode !== 'LOGO' && !logoBytes) ? null : LOGO_LINE[logoMode];
       if (input.kind === 'sku' && input.card) {
         // The SKU image on the brand template: the colour's model photo (the material's own, else the drawn one), its fabric, the material's words. No model call.

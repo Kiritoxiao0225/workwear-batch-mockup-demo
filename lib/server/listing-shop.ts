@@ -24,7 +24,8 @@ import type { Tenant } from './tenant-scope';
 
 const db = () => catalogDatabase();
 /** What is stored on the shop's row; the LOGOs are asset ids of uploaded reference images (rows before 10-18 have no brand). */
-type Settings = Omit<ShopService, 'made' | 'logo' | 'brand' | 'corner'> & { logo: string | null; brand?: string | null; corner?: boolean };
+/** `logoGone`: when the sample LOGO was deleted, so a crafts image drawn before still with it is drawn again. */
+type Settings = Omit<ShopService, 'made' | 'logo' | 'brand' | 'corner'> & { logo: string | null; brand?: string | null; corner?: boolean; logoGone?: string };
 export const serviceSlot = (id: ServiceImageId) => `service:${id}`;
 
 /** The tenant's shop row, made the first time (services the AI read in uploaded products come ticked). */
@@ -47,8 +48,8 @@ export async function shopState(tenant: string, user: string) {
   const states = await slotStates(row.id);
   const made: ShopService['made'] = {}, making: ServiceImageId[] = [], failed: Partial<Record<ServiceImageId, string>> = {};
   const times = new Map(((await db().query(`SELECT id,created_at FROM listing_assets WHERE project_id=$1 AND slot IS NOT NULL`, [row.id])).rows as { id: string; created_at: Date }[]).map(r => [r.id, r.created_at.toISOString()]));
-  // When the sample LOGO was set: a crafts image drawn before it shows the old one (10-21).
-  const logoAt = row.shop.logo ? ((await db().query('SELECT created_at FROM listing_assets WHERE id=$1', [row.shop.logo])).rows[0]?.created_at as Date | undefined)?.toISOString() : undefined;
+  // When the sample LOGO was set or deleted: a crafts image drawn before shows the old one (10-21).
+  const logoAt = row.shop.logo ? ((await db().query('SELECT created_at FROM listing_assets WHERE id=$1', [row.shop.logo])).rows[0]?.created_at as Date | undefined)?.toISOString() : row.shop.logoGone;
   for (const def of SERVICE_IMAGES) {
     const s = states.find(x => x.slot === serviceSlot(def.id));
     if (!s) continue;
@@ -62,7 +63,9 @@ export async function shopState(tenant: string, user: string) {
       history: kept.reverse().map(v => ({ image: assetUrl(v.id), asset: v.id, madeAt: times.get(v.id) ?? '' })),
     } satisfies MadeService;
   }
-  const shop: ShopService = { ...row.shop, logo: row.shop.logo ? assetUrl(row.shop.logo) : null,
+  const settings: Settings = { ...row.shop };
+  delete settings.logoGone;
+  const shop: ShopService = { ...settings, logo: row.shop.logo ? assetUrl(row.shop.logo) : null,
     brand: row.shop.brand ? assetUrl(row.shop.brand) : null, corner: !!row.shop.corner && !!row.shop.brand, made };
   return { project: row.id, shop, making, failed };
 }
@@ -87,6 +90,17 @@ export async function saveShopLogo(tenant: string, user: string, bytes: Buffer, 
   const row = await catalogTransaction(c => shopRow(c, tenant, user));
   const { asset } = await addReference(tenant, row.id, bytes, name);
   await db().query(`UPDATE listing_projects SET shop=shop||jsonb_build_object('logo',$2::text),updated_at=now() WHERE id=$1`, [row.id, asset]);
+  return shopState(tenant, user);
+}
+
+/**
+ * Takes a LOGO off the shop: the sample one (the chest then prints 「LOGO」, the crafts image is drawn
+ * again with an abstract pattern), or its own (the corner switch goes off with it).
+ */
+export async function removeShopLogo(tenant: string, user: string, which: 'logo' | 'brand') {
+  const row = await catalogTransaction(c => shopRow(c, tenant, user));
+  const patch = which === 'logo' ? (row.shop.logo ? { logo: null, logoGone: new Date().toISOString() } : {}) : { brand: null, corner: false };
+  await db().query('UPDATE listing_projects SET shop=shop||$2::jsonb,updated_at=now() WHERE id=$1', [row.id, patch]);
   return shopState(tenant, user);
 }
 

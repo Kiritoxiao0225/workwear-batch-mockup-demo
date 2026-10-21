@@ -610,8 +610,25 @@ try {
   await call(0, `projects/${fifth}/redo`, { slot: 'square:3', note: '' });
   for (const j of await imageJobs(fifth, true)) await make(j);
   assert.doesNotMatch(prompt('square:3').prompt, /空位/); assert.equal((await receiptOf(fifth, 'square:3')).corner, undefined);
+  // Deleting the LOGOs (10-21): someone else's shop is untouched; the shop's own takes the corner switch off with it;
+  // the sample one makes the chest print 「LOGO」 and the crafts image drawn again whole, with no LOGO image.
+  await call(1, 'shop/logo', undefined, 200, 'DELETE');
+  assert.ok((await (await call(0, 'shop')).json()).shop.logo);
+  await call(0, 'shop/corner', { on: true });
+  const noBrand = (await (await call(0, 'shop/brand', undefined, 200, 'DELETE')).json()).shop;
+  assert.deepEqual([noBrand.brand, noBrand.corner], [null, false]);
+  const noLogo = (await (await call(0, 'shop/logo', undefined, 200, 'DELETE')).json()).shop;
+  assert.deepEqual([noLogo.logo, noLogo.made['D-warm'].oldLogo], [null, true]);
+  await call(0, `projects/${fifth}/redo`, { slot: 'square:1', note: '' });
+  for (const j of await imageJobs(fifth, true)) await make(j);
+  assert.match(prompt('square:1').prompt, /胸口左侧印一个白色「LOGO」字样/); assert.doesNotMatch(prompt('square:1').prompt, /客户的 LOGO/);
+  assert.equal((await (await call(0, 'shop/make', {})).json()).images, 1);
+  for (const j of await imageJobs(shop0.project, true)) await make(j);
+  assert.equal(prompt('service:D-warm').refs, 1);
+  assert.equal((await (await call(0, 'shop')).json()).shop.made['D-warm'].oldLogo, undefined);
   // The credits this set took go back, so the checks after it start where they did.
   await db().query('UPDATE credit_accounts SET balance_cents=$2 WHERE tenant_id=$1', [tenants[0], beforeCorner]);
+  pass('删除 LOGO：只删自己店的；删店铺 LOGO 连开关一起关；删样例 LOGO 后胸口改印「LOGO」字样、印绣工艺图整张重画成抽象图案');
   pass('胸口印样例 LOGO：出图带上店铺设置里的样例 LOGO；店铺 LOGO：没传 LOGO 打不开；开了以后新出的方图左上角留空、看图和下载都贴上（深底变白）；第 2 张服务图不贴；竖版照着留空也贴；别人看不到；换 LOGO 马上换、关掉马上恢复原图，之后出的图不再留空');
 
   const run = async (provider: Parameters<typeof executePlan>[1]) => {

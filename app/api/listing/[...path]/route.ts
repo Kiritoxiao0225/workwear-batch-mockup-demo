@@ -7,7 +7,7 @@ import { addReference, addSourceImage, chooseVersion, createProject, deleteProje
 import { addExtraImage, imagePrices, planPrice, requestPlan, submitDraft } from '@/lib/server/listing-jobs';
 import { copyProject } from '@/lib/server/listing-copy';
 import { addSet, downloadZip, editSlot, recast, redoSkus, redoSlot, redrawSlot, slotStates, startVerticals } from '@/lib/server/listing-generation';
-import { makeServices, saveShop, saveShopBrand, saveShopCorner, saveShopLogo, shopBrand, shopState } from '@/lib/server/listing-shop';
+import { makeServices, removeShopLogo, saveShop, saveShopBrand, saveShopCorner, saveShopLogo, shopBrand, shopState } from '@/lib/server/listing-shop';
 import { cornerAssets, pasteShopLogo } from '@/lib/server/listing-corner';
 import { SKU_PEOPLE } from '@/lib/listing/draft';
 import { limitUploads, LISTING_UPLOAD_WINDOWS } from '@/lib/server/upload-limit';
@@ -116,6 +116,7 @@ export async function DELETE(request: NextRequest, context: Context) {
     const { tenant, user } = await tenantScope(request, true), { path } = await context.params;
     await assertPageAccess(user.id, ['/listing-images']);
     if (path[0] === 'layouts' && path[1]) return json(await deleteLayout(tenant.id, path[1]));
+    if (path[0] === 'shop' && (path[1] === 'logo' || path[1] === 'brand') && !path[2]) return json(await removeShopLogo(tenant.id, user.id, path[1]));
     if (path[0] !== 'projects' || !path[1]) throw new CatalogHttpError(404, '接口不存在');
     return json(await deleteProject(tenant.id, path[1]));
   } catch (error) { return catalogError(error); }
