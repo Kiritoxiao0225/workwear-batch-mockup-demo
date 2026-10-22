@@ -68,7 +68,34 @@ describe('the Codex relay (images when LISTING_IMAGE_PROVIDER=cliproxy)', () => 
       expect(calls[0].form.get('size')).toBe('1152x1536');
       expect(calls[0].form.getAll('image[]')).toHaveLength(2);
       vi.stubGlobal('fetch', async () => json({ error: {} }, 429));
-      await expect(generateListingImage({ prompt: 'p', references: [png], ratio: 'square' }, hooks)).rejects.toMatchObject({ notCharged: true });
+      await expect(generateListingImage({ prompt: 'p', references: [png], ratio: 'square' }, { ...hooks, retryWaitMs: () => 0 })).rejects.toMatchObject({ notCharged: true });
+    } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
+  });
+
+  it('tries a passing failure again, up to two more times, and never a refused or unauthorised one', async () => {
+    vi.stubEnv('CLIPROXY_API_KEY', 'k'); vi.stubEnv('CLIPROXY_API_BASE_URL', 'https://relay.example/v1');
+    const png = await sharp({ create: { width: 4, height: 4, channels: 3, background: '#fff' } }).png().toBuffer();
+    const submitted = vi.fn(async () => {}), waits: number[] = [];
+    const hooks = { env: { LISTING_IMAGE_PROVIDER: 'cliproxy' }, beforeSubmit: submitted, receipt: async () => {}, retryWaitMs: (ms: number) => { waits.push(ms); return 0; } };
+    const answers = (...list: (number | 'drop')[]) => { let n = 0; vi.stubGlobal('fetch', async () => {
+      const a = list[Math.min(n++, list.length - 1)];
+      if (a === 'drop') throw new TypeError('fetch failed');
+      return a === 200 ? json({ data: [{ b64_json: png.toString('base64') }] }) : json({ error: {} }, a);
+    }); return () => n; };
+    try {
+      let calls = answers(429, 'drop', 200);
+      expect((await generateListingImage({ prompt: 'p', references: [png], ratio: 'square' }, hooks)).bytes.equals(png)).toBe(true);
+      expect(calls()).toBe(3);
+      expect(submitted).toHaveBeenCalledTimes(1);
+      expect(waits[0]).toBeGreaterThanOrEqual(40_000); // a rate limit waits longer
+      calls = answers(502);
+      await expect(generateListingImage({ prompt: 'p', references: [png], ratio: 'square' }, hooks)).rejects.toMatchObject({ notCharged: true, message: expect.stringContaining('已自动重试 2 次') });
+      expect(calls()).toBe(3);
+      for (const status of [400, 401, 403]) {
+        calls = answers(status);
+        await expect(generateListingImage({ prompt: 'p', references: [png], ratio: 'square' }, hooks)).rejects.toMatchObject({ notCharged: true });
+        expect(calls()).toBe(1);
+      }
     } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
   });
 });

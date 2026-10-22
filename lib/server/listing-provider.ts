@@ -3,8 +3,9 @@ import { cliproxyListingImage } from './cliproxy-image-2';
 /**
  * Model calls for 电商主图: the analysis and the images on EvoLink (gpt-image-2.5), as live, unless
  * LISTING_PLAN_PROVIDER=cliproxy or LISTING_IMAGE_PROVIDER=cliproxy moves that half to the Codex
- * relay (CLIProxy, gpt-image-2; the local setup uses it). One request per call; nothing here
- * retries, because a request that was sent may already have been charged.
+ * relay (CLIProxy, gpt-image-2; the local setup uses it). One request per call on EvoLink, because
+ * a request that was sent may already have been charged; a relay image, which costs nothing when it
+ * fails, is tried again on a passing failure (RELAY_RETRY_WAITS).
  */
 type Env = Record<string, string | undefined>;
 type Options = { env?: Env; fetchImplementation?: typeof fetch; beforeSubmit: () => Promise<void>; receipt: (id: string) => Promise<void> };
@@ -84,6 +85,8 @@ export const listingImageModel = (env: Env = process.env) => listingImageProvide
 const RELAY_SIZES = { square: '1024x1024', portrait: '1152x1536', long: '1024x1536' } as const;
 const mimeOf = (bytes: Buffer) => bytes[0] === 0xff && bytes[1] === 0xd8 ? 'image/jpeg' : bytes.subarray(8, 12).toString() === 'WEBP' ? 'image/webp' : 'image/png';
 const RATIOS = { square: '1:1', portrait: '3:4', long: '2:3' } as const;
+/** How long to wait before each retry of a relay image, in ms (doubled after a rate limit). */
+const RELAY_RETRY_WAITS = [20_000, 45_000];
 // The provider's words help (a refusal reads differently from a timeout); links and token-like runs
 // stay out of what the tenant sees.
 export const providerReason = (text: string) => text.replace(/https?:\/\/\S+/gu, '[链接]').replace(/[A-Za-z0-9_\-+/=]{24,}/gu, '…').slice(0, 80);
@@ -94,15 +97,29 @@ export type ImageCall = { bytes: Buffer; taskId: string; credits: number | null;
  * A task the provider reports as failed or cancelled is not charged, so it throws with
  * `notCharged`; anything else after submission may have been charged.
  */
-export async function generateListingImage(input: { prompt: string; references: Buffer[]; ratio: keyof typeof RATIOS; mask?: Buffer }, options: Options & { pollMs?: number; timeoutMs?: number }): Promise<ImageCall> {
+export async function generateListingImage(input: { prompt: string; references: Buffer[]; ratio: keyof typeof RATIOS; mask?: Buffer }, options: Options & { pollMs?: number; timeoutMs?: number; retryWaitMs?: (waited: number) => number }): Promise<ImageCall> {
   const env = options.env ?? process.env, transport = options.fetchImplementation ?? fetch;
   if (listingImageProvider(env) === 'cliproxy') {
-    // The relay runs on a subscription: a failed image costs nothing, so the user is not charged for it.
+    // The relay runs on a subscription: a failed image costs nothing, so the user is not charged for
+    // it, and a rate limit, a server fault or a dropped connection is tried again before it is shown.
     await options.beforeSubmit();
-    try {
-      const call = await cliproxyListingImage({ prompt: input.prompt, images: input.references, size: RELAY_SIZES[input.ratio], mask: input.mask });
-      return { bytes: call.bytes, taskId: '', credits: null, durationMs: call.durationMs };
-    } catch (error) { throw Object.assign(error instanceof Error ? error : new Error('出图失败'), { notCharged: true }); }
+    for (let tried = 0; ; tried++) {
+      try {
+        const call = await cliproxyListingImage({ prompt: input.prompt, images: input.references, size: RELAY_SIZES[input.ratio], mask: input.mask });
+        if (tried) console.info('[listing] relay image made after', tried, 'retries');
+        return { bytes: call.bytes, taskId: '', credits: null, durationMs: call.durationMs };
+      } catch (error) {
+        const failure = error instanceof Error ? error : new Error('出图失败'), { retry, limited } = failure as { retry?: boolean; limited?: boolean };
+        if (retry && tried < RELAY_RETRY_WAITS.length) {
+          const waitMs = RELAY_RETRY_WAITS[tried] * (limited ? 2 : 1) + Math.random() * 10_000;
+          console.warn('[listing] relay image failed, retrying', tried + 1, failure.message);
+          await new Promise(r => setTimeout(r, options.retryWaitMs ? options.retryWaitMs(waitMs) : waitMs));
+          continue;
+        }
+        if (tried) failure.message += `（已自动重试 ${tried} 次）`;
+        throw Object.assign(failure, { notCharged: true });
+      }
+    }
   }
   const key = env.EVOLINK_API_KEY?.trim();
   if (!key) throw new Error('EVOLINK_API_KEY 未配置');
