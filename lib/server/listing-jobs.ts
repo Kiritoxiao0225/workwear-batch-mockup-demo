@@ -2,20 +2,22 @@
  * 电商主图 background work. Same lifecycle as the garment AI queue: credits are held before a job
  * exists, a provider call is recorded before it is sent, and a sent call is never repeated.
  */
+import type { Inner } from '../listing/wear';
+import { PLAN_IMAGE_COST_MICRO, planCredits, planUserMicro } from '../listing/plan-price';
 import { createHash, randomUUID } from 'node:crypto';
 import { posix } from 'node:path';
 import { catalogDatabase, catalogTransaction } from './catalog-database';
 import { CatalogHttpError } from './catalog-auth';
 import { readCatalogFile } from './catalog-files';
-import { currentPrices, holdCredits, microToCents, priceOf, releaseHold, settleHold } from './credits';
+import { currentPrices, holdCredits, microToCents, priceOf, releaseHold, settleHold, type PriceSnapshot } from './credits';
 import { directKeys, draftImages, pickProblems, reusedSlots, usedSlots, type Reuse } from '../listing/draft';
 import { draftSchema, type SubmittedDraft } from '../listing/draft-schema';
 import { skuPhotos } from '../listing/sku-card';
 import { skuPair } from '../listing/templates';
 import { claimLayout, executeLayout, renewLayoutLease, resolveLayout } from './listing-layouts';
-import { chooseMaterials, coloursRequest, parseColours, parseRead, parseSorted, readRequest, recolored, settleCopies, sortRequest, worthReading, type Organized, type SortedImage } from './listing-organize';
+import { chooseMaterials, coloursRequest, applyLiners, LINER_CHECK_BATCH, LINER_CHECK_SIDE, linerCandidates, linerRequest, parseColours, parseLinerBatch, type LinerCheck, parseRead, parseSorted, readRequest, recolored, settleCopies, sortRequest, worthReading, type Organized, type SortedImage } from './listing-organize';
 import { buildPlan, writeRequest } from './listing-write';
-import { colourSources, planViews, type PlanSource, type PlanView } from './listing-plan-views';
+import { colourSources, planViews, single, type PlanSource, type PlanView } from './listing-plan-views';
 import { assertListingProviderConfigured, callPlanModel, LISTING_PLAN_MODEL, listingPlanProvider, listingWorkerConcurrency, type PlanCall } from './listing-provider';
 import { addSourceImage, clearOldSources, sourceImages } from './listing-store';
 import { markPlain } from './listing-plain';
@@ -34,16 +36,21 @@ export async function imagePrices() {
     layoutCredits: microToCents(priceOf(prices, 'listing_layout').userMicroCents) };
 }
 
-/** Credits the planning step will hold, for the page to show before the user starts. */
+/** What 整理素材 costs, for the page to work out each product's price from its images before the user starts. */
 export async function planPrice() {
-  return microToCents(priceOf(await currentPrices(), 'listing_plan').userMicroCents);
+  const p = priceOf(await currentPrices(), 'listing_plan');
+  return { planCostMicro: p.costMicroCents, planMultiplierMilli: p.multiplierMilli, planCredits: planCredits(p.costMicroCents, p.multiplierMilli, 0) };
+}
+/** The prices held for one product's analysis: 读商品与策划 priced for its images (plan-price.ts), so it settles at that. */
+function planSnapshot(prices: PriceSnapshot, images: number): PriceSnapshot {
+  return { ...prices, prices: prices.prices.map(e => e.action !== 'listing_plan' ? e
+    : { ...e, costMicroCents: e.costMicroCents + images * PLAN_IMAGE_COST_MICRO, userMicroCents: planUserMicro(e.costMicroCents, e.multiplierMilli, images) }) };
 }
 
 /** Uploads are done: hold the planning price and queue the analysis. */
 export async function requestPlan(tenant: Tenant, user: string, projectId: string) {
   assertListingProviderConfigured();
-  const prices = await currentPrices();
-  const price = priceOf(prices, 'listing_plan');
+  const current = await currentPrices();
   return catalogTransaction(async c => {
     const p = (await c.query(`SELECT status FROM listing_projects WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL FOR UPDATE`, [projectId, tenant.id])).rows[0];
     if (!p) throw new CatalogHttpError(404, '商品不存在');
@@ -54,9 +61,9 @@ export async function requestPlan(tenant: Tenant, user: string, projectId: strin
     if (!(await c.query("SELECT 1 FROM listing_workers WHERE heartbeat_at>now()-interval '45 seconds' LIMIT 1")).rowCount) {
       throw new CatalogHttpError(503, '电商主图后台未连接，未冻结积分，请稍后再试');
     }
-    const id = randomUUID();
+    const id = randomUUID(), prices = planSnapshot(current, images);
     await holdCredits(c, { id: holdId(id), tenantId: tenant.id, kind: 'analysis', jobRef: 'listing:plan:' + projectId,
-      billingMode: tenant.billingMode, amountCents: microToCents(price.userMicroCents), snapshot: prices });
+      billingMode: tenant.billingMode, amountCents: microToCents(priceOf(prices, 'listing_plan').userMicroCents), snapshot: prices });
     await c.query(`INSERT INTO listing_jobs(id,tenant_id,project_id,created_by,step) VALUES($1,$2,$3,$4,'plan')`, [id, tenant.id, projectId, user]);
     await c.query(`UPDATE listing_projects SET status='planning', error=NULL, updated_at=now() WHERE id=$1`, [projectId]);
     return { status: 'planning' };
@@ -151,7 +158,7 @@ export async function executePlan(job: JobRow, provider: Provider = (request, ho
     try {
       const told = await planViews(colourSources(sources));
       palette = (await ask(coloursRequest({ views: told.views, paths: sources.map(s => `${s.id}：${s.folder ? s.folder + '/' : ''}${s.name}`), model, product: project.name }), parseColours)).map(c => c.name);
-    } catch (error) { throw Object.assign(error as Error, { done: 0, total: batches.length + 2 }); }
+    } catch (error) { throw Object.assign(error as Error, { done: 0, total: batches.length + 3 }); }
     // Three batches at a time; every batch is tried, so one cut connection loses only its own.
     const sorted: SortedImage[][] = new Array(batches.length);
     let next = 0, firstError: unknown = null;
@@ -161,21 +168,33 @@ export async function executePlan(job: JobRow, provider: Provider = (request, ho
         try { sorted[k] = await ask(sortRequest({ views: b, model, product: project.name, colors: palette }), content => parseSorted(content, idsOf(b))); } catch (error) { firstError ??= error; }
       }
     }));
-    if (firstError) throw Object.assign(firstError as Error, { done: sorted.filter(Boolean).length + 1, total: batches.length + 2 });
-    const images = recolored(settleCopies(sorted.flat()), palette), readable = new Set(worthReading(images).map(i => i.id));
+    if (firstError) throw Object.assign(firstError as Error, { done: sorted.filter(Boolean).length + 1, total: batches.length + 3 });
+    // The images that may show a liner, looked at again one by one at full size (10-21: at ~200 px a black fleece is a black T-shirt).
+    const bySource = new Map(sources.map(s => [s.id, s])), pathOf = (id: string) => { const s = bySource.get(id); return s ? `${s.folder ? s.folder + '/' : ''}${s.name}` : ''; };
+    const sortedImages = recolored(settleCopies(sorted.flat()), palette), checked = linerCandidates(sortedImages, pathOf);
+    let images: SortedImage[];
+    try {
+      const checks: LinerCheck[] = [];
+      for (let k = 0; k < checked.length; k += LINER_CHECK_BATCH) {
+        const part = checked.slice(k, k + LINER_CHECK_BATCH);
+        checks.push(...await ask(linerRequest({ views: await Promise.all(part.map(id => single(bySource.get(id)!, LINER_CHECK_SIDE))), model, product: project.name, colors: palette }), parseLinerBatch));
+      }
+      images = applyLiners(checks, sortedImages, checked);
+    } catch (error) { throw Object.assign(error as Error, { done: batches.length + 1, total: batches.length + 3 }); }
+    const readable = new Set(worthReading(images).map(i => i.id));
     const toRead = sources.filter(s => !duplicates.has(s.id) && readable.has(s.id));
     const readViews = (await planViews(toRead.length ? toRead : sources.filter(s => !duplicates.has(s.id)))).views;
     let organized: Organized;
     try { organized = await ask(readRequest({ views: readViews, model, product: project.name, images, colors: palette }), content => parseRead(content, images)); } catch (error) {
-      throw Object.assign(error as Error, { done: batches.length + 1, total: batches.length + 2 });
+      throw Object.assign(error as Error, { done: batches.length + 2, total: batches.length + 3 });
     }
     const certain = attempts.find(a => a.status === 'succeeded');
     if (certain) await settleHold(holdId(job.id), job.tenant_id, [{ action: 'listing_plan', billable: true, certain: true, attemptId: certain.id }]);
     else await releaseHold(holdId(job.id), job.tenant_id, '整理全部用了之前存下的结果').catch(() => {});
     const keptSources = sources.filter(s => !duplicates.has(s.id));
     organized = { ...organized, images: await markPlain(organized.images, keptSources) };
-    const { look, ...rest } = organized;
-    const materials: Materials = { category: organized.category, categoryWhy: organized.categoryWhy, checks: organized.checks, titles: organized.titles, themes: organized.themes, look,
+    const { look, wear, ...rest } = organized;
+    const materials: Materials = { category: organized.category, categoryWhy: organized.categoryWhy, checks: organized.checks, titles: organized.titles, themes: organized.themes, look, wear,
       sorted: rest, chosen: chooseMaterials(organized, keptSources), duplicates: [...duplicates], model: lastModel || model, images: map };
     await db().query(`UPDATE listing_projects SET status='materials',materials=$2,plan=NULL,error=NULL,updated_at=now() WHERE id=$1`, [job.project_id, materials]);
     await db().query(`UPDATE listing_jobs SET status='succeeded',lease_until=NULL,updated_at=now() WHERE id=$1`, [job.id]);
@@ -210,7 +229,9 @@ export async function executePlan(job: JobRow, provider: Provider = (request, ho
  */
 export type Materials = {
   category: string; categoryWhy: string; checks: Organized['checks']; titles: Organized['titles']; themes?: Organized['themes']; look?: Organized['look'];
-  sorted: Omit<Organized, 'look'>; chosen: ReturnType<typeof chooseMaterials>; duplicates: [string, string][]; model: string; images: { label: string; assetId: string }[]; draft?: SubmittedDraft & { runId: string };
+  /** How it is worn and its SKU versions (wear.ts); none on material sorted before 10-21. */
+  wear?: Organized['wear'];
+  sorted: Omit<Organized, 'look' | 'wear'>; chosen: ReturnType<typeof chooseMaterials>; duplicates: [string, string][]; model: string; images: { label: string; assetId: string }[]; draft?: SubmittedDraft & { runId: string };
   from?: string; baseName?: string; variant?: number; reuse?: Reuse;
 };
 
@@ -273,7 +294,7 @@ export async function submitDraft(tenant: Tenant, user: string, projectId: strin
  * (X1, X2, …) so the labels the model saw do not move; it is extracted by the model like a colour
  * image, never used as the product image directly.
  */
-export async function addExtraImage(tenant: string, projectId: string, bytes: Buffer, name: string) {
+export async function addExtraImage(tenant: string, projectId: string, bytes: Buffer, name: string, liner?: { inner: string; color: string; drawn?: boolean }) {
   const added = await addSourceImage(tenant, projectId, bytes, name, `补传/${name}`, ['materials']);
   return catalogTransaction(async c => {
     const p = (await c.query(`SELECT materials FROM listing_projects WHERE id=$1 AND tenant_id=$2 FOR UPDATE`, [projectId, tenant])).rows[0];
@@ -281,7 +302,9 @@ export async function addExtraImage(tenant: string, projectId: string, bytes: Bu
     if (known) return { label: known.label, url: added.url };
     const label = `X${m.images.filter(i => i.label.startsWith('X')).length + 1}`;
     m.images.push({ label, assetId: added.id });
-    m.sorted.images.push({ id: label, kind: '颜色款图', color: '', front: true, detail: '', text: false, logo: false, same: '', person: '', face: false });
+    // A liner added on the plan (10-22, uploaded or drawn and adopted) counts as that liner worn alone; a drawing is on white.
+    m.sorted.images.push(liner ? { id: label, kind: liner.drawn ? '静物' : '模特实拍', color: liner.color, front: false, detail: '', text: false, logo: false, same: '', person: '', face: false, role: '内胆', inner: liner.inner as Inner, innerColor: liner.color }
+      : { id: label, kind: '颜色款图', color: '', front: true, detail: '', text: false, logo: false, same: '', person: '', face: false });
     await c.query(`UPDATE listing_projects SET materials=$2,updated_at=now() WHERE id=$1`, [projectId, m]);
     return { label, url: added.url };
   });

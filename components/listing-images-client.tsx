@@ -5,6 +5,7 @@
  * square images are made first and changed one by one, then the 3:4 and 2:3 images follow. Beside
  * the 工作台 are the 母版库 (the shop's default master) and the 店铺设置 (its service images).
  */
+import { PLAN_IMAGE_COST_MICRO, planCredits } from "@/lib/listing/plan-price";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppHeader } from "./app-header";
 import { PageHeader, PageTabs } from "./page-header";
@@ -324,10 +325,10 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
           <button type="button" className={"lp-drop" + (over ? " over" : "")}
             onDragOver={e => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={onDrop} onClick={() => pick.current?.click()}>
             <span className="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><path d="M12 10v6M9 13l3-3 3 3" /></svg></span>
-            <span className="tx"><b>把商品文件夹拖到这里</b><span>一个文件夹一款，主图、SKU 图、详情图随便放。可以一次拖多个{config && !config.exempt && <> · 整理素材每款 {config.planCredits} 积分</>}</span></span>
+            <span className="tx"><b>把商品文件夹拖到这里</b><span>一个文件夹一款，主图、SKU 图、详情图随便放。可以一次拖多个{config && !config.exempt && <> · 整理素材按张数算：每款 {config.planCredits} 积分起，每张图再加 {PLAN_IMAGE_COST_MICRO * config.planMultiplierMilli / 1e6} 积分</>}</span></span>
             <span className="lp-btn">选择文件夹</span>
           </button>
-          {pending && <div className="lp-confirm">识别到 <b>{pending.length} 款</b>：{pending.map(g => g.name).join("、")}{config && !config.exempt && <> · 整理素材共 <b>{config.planCredits * pending.length}</b> 积分</>}
+          {pending && <div className="lp-confirm">识别到 <b>{pending.length} 款</b>：{pending.map(g => g.name).join("、")}{config && !config.exempt && <> · 整理素材共 <b>{pending.reduce((n, g) => n + planCredits(config.planCostMicro, config.planMultiplierMilli, g.files.length), 0)}</b> 积分{pending.length > 1 ? `（${pending.map(g => `${g.name} ${g.files.length} 张 ${planCredits(config.planCostMicro, config.planMultiplierMilli, g.files.length)}`).join("、")}）` : `（${pending[0].files.length} 张）`}</>}
             {pending.some(g => g.files.length > BIG_FOLDER) && <> · {pending.filter(g => g.files.length > BIG_FOLDER).map(g => `${g.name} 有 ${g.files.length} 张`).join("、")}，素材较多，会分几段整理，慢一些；中途断了可以接着做</>}
             <button type="button" className="lp-btn sm primary" onClick={() => { const g = pending; setPending(null); void startGroups(g); }}>开始整理</button>
             <button type="button" className="lp-btn sm" onClick={() => setPending(null)}>取消</button></div>}
@@ -374,15 +375,18 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
         })}</div>
         </>}
       </main>
-      {planning && planDetail?.materials && planDraft && <PlanDialog name={planDetail.name} materials={planDetail.materials} sources={planDetail.sources} draft={planDraft} layouts={layouts} prices={prices}
+      {planning && planDetail?.materials && planDraft && <PlanDialog projectId={planning} name={planDetail.name} materials={planDetail.materials} sources={planDetail.sources} draft={planDraft} layouts={layouts} prices={prices}
         onChange={d => setDrafts(x => ({ ...x, [planning]: d }))}
-        onUpload={async file => {
+        onUpload={async (file, liner) => {
           try {
-            const added = await api<{ label: string; url: string }>(`projects/${planning}/extra`, { method: "POST", body: await shrink(file), headers: { "Content-Type": "application/octet-stream", "x-file-name": encodeURIComponent(file.name) } });
+            // A liner photo (10-22) says what it is, so the plan counts it as that liner worn alone.
+            const tag: Record<string, string> = liner ? { "x-liner-inner": encodeURIComponent(liner.inner), "x-liner-color": encodeURIComponent(liner.color) } : {};
+            const added = await api<{ label: string; url: string }>(`projects/${planning}/extra`, { method: "POST", body: await shrink(file), headers: { "Content-Type": "application/octet-stream", "x-file-name": encodeURIComponent(file.name), ...tag } });
             const d = await api<Detail>("projects/" + planning); setDetails(o => ({ ...o, [planning]: d }));
             return added;
           } catch (error) { say((error as Error).message); throw error; }
         }}
+        onRefresh={async () => { const d = await api<Detail>("projects/" + planning); setDetails(o => ({ ...o, [planning]: d })); }}
         onService={() => { setPlanning(null); setView("shop"); }}
         onClose={() => setPlanning(null)}
         onStart={async () => { if (await start([planning])) { setPlanning(null); say("AI 正在写每张图的画面，写完马上开始出图"); } }} />}

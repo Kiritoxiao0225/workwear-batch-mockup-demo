@@ -16,7 +16,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 export const post = <T>(path: string, body: unknown = {}) => api<T>(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 /** An uploaded or generated image. */
-export const assetUrl = (id: string) => isDemo() ? (id.startsWith('/') ? id : `/listing-demo/${id}`) : `/api/listing/assets/${id}`;
+export const assetUrl = (id: string) => isDemo() ? (id.startsWith('/') || id.startsWith('blob:') ? id : `/listing-demo/${id}`) : `/api/listing/assets/${id}`;
 export const downloadUrl = (projectId: string) => isDemo() ? '#demo-download' : `/api/listing/projects/${projectId}/download`;
 
 /**
@@ -36,3 +36,24 @@ export async function redrawImage(projectId: string, slot: string, ask: string, 
   }
   throw new Error('等太久了，关掉这个窗口过一会儿再点开看看');
 }
+
+/** What a liner image added on the plan is (10-22): its material and colour, so the plan counts it as that liner worn alone. */
+export type LinerTag = { inner: string; color: string };
+/**
+ * Draws one image for the plan before anything is made (10-22, a liner colour the material lacks):
+ * from the user's own words and the images they ticked (`refs`, material labels; `assets`, references
+ * uploaded for it). Charged as one image; waits for it (about 40 seconds). Not part of the material
+ * until adopted.
+ */
+export async function drawMaterial(projectId: string, prompt: string, refs: string[], assets: string[] = []): Promise<{ asset: string; url: string }> {
+  const { job } = await post<{ job: string }>(`projects/${projectId}/draw`, { prompt, refs, assets });
+  for (let i = 0; i < 160; i++) {
+    await new Promise(r => setTimeout(r, 2500));
+    const s = await api<{ status: string; error: string | null; asset: string | null }>(`projects/${projectId}/draws/${job}`);
+    if (s.status === 'succeeded' && s.asset) return { asset: s.asset, url: assetUrl(s.asset) };
+    if (s.status === 'failed' || s.status === 'unknown') throw new Error(s.error || '没生成出来，没扣积分，可以再试一次');
+  }
+  throw new Error('还在生成，过一会儿再看');
+}
+/** A drawn image taken into the material as a liner worn alone; resolves to its label. */
+export const adoptDrawn = (projectId: string, asset: string, liner: LinerTag) => post<{ label: string; url: string }>(`projects/${projectId}/adopt`, { asset, ...liner });

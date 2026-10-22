@@ -23,6 +23,11 @@ export type SkuCard = SkuText & {
   photo: { bytes: Buffer; cutout: boolean; frame?: Frame | null };
   /** A short tag such as 「男女同款」: a dark pill under the title. */
   tag?: string | null;
+  /**
+   * A version over a liner or the liner alone (10-22): the material's photo of the liner, a small picture
+   * under the title with its name on it (大俊's SKU sheet); the feature card stays at the bottom.
+   */
+  liner?: { photo: Buffer; name: string; whole?: boolean } | null;
 };
 
 /** `serif`: the title's (Noto Serif SC Black, GB2312 level one only; OFL, public/fonts/NotoSerifSC-OFL.txt). */
@@ -264,7 +269,21 @@ export async function renderSkuCard(c: SkuCard): Promise<Buffer> {
   for (const t of c.title.slice(0, 2)) {
     ctx.letterSpacing = '4px'; fitText(ctx, t, FONT.serif, 64, W); ctx.fillText(t, L, y + 56); ctx.letterSpacing = '0px'; y += 82;
   }
-  if (c.tag) {
+  if (c.liner) {
+    // Under the title: the liner itself (its photo's middle, where the garment is) with its name across the bottom.
+    const box = { w: 190, h: 150 }, meta = await sharp(c.liner.photo).metadata(), w = meta.width ?? 1, h = meta.height ?? 1;
+    // A white image is the liner whole; a photo of someone in it, its middle.
+    const crop = c.liner.whole ? await sharp(c.liner.photo).rotate().flatten({ background: '#ffffff' }).trim({ threshold: 8 }).resize(box.w * 2 - 40, box.h * 2 - 100, { fit: 'contain', background: '#ffffff' })
+      .extend({ top: 10, bottom: 90, left: 20, right: 20, background: '#ffffff' }).png().toBuffer()
+      : await sharp(c.liner.photo).rotate().extract({ left: Math.round(w * 0.15), top: Math.round(h * 0.18), width: Math.round(w * 0.7), height: Math.round(h * 0.5) })
+      .resize(box.w * 2, box.h * 2, { fit: 'cover' }).png().toBuffer();
+    ctx.save(); roundRect(ctx, L, y + 4, box.w, box.h, 14); ctx.clip();
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(L, y + 4, box.w, box.h);
+    ctx.drawImage(await loadImage(crop), L, y + 4, box.w, box.h);
+    ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(L, y + 4 + box.h - 40, box.w, 40);
+    ctx.fillStyle = '#ffffff'; fitText(ctx, c.liner.name, FONT.heavy, 24, box.w - 24); ctx.textAlign = 'center'; ctx.fillText(c.liner.name, L + box.w / 2, y + 4 + box.h - 12); ctx.textAlign = 'left';
+    ctx.restore(); ctx.fillStyle = INK; y += box.h + 30;
+  } else if (c.tag) {
     // Under the title, in place of its short bar.
     ctx.font = `30px "${FONT.heavy}"`;
     const w = Math.min(W, ctx.measureText(c.tag).width + 44);

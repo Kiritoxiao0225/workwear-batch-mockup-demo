@@ -6,6 +6,7 @@
  * image per colour and the structure references (full front view, collar, zip and cuffs, pocket,
  * fabric, back); lib/listing/plan.ts shares the points out over the images.
  */
+import { INNERS, settleWear, type Inner, type Wear } from '../listing/wear';
 import { z } from 'zod';
 import { CATEGORIES, TASKS, type Category } from '../listing/category';
 import { GARMENT_ROLES, isComponent, isGroup, type GarmentRole } from '../listing/garment-role';
@@ -44,6 +45,9 @@ const IMAGE_RULES = `每张图（images，一张不漏，按编号）：
 - logo：衣服本身上有没有 logo、品牌标、印字或图案（只看衣服，不看背景和图上加的字）。
 - person：画面里有没有真人模特：只有一位男生写 男，只有一位女生写 女，一男一女写 男女，三人以上写 多人，没有人留空。
 - face：画面里模特的脸是否正对或微侧镜头、五官清楚、没被墨镜、口罩、手或帽檐挡住，脸足够大能看清长相。没有人写 false。
+- open：画面里有没有外套是敞开穿的（拉链拉开、门襟敞着、能看到里面穿的东西），多人合照里有一件敞开就写 true；外套都拉上、或画面里没有外套写 false。
+- inner：画面里看得到的内胆是什么料：摇粒绒（毛茸茸的颗粒绒、抓绒都写摇粒绒）/ 羽绒（一格一格鼓起来的绗缝）/ 棉（薄一些的绗缝夹棉）/ 其他。外套敞开、里面穿着内胆的照片写里面那件；role 是内胆的写它自己；看不到内胆（只穿外套、里面是 T 恤或衬衫，或外套拉链拉上看不到里面）留空。衣服里缝死的里布、里绒不算内胆，留空。
+- innerColor：inner 不为空时，那件内胆的颜色（如 黑色、米色、藏青）；否则留空。
 - same：如果这张和另一张是同一张照片（裁剪、缩放、调色、加字前后的版本），写那一张的编号，否则留空。`;
 /** The whole product's rules: colours, points, category, checks, titles, master. */
 const WHOLE_RULES = `整款：
@@ -56,12 +60,19 @@ const WHOLE_RULES = `整款：
 - category：这款按哪个品类来排，写品类编号（下面列出的）。按衣服本身判断，不看素材里的文案怎么叫它：workwear（冲锋衣）指连帽或高立领、前门襟是拉链（外露的、或被挡风片盖住的都算）、面料防风防泼水的外套（单层、软壳、三合一都算）；T 恤、衬衫、马甲、羽绒服、棉服、卫衣、POLO 都不是，写 generic。categoryWhy：一句话理由（不超过 40 个字），如“连帽、外露拉链、防泼水面料，是冲锋衣”。
 - checks：下面"卖点类别"里属于衣服功能的每一类（不含服务类），看这件衣服的图判断它像不像有：seen 写 有 / 看不出 / 不像；why 一句话依据（不超过 30 个字），如“单层薄款，没看到内胆或加绒”。素材里已经讲到的类别也要判断。
 - titles：给每类主图各写 2–3 句候选大标题（4–10 个字，概括这类图要讲的，口语、有力，如“细节经得起看”“三防面料 雨天不怕”），类别：${TASKS.filter(t => t !== '收口').join('、')}。只能根据素材里有的卖点写，不编造参数和承诺。
+- wear：这款衣服怎么穿（定妆照、有人的图和 SKU 图都照它），type 三选一：
+  · 内胆：可拆内胆的三合一，并且素材里真的拍到了内胆（套在外套里面露出来，或内胆单独拍、单独穿）。
+  · 一体：棉、绒、羽绒缝在衣服里拆不下来（一体棉、加棉、夹棉、一体绒、加绒、一体羽绒），看文字、文件夹名，也看图里是不是蓬松鼓起、有绗缝。
+  · 薄款：春秋单层外套；三合一但素材里一张内胆都没拍到的，也算薄款。
+  why：一句话依据（不超过 40 个字），写看到了哪些字、哪些图，如“文件夹写一体羽绒，模特图衣身鼓起有绗缝”。
+  versions：只有 type 是内胆才写，列素材里真的拍到的每一种穿法，一种一条：kind 是 单外壳（外套里面没穿内胆）/ 外壳加内胆（外套里面穿着内胆）/ 单内胆（只穿或只拍内胆）；inner 写内胆的料（摇粒绒 / 羽绒 / 棉 / 其他，单外壳留空）；colors 写这个穿法拍到了哪些颜色（外套的颜色名，单内胆写内胆自己的颜色）；from 写拍到这个穿法的图编号。不要拼、不要猜：有外套的图、也有内胆的图，但没有一张是外套里穿着这件内胆，就不能写外壳加内胆；内胆只露在外套里面、没有单独拍的，就不能写单内胆；文字里提到、图里没拍到的穿法不写。
 - look：这款用哪套母版、首图在哪儿拍、首图主打哪个卖点。先看素材里有没有写给谁穿、什么行业（如 4S 店、物业、工地、餐饮、团建），写了就照着选；没写就看衣服本身：颜色深浅、功能卖点多不多、偏商务还是偏户外。master：从下面"母版"里选一个编号；M4 只在素材讲男女同款、情侣或年轻团队时选；M5 是给不想用模特、想省积分的店铺自己换的，不要选；素材里没有模特图不要紧，出图时模特是另画的。place：首图地点编号，只有首图是实景的母版才写，不能选这套母版不能拍的地点，否则留空。sell：首图主打的卖点，从下面"首图卖点"里选一个，要是 points 里讲到的、并且在这个地点演得出来的（看地点后面列的）；都不沾留空。why：一句话理由（不超过 40 个字），如“三防卖点多、深色款，选暗黑科技；素材写了物业保安，在小区门口拍”。`;
-const IMAGE_SHAPE = '{ "id": "M1", "kind": "", "role": "", "colorsSeen": [], "color": "", "front": false, "facing": "", "detail": "", "parts": [], "text": false, "logo": false, "person": "", "face": false, "same": "" }';
+const IMAGE_SHAPE = '{ "id": "M1", "kind": "", "role": "", "colorsSeen": [], "color": "", "front": false, "facing": "", "detail": "", "parts": [], "text": false, "logo": false, "person": "", "face": false, "open": false, "inner": "", "innerColor": "", "same": "" }';
 const WHOLE_SHAPE = `"colors": [{ "name": "", "hex": "", "from": ["M1"] }],
   "points": [{ "type": "", "text": "", "note": "", "from": ["M1"], "why": "", "concept": null, "proof": "", "part": "", "short": "" }],
   "notes": [""], "category": "", "categoryWhy": "", "checks": [{ "concept": "", "seen": "", "why": "" }], "titles": { "功能": [""] },
-  "look": { "master": "", "place": "", "sell": "", "why": "" }`;
+  "look": { "master": "", "place": "", "sell": "", "why": "" },
+  "wear": { "type": "", "why": "", "versions": [{ "kind": "", "inner": "", "colors": [""], "from": ["M1"] }] }`;
 
 /** The one-call analysis (kept for small folders' tests and as the reference wording). */
 const SYSTEM = `${ROLE}你会收到同一款衣服的一大批原始素材（实拍、静物、3D 图、做好的主图和详情页、海报、颜色图等，可能很乱），每张都标了编号。
@@ -164,12 +175,72 @@ export function sortRequest(input: { views: PlanView[]; model: string; product: 
 }
 /** The whole product, read from the images worth reading and how each was sorted. */
 export function readRequest(input: { views: PlanView[]; model: string; product: string; images: SortedImage[]; colors?: string[] }) {
-  const line = (i: SortedImage) => `${i.id}：${i.kind}${i.color ? `，${i.color}` : ''}${i.detail || i.parts?.length ? `，部位 ${[...new Set([i.detail, ...(i.parts ?? [])].filter(Boolean))].join('、')}` : ''}${i.front ? '，正面全身' : ''}${i.text ? '，有卖点字' : ''}${i.person ? `，${i.person}` : ''}`;
+  const inner = (i: SortedImage) => i.role === '内胆' ? `，单拍内胆（${i.innerColor ?? ''}${i.inner ?? ''}）` : i.inner ? `，外套里穿着${i.innerColor ?? ''}${i.inner}内胆` : '';
+  const line = (i: SortedImage) => `${i.id}：${i.kind}${i.color ? `，${i.color}` : ''}${i.detail || i.parts?.length ? `，部位 ${[...new Set([i.detail, ...(i.parts ?? [])].filter(Boolean))].join('、')}` : ''}${i.front ? '，正面全身' : ''}${i.text ? '，有卖点字' : ''}${i.person ? `，${i.person}` : ''}${inner(i)}`;
   return { model: input.model, reasoning_effort: 'low', max_completion_tokens: 12000, response_format: { type: 'json_object' },
     messages: [{ role: 'system', content: READ_SYSTEM.replace('{CATALOG}', catalog(CATEGORIES)) }, { role: 'user', content: [
       { type: 'text' as const, text: `${paletteLine(input.colors, true)}每张图已经整理好的分类：\n${input.images.map(line).join('\n')}` },
       ...userContent(`商品：${input.product}。下面是要读的素材（拼在一起的，每一格、每一段都是一张独立素材，按说明里的顺序对应编号）。`, input.views)] }] };
 }
+/**
+ * The liner check (10-21): sorted at about 200 px a picture, a black fleece and a black T-shirt
+ * look alike, and a zipped-up shell hides what is inside. The images that may show a liner (sorted
+ * as showing one, or in a folder or file named for one) are looked at again one by one at 768 px,
+ * LINER_CHECK_BATCH to a call (10-21: 6609 had 94, and the ones past the first 40 lost their liners; 10-22: in a call of 40
+ * a black fleece under 1888's 黑白 shell was missed, in a call of 2 it was seen every time).
+ */
+export const LINER_CHECK_SIDE = 768, LINER_CHECK_BATCH = 10, LINER_CHECK_MAX = 160;
+const LINER_WORDS = /内胆|羽绒|抓绒|摇粒|加绒|加棉|夹棉|一体/;
+export function linerCandidates(images: SortedImage[], pathOf: (id: string) => string): string[] {
+  // An open jacket may show a liner the sort could not make out at its size (10-22: 1888's 黑白 over a black fleece, in a couple photo).
+  const maybe = images.filter(i => i.kind !== '无关' && !i.same && (i.role === '内胆' || !!i.inner || !!i.open || LINER_WORDS.test(pathOf(i.id))));
+  // The ones sorted as showing a liner first, then the rest by folder, a few from each, up to the limit.
+  const seen = maybe.filter(i => i.role === '内胆' || i.inner || i.open), rest = maybe.filter(i => !seen.includes(i));
+  const byFolder = new Map<string, SortedImage[]>();
+  for (const i of rest) { const f = pathOf(i.id).split('/').slice(0, -1).join('/'); byFolder.set(f, [...(byFolder.get(f) ?? []), i]); }
+  const spread: SortedImage[] = [];
+  for (let k = 0; spread.length < rest.length; k++) for (const list of byFolder.values()) if (list[k]) spread.push(list[k]);
+  return [...seen, ...spread].slice(0, LINER_CHECK_MAX).map(i => i.id);
+}
+const LINER_SYSTEM = `${ROLE}你会收到同一款衣服的一些照片，每张都标了编号，都是原图放大看的。
+任务：逐张看清楚外套里面有没有内胆。只输出 JSON。
+
+每张图：
+- role：主体（穿着或摆着这款外套）/ 内胆（单独穿、单独拍的内胆，外面没有套外套）/ 其他（细节特写、详情页文字图等看不出的）。
+- open：外套是不是敞开的、能看清里面穿的是什么；拉链拉上、领口只露一点点看不清的写 false。role 是内胆时写 true。
+- inner：外套里面（或单独拍的）那件内胆的料：摇粒绒（毛茸茸的颗粒绒，抓绒也写摇粒绒）/ 羽绒（一格一格鼓起来的绗缝，像轻薄羽绒服）/ 棉（薄一些的绗缝夹棉）/ 其他。里面只是 T 恤、衬衫、卫衣、运动背心、打底衫，或 open 是 false 的，留空。衣服里缝死的里布、里绒不算内胆，留空。
+- innerColor：inner 不为空时，内胆的颜色（如 黑色、米色、藏青）；否则留空。
+- shellColor：role 是主体时，外套的颜色名（多人合照里有好几件，写穿着内胆的那一件），名字从下面的颜色清单里选，选不出留空。
+
+输出：
+{ "images": [{ "id": "M1", "role": "", "open": false, "inner": "", "innerColor": "", "shellColor": "" }] }`;
+export function linerRequest(input: { views: PlanView[]; model: string; product: string; colors?: string[] }) {
+  return { model: input.model, reasoning_effort: 'low', max_completion_tokens: 6000, response_format: { type: 'json_object' },
+    messages: [{ role: 'system', content: LINER_SYSTEM }, { role: 'user', content: userContent(`${input.colors?.length ? `这款的颜色清单：${input.colors.join('、')}。\n` : ''}商品：${input.product}。下面每张都是一张独立素材。`, input.views) }] };
+}
+const linerSchema = z.object({ images: z.array(z.object({ id: z.string(), role: z.enum(['主体', '内胆', '其他']).catch('其他'), open: z.boolean().catch(false),
+  inner: z.enum(['', ...INNERS]).catch(''), innerColor: z.string().trim().max(12).catch(''), shellColor: z.string().trim().max(12).catch('') })) });
+export type LinerCheck = z.infer<typeof linerSchema>['images'][number];
+/** One batch of the liner check. */
+export function parseLinerBatch(content: string): LinerCheck[] {
+  const parsed = linerSchema.safeParse(modelJson(content, '内胆复核结果不是完整的 JSON'));
+  if (!parsed.success) throw new Error('内胆复核结果缺少每张图');
+  return parsed.data.images;
+}
+/**
+ * The checked images take the liner check's word; an image the check did not look at keeps no liner,
+ * so only what was seen at full size stands behind a SKU version (wear.ts).
+ */
+export function applyLiners(checks: LinerCheck[], images: SortedImage[], checked: string[]): SortedImage[] {
+  const byId = new Map(checks.map(i => [i.id, i])), looked = new Set(checked);
+  return images.map(i => {
+    const r = byId.get(i.id);
+    if (!looked.has(i.id) || !r) return i.inner || i.role === '内胆' ? { ...i, inner: '', innerColor: '', ...(i.role === '内胆' ? { role: '不确定' as const } : {}) } : i;
+    const inner = r.role === '其他' || (r.role === '主体' && !r.open) ? '' : r.inner;
+    return { ...i, role: r.role === '内胆' ? '内胆' : r.role === '主体' ? '主体' : i.role, inner, innerColor: inner ? r.innerColor : '', ...(r.role === '主体' && r.shellColor ? { color: i.color || r.shellColor } : {}) };
+  });
+}
+
 /** The images worth reading for the whole product: not unrelated, not a copy of another. */
 export const worthReading = (images: SortedImage[]) => images.filter(i => i.kind !== '无关' && !i.same);
 
@@ -181,6 +252,10 @@ const imageSchema = z.object({
   /** Set by the program, not the model: a still life that is really on white (listing-plain). */
   plain: z.boolean().optional().catch(undefined),
   role: z.enum(GARMENT_ROLES).optional().catch(undefined), colorsSeen: z.array(z.string().trim().min(1).max(12)).max(12).optional().catch(undefined),
+  /** The liner the image shows, inside the shell or on its own (10-21); missing on material sorted before. */
+  inner: z.enum(['', ...INNERS]).optional().catch(undefined), innerColor: z.string().trim().max(12).optional().catch(undefined),
+  /** A jacket on it is worn open (10-22): easy to see at ~200 px, so the liner check looks at every one. */
+  open: z.boolean().optional().catch(undefined),
 });
 const organizeSchema = z.object({
   images: z.array(imageSchema),
@@ -193,12 +268,14 @@ const organizeSchema = z.object({
   titles: z.record(z.string(), z.array(z.string().trim().min(1).max(20)).max(4)).catch({}).default({}),
   themes: z.array(z.object({ title: z.string().trim().min(1).max(20), kind: z.string().max(8).catch('功能'), points: z.array(z.number().int()).max(16), show: z.string().max(120).catch('').default('') })).max(8).catch([]).default([]),
   look: z.object({ master: z.string().max(8).catch(''), place: z.string().max(12).catch(''), sell: z.string().max(8).catch(''), why: z.string().max(120).catch('').default('') }).nullable().catch(null).default(null),
+  wear: z.object({ type: z.string().max(8).catch(''), why: z.string().max(200).catch('').default(''),
+    versions: z.array(z.object({ kind: z.string().max(8).catch(''), inner: z.string().max(8).catch(''), colors: z.array(z.string().max(12)).max(16).catch([]).default([]), from: z.array(z.string()).max(60).catch([]).default([]) })).max(12).catch([]).default([]) }).nullable().catch(null).default(null),
 });
 /** The AI's pick of the master, where the cover is shot and the point it acts out; empty parts fall back to the plan's rules. */
 export type Look = { master: string; place?: PlaceId; sell?: Sell; why: string };
-export type Organized = Omit<z.infer<typeof organizeSchema>, 'look' | 'images'> & { look: Look | null; images: SortedImage[] };
+export type Organized = Omit<z.infer<typeof organizeSchema>, 'look' | 'images' | 'wear'> & { look: Look | null; images: SortedImage[]; wear: Wear | null };
 /** `parts` is missing on material sorted before 10-13; `role` and `colorsSeen` before 10-16. */
-export type SortedImage = Omit<z.infer<typeof imageSchema>, 'parts' | 'role' | 'colorsSeen'> & { parts?: string[]; role?: GarmentRole; colorsSeen?: string[] };
+export type SortedImage = Omit<z.infer<typeof imageSchema>, 'parts' | 'role' | 'colorsSeen' | 'inner'> & { parts?: string[]; role?: GarmentRole; colorsSeen?: string[]; inner?: Inner | '' };
 
 /** A colour name's characters, in any order, without 色: 「黑白拼」 and 「黑拼白」 are the same colour. */
 const colorKey = (name: string) => [...name.replace(/[色\s]/gu, '')].sort().join('');
@@ -249,7 +326,8 @@ export function parseOrganized(content: string, ids: string[]): Organized {
   data.titles = Object.fromEntries(Object.entries(data.titles).filter(([k]) => (TASKS as string[]).includes(k)));
   // A theme keeps only the points that exist (numbered from 1).
   data.themes = data.themes.map(t => ({ ...t, points: t.points.filter(n => n >= 1 && n <= data.points.length) })).filter(t => t.points.length);
-  return { ...data, look: lookOf(data.look) };
+  // Only the versions the images show (wear.ts): 不要拼，不要猜.
+  return { ...data, look: lookOf(data.look), wear: settleWear(data.wear, data.images, data.colors.map(c => c.name)) };
 }
 
 const sortedSchema = z.object({ images: z.array(imageSchema) });
@@ -337,15 +415,18 @@ export function chooseMaterials(sorted: Pick<Organized, 'images' | 'colors'>, si
     const own = usable.filter(i => !isComponent(i) && colourRank[i.kind] && (colorKey(i.color) === colorKey(c.name) || c.from.includes(i.id)));
     // With no whole front view, the garment itself open on a hanger (10-15: each 3-in-1 jacket showed its
     // liner; the liner alone was the only front view) is drawn closed rather than the colour left without one.
-    const fronts = own.filter(i => i.front), candidates = fronts.length ? fronts : own.filter(i => i.role === '主体');
-    return { name: c.name, hex: c.hex, pick: best(candidates, i => (colourRank[i.kind] ?? 0) * 2 + facingScore(i) + (i.logo ? 0 : 1) - (isGroup(i) ? 3 : 0) - (i.plain === false ? 1 : 0)), candidates: candidates.map(i => i.id) };
+    // Its shell on its own first (10-22: 1888's 乌梅紫 was picked open over its down liner, the only front view sorted so).
+    const fronts = own.filter(i => i.front), closed = fronts.filter(i => !i.inner), alone = own.filter(i => i.role === '主体' && !i.inner && !i.open);
+    const candidates = closed.length ? closed : alone.length ? alone : fronts.length ? fronts : own.filter(i => i.role === '主体');
+    // A shell worn open over its liner makes a poor white image: it would be drawn closed from guesswork (10-22: 1888's 乌梅紫).
+    return { name: c.name, hex: c.hex, pick: best(candidates, i => (colourRank[i.kind] ?? 0) * 2 + facingScore(i) + (i.logo ? 0 : 1) - (isGroup(i) ? 3 : 0) - (i.plain === false ? 1 : 0) - (i.inner ? 4 : i.open ? 2 : 0)), candidates: candidates.map(i => i.id) };
   });
   // A full front view shows one garment: an image with one colour, ideally a colour's own pick.
   const picked = new Set(colors.map(c => c.pick));
   const fronts = usable.filter(i => !isComponent(i) && i.front && i.color && colourRank[i.kind]);
   // None whole and closed (10-19: 552's hanger shots, every jacket open): the first colour's own image, as
   // the colours themselves fall back to it, rather than a plan that cannot start until one is picked.
-  const front = { part: FRONT, pick: best(fronts, i => (picked.has(i.id) ? 10 : 0) + (colourRank[i.kind] ?? 0) + facingScore(i)) ?? colors.find(c => c.pick)?.pick ?? null,
+  const front = { part: FRONT, pick: best(fronts, i => (picked.has(i.id) ? 10 : 0) + (colourRank[i.kind] ?? 0) + facingScore(i) - (i.inner ? 4 : i.open ? 2 : 0)) ?? colors.find(c => c.pick)?.pick ?? null,
     candidates: fronts.length ? fronts.map(i => i.id) : colors.flatMap(c => c.pick ? [c.pick] : []) };
   const named = new Map<string, SortedImage[]>();
   // A part counts from an image sorted as it, and from a detail page that shows it among others (`parts`).

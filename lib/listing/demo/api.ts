@@ -114,13 +114,13 @@ const made = (d: Draft, slot: string, layout: string): SlotState => {
   const words = layout === 'M3' && task && SHOWN[task] ? SHOWN[task]! : wordsOf(d, slot);
   return { slot, status: 'succeeded', error: null, image: id, history: [{ id, words, elements: elementsOf(id) }], words, task };
 };
-function project(id: string, name: string, status: Project['status'], minAgo: number, round: Project['round'], layout = 'M3'): Project {
+function project(id: string, name: string, status: Project['status'], minAgo: number, round: Project['round'], layout = 'M3', own?: { materials: Materials; sources: Source[]; cover: string }): Project {
   const first = round ? defaultDraft(DEMO_MATERIAL, layoutOf(layout)) : null;
   // The plan says what the ready-made images show, so the 3:4 images follow them.
   const plan = first && layout === 'M3' ? { ...first, slots: first.slots.map(x => { const w = SHOWN[x.task]; return w ? { ...x, title: w.title, sub: w.sub, tags: w.tags, cells: w.cells.map(c => ({ point: c.point!, proof: c.proof })) } : x; }) } : first;
   const slots = plan ? [...slotsOf(plan, 1), ...(round === 2 ? slotsOf(plan, 2) : [])].map(s => made(plan, s, layout)) : [];
-  return { id, name, layout, status, error: null, images: 37, cover: '/listing-demo/M30.jpg', slots, made: slots.length, broken: 0, created_at: iso(minAgo), updated_at: iso(minAgo),
-    plan, materials: status === 'planning' || status === 'uploading' ? null : MATERIALS, sources: SOURCES, round };
+  return { id, name, layout, status, error: null, images: own ? own.sources.length : 37, cover: own?.cover ?? '/listing-demo/M30.jpg', slots, made: slots.length, broken: 0, created_at: iso(minAgo), updated_at: iso(minAgo),
+    plan, materials: status === 'planning' || status === 'uploading' ? null : own?.materials ?? MATERIALS, sources: own?.sources ?? SOURCES, round };
 }
 const projects: Project[] = [
   project('demo-plan', 'M21#落霞橙三防工作服', 'materials', 12, 0),
@@ -201,12 +201,14 @@ const learning = new Map<string, LearnState & { refsCount: number }>();
 
 /* ---------- the routes ---------- */
 
+/** The demo's AI drawings in progress (local only). */
+const draws = new Map<string, { status: string; asset: string | null }>();
 export async function demoApi(path: string, init?: RequestInit): Promise<unknown> {
   await wait(150);
   const method = init?.method ?? 'GET';
   const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
   const [a, id, action] = path.split('/');
-  if (path === 'config') return { layouts, learning: [...learning.values()].filter(l => l.status !== 'saved').map(l => ({ id: l.id, name: l.name, status: l.status })), planCredits: 180, imageCredits: 22, multiCredits: 36, layoutCredits: 100, exempt: false } satisfies Config;
+  if (path === 'config') return { layouts, learning: [...learning.values()].filter(l => l.status !== 'saved').map(l => ({ id: l.id, name: l.name, status: l.status })), planCredits: 300, planCostMicro: 150000, planMultiplierMilli: 2000, imageCredits: 22, multiCredits: 36, layoutCredits: 100, exempt: false } satisfies Config;
   if (a === 'shop') {
     if (!id && method === 'POST') Object.assign(shopSettings, { items: body.items, crafts: body.crafts });
     if (id === 'logo') shopSettings.logo = URL.createObjectURL(init!.body as Blob);
@@ -225,7 +227,27 @@ export async function demoApi(path: string, init?: RequestInit): Promise<unknown
     if (!action) return { ...summary(p), plan: p.plan, materials: p.materials, slots: p.slots, sources: p.sources } satisfies Detail;
     if (action === 'images') { p.images++; return {}; }
     if (action === 'plan') { p.status = 'planning'; setTimeout(() => Object.assign(p, { status: 'materials', materials: MATERIALS }), 4000); return {}; }
-    if (action === 'extra') throw new Error('演示页不能补传图片，上线后这里能传');
+    // Local demo only: an upload or a drawn liner joins the material, tagged as that liner worn alone (10-22).
+    const addImage = (url: string, name: string, tag: Partial<Materials['sorted']['images'][number]>) => {
+      const m = p.materials!, label = `X${m.images.filter(i => i.label.startsWith('X')).length + 1}`;
+      m.images.push({ label, assetId: url });
+      m.sorted.images.push({ id: label, kind: '颜色款图', color: '', front: true, detail: '', text: false, logo: false, same: '', person: '', face: false, ...tag });
+      p.sources = [...(p.sources ?? []), { id: url, label, name, path: `补传/${name}`, shape: '1:1' }];
+      return { label, url };
+    };
+    const header = (k: string) => { const h = init?.headers as Record<string, string> | undefined; return h?.[k] ? decodeURIComponent(h[k]) : ''; };
+    if (action === 'extra') {
+      const inner = header('x-liner-inner'), color = header('x-liner-color');
+      return addImage(URL.createObjectURL(init!.body as Blob), header('x-file-name') || '补传.jpg', inner ? { kind: '模特实拍', role: '内胆', inner, innerColor: color, color, front: false } : {});
+    }
+    if (action === 'draw') {
+      const job = `draw-${Date.now()}`, black = /黑/.test(String(body.prompt));
+      draws.set(job, { status: 'running', asset: null });
+      setTimeout(() => draws.set(job, { status: 'succeeded', asset: black ? '/listing-demo/lined/draw-black.jpg' : '/listing-demo/lined/draw-beige.jpg' }), 3500);
+      return { job };
+    }
+    if (action === 'draws') { const d = draws.get(path.split('/')[3]); return { status: d?.status ?? 'failed', error: d ? null : '找不到', asset: d?.asset ?? null }; }
+    if (action === 'adopt') return addImage(body.asset, 'AI 内胆图.jpg', { kind: '静物', role: '内胆', inner: body.inner, innerColor: body.color, color: body.color, front: false });
     if (action === 'start') {
       const d = body as Draft;
       p.plan = d; p.layout = d.layout; p.slots = []; p.round = 1;
@@ -244,7 +266,7 @@ export async function demoApi(path: string, init?: RequestInit): Promise<unknown
       return { images: people.length };
     }
     if (action === 'redo') { const back = p.status; run(p, [body.slot], () => { p.status = back; }); return { images: 1 }; }
-    if (action === 'refs') return { asset: 'ref' };
+    if (action === 'refs') return { asset: init?.body instanceof Blob ? URL.createObjectURL(init.body) : 'ref' };
     if (action === 'redraw') {
       const s = p.slots.find(x => x.slot === body.slot);
       if (!s?.image) throw new Error('这张还没出好');

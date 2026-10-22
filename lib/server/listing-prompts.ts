@@ -6,6 +6,9 @@
  * image shows no garment), the cast (the models every image with people is drawn from) and these
  * words. Only the shop's service images learn from a (washed) competitor sample.
  */
+import { linerRefLine } from '../listing/wear';
+/** How the garment was worn on every image before 10-22, and still for 春秋薄款. */
+const NOW = '拉链拉到胸口，里面是白色圆领 T 恤';
 import { CORNER_BAND, CORNER_KEEP, CORNER_LINE, cornerStay, cornerTemplate } from '../listing/corner';
 import type { ServiceImageDef } from '../listing/service';
 import { crowdLine, DEFAULT_PLACE, othersLine } from './listing-crowd';
@@ -53,16 +56,16 @@ ${lines(input.garment)}
 }
 
 /** The cast: a young man and a young woman in the main colour, plain grey, faces clear. Every image with people is drawn from it. */
-export function castPrompt(input: { color: string; garment: string[] }) {
+export function castPrompt(input: { color: string; garment: string[]; wear?: string | null; linerRef?: number }) {
   return `为一套服装商品主图生成一张“模特定妆照”，竖版 3:4。它只用来确定后面每张图里的模特长什么样。
-参考图是这件衣服的白底产品图，衣服以它为准。
+参考图${input.linerRef ? '1' : ''}是这件衣服的白底产品图，衣服以它为准。${input.linerRef ? linerRefLine(input.linerRef) : ''}
 
 衣服（必须和参考图一模一样）：
 ${lines(input.garment)}
 - 颜色：${input.color}，和参考图一致，不偏色。
 
 画面：
-- 一男一女两位二十多岁的中国职场员工，并排正面站立，男生在左、女生在右，都穿这件衣服，拉链拉到胸口，里面是白色圆领 T 恤，下身深灰色休闲裤。
+- 一男一女两位二十多岁的中国职场员工，并排正面站立，男生在左、女生在右，都穿这件衣服，${input.wear ?? NOW}，下身深灰色休闲裤。
 - 男生短黑发、利落干净；女生黑色长发披肩。两人的脸正对镜头、表情自然微笑，五官、发型、肤色清楚。
 - 从头顶拍到大腿中部，头顶离画面上沿约 5%。
 - 纯浅灰色背景，柔和均匀的棚拍光，没有道具。
@@ -73,10 +76,10 @@ ${lines(input.garment)}
  * Half of a cast drawn from the material: one person, from their photo (`photo`) or made up. Two
  * people drawn at once from two photos come out with the second face made up, so each is drawn alone.
  */
-export function castOnePrompt(input: { color: string; garment: string[]; who: '男' | '女'; photo: boolean }) {
+export function castOnePrompt(input: { color: string; garment: string[]; who: '男' | '女'; photo: boolean; wear?: string | null; linerRef?: number }) {
   const person = input.who === '男' ? '男生' : '女生', pronoun = input.who === '男' ? '他' : '她';
   return `为一套服装商品主图生成一张“模特定妆照”，竖版 3:4。它只用来确定后面每张图里的模特长什么样。
-参考图1是这件衣服的白底产品图，衣服以它为准。${input.photo ? `参考图2是素材里的${person}模特照片，只用来认人：${pronoun}穿的衣服、帽子、墨镜、背包、手里拿的东西、背景都不要带过来。` : ''}
+参考图1是这件衣服的白底产品图，衣服以它为准。${input.photo ? `参考图2是素材里的${person}模特照片，只用来认人：${pronoun}穿的衣服、帽子、墨镜、背包、手里拿的东西、背景都不要带过来。` : ''}${input.linerRef ? linerRefLine(input.linerRef) : ''}
 
 衣服（必须和参考图1一模一样）：
 ${lines(input.garment)}
@@ -84,7 +87,7 @@ ${lines(input.garment)}
 
 画面：
 - 只有一位${person}，${input.photo ? `就是参考图2里的那个人：脸型、五官、发型、肤色、年龄都和照片一模一样。长相照原样画，不要美化、不要改成网红脸${input.who === '女' ? '或娃娃脸' : ''}。` : input.who === '男' ? '二十多岁的中国职场员工，短黑发、利落干净。' : '二十多岁的中国职场员工，黑色长发披肩。'}
-- ${pronoun}穿这件衣服，拉链拉到胸口，里面是白色圆领 T 恤，下身深灰色休闲裤；不戴帽子和墨镜，正面站立，脸正对镜头、表情自然。
+- ${pronoun}穿这件衣服，${input.wear ?? NOW}，下身深灰色休闲裤；不戴帽子和墨镜，正面站立，脸正对镜头、表情自然。
 - 从头顶拍到大腿中部，头顶离画面上沿约 5%。
 - 纯浅灰色背景，柔和均匀的棚拍光，没有道具。
 - 画面里不额外加任何文字、标签、logo 和水印；${OWN_MARKS}。`;
@@ -114,7 +117,7 @@ const PAIR_POSES = [
  * the camera, every one came out stiff); `pose`: the colour's place in the set, so the poses vary.
  * Head to knees as before: the SKU image finds the person on it and fills its panel.
  */
-export function skuModelPrompt(input: { color: string; garment: string[]; lead: '男' | '女'; who: 'pair' | 'lead'; halves: boolean; logo: string | null; logoRef?: number; place?: string; pose?: number }) {
+export function skuModelPrompt(input: { color: string; garment: string[]; lead: '男' | '女'; who: 'pair' | 'lead'; halves: boolean; logo: string | null; logoRef?: number; place?: string; pose?: number; wear?: string | null; linerRef?: number; subject?: string }) {
   const pair = input.who === 'pair', person = input.lead === '男' ? '男生' : '女生';
   const castRefs = pair && input.halves ? '参考图2是男模特、参考图3是女模特的定妆照' : `参考图2是这套图的模特定妆照`;
   const only = !pair && !input.halves ? `：只画里面的${person}，另一个人不出现` : '';
@@ -125,7 +128,7 @@ export function skuModelPrompt(input: { color: string; garment: string[]; lead: 
 - ${input.lead === '男' ? '他' : '她'}穿这件衣服`;
   const n = input.pose ?? 0, pose = pair ? PAIR_POSES[n % PAIR_POSES.length] : SKU_POSES[n % SKU_POSES.length];
   return `为服装商品的 SKU 图生成一张${pair ? '双人' : '单人'}模特实拍图，竖版 3:4。
-参考图1是这件衣服「${input.color}」的白底产品图，衣服的颜色和款式以它为准。${castRefs}，只用来认人${only}${input.logoRef ? `；参考图${input.logoRef}是客户的 LOGO，只用来印在衣服胸口` : ''}。
+${input.subject ?? `参考图1是这件衣服「${input.color}」的白底产品图，衣服的颜色和款式以它为准。`}${castRefs}，只用来认人${only}${input.logoRef ? `；参考图${input.logoRef}是客户的 LOGO，只用来印在衣服胸口` : ''}。${input.linerRef ? linerRefLine(input.linerRef) : ''}
 
 衣服（必须和参考图1一模一样）：
 ${lines(input.garment)}
@@ -133,7 +136,7 @@ ${lines(input.garment)}
 - ${input.logo ?? NO_CHEST}
 
 画面：
-${who}，拉链拉到胸口，里面是白色圆领 T 恤，下身深灰色休闲裤；不戴帽子和墨镜。
+${who}，${input.wear ?? NOW}，下身深灰色休闲裤；不戴帽子和墨镜。
 - 场景实拍：${input.place || DEFAULT_PLACE}；背景有明显的景深虚化，${pair ? '人物' : '人'}和背景在同一种光下（光的方向、色温一致），不能像抠图贴上去。
 - 姿势自然放松：${pose}；脸朝镜头、表情自然微笑；衣服正面（门襟拉链、口袋、领子）清楚完整，不被手臂挡住。
 - 取景固定：从头顶拍到膝盖，膝盖正好在画面下沿；头顶离画面上沿约 5%；${pair ? '两人整体' : '人'}在画面正中间${pair ? '；两人加起来的宽度不超过画面宽度的 85%，左右两边都露出背景，手臂和肩膀不能碰到画面边缘' : '，左右两边都露出背景'}。
@@ -168,6 +171,8 @@ export function mainPrompt(input: {
   place?: string;
   /** The top-left corner is kept for the shop's LOGO (corner.ts). */
   corner?: boolean;
+  /** How the people wear it (wear.ts wearLine); none: as the cast does. */
+  wear?: string | null;
 }) {
   const { content: c, used, all } = input, kept = input.corner ? cornerTemplate(input.template) : null, t = kept?.template ?? input.template;
   // Several colours on several people: the team together, each place its colour (listing-crowd.ts).
@@ -201,7 +206,7 @@ export function mainPrompt(input: {
         return z.kind === 'icon' || x.icon ? `图标卡片：${area(z.box)}；一个简洁的线描图标配一行字「${x.text}」，字高约占画面 ${fitHeight(x.text, z.box[2], 2.8)}%；卡片底是干净的纯色，不画衣服、面料、胶条或任何结构。`
           : `卡片：${area(z.box)}；卡片里画：${x.recipe}；卡片底部一行字「${x.text}」，字高约占画面 ${fitHeight(x.text, z.box[2], 3)}%。`;
       }
-      case 'person': return `人物：${area(z.box)}；${group ? `${crowdLine(used, input.cast ? `参考图${input.cast}` : '定妆照')}。` : input.cast ? people(t, input.lead, input.cast) : '模特穿着这件衣服。'}${c.act ? `动作：${c.act}。` : ''}`;
+      case 'person': return `人物：${area(z.box)}；${group ? `${crowdLine(used, input.cast ? `参考图${input.cast}` : '定妆照')}。` : input.cast ? people(t, input.lead, input.cast) : '模特穿着这件衣服。'}${input.wear ? `穿法：${input.wear}。` : ''}${c.act ? `动作：${c.act}。` : ''}`;
       case 'garment': return `衣服：${area(z.box)}；画面里没有人，衣服${DISPLAY[t.display ?? '平铺']}。`;
       case 'swatch': return `色块：${area(z.box)}；一排圆形色块，每个色块下写颜色名（字高约占画面 2.5%）：${all.map(x => `「${x.name}」${x.hex}`).join('、')}。`;
       case 'badge': return `工牌：${area(z.box)}；模特脖子上挂一条挂绳，胸前垂一张竖向白色工牌卡${c.badge ? `，卡上印「${c.badge}」` : '，卡上只有简单色块和线条，不写字'}。`;
@@ -362,4 +367,9 @@ export function redrawPrompt(input: { ratio: Ratio; ask: string; reference: bool
 
 要求：${input.ask}
 ${input.reference ? '参考图2是用户给的参考，只学它和要求有关的部分（比如背景、姿势、光线），不要照搬它上面的文字、logo 和人物长相。\n' : ''}${input.style ? `${style(input.style)}\n` : ''}${input.corner ? `${cornerStay(input.ratio === 'portrait')}\n` : ''}所有中文逐字正确、笔画清晰；要求里写到的新字就用那几个字，除此之外不要加新的字。`;
+}
+
+/** An image drawn on the plan (10-22): the user's own words, the references as they ticked them; nothing added on the picture. */
+export function drawPrompt(ask: string, refs: number) {
+  return `${ask}\n\n${refs > 1 ? `参考图 1 到 ${refs} 都是同一件衣服的照片，一起看。` : '参考图是这件衣服的照片。'}画面里不要额外加文字、标签、logo 和水印；参考图里的人、背景和别的衣服都不要带过来。`;
 }

@@ -4,6 +4,7 @@
  * nothing for gives way to the next one, so nothing is made up.
  */
 import { colorKeys, type Gender, type Point, type SkuPeople } from './draft';
+import { itemPhoto, skuItems, type DraftVersion } from './sku-versions';
 import { isComponent } from './garment-role';
 import { textUnits } from './point-words';
 
@@ -99,9 +100,14 @@ export function modelPhotoFor(images: { id: string; kind: string; color: string;
 }
 
 /** Each colour's own model photo, by the colour's key (colorKeys); colours without one are left out, and all of them when the plan draws the models. */
-export function skuPhotos(d: { colors: { name: string; pick: string | null }[]; model: { lead: '男' | '女' }; skuPeople?: SkuPeople }, images: Parameters<typeof modelPhotoFor>[0], pair: boolean): Record<string, string> {
+export function skuPhotos(d: { colors: { name: string; pick: string | null }[]; model: { lead: '男' | '女' }; skuPeople?: SkuPeople; versions?: DraftVersion[] }, images: Parameters<typeof modelPhotoFor>[0], pair: boolean): Record<string, string> {
   if (d.skuPeople && d.skuPeople !== '实拍') return {};
   const keys = colorKeys(d.colors);
+  // By version (10-22): each SKU image's own photo, the shell alone, over its liner, or the liner alone.
+  if (d.versions?.some(v => v.on)) {
+    const items = skuItems(d, d.colors.flatMap((c, k) => keys[k] ? [{ name: c.name, sku: keys[k]! }] : []));
+    return Object.fromEntries(items.flatMap(it => { const label = itemPhoto(images, it, d.model.lead, pair); return label ? [[it.key, label]] : []; }));
+  }
   return Object.fromEntries(d.colors.flatMap((c, k) => { const label = c.pick ? modelPhotoFor(images, c.pick, c.name, d.model.lead, pair) : null; return label ? [[keys[k]!, label]] : []; }));
 }
 

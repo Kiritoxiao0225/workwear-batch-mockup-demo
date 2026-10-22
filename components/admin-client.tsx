@@ -43,7 +43,7 @@ const ACTIONS: { action: string; label: string; where: string; supplier: string;
   { action: 'cutout_standard', label: '抠图·标准', where: '成衣效果图', supplier: '火山显著性分割' },
   { action: 'back_reference', label: 'AI 背面参考', where: '成衣效果图', supplier: '火山 Seedream' },
   { action: 'recognize', label: '素材库识别', where: '商品素材库', supplier: '豆包 Seed Lite', free: true },
-  { action: 'listing_plan', label: '读商品与策划', where: '电商主图', supplier: 'EvoLink gpt-6.1-sol' },
+  { action: 'listing_plan', label: '读商品与策划（起步价，每张图另加 ¥0.0075 成本）', where: '电商主图', supplier: 'EvoLink gpt-6.1-sol' },
   { action: 'listing_image', label: '出一张图', where: '电商主图', supplier: 'EvoLink Sunburst' },
   { action: 'listing_image_multi', label: '出一张多色图', where: '电商主图', supplier: 'EvoLink Sunburst' },
   { action: 'listing_layout', label: '学一个新版式', where: '电商主图', supplier: 'EvoLink gpt-6.1-sol + Sunburst' },

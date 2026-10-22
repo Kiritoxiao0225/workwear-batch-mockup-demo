@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { DEMO_MATERIAL } from '../listing/demo/material';
 import { defaultDraft, type Model, type SkuPeople } from '../listing/draft';
 import { skuPhotos } from '../listing/sku-card';
+import { wearLine } from '../listing/wear';
 import { LEGACY_LAYOUTS as BUILT_IN_LAYOUTS } from '../listing/legacy-layouts';
 import { SERVICE_IMAGES } from '../listing/service';
 import { BUILT_IN_LAYOUTS as MASTERS, FLAT_EXAMPLE, fitTemplate, type Layout } from '../listing/templates';
@@ -147,6 +148,19 @@ describe('the masters', () => {
     expect(at('M4', '男').get('skumodel:M31')?.input).toMatchObject({ who: '男' });
     expect(at('M4', '女').get('skumodel:M31')?.input).not.toHaveProperty('pair');
     expect(at('M1', '男', { lead: '女', photos: { 女: 'M9' } }).get('skumodel:M31')?.depends).toEqual(['product:M31', 'cast:男']);
+  });
+  it('people wear it by the garment\'s type (10-22): open over the liner photo, zipped to the top, or as before', () => {
+    const cast = (wear?: string | null, linerRef?: number) => castOnePrompt({ color: '乌梅紫', garment: ['连帽'], who: '女', photo: false, wear, linerRef });
+    expect(cast()).toContain('拉链拉到胸口，里面是白色圆领 T 恤');
+    const lined = cast(wearLine('内胆', 2), 2);
+    expect(lined).toContain('参考图2是这款的内胆照片'); expect(lined).toContain('外套拉链拉开、敞着穿'); expect(lined).not.toContain('白色圆领 T 恤');
+    expect(cast(wearLine('一体'))).toContain('拉链一直拉到最顶');
+    expect(wearLine('薄款')).toBeNull();
+    const sku = skuModelPrompt({ color: '乌梅紫', garment: ['连帽'], lead: '女', who: 'lead', halves: true, logo: null, wear: wearLine('内胆', 3), linerRef: 3 });
+    expect(sku).toContain('参考图3是这款的内胆照片');
+    const fill = { title: '防水', sub: '', tags: [], facts: [], cells: [], color: '乌梅紫', colors: [], all: [], light: false, who: '参考图2里的女生', badge: '', castRef: 2 };
+    expect(specPrompt({ master: 'M1', task: '首图', taskLabel: '首图', n: 1, total: 5, spec: SPECS.M1.首图!, fill: { ...fill, wear: wearLine('一体') }, garment: ['连帽'], logo: null, refs: { garment: [{ name: '乌梅紫' }], cast: 2, sample: 3 } }))
+      .toContain('拉链一直拉到最顶');
   });
   it('the chest LOGO is about a palm wide, not 「小小的」 (10-21)', () => {
     for (const line of Object.values(LOGO_LINE)) { expect(line).toContain('宽约 8–10 厘米'); expect(line).not.toContain('小小的'); }

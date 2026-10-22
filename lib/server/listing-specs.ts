@@ -34,6 +34,8 @@ export type Fill = {
   badge: string;
   /** The cast's reference number, and where the closer's group is shot (the plan's `place`). */
   castRef?: number; place?: string;
+  /** How the people wear it, by the garment's type (wear.ts wearLine); none: zipped to the chest as before. */
+  wear?: string | null;
 };
 export type Spec = {
   /** The sample image (public path), sent as the layout reference. */
@@ -197,7 +199,7 @@ export const SPECS: Record<string, Partial<Record<Task, Spec>>> = {
   M1: {
     首图: { sample: rival('6-1'), cells: 0, people: true, photo: true,
       zones: f => [
-        `左0% 上0% 宽100% 高100%：人物：${f.who}穿着这件衣服，拉链拉到胸口，内搭白色 T 恤${f.act ? `；${f.act}` : ''}。`,
+        `左0% 上0% 宽100% 高100%：人物：${f.who}穿着这件衣服，${f.wear ?? '拉链拉到胸口，内搭白色 T 恤'}${f.act ? `；${f.act}` : ''}。`,
         `左48% 上52% 宽11% 高22%：工牌：脖子上挂一条浅灰挂绳，胸前垂一张竖向白色工牌卡，${f.badge ? `卡上印「${f.badge}」${f.badge.length}个深色字` : '卡上只有简单色块和线条，不写字'}。`,
         `左76% 上58% 宽17% 高22%：竖排粗宋体大标题「${f.title}」，深灰黑，从上到下一列，每个字高约占画面 ${V(f.title, 22, 9)}%。`,
         enOf(f.title) && `左84% 上55% 宽14% 高6%：竖排大标题右上方一行细细的深灰英文手写花体「${script(enOf(f.title))}」，比大字小很多，只当装饰。`,
@@ -255,7 +257,7 @@ export const SPECS: Record<string, Partial<Record<Task, Spec>>> = {
   M3: {
     首图: { sample: rival('49-1'), cells: 0, people: true, photo: true,
       zones: f => [
-        `左0% 上0% 宽100% 高100%：人物：${f.who}穿着这件衣服，拉链拉到胸口，像抓拍、不看镜头${f.act ? `；${f.act}` : ''}。`,
+        `左0% 上0% 宽100% 高100%：人物：${f.who}穿着这件衣服，${f.wear ?? '拉链拉到胸口'}，像抓拍、不看镜头${f.act ? `；${f.act}` : ''}。`,
         `左3% 上68% 宽38% 高22%：白色书法大字「${f.title}」：行书毛笔字，笔画粗细对比强、有连笔和尖锐的出锋，飘逸不粗笨，带很淡的投影，每个字高约占画面 ${H(f.title, 38, 14)}%。`,
         enOf(f.title) && `左8% 上80% 宽30% 高6%：大字下面压着一行半透明的浅铜棕色英文手写花体「${script(enOf(f.title))}」，比大字小很多，只当装饰。`,
         enOf(f.title) && `左6% 上88% 宽26% 高6%：两行白色细体大写英文「${enOf(f.title)}」「WORK JACKET」，字距拉开，字高约占画面 1.8%。`,
@@ -279,7 +281,7 @@ export const SPECS: Record<string, Partial<Record<Task, Spec>>> = {
     首图: { sample: rival('1-1'), cells: 0, people: true, photo: true,
       zones: f => [
         // With nothing said of their faces, the two stared blank-faced into the lens, close up (10-19).
-        `左0% 上0% 宽100% 高100%：人物：${f.who}，两人都穿这件${f.color}的衣服，拉链拉到胸口；从头顶拍到臀部，两人脸部清楚；${EASY_FACES}。`,
+        `左0% 上0% 宽100% 高100%：人物：${f.who}，两人都穿这件${f.color}的衣服，${f.wear ?? '拉链拉到胸口'}；从头顶拍到臀部，两人脸部清楚；${EASY_FACES}。`,
         two(f.title)[1] ? `左68% 上8% 宽29% 高18%：两行深色粗黑体大字，右对齐：第一行「${two(f.title)[0]}」，第二行「${two(f.title)[1]}」；每个字高约占画面 ${H(longer(two(f.title)[0], two(f.title)[1]), 29, 7)}%。`
           : `左68% 上8% 宽29% 高18%：深色粗黑体大字「${f.title}」，右对齐，每个字高约占画面 ${H(f.title, 29, 7)}%。`,
         f.tags[0] && `左72% 上28% 宽24% 高5%：绿色圆角胶囊，里面白字「${f.tags[0]}」，字高约占画面 ${pill(f.tags[0], 24, 2.5)}%。`,

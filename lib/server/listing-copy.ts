@@ -47,7 +47,7 @@ export async function copyProject(tenant: string, user: string, sourceId: string
       ORDER BY a.slot, GREATEST(a.created_at, COALESCE(a.chosen_at, a.created_at)) DESC`, [sourceId])).rows
       .filter(r => CARRIED.test(r.slot)) as { slot: string; file_id: string; kind: string; name: string; width: number; height: number; step: string; input: unknown; depends: string[] }[];
     const reuse: Reuse | undefined = stored && carried.length
-      ? { colors: Object.fromEntries(stored.colors.map(x => [x.sku, x.name])), model: stored.draft.model, slots: carried.map(r => r.slot) } : undefined;
+      ? { colors: Object.fromEntries(stored.colors.map(x => [x.sku, x.name])), model: stored.draft.model, wear: stored.draft.wear, slots: carried.map(r => r.slot) } : undefined;
     // Copies of copies count from the first product: their names and their seeds (draft.seed) follow on.
     const root = m.from ?? sourceId, base = m.baseName ?? p.name;
     const before = Number((await c.query(`SELECT count(*)::int n FROM listing_projects WHERE tenant_id=$1 AND materials->>'from'=$2`, [tenant, root])).rows[0].n);

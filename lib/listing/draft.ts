@@ -9,6 +9,8 @@
  *   say on it), each with as many cards as it has points, and a short heading the AI wrote;
  * - which colour each image shows, who models, and what the two rounds of images cost.
  */
+import { skuItems, type DraftVersion } from './sku-versions';
+import type { WearType } from './wear';
 import { BUILDS, categoryById, groupOf, evidenceOf, type Category, type PointGroup, type PointType, type Task } from './category';
 import { isComponent, isGroup } from './garment-role';
 import { cleanWords, conciseTag, FACT, shortName } from './point-words';
@@ -80,6 +82,14 @@ export type Draft = {
    * them or both. None (plans before 10-21): 实拍.
    */
   skuPeople?: SkuPeople;
+  /**
+   * How it is worn (10-22): 春秋薄款 as before, 有内胆 open over its liner (`liner`: the material's photo
+   * the liner is drawn from), 一体 zipped to the top. From the material's reading, changed on the plan.
+   * None (plans before): as before.
+   */
+  wear?: { type: WearType; liner?: string };
+  /** The SKU versions of a 有内胆 jacket (sku-versions.ts); none: one SKU image per colour, as before. */
+  versions?: DraftVersion[];
   /** What the chest shows: nothing, the word 「LOGO」, the shop's sample LOGO (店铺设置, 10-21), or this product's customer LOGO (an uploaded image's label). */
   logo?: { mode: '不印' | 'LOGO' | '样例' | '客户'; label?: string };
   /** A copy's number (「再出一套」): it moves the plan's seed, so each copy leads with another point and scene. */
@@ -90,16 +100,18 @@ export type Draft = {
  * What a copy of a product (「再出一套」, listing-copy) carries over from it: its colours' white
  * images by colour key (with the colour's name then), its model and the slots it has images of.
  */
-export type Reuse = { colors: Record<string, string>; model: Model | null; slots: string[] };
+export type Reuse = { colors: Record<string, string>; model: Model | null; slots: string[]; wear?: Draft['wear'] };
 /**
  * The carried-over images this plan can use as they are: a colour's white image while the colour
  * keeps its name and garment image, the cast while the model is the same. The rest is drawn again.
  */
-export function reusedSlots(d: Pick<Draft, 'colors' | 'model'>, reuse?: Reuse): Set<string> {
+export function reusedSlots(d: Pick<Draft, 'colors' | 'model' | 'wear'>, reuse?: Reuse): Set<string> {
   const out = new Set<string>();
   if (!reuse) return out;
   colorKeys(d.colors).forEach((k, i) => { if (k && reuse.colors[k] === d.colors[i].name && reuse.slots.includes(`product:${k}`)) out.add(`product:${k}`); });
-  const m = reuse.model, same = !!m && m.lead === d.model.lead && (m.photos?.男 ?? '') === (d.model.photos?.男 ?? '') && (m.photos?.女 ?? '') === (d.model.photos?.女 ?? '');
+  // The cast is worn the copy's way too (10-22): another wear draws it again.
+  const m = reuse.model, same = !!m && m.lead === d.model.lead && (m.photos?.男 ?? '') === (d.model.photos?.男 ?? '') && (m.photos?.女 ?? '') === (d.model.photos?.女 ?? '')
+    && (reuse.wear?.type ?? '薄款') === (d.wear?.type ?? '薄款') && (reuse.wear?.liner ?? '') === (d.wear?.liner ?? '');
   if (same) for (const s of reuse.slots) if (s === 'cast' || s.startsWith('cast:')) out.add(s);
   return out;
 }
@@ -660,6 +672,10 @@ export function checkDraft(d: Draft, layout: Layout, images?: PickSource[]) {
     ...d.colors.filter(c => !c.pick).map(c => `「${c.name}」没有衣服图：补传一张，或者不要这个颜色`),
     ...(d.parts.find(p => p.part === FRONT)?.pick ? [] : ['缺正面全身图：补传一张']),
     ...(d.parts.some(p => !p.part.trim()) ? ['有衣服部位没写名字'] : []),
+    // A SKU version the user added is drawn from the image they pick (10-22).
+    // A liner alone cannot be zipped up out of sight: it needs an image to draw from.
+    ...(d.versions ?? []).filter(v => v.on && v.added && v.kind === '单内胆' && !v.ref).map(() => '你加的「单穿内胆」还没选参考图：选一张这件内胆的照片'),
+    ...(d.versions ?? []).filter(v => v.on && !v.colors.length).map(v => `SKU 版本「${v.kind === '单外壳' ? '单外壳' : v.kind === '外壳加内胆' ? `外壳 + ${v.inner}内胆` : `单穿${v.inner}内胆`}」一个颜色都没勾：勾上颜色，或者不勾这个版本`),
     ...(live.length ? [] : ['没有颜色了：至少留一个']),
   ];
   const used = usedSlots(d, d.counts.square);
@@ -675,8 +691,13 @@ export function checkDraft(d: Draft, layout: Layout, images?: PickSource[]) {
 /* ---------- the two rounds and their price ---------- */
 
 /** Does the set need the cast: an image with people, or a SKU image of a colour the material has no model photo of (`photos`). */
-export const wantsCast = (d: Pick<Draft, 'category' | 'colors'>, layout: Layout, photos: Set<string>) =>
-  needsCast(layout, categoryById(d.category).tasks) || (!!layout.sku.specCard && colorKeys(d.colors).some(k => k && !photos.has(k)));
+/** The plan's SKU images (sku-versions.ts), each colour by its key. */
+export const skuItemsOf = (d: Pick<Draft, 'colors' | 'versions'>) => {
+  const keys = colorKeys(d.colors);
+  return skuItems(d, d.colors.flatMap((c, k) => keys[k] ? [{ name: c.name, sku: keys[k]! }] : []));
+};
+export const wantsCast = (d: Pick<Draft, 'category' | 'colors' | 'versions'>, layout: Layout, photos: Set<string>) =>
+  needsCast(layout, categoryById(d.category).tasks) || (!!layout.sku.specCard && skuItemsOf(d).some(i => !photos.has(i.key)));
 
 /** The label's mark on a carried-over image. */
 const REUSED = '（沿用）';
@@ -692,7 +713,8 @@ export type ImageItem = { slot: string; label: string; ratio?: Ratio; round: 1 |
  */
 export function draftImages(d: Draft, layout: Layout, direct: Set<string>, photos: Set<string> = new Set(), reused: Set<string> = new Set()): ImageItem[] {
   const colors = colorKeys(d.colors).filter((k): k is string => !!k);
-  const drawn = layout.sku.specCard ? colors.filter(k => !photos.has(k)) : [];
+  // On the template, one SKU image per colour and version (sku-versions.ts); before, one per colour.
+  const skus = layout.sku.specCard ? skuItemsOf(d).map(i => i.key) : colors, drawn = layout.sku.specCard ? skus.filter(k => !photos.has(k)) : [];
   const items: ImageItem[] = [];
   const own = (slot: string, label: string, free = false): ImageItem => reused.has(slot) ? { slot, label: `${label}${REUSED}`, round: 1, multi: false, free: true, person: false } : { slot, label, round: 1, multi: false, free, person: false };
   for (const k of colors) items.push(own(`product:${k}`, '白底产品图', direct.has(k)));
@@ -701,7 +723,7 @@ export function draftImages(d: Draft, layout: Layout, direct: Set<string>, photo
     else items.push(own('cast', '模特定妆照'));
   }
   for (const k of drawn) items.push({ slot: `skumodel:${k}`, label: 'SKU 模特图', round: 1, multi: false, free: false, person: true });
-  for (const k of colors) items.push({ slot: `sku:${k}`, label: 'SKU 图', round: 1, multi: false, free: !!layout.sku.specCard, person: layout.sku.people > 0 || !!layout.sku.specCard });
+  for (const k of skus) items.push({ slot: `sku:${k}`, label: 'SKU 图', round: 1, multi: false, free: !!layout.sku.specCard, person: layout.sku.people > 0 || !!layout.sku.specCard });
   const add = (ratio: 'square' | 'portrait', n: number, round: 1 | 2) => usedSlots(d, n).forEach((i, k) => {
     const s = d.slots[i];
     const kept = ratio === 'square' && !!s.shopService;

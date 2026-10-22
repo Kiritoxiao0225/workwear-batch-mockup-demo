@@ -6,6 +6,7 @@ import type { Task } from './category';
 import type { Check, Counts, Draft, Reuse, SortedPoint } from './draft';
 import type { PlaceId, Sell } from './scene';
 import type { Box, Layout, ZoneKind } from './templates';
+import type { Wear } from './wear';
 
 /** square: round one is made (white-background, cast, SKU and 1:1 images); the 3:4 and 2:3 images wait for 「出竖版」. */
 export type Status = 'uploading' | 'planning' | 'materials' | 'writing' | 'generating' | 'square' | 'done' | 'failed';
@@ -22,7 +23,9 @@ export type Sorted = { id: string; kind: string; color: string; front: boolean; 
   /** Who is in the picture (男 / 女 / 男女 / 多人) and whether a face is clear enough to draw from; missing on material sorted before 10-11. */
   person?: string; face?: boolean;
   /** 主体 / 内胆 / 配件 / 组合 / 不确定, and the colours of the garments on it; missing on material sorted before 10-16. */
-  role?: string; colorsSeen?: string[] };
+  role?: string; colorsSeen?: string[];
+  /** The liner the image shows (wear.ts INNERS) and its colour; missing on material sorted before 10-21. */
+  inner?: string; innerColor?: string };
 export type Materials = {
   /** The AI's call on the category and why; its look at the kinds of point the material does not mention; its headings for each kind of image. */
   category: string; categoryWhy?: string; checks?: Check[]; titles?: Partial<Record<Task, string[]>>;
@@ -30,6 +33,8 @@ export type Materials = {
   themes?: unknown[];
   /** The AI's pick of the master, where the cover is shot and the point it acts out, with why (none on material sorted before 2026-10-12). */
   look?: { master: string; place?: PlaceId; sell?: Sell; why: string } | null;
+  /** How the jacket is worn and the SKU versions its material shows (wear.ts); none on material sorted before 10-21. */
+  wear?: Wear | null;
   sorted: { images: Sorted[]; colors: { name: string; hex: string; from: string[] }[]; points: SortedPoint[]; notes: string[] };
   chosen: { colors: { name: string; hex: string; pick: string | null; candidates: string[] }[]; parts: { part: string; pick: string | null; candidates: string[] }[] };
   duplicates: [string, string][]; images: { label: string; assetId: string }[];
@@ -61,7 +66,9 @@ export type SlotState = {
 export type Detail = Omit<Summary, "slots"> & { plan: Draft | null; materials: Materials | null; slots: SlotState[]; sources: Source[] };
 
 export type LayoutCard = Layout & { own: boolean };
-export type Config = { layouts: LayoutCard[]; learning: { id: string; name: string; status: string }[]; planCredits: number; imageCredits: number; multiCredits: number; layoutCredits: number; exempt: boolean };
+export type Config = { layouts: LayoutCard[]; learning: { id: string; name: string; status: string }[];
+  /** 整理素材: its start in credits and what the page needs to price a product by its images (plan-price.ts). */
+  planCredits: number; planCostMicro: number; planMultiplierMilli: number; imageCredits: number; multiCredits: number; layoutCredits: number; exempt: boolean };
 export type LearnState = { id: string; name: string; status: string; error: string | null; layout: Layout | null; refs: string[]; samples: string[] };
 
 /**

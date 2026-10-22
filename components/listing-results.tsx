@@ -12,7 +12,7 @@ import { useState } from "react";
 import type { Detail, LayoutCard, SlotState } from "@/lib/listing/api-types";
 import { assetUrl, downloadUrl, post, redrawImage } from "@/lib/listing/client-api";
 import { TASK_LABEL } from "@/lib/listing/category";
-import { colorKeys, SKU_PEOPLE, type SkuPeople } from "@/lib/listing/draft";
+import { colorKeys, SKU_PEOPLE, skuItemsOf, type SkuPeople } from "@/lib/listing/draft";
 import { skuPhotos, skuWho } from "@/lib/listing/sku-card";
 import { skuPair } from "@/lib/listing/templates";
 import { EditDialog } from "./listing-edit";
@@ -28,7 +28,8 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
 }) {
   const plan = detail.plan, layout = layoutOf(layouts, plan?.layout ?? detail.layout);
   const colors = plan?.colors.filter(c => c.pick) ?? [], main = plan?.main ?? "";
-  const keys = colorKeys(colors), nameOf = (key: string) => colors[keys.indexOf(key)]?.name ?? key;
+  // A SKU image by version is named for its colour and version (sku-versions.ts).
+  const keys = colorKeys(colors), items = plan ? skuItemsOf(plan) : [], nameOf = (key: string) => items.find(i => i.key === key)?.label ?? colors[keys.indexOf(key)]?.name ?? key;
   const free = colors.filter(c => c.name !== main && !plan?.extra.some(e => e.color === c.name));
   const [adding, setAdding] = useState<{ color: string; layout: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -84,9 +85,9 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
    * without one get the cover's people drawn), or the cast drawn in every colour. Drawn ones are paid, the cards free.
    */
   const redoSkus = (people: SkuPeople) => {
-    const d = plan ? { colors, model: plan.model, skuPeople: people } : null;
+    const d = plan ? { colors, model: plan.model, skuPeople: people, versions: plan.versions } : null;
     const own = d && detail.materials ? Object.keys(skuPhotos(d, detail.materials.sorted.images, skuPair(layout))).length : 0;
-    const n = colors.length - own, by = d ? skuWho(d, skuPair(layout)) : "男女", who = by === "男女" ? "定妆照里的男女两位" : `定妆照里的${by === "男" ? "男生" : "女生"}`;
+    const n = (plan ? skuItemsOf(plan).length : colors.length) - own, by = d ? skuWho(d, skuPair(layout)) : "男女", who = by === "男女" ? "定妆照里的男女两位" : `定妆照里的${by === "男" ? "男生" : "女生"}`;
     const cost = n ? `（共 ${n} 张${prices.exempt ? "" : `，约 ${n * prices.image} 积分`}）` : "";
     const how = people === "实拍" ? `素材里有这个颜色模特图的直接用${n ? `，没有的 ${n} 个颜色照${who}重画${cost}` : ""}` : `每个颜色都照${who}重画${cost}`;
     if (window.confirm(`SKU 图全部重新生成：${how}，再按模板重新拼，所有颜色的人一样大。旧版本都留着。`)) void act("skus", { people }, "SKU 图开始重做，做好的会陆续换上");

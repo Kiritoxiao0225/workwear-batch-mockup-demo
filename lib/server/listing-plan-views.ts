@@ -63,7 +63,7 @@ export async function findDuplicates(sources: PlanSource[]) {
   return { kept, duplicates };
 }
 
-const single = async (s: PlanSource, side: number): Promise<PlanView> => ({
+export const single = async (s: PlanSource, side: number): Promise<PlanView> => ({
   ids: [s.id], text: `【${s.id}】形状：${s.shape}（${s.width}×${s.height}），所在文件夹：${s.folder || '（根目录）'}，文件名：${s.name}`,
   dataUrl: await jpeg(sharp(s.bytes, { limitInputPixels: 60_000_000 }).rotate().resize(side, side, { fit: 'inside' })),
 });

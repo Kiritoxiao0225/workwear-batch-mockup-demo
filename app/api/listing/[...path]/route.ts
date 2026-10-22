@@ -5,8 +5,9 @@ import { CatalogHttpError } from '@/lib/server/catalog-auth';
 import { assertPageAccess } from '@/lib/server/page-access';
 import { addReference, addSourceImage, chooseVersion, createProject, deleteProject, listProjects, MAX_SOURCE_BYTES, projectDetail, readListingAsset } from '@/lib/server/listing-store';
 import { addExtraImage, imagePrices, planPrice, requestPlan, submitDraft } from '@/lib/server/listing-jobs';
+import { INNERS } from '@/lib/listing/wear';
 import { copyProject } from '@/lib/server/listing-copy';
-import { addSet, downloadZip, editSlot, recast, redoSkus, redoSlot, redrawSlot, slotStates, startVerticals } from '@/lib/server/listing-generation';
+import { addSet, adoptDrawn, downloadZip, drawMaterial, drawState, editSlot, recast, redoSkus, redoSlot, redrawSlot, slotStates, startVerticals } from '@/lib/server/listing-generation';
 import { makeServices, removeShopLogo, saveShop, saveShopBrand, saveShopCorner, saveShopLogo, shopBrand, shopState } from '@/lib/server/listing-shop';
 import { cornerAssets, pasteShopLogo } from '@/lib/server/listing-corner';
 import { SKU_PEOPLE } from '@/lib/listing/draft';
@@ -22,7 +23,7 @@ export async function GET(request: NextRequest, context: Context) {
   try {
     const { tenant, user } = await tenantScope(request), { path } = await context.params;
     await assertPageAccess(user.id, ['/listing-images']);
-    if (path[0] === 'config') return json({ layouts: await layoutCards(tenant.id), learning: await openLayouts(tenant.id, user.id), planCredits: await planPrice(), ...await imagePrices(), exempt: tenant.billingMode === 'exempt' });
+    if (path[0] === 'config') return json({ layouts: await layoutCards(tenant.id), learning: await openLayouts(tenant.id, user.id), ...await planPrice(), ...await imagePrices(), exempt: tenant.billingMode === 'exempt' });
     if (path[0] === 'layouts' && path[1] && path[2] === 'files' && path[3] && path[4]) {
       const file = await layoutFile(tenant.id, path[1], path[3], Number(path[4]));
       return new NextResponse(new Uint8Array(file.bytes), { headers: { 'Content-Type': file.file.mime_type, 'Cache-Control': 'private, max-age=3600', 'X-Content-Type-Options': 'nosniff' } });
@@ -35,6 +36,7 @@ export async function GET(request: NextRequest, context: Context) {
         'Content-Disposition': `attachment; filename="listing-images.zip"; filename*=UTF-8''${encodeURIComponent(zip.name)}` } });
     }
     if (path[0] === 'shop' && !path[1]) return json(await shopState(tenant.id, user.id));
+    if (path[0] === 'projects' && path[1] && path[2] === 'draws' && path[3]) return json(await drawState(tenant.id, path[1], path[3]));
     if (path[0] === 'projects' && path[1]) return json({ ...await projectDetail(tenant.id, path[1]), slots: await slotStates(path[1]) });
     if (path[0] === 'projects') return json(await listProjects(tenant.id));
     if (path[0] === 'assets' && path[1]) {
@@ -79,7 +81,9 @@ export async function POST(request: NextRequest, context: Context) {
     }
     if (path[0] === 'projects' && path[1] && path[2] === 'extra') {
       const bytes = await catalogBody(request, MAX_SOURCE_BYTES);
-      return json(await addExtraImage(tenant.id, path[1], bytes, header(request, 'x-file-name') || '补传.jpg'));
+      // A liner photo says what it is (10-22): that liner worn alone, in that colour.
+      const inner = INNERS.find(x => x === header(request, 'x-liner-inner')), color = header(request, 'x-liner-color').trim().slice(0, 12);
+      return json(await addExtraImage(tenant.id, path[1], bytes, header(request, 'x-file-name') || '补传.jpg', inner && color ? { inner, color } : undefined));
     }
     if (path[0] === 'projects' && path[1] && path[2] === 'images') {
       const bytes = await catalogBody(request, MAX_SOURCE_BYTES);
@@ -95,6 +99,8 @@ export async function POST(request: NextRequest, context: Context) {
     if (path[0] === 'projects' && path[2] === 'sets') return json(await addSet(tenant, user.id, path[1], body));
     if (path[0] === 'projects' && path[2] === 'copies') return json(await copyProject(tenant.id, user.id, path[1], body));
     if (path[0] === 'projects' && path[2] === 'redo') return json(await redoSlot(tenant, user.id, path[1], String(body.slot ?? ''), String(body.note ?? '')));
+    if (path[0] === 'projects' && path[2] === 'draw') return json(await drawMaterial(tenant, user.id, path[1], body));
+    if (path[0] === 'projects' && path[2] === 'adopt') return json(await adoptDrawn(tenant.id, path[1], body));
     if (path[0] === 'projects' && path[2] === 'skus') return json(await redoSkus(tenant, user.id, path[1], undefined, SKU_PEOPLE.find(p => p === body.people)));
     if (path[0] === 'projects' && path[2] === 'verticals') return json(await startVerticals(tenant, user.id, path[1]));
     if (path[0] === 'projects' && path[2] === 'cast') return json(await recast(tenant, user.id, path[1]));

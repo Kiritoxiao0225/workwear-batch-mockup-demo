@@ -10,6 +10,7 @@ import sharp from 'sharp';
 import { NextRequest } from 'next/server';
 import type { Materials } from '../lib/listing/api-types';
 import type { Draft } from '../lib/listing/draft';
+import { draftVersions } from '../lib/listing/sku-versions';
 import type { Layout, Template } from '../lib/listing/templates';
 const root = await mkdtemp(join(tmpdir(), 'listing-')), probe = createServer();
 await new Promise<void>(r => probe.listen(0, '127.0.0.1', r));
@@ -58,7 +59,7 @@ try {
   const detailOf = async (project: string) => (await call(0, 'projects/' + project)).json();
 
   const config = await (await call(0, 'config')).json();
-  assert.equal(config.planCredits, 180); assert.equal(config.layouts.length, 5);
+  assert.deepEqual([config.planCredits, config.planCostMicro, config.planMultiplierMilli], [180, 90000, 2000]); assert.equal(config.layouts.length, 5);
   assert.ok(config.layouts.every((l: Layout) => TASKS.every(t => l.templates[t]?.square.zones.length) && l.long.zones.length && l.sku.zones.length));
   const unit = config.imageCredits as number, multiUnit = config.multiCredits as number;
   const costOf = (items: { multi: boolean; free: boolean }[]) => items.reduce((n, i) => n + (i.free ? 0 : i.multi ? multiUnit : unit), 0);
@@ -96,9 +97,10 @@ try {
   await call(1, `projects/${id}/plan`, {}, 404);
   assert.equal((await (await call(0, `projects/${id}/plan`, {})).json()).status, 'planning');
   assert.equal((await (await call(0, `projects/${id}/plan`, {})).json()).status, 'planning');
-  assert.equal(await balance(tenants[0]), 4820);
+  // 整理素材 by its 3 images (plan-price.ts): 180 to start, 1.5 an image, rounded up.
+  assert.equal(await balance(tenants[0]), 5000 - 185);
   await upload(0, id, await image(700, 700, '#123456'), '晚到的.jpg', 409);
-  pass('后台没连上不冻结积分；冻结 180 积分只冻一次；开始分析后不能再加图');
+  pass('后台没连上不冻结积分；按张数冻结（3 张 185 积分）只冻一次；开始分析后不能再加图');
 
   type Job = { id: string; tenant_id: string; project_id: string; step: string };
   type ImgJob = { id: string; tenant_id: string; project_id: string; run_id: string; slot: string; input: never; depends: string[] };
@@ -144,10 +146,10 @@ try {
   assert.deepEqual([wild.concept, wild.proof], [null, '']);
   assert.equal(m1.images.length, 3);
   const hold = (await db().query("SELECT state,settled_cents FROM credit_holds WHERE id=$1", ['listing:' + job.id])).rows[0];
-  assert.deepEqual([hold.state, Number(hold.settled_cents)], ['settled', 180]);
+  assert.deepEqual([hold.state, Number(hold.settled_cents)], ['settled', 185]);
   assert.equal((await db().query("SELECT status,provider_request_id FROM listing_attempts WHERE job_id=$1", [job.id])).rows[0].provider_request_id, 'chatcmpl-test');
   assert.equal((await db().query("SELECT count(*)::int n FROM usage_events WHERE tenant_id=$1 AND metric_code='listing_plan'", [tenants[0]])).rows[0].n, 1);
-  pass('整理素材：AI 分类、认颜色（缺图的颜色也列出）、判品类、对不上的卖点种类和画法丢掉；程序挑每色的图和正面全身；按 180 积分结算并记用量');
+  pass('整理素材：AI 分类、认颜色（缺图的颜色也列出）、判品类、对不上的卖点种类和画法丢掉；程序挑每色的图和正面全身；按冻结的 185 积分结算并记用量');
 
   // ---- 卖点上图：开始出图只冻结第一轮（方图）的积分；写画面免费，写完自动出图 ----
   const plan = draftFrom(m1, commute, counts(3, 2, 1)), used = usedSlots(plan, 3), cover = plan.slots[used[0]];
@@ -319,7 +321,10 @@ try {
   assert.equal(beforeSkus - await balance(tenants[0]), models.length * unit);
   for (const j of skuJobs) await make(j);
   assert.equal((await detailOf(id)).status, 'done');
-  pass('SKU 图全部重做：没有模特图的颜色照定妆照重画模特（每色一张的钱），SKU 图跟着免费重拼');
+  // SKU models wear the garment as it is: no chest LOGO, whatever the plan prints on the main images (10-21).
+  const skuModelPrompt = prompt(models[0].slot);
+  assert.match(skuModelPrompt.prompt, /胸口不另外印字/); assert.doesNotMatch(skuModelPrompt.prompt, /LOGO/);
+  pass('SKU 图全部重做：没有模特图的颜色照定妆照重画模特（每色一张的钱），SKU 图跟着免费重拼；SKU 模特胸口不印 LOGO');
 
   await call(1, `projects/${id}/download`, undefined, 404);
   const zip = await JSZip.loadAsync(Buffer.from(await (await call(0, `projects/${id}/download`)).arrayBuffer()));
@@ -630,6 +635,69 @@ try {
   await db().query('UPDATE credit_accounts SET balance_cents=$2 WHERE tenant_id=$1', [tenants[0], beforeCorner]);
   pass('删除 LOGO：只删自己店的；删店铺 LOGO 连开关一起关；删样例 LOGO 后胸口改印「LOGO」字样、印绣工艺图整张重画成抽象图案');
   pass('胸口印样例 LOGO：出图带上店铺设置里的样例 LOGO；店铺 LOGO：没传 LOGO 打不开；开了以后新出的方图左上角留空、看图和下载都贴上（深底变白）；第 2 张服务图不贴；竖版照着留空也贴；别人看不到；换 LOGO 马上换、关掉马上恢复原图，之后出的图不再留空');
+
+  // ---- 内胆款（10-22）：整理认出类型和 SKU 版本（复核过的才算）；定妆照穿着内胆；SKU 按颜色 × 版本出，有实拍直接用，你加的版本照参考图画 ----
+  const lined = randomUUID();
+  await call(0, 'projects', { id: lined, name: '内胆款', layout: 'M3', counts: counts(1, 0, 0) });
+  await upload(0, lined, await image(600, 600, '#5b2a4a'), '外套/乌梅紫.jpg');
+  await upload(0, lined, await image(600, 800, '#5b2a4b'), '羽绒/乌梅紫羽绒.jpg');
+  await upload(0, lined, await image(600, 800, '#e8e0d0'), '内胆/米色内胆.jpg');
+  await call(0, `projects/${lined}/plan`, {});
+  const [SHELL, OVER, ALONE] = ['外套/乌梅紫.jpg', '羽绒/乌梅紫羽绒.jpg', '内胆/米色内胆.jpg'].map(path => (detailOf(lined) as Promise<{ sources: { path: string; label: string }[] }>).then(d => d.sources.find(i => i.path === path)!.label));
+  const ids = await Promise.all([SHELL, OVER, ALONE]);
+  const linedSorted = { images: [{ id: ids[0], kind: '颜色款图', color: '乌梅紫', front: true, role: '主体' }, { id: ids[1], kind: '模特实拍', color: '乌梅紫', role: '主体', inner: '羽绒', innerColor: '黑色', person: '女', face: true },
+    { id: ids[2], kind: '模特实拍', color: '米色', role: '内胆', inner: '摇粒绒', innerColor: '米色', person: '女', face: true }], colors: [{ name: '乌梅紫', hex: '#5b2a4a', from: [ids[0]] }], points: [], category: 'workwear',
+    wear: { type: '内胆', why: '文件夹写羽绒，有米色内胆单穿', versions: [{ kind: '单外壳', from: [ids[0]] }, { kind: '外壳加内胆', inner: '羽绒', from: [ids[1]] }, { kind: '外壳加内胆', inner: '摇粒绒', from: [ids[0], ids[2]] }, { kind: '单内胆', inner: '摇粒绒', from: [ids[2]] }] } };
+  // The liner check looks again at the two that may show a liner (sorted as such, or named for one) and agrees.
+  let checked = 0;
+  await executePlan(await latest(lined, 'plan'), async (r, hooks) => {
+    await hooks.beforeSubmit();
+    const system = String((r as { messages: { content: unknown }[] }).messages[0].content);
+    if (system.includes('逐张看清楚外套里面有没有内胆')) { checked++; return reply({ images: [{ id: ids[1], role: '主体', open: true, inner: '羽绒', innerColor: '黑色', shellColor: '乌梅紫' }, { id: ids[2], role: '内胆', open: true, inner: '摇粒绒', innerColor: '米色' }] }); }
+    return reply(linedSorted);
+  });
+  const lm = (await detailOf(lined)).materials as Materials;
+  assert.equal(checked, 1);
+  // A shell photo and a liner photo are not 外壳 + 摇粒绒: that version is dropped (不要拼，不要猜).
+  assert.deepEqual([lm.wear?.type, lm.wear?.versions.map(v => [v.kind, v.inner, v.colors.join('、')])], ['内胆', [['单外壳', '', '乌梅紫'], ['外壳加内胆', '羽绒', '乌梅紫'], ['单内胆', '摇粒绒', '米色']]]);
+  // A liner colour the material lacks, on the plan (10-22): a photo uploaded as that liner, or one drawn by AI from the ticked references and taken in.
+  const tagged = { 'content-type': 'application/octet-stream', 'x-file-name': 'black.jpg', 'x-liner-inner': encodeURIComponent('摇粒绒'), 'x-liner-color': encodeURIComponent('灰色') };
+  const up = await (await call(0, `projects/${lined}/extra`, await image(500, 600, '#777777'), 200, 'POST', tagged)).json();
+  const beforeDraw = await balance(tenants[0]);
+  await call(0, `projects/${lined}/draw`, { prompt: '照参考图这件摇粒绒内胆，颜色换成黑色', refs: [] }, 400);
+  await call(0, `projects/${lined}/draw`, { prompt: '照参考图这件摇粒绒内胆，颜色换成黑色', refs: ['M999'] }, 400);
+  await call(1, `projects/${lined}/draw`, { prompt: '照参考图这件摇粒绒内胆，颜色换成黑色', refs: [ids[2]] }, 404);
+  const { job: drawJob } = await (await call(0, `projects/${lined}/draw`, { prompt: '照参考图这件摇粒绒内胆，颜色换成黑色', refs: [ids[2]] })).json();
+  await call(0, `projects/${lined}/draw`, { prompt: '再来一张', refs: [ids[2]] }, 409);
+  assert.equal((await (await call(0, `projects/${lined}/draws/${drawJob}`)).json()).status, 'queued');
+  for (const j of await imageJobs(lined, true)) await make(j);
+  assert.match(prompt('draw:1').prompt, /颜色换成黑色/); assert.equal(prompt('draw:1').refs, 1);
+  const drawn = await (await call(0, `projects/${lined}/draws/${drawJob}`)).json();
+  assert.equal(drawn.status, 'succeeded'); assert.equal(beforeDraw - await balance(tenants[0]), unit);
+  await call(1, `projects/${lined}/adopt`, { asset: drawn.asset, inner: '摇粒绒', color: '黑色' }, 404);
+  const adopted = await (await call(0, `projects/${lined}/adopt`, { asset: drawn.asset, inner: '摇粒绒', color: '黑色' })).json();
+  const lm2 = (await detailOf(lined)).materials as Materials, tagOf = (l: string) => lm2.sorted.images.find(i => i.id === l)!;
+  assert.deepEqual([tagOf(up.label).role, tagOf(up.label).inner, tagOf(up.label).innerColor, tagOf(adopted.label).kind, tagOf(adopted.label).innerColor], ['内胆', '摇粒绒', '灰色', '静物', '黑色']);
+  assert.ok(!((await detailOf(lined)).slots as { slot: string }[]).some(x => x.slot.startsWith('draw:')));
+  const linedDraft: Draft = { ...draftFrom(lm, commute, counts(1, 0, 0)), wear: { type: '内胆', liner: ids[1] },
+    versions: [...draftVersions(lm.wear!.versions), { key: 'v9', kind: '外壳加内胆', inner: '摇粒绒', colors: ['乌梅紫'], on: true, added: true, ref: ids[2] }] };
+  await call(0, `projects/${lined}/start`, linedDraft);
+  await call(0, `projects/${lined}/draw`, { prompt: '照参考图这件摇粒绒内胆，颜色换成黑色', refs: [ids[2]] }, 409);
+  await executeWrite(await latest(lined, 'write'), async (_r, hooks) => { await hooks.beforeSubmit(); return reply({ product: { name: '内胆款', garment: ['连帽'] } }); });
+  const linedJobs = await imageJobs(lined, true), slotsOf = (prefix: string) => linedJobs.filter(j => j.slot.startsWith(prefix)).map(j => j.slot).sort();
+  // The material's own photo where it has one (the shell over its liner, the liner alone); drawn otherwise.
+  assert.deepEqual(slotsOf('sku:'), [`sku:${ids[0]}`, `sku:${ids[0]}~v2`, `sku:${ids[0]}~v9`, 'sku:~v3~0'].sort());
+  assert.deepEqual(slotsOf('skumodel:'), [`skumodel:${ids[0]}`, `skumodel:${ids[0]}~v9`].sort());
+  for (const j of linedJobs) await make(j);
+  assert.match(prompt('cast').prompt, /参考图2是这款的内胆照片/); assert.match(prompt('cast').prompt, /外套拉链拉开、敞着穿/);
+  assert.match(prompt(`skumodel:${ids[0]}`).prompt, /拉链拉到胸口，里面是白色圆领 T 恤/); assert.doesNotMatch(prompt(`skumodel:${ids[0]}`).prompt, /内胆照片/);
+  assert.match(prompt(`skumodel:${ids[0]}~v9`).prompt, /参考图3是这款的内胆照片/);
+  const linedSlots = (await detailOf(lined)).slots as { slot: string; image: string | null }[];
+  assert.ok([`sku:${ids[0]}`, `sku:${ids[0]}~v2`, `sku:${ids[0]}~v9`, 'sku:~v3~0'].every(slot => linedSlots.find(s => s.slot === slot)?.image));
+  const linedZip = await JSZip.loadAsync(Buffer.from(await (await call(0, `projects/${lined}/download`)).arrayBuffer()));
+  assert.ok(['SKU-乌梅紫-单外壳', 'SKU-乌梅紫-外壳+羽绒内胆', 'SKU-米色-单穿摇粒绒内胆'].every(n => Object.keys(linedZip.files).some(f => f.startsWith(n))), Object.keys(linedZip.files).join(' '));
+  await db().query('UPDATE credit_accounts SET balance_cents=$2 WHERE tenant_id=$1', [tenants[0], beforeCorner]);
+  pass('内胆款：方案页补内胆颜色（上传标明是内胆；AI 生成按一张收费、用这张才进素材、不进结果和下载、出图后不能再生成）；整理认出有内胆和三种 SKU 版本，外壳和内胆各一张照片不拼成组合；定妆照穿着内胆；SKU 按颜色 × 版本出，有实拍的直接用，单外壳照旧穿白 T，你加的版本照你选的参考图画；下载按颜色和版本命名');
 
   const run = async (provider: Parameters<typeof executePlan>[1]) => {
     const pid = randomUUID();
