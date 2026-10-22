@@ -39,6 +39,12 @@ export type MasterId = keyof typeof MASTER_NAMES;
  * crafts. sample: the competitor image it is learned from (service-samples/<sample>.png).
  */
 export type ServiceImageId = 'A-light' | 'A-dark' | 'D-warm' | 'B-light';
+/** The account's first shop (the one it always had): its images keep the slots service:<id>. */
+export const SHOP_MAIN = 'main';
+/** One of the account's shops (10-22): its name and whether new products use it. */
+export type ShopSet = { id: string; name: string; isDefault: boolean };
+/** A service image's slot on the shop row: the first shop's as before, another's with its id. */
+export const serviceSlot = (id: ServiceImageId, set?: string | null) => !set || set === SHOP_MAIN ? `service:${id}` : `service:${set}~${id}`;
 export type ServiceImageDef = { id: ServiceImageId; name: string; what: string; kind: 'items' | 'crafts'; slots: number; sample: string; masters: MasterId[] };
 export const SERVICE_IMAGES: ServiceImageDef[] = [
   { id: 'A-light', name: '先看样再决定 · 浅色', what: '一句大口号，下面一个框放 4 项服务', kind: 'items', slots: 4, sample: '24-5', masters: ['M1', 'M5'] },

@@ -9,7 +9,7 @@ import { categoryById } from '../category';
 import { defaultDraft, usedSlots, type Draft } from '../draft';
 import type { Task } from '../category';
 import { BUILT_IN_LAYOUTS, FLAT_EXAMPLE, withPeople, type Layout, type People, type Display } from '../templates';
-import { defaultShop, pendingOf, SERVICE_IMAGES, wordsFor, type ServiceImageId, type ShopService } from '../service';
+import { defaultShop, pendingOf, SERVICE_IMAGES, serviceSlot, SHOP_MAIN, wordsFor, type ServiceImageId, type ShopService } from '../service';
 import { DEMO_MATERIAL } from './material';
 
 const COLORS = DEMO_MATERIAL.colors.map(c => c.name);
@@ -133,30 +133,33 @@ setTimeout(() => { const p = projects.find(x => x.id === 'demo-planning'); if (p
 
 /* ---------- the shop ---------- */
 
-/** The shop's row, as on the server: its service images are the versions of its service:<id> slots. */
+/** The shop's row, as on the server: its service images are the versions of its service:<id> slots (another shop's service:<set>~<id>). */
 const SHOP_ID = 'demo-shop';
 const start = defaultShop(['免费设计', '免费印绣', '一件起订', '现货速发']);
-const shopSettings: Omit<ShopService, 'made'> = { items: start.items, crafts: start.crafts, logo: null, brand: null, corner: false };
+type DemoSet = { id: string; name: string; settings: Omit<ShopService, 'made'> };
+const shopSets: DemoSet[] = [{ id: SHOP_MAIN, name: '我的店铺', settings: { items: start.items, crafts: start.crafts, logo: null, brand: null, corner: false } }];
+let defaultSet = SHOP_MAIN;
+const setOf = (id?: string | null) => shopSets.find(s => s.id === id) ?? shopSets.find(s => s.id === defaultSet)!;
 projects.push({ ...project(SHOP_ID, '店铺服务图', 'done', 0, 0), slots: [] });
 const madeAt = new Map<string, string>();
-function shopState() {
-  const shop = find(SHOP_ID), made: ShopService['made'] = {}, making: ServiceImageId[] = [];
+function shopState(set?: string | null) {
+  const shop = find(SHOP_ID), own = setOf(set), made: ShopService['made'] = {}, making: ServiceImageId[] = [];
   for (const def of SERVICE_IMAGES) {
-    const s = shop.slots.find(x => x.slot === `service:${def.id}`);
+    const s = shop.slots.find(x => x.slot === serviceSlot(def.id, own.id));
     if (!s) continue;
     if (s.status === 'queued' || s.status === 'running') making.push(def.id);
     if (!s.image) continue;
     made[def.id] = { image: s.image, asset: s.image, words: s.words?.tags ?? [], madeAt: madeAt.get(s.image) ?? '',
       history: s.history.filter(v => v.id !== s.image && !v.job).reverse().map(v => ({ image: v.id, asset: v.id, madeAt: madeAt.get(v.id) ?? '' })) };
   }
-  return { project: SHOP_ID, shop: { ...shopSettings, made }, making, failed: {} };
+  return { project: SHOP_ID, set: own.id, sets: shopSets.map(x => ({ id: x.id, name: x.name, isDefault: x.id === defaultSet })), shop: { ...own.settings, made }, making, failed: {} };
 }
 /** 「确认」: the images never made come out one by one; the others get their changed words redrawn (the same picture in the demo). */
-function makeShop() {
-  const shop = find(SHOP_ID), state = shopState(), pending = pendingOf(state.shop);
+function makeShop(set?: string | null) {
+  const shop = find(SHOP_ID), state = shopState(set), pending = pendingOf(state.shop);
   const ids = [...pending.fresh.map(d => d.id), ...pending.stale.map(x => x.def.id)];
   ids.forEach((id, k) => {
-    const slot = `service:${id}`, old = shop.slots.find(x => x.slot === slot);
+    const slot = serviceSlot(id, state.set), old = shop.slots.find(x => x.slot === slot);
     if (old) old.status = 'queued'; else shop.slots.push({ slot, status: 'queued', error: null, image: null, history: [], words: null });
     setTimeout(() => {
       const s = shop.slots.find(x => x.slot === slot)!, base = `/listing-demo/service/${id}.jpg`;
@@ -207,15 +210,34 @@ export async function demoApi(path: string, init?: RequestInit): Promise<unknown
   await wait(150);
   const method = init?.method ?? 'GET';
   const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
-  const [a, id, action] = path.split('/');
+  const [bare, query] = path.split('?'), [a, id, action] = bare.split('/');
   if (path === 'config') return { layouts, learning: [...learning.values()].filter(l => l.status !== 'saved').map(l => ({ id: l.id, name: l.name, status: l.status })), planCredits: 300, planCostMicro: 150000, planMultiplierMilli: 2000, imageCredits: 22, multiCredits: 36, layoutCredits: 100, exempt: false } satisfies Config;
   if (a === 'shop') {
-    if (!id && method === 'POST') Object.assign(shopSettings, { items: body.items, crafts: body.crafts });
-    if (id === 'logo') shopSettings.logo = URL.createObjectURL(init!.body as Blob);
-    if (id === 'brand') shopSettings.brand = URL.createObjectURL(init!.body as Blob);
-    if (id === 'corner') shopSettings.corner = !!body.on && !!shopSettings.brand;
-    if (id === 'make') { await wait(400); return makeShop(); }
-    return shopState();
+    // Several shops (10-22): the one named by ?set=, the body's set or the upload's header; none, the default.
+    const set = new URLSearchParams(query).get('set') ?? body.set ?? new Headers(init?.headers).get('x-shop-set'), own = setOf(set).settings;
+    if (id === 'sets') {
+      if (!action && method === 'POST') {
+        if (!String(body.name ?? '').trim()) throw new Error('给这套店铺起个名字');
+        if (shopSets.some(x => x.name === body.name)) throw new Error('已经有同名的店铺');
+        const from = setOf(null).settings, made = { id: `s${Math.random().toString(16).slice(2, 10)}`, name: body.name, settings: { items: from.items.map(x => ({ ...x })), crafts: [...from.crafts], logo: null, brand: null, corner: false } };
+        shopSets.push(made); return shopState(made.id);
+      }
+      if (method === 'DELETE') {
+        if (action === SHOP_MAIN) throw new Error('第一套店铺不能删，可以改名');
+        if (action === defaultSet) throw new Error('默认店铺不能删：先把别的店铺设为默认');
+        shopSets.splice(shopSets.findIndex(x => x.id === action), 1); return shopState();
+      }
+      const it = shopSets.find(x => x.id === action)!;
+      if (body.name) it.name = body.name;
+      if (body.isDefault) defaultSet = it.id;
+      return shopState(it.id);
+    }
+    if (!id && method === 'POST') Object.assign(own, { items: body.items, crafts: body.crafts });
+    if (id === 'logo') own.logo = method === 'DELETE' ? null : URL.createObjectURL(init!.body as Blob);
+    if (id === 'brand') Object.assign(own, method === 'DELETE' ? { brand: null, corner: false } : { brand: URL.createObjectURL(init!.body as Blob) });
+    if (id === 'corner') own.corner = !!body.on && !!own.brand;
+    if (id === 'make') { await wait(400); return makeShop(set); }
+    return shopState(set);
   }
   if (a === 'projects') {
     if (!id) {

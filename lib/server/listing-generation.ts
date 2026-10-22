@@ -10,6 +10,7 @@
  *   square:<n>     round one: the square images; portrait:<n> and long:1 round two (「出竖版」)
  *   square:1+<sku> / portrait:1+<sku> / long:1+<sku>   the covers of an extra set in that colour
  *   service:<id>   on the shop's row (listing-shop): one of the shop's four service images
+ *   service:<set>~<id>   the same for another of the account's shops (10-22)
  *
  * The square image that shows the shop's services copies the shop's current one for the product's
  * master (free); its 3:4 image lays that one out again. 「点图修改」 redraws one image from its
@@ -47,9 +48,9 @@ import { resolveLayout } from './listing-layouts';
 import { castOnePrompt, castPrompt, drawPrompt, editPrompt, longPrompt, mainPrompt, productPrompt, redrawPrompt, relayoutPrompt, servicePrompt, serviceWordsPrompt, skuModelPrompt, skuPrompt, type Content, type Ratio } from './listing-prompts';
 import { callPlanModel, generateListingImage, LISTING_PLAN_MODEL, listingImageModel, listingImageProvider, type ImageCall, type PlanCall } from './listing-provider';
 import { frameRequest, parseFrame, parseRecognized, recognizeRequest, type Expected, type Frame } from './listing-recognize';
-import { shopBrand, shopServiceImage, shopSettings } from './listing-shop';
+import { liveShop, shopBrand, shopServiceImage, shopSettings } from './listing-shop';
 import { cornerAssets, pasteShopLogo } from './listing-corner';
-import { latestOutputs, MAIN_SLOT, storeOutput, type StoredPlan } from './listing-store';
+import { latestOutputs, MAIN_SLOT, slotShop, storeOutput, type StoredPlan } from './listing-store';
 import { upscaleListingImage } from './listing-upscale';
 import type { Tenant } from './tenant-scope';
 
@@ -72,7 +73,7 @@ export type JobInput = (
   /** One of the shop's service images, its words in `words.tags`; `stale`: only the words that changed since `from` are redrawn on `base`. */
   | { kind: 'service'; image: ServiceImageId; words: Words; stale?: { base: string; from: string[] } }
   /** A product's service image: the shop's current one for the master, copied (free). */
-  | { kind: 'copy'; image: ServiceImageId; index: number; words: Words }
+  | { kind: 'copy'; image: ServiceImageId; index: number; words: Words; shop?: string }
   /** A product's 3:4 service image: its square one (`from`) laid out again. */
   /**
    * A 3:4 image (or the 2:3 long image, from the square cover): its square one (`from`, the current version) laid out again;
@@ -170,7 +171,7 @@ export function planJobs(stored: StoredPlan, layout: Layout, round: 1 | 2, only?
       if (ratio === 'portrait') { jobs.push(relayoutJob(slot, `square:${squares.indexOf(i) + 1}`, i, words, d.slots[i].shopService ? [] : colors, layout)); return; }
       if (!d.slots[i].shopService) { jobs.push(mainJob(slot, ratio, i, k + 1, used.length, colors)); return; }
       // The shop's service image: the square one is copied for free.
-      jobs.push({ slot, step: 'image', input: { kind: 'copy', image: service, index: i, words }, depends: [], multi: false, free: true });
+      jobs.push({ slot, step: 'image', input: { kind: 'copy', image: service, index: i, words, ...(d.shop ? { shop: d.shop } : {}) }, depends: [], multi: false, free: true });
     });
     for (const e of d.extra) if (n && (!only || skuOf.get(e.color) === only)) {
       const sku = skuOf.get(e.color);
@@ -278,7 +279,7 @@ export async function recast(tenant: Tenant, user: string, projectId: string) {
 
 /** One more cover set in another colour: its square cover now, its 3:4 and long covers too once round two has run. */
 export async function addSet(tenant: Tenant, user: string, projectId: string, input: unknown) {
-  const b = z.object({ color: z.string().min(1), layout: z.string().default('') }).parse(input);
+  const b = z.object({ color: z.string().min(1), layout: z.string().default(''), shop: z.string().max(16).optional() }).parse(input);
   if (b.layout && !(await resolveLayout(tenant.id, b.layout, { forNewProject: true }))) throw new CatalogHttpError(400, '没有这个版式');
   const prices = await currentPrices();
   return catalogTransaction(async c => {
@@ -286,7 +287,9 @@ export async function addSet(tenant: Tenant, user: string, projectId: string, in
     const color = stored.colors.find(x => x.name === b.color);
     if (!color) throw new CatalogHttpError(400, '没有这个颜色');
     if (color === stored.colors[0] || stored.draft.extra.some(e => e.color === b.color)) throw new CatalogHttpError(409, `「${b.color}」已经有首图了`);
-    const next: StoredPlan = { ...stored, draft: { ...stored.draft, extra: [...stored.draft.extra, { color: b.color, layout: b.layout }] } };
+    // Its own shop when it names one (10-22), else the product's.
+    const shop = b.shop ? await liveShop(tenant.id, b.shop) : undefined;
+    const next: StoredPlan = { ...stored, draft: { ...stored.draft, extra: [...stored.draft.extra, { color: b.color, layout: b.layout, ...(shop && shop !== stored.draft.shop ? { shop } : {}) }] } };
     const jobs = [...planJobs(next, layout, 1, color.sku), ...(stored.round === 2 ? planJobs(next, layout, 2, color.sku) : [])];
     await queueRun(c, tenant, user, projectId, jobs, prices);
     await c.query('UPDATE listing_projects SET plan=$2 WHERE id=$1', [projectId, next]);
@@ -633,13 +636,15 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
     };
     if (input.kind === 'copy') {
       // The shop's service image for this master: copied, no model call, nothing charged.
-      const bytes = await shopServiceImage(job.tenant_id, input.image);
+      const bytes = await shopServiceImage(job.tenant_id, input.image, input.shop);
       if (!bytes) throw new CatalogHttpError(409, '店铺还没出这套母版的服务图：去「店铺设置」确认生成后，再点重新生成');
       await succeed(bytes);
       return;
     }
     const p = (await db().query('SELECT plan FROM listing_projects WHERE id=$1', [job.project_id])).rows[0];
     const stored = p.plan as StoredPlan, d = stored?.draft;
+    // The shop the image is for (10-22): a cover in another colour may name its own, else the product's.
+    const shopSet = slotShop(stored, job.slot);
     const layout = d ? await resolveLayout(job.tenant_id, (input.kind === 'main' && input.layout) || d.layout) : undefined;
     if (d && !layout) throw new CatalogHttpError(404, '版式不存在');
     const outputs = await latestOutputs(job.project_id);
@@ -651,7 +656,8 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         references = [await versionAt1K(job.project_id, input.stale.base)];
         prompt = serviceWordsPrompt(words.map((to, i) => ({ from: input.stale!.from[i] ?? '', to })).filter(x => x.from !== x.to && x.from));
       } else {
-        const { logo } = def.kind === 'crafts' ? await shopSettings(job.tenant_id) : { logo: null };
+        // A shop's service image: the shop it is for is in its slot (service:<set>~<id>).
+        const { logo } = def.kind === 'crafts' ? await shopSettings(job.tenant_id, /^service:(.+)~/.exec(job.slot)?.[1]) : { logo: null };
         references = [await sampleOf(def.sample), ...(logo ? [logo] : [])];
         prompt = servicePrompt(def, words, !!logo);
       }
@@ -685,7 +691,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
       const hasCast = outputs.has('cast');
       // What is printed on the chest; a LOGO image (the shop's sample one, or this product's customer one) is sent as the last reference image.
       // The shop's sample LOGO deleted since the plan: the word 「LOGO」, as the shop page says.
-      const sample = d.logo?.mode === '样例' ? (await shopSettings(job.tenant_id)).logo : null;
+      const sample = d.logo?.mode === '样例' ? (await shopSettings(job.tenant_id, shopSet)).logo : null;
       const logoMode = d.logo?.mode === '样例' && !sample ? 'LOGO' : d.logo?.mode ?? 'LOGO', logoAsset = logoMode === '客户' ? stored.images.find(i => i.label === d.logo?.label)?.assetId : undefined;
       const logoBytes = sample ?? (logoAsset ? await fileOf((await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [logoAsset])).rows[0].file_id) : null);
       const logoLine = logoMode === '不印' || (logoMode !== 'LOGO' && !logoBytes) ? null : LOGO_LINE[logoMode];
@@ -716,7 +722,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         const row = colorRow(it.name);
         await succeed(await renderSkuCard({
           // The shop's own LOGO while it shows one (店铺设置); the sample LOGO is only for the crafts image.
-          ...text, rows: [...text.rows, lined ? { ...row, sub: versionName(v) } : row], logo: await (await shopBrand(job.tenant_id))?.bytes().catch(() => null) ?? null,
+          ...text, rows: [...text.rows, lined ? { ...row, sub: versionName(v) } : row], logo: await (await shopBrand(job.tenant_id, shopSet))?.bytes().catch(() => null) ?? null,
           fabric: product ? await fabricCrop(product) : await sharp(photo!).resize(800, 800, { fit: 'cover', position: 'centre' }).png().toBuffer(),
           ...(thumbFile ? { liner: { photo: await fileOf(thumbFile), name: `${v!.inner}内胆`, whole: sorted.find((i: { id: string; kind: string }) => i.id === thumbLabel)?.kind === '静物' } } : {}),
           photo: photo ? { bytes: photo, cutout: false, frame } : { bytes: await removeFlatArtworkBackground(product!, { r: 255, g: 255, b: 255 }), cutout: true },
@@ -812,11 +818,11 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         prompt = editPrompt({ ratio, box: input.edit.box, to: input.edit.to, what: editWhat(stored, input.edit, input.words, layout), style: layout.style });
         paste = { original, boxes };
       } else if (input.ratio === 'square' && input.index >= 0) {
-        corner = !!(await shopBrand(job.tenant_id));
+        corner = !!(await shopBrand(job.tenant_id, shopSet));
         // A square image its master has a spec for: drawn the way the master's sample was.
         const shot = await specShot({ corner, stored, projectId: job.project_id, input, slot: job.slot, layout, output, cast: hasCast ? await output('cast') : null,
           logo: logoBytes && logoLine ? { bytes: logoBytes, line: logoLine } : logoLine ? { bytes: null, line: logoLine } : null,
-          badge: async () => (await shopSettings(job.tenant_id)).settings?.items.some(x => x.on && x.title === '免费印绣') ? '免费印绣' : '', wear: wearLine(wearType) });
+          badge: async () => (await shopSettings(job.tenant_id, shopSet)).settings?.items.some(x => x.on && x.title === '免费印绣') ? '免费印绣' : '', wear: wearLine(wearType) });
         if (shot) { references = shot.references; prompt = shot.prompt; ratio = 'square'; }
       }
       if (!prompt && input.kind === 'main' && !input.edit) {
@@ -831,7 +837,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         if (shows && logoBytes && logoLine) references.push(logoBytes);
         ratio = input.ratio;
         const used = input.colors.map(n => colors.find(c => c.name === n)!).filter(Boolean);
-        const shop = t.zones.some(z => z.kind === 'badge') ? (await shopSettings(job.tenant_id)).settings : null;
+        const shop = t.zones.some(z => z.kind === 'badge') ? (await shopSettings(job.tenant_id, shopSet)).settings : null;
         const badge = shop?.items.some(x => x.on && x.title === '免费印绣') ? '免费印绣' : '';
         const logoRef = shows && logoBytes && logoLine ? references.length : undefined, content = contentOf(stored, input, job.slot, layout, badge);
         await withPartPhotos(stored, job.project_id, content.cells, references);
@@ -965,8 +971,13 @@ export async function downloadZip(projectId: string) {
   const stored = p.plan as StoredPlan | null, colors = stored?.colors ?? [], items = stored ? skuItems(stored.draft, colors) : [];
   const nameOf = (sku: string) => zipEntryName(items.find(i => i.key === sku)?.label.replace(' · ', '-').replace(/\s+/g, '') ?? colors.find(c => c.sku === sku)?.name ?? sku);
   const states = await slotStates(projectId), outputs = await latestOutputs(projectId), zip = new JSZip();
-  const brand = await shopBrand(p.tenant_id), corner = brand ? await cornerAssets(p.tenant_id, [...outputs.values()].map(o => o.id)) : new Set<string>();
-  const logo = corner.size ? await brand!.bytes().catch(() => null) : null;
+  // Each image gets its own shop's LOGO (10-22): a cover in another colour may be for another shop.
+  const corner = await cornerAssets(p.tenant_id, [...outputs.values()].map(o => o.id)), logos = new Map<string, Promise<Buffer | null>>();
+  const logoFor = (slot: string) => {
+    const set = slotShop(stored, slot) ?? '';
+    if (!logos.has(set)) logos.set(set, shopBrand(p.tenant_id, set || null).then(b => b ? b.bytes().catch(() => null) : null));
+    return logos.get(set)!;
+  };
   for (const s of states) {
     const o = outputs.get(s.slot); if (!o) continue;
     const [kind, key] = s.slot.split(':'), [n, set] = (key ?? '').split('+');
@@ -976,7 +987,8 @@ export async function downloadZip(projectId: string) {
     const main = kind === 'long' ? `${KIND_FILE.long}.${ext}` : `${KIND_FILE[kind]}-${n.padStart(2, '0')}-${task}.${ext}`;
     const name = kind === 'product' ? `白底产品图/${nameOf(key)}.${ext}` : kind === 'sku' ? `SKU-${nameOf(key)}.${ext}` : kind === 'skumodel' ? `SKU模特图/${nameOf(key)}.${ext}` : kind === 'cast' ? `模特定妆照.${ext}` : set ? `换色首图-${nameOf(set)}/${main}` : main;
     const bytes = await fileOf(o.file_id);
-    zip.file(name, logo && corner.has(o.id) ? await pasteShopLogo(bytes, logo) : bytes);
+    const logo = corner.has(o.id) ? await logoFor(s.slot) : null;
+    zip.file(name, logo ? await pasteShopLogo(bytes, logo) : bytes);
   }
   if (!Object.keys(zip.files).length) throw new CatalogHttpError(409, '还没有出好的图');
   return { name: `${p.name}-电商主图.zip`, bytes: await zip.generateAsync({ type: 'nodebuffer', compression: 'STORE' }) };

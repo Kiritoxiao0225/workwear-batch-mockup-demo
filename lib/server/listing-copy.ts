@@ -57,6 +57,8 @@ export async function copyProject(tenant: string, user: string, sourceId: string
       for (const s of sources) assetOf.set(s.id, randomUUID());
       const materials: Materials = {
         ...m, from: root, baseName: base, variant: before + k + 1, ...(reuse ? { reuse } : {}),
+        // 「再出一套」 keeps the product's shop unless its plan picks another (10-22).
+        ...(stored?.draft.shop ?? m.shop ? { shop: stored?.draft.shop ?? m.shop } : {}),
         look: { ...(m.look ?? { why: '' }), master: layout.id },
         images: m.images.filter(i => assetOf.has(i.assetId)).map(i => ({ label: i.label, assetId: assetOf.get(i.assetId)! })),
       };

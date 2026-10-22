@@ -27,7 +27,7 @@ import type { LinerTag } from "@/lib/listing/client-api";
 import { capacity, cellZones, mostCells, PEOPLE_LABEL, skuPair, type Layout } from "@/lib/listing/templates";
 import { SlotPreview, Wire } from "./listing-wire";
 import { bestSell, coverPicks, coverScene, isSellTitle, masterInfo, PLACE_IDS, PLACES, seedOf, SELLS, sellOf, sellTitle, type PlaceId, type Sell } from "@/lib/listing/scene";
-import { useShopService } from "./listing-service";
+import { useShopState } from "./listing-service";
 
 export const KINDS = ["颜色款图", "静物", "3D渲染", "模特实拍", "细节特写", "卖点图", "详情页", "海报", "尺码表", "无关"] as const;
 export type Prices = { image: number; multi: number; exempt: boolean };
@@ -114,7 +114,7 @@ export function rearrange(d: Draft, layout: Layout, keepHand: boolean): Draft {
 /** Another category: its points and images afresh; the colours, parts, chest, model and counts the user set stay. */
 function withCategory(d: Draft, m: Materials, layout: Layout, category: string): Draft {
   const fresh = startDraft(m, layout, d.counts, category);
-  return rearrange({ ...fresh, colors: d.colors, main: d.main, parts: d.parts, logo: d.logo, model: d.model, skuPeople: d.skuPeople, wear: d.wear, versions: d.versions, extra: d.extra, scene: d.scene }, layout, false);
+  return rearrange({ ...fresh, colors: d.colors, main: d.main, parts: d.parts, logo: d.logo, model: d.model, skuPeople: d.skuPeople, wear: d.wear, versions: d.versions, extra: d.extra, scene: d.scene, ...(d.shop ? { shop: d.shop } : {}) }, layout, false);
 }
 /** What changed on the cover when the master could not shoot where it was, said once. */
 function movedNote(before: Draft, after: Draft, layout: Layout): string {
@@ -179,7 +179,8 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
   const [linerOpen, setLinerOpen] = useState<{ inner: string; color?: string; version?: number; shell?: string } | null>(null);
   const upload = useRef<HTMLInputElement>(null);
   const logoUpload = useRef<HTMLInputElement>(null);
-  const shop = useShopService();
+  // The shop the product is for (10-22): the plan's choice, a copy's first product's, else the default one.
+  const shopState = useShopState(draft.shop ?? materials.shop), shop = shopState?.shop ?? null, shops = shopState?.sets ?? [];
   const layout = layoutOf(layouts, draft.layout), category = categoryById(draft.category);
   const sorted = new Map(materials.sorted.images.map(i => [i.id, i]));
   const byLabel = new Map(materials.images.map(i => [i.label, { label: i.label, url: assetUrl(i.assetId), path: sources.find(s => s.id === i.assetId)?.path ?? i.label }]));
@@ -354,6 +355,11 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
         : library.filter(i => libTab === "全部" || sorted.get(i.label)?.kind === libTab).map(i => (
           <a key={i.label} className="it" href={i.url} target="_blank" rel="noreferrer"><img src={i.url} alt="" loading="lazy" /><span className="cat">{sorted.get(i.label)?.kind}{sorted.get(i.label)?.color ? "·" + sorted.get(i.label)!.color : ""}</span><small>{i.path}</small></a>))}</div>
     </details>
+    {shops.length > 1 && <>
+      <h4 className="lp-h">用哪套店铺 <small>左上角的店铺 LOGO、胸口的样例 LOGO、第 2 张服务图都用这套的；换色首图在第 ② 步还能另选</small></h4>
+      <div className="lp-chips">{shops.map(s => (
+        <button type="button" key={s.id} className={"lp-chip" + (shopState?.set === s.id ? " on" : "")} onClick={() => set({ shop: s.id })}>{s.name}{s.isDefault && <small> · 默认</small>}</button>))}</div>
+    </>}
     <h4 className="lp-h">胸口印什么 <small>竞品首图几乎都在胸口印了标；只影响有人和整件衣服的主图，SKU 图不印</small></h4>
     <div className="lp-logo3">{([["样例", shop?.logo ? "店铺设置里的样例 LOGO，每款都能直接用" : "先去店铺设置传样例 LOGO"], ["客户", "这款单独传一个客户的 LOGO 做案例"], ["LOGO", "印一个「LOGO」字样，告诉买家能印标"], ["不印", "衣服原样，不印任何字"]] as const).map(([mode, what]) => (
       <button type="button" key={mode} disabled={mode === "样例" && !shop?.logo} className={"lp-pick" + (logoMode === mode ? " on" : "")} onClick={() => mode === "客户" && !draft.logo?.label ? logoUpload.current?.click() : set({ logo: { mode, label: draft.logo?.label } })}>
@@ -452,6 +458,8 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
         <div key={k} className="lp-set"><b>加一套首图</b>
           颜色 <select value={e.color} onChange={x => set({ extra: draft.extra.map((y, m) => m === k ? { ...y, color: x.target.value } : y) })}>{ok.filter(c => c.name === e.color || free.includes(c)).map(c => <option key={c.name}>{c.name}</option>)}</select>
           版式 <select value={e.layout} onChange={x => set({ extra: draft.extra.map((y, m) => m === k ? { ...y, layout: x.target.value } : y) })}><option value="">跟主推套一样</option>{layouts.filter(l => l.id !== draft.layout).map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select>
+          {shops.length > 1 && <>店铺 <select value={e.shop ?? ""} onChange={x => set({ extra: draft.extra.map((y, m) => m === k ? { color: y.color, layout: y.layout, ...(x.target.value ? { shop: x.target.value } : {}) } : y) })}>
+            <option value="">跟这款一样（{shops.find(s => s.id === shopState?.set)?.name}）</option>{shops.filter(s => s.id !== shopState?.set).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></>}
           <span className="grow">1:1 首图先出，3:4 首图和长图跟竖版一起出</span><button type="button" className="lp-btn link" onClick={() => set({ extra: draft.extra.filter((_, m) => m !== k) })}>移除</button></div>))}
       {free.length > 0 && <div><button type="button" className="lp-btn sm" onClick={() => set({ extra: [...draft.extra, { color: free[0].name, layout: "" }] })}>＋ 再加一套首图（换个颜色）</button></div>}
     </div>

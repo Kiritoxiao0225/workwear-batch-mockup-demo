@@ -8,7 +8,7 @@ import { addExtraImage, imagePrices, planPrice, requestPlan, submitDraft } from 
 import { INNERS } from '@/lib/listing/wear';
 import { copyProject } from '@/lib/server/listing-copy';
 import { addSet, adoptDrawn, downloadZip, drawMaterial, drawState, editSlot, recast, redoSkus, redoSlot, redrawSlot, slotStates, startVerticals } from '@/lib/server/listing-generation';
-import { makeServices, removeShopLogo, saveShop, saveShopBrand, saveShopCorner, saveShopLogo, shopBrand, shopState } from '@/lib/server/listing-shop';
+import { createShopSet, deleteShopSet, makeServices, removeShopLogo, saveShop, saveShopBrand, saveShopCorner, saveShopLogo, shopBrand, shopOfAsset, shopState, updateShopSet } from '@/lib/server/listing-shop';
 import { cornerAssets, pasteShopLogo } from '@/lib/server/listing-corner';
 import { SKU_PEOPLE } from '@/lib/listing/draft';
 import { limitUploads, LISTING_UPLOAD_WINDOWS } from '@/lib/server/upload-limit';
@@ -35,14 +35,15 @@ export async function GET(request: NextRequest, context: Context) {
       return new NextResponse(new Uint8Array(zip.bytes), { headers: { 'Content-Type': 'application/zip', 'Cache-Control': 'no-store',
         'Content-Disposition': `attachment; filename="listing-images.zip"; filename*=UTF-8''${encodeURIComponent(zip.name)}` } });
     }
-    if (path[0] === 'shop' && !path[1]) return json(await shopState(tenant.id, user.id));
+    // Several shops (10-22): `?set=` names the one, none the default.
+    if (path[0] === 'shop' && !path[1]) return json(await shopState(tenant.id, user.id, request.nextUrl.searchParams.get('set')));
     if (path[0] === 'projects' && path[1] && path[2] === 'draws' && path[3]) return json(await drawState(tenant.id, path[1], path[3]));
     if (path[0] === 'projects' && path[1]) return json({ ...await projectDetail(tenant.id, path[1]), slots: await slotStates(path[1]) });
     if (path[0] === 'projects') return json(await listProjects(tenant.id));
     if (path[0] === 'assets' && path[1]) {
       // A main image that kept the corner is shown with the shop's LOGO as it is now (off, or another LOGO later):
       // the browser asks again each time and gets 304 while it has not changed. Any other asset ID always names the same bytes.
-      const brand = (await cornerAssets(tenant.id, [path[1]])).size ? await shopBrand(tenant.id) : undefined;
+      const brand = (await cornerAssets(tenant.id, [path[1]])).size ? await shopBrand(tenant.id, await shopOfAsset(tenant.id, path[1])) : undefined;
       const tag = brand === undefined ? null : `"corner-1-${brand?.id ?? 'off'}"`;
       if (tag && request.headers.get('if-none-match') === tag) return new NextResponse(null, { status: 304, headers: { ETag: tag, 'Cache-Control': 'private, no-cache' } });
       const file = await readListingAsset(tenant.id, path[1]);
@@ -73,11 +74,11 @@ export async function POST(request: NextRequest, context: Context) {
     }
     if (path[0] === 'shop' && path[1] === 'logo') {
       const bytes = await catalogBody(request, MAX_SOURCE_BYTES);
-      return json(await saveShopLogo(tenant.id, user.id, bytes, header(request, 'x-file-name') || 'LOGO'));
+      return json(await saveShopLogo(tenant.id, user.id, bytes, header(request, 'x-file-name') || 'LOGO', header(request, 'x-shop-set') || null));
     }
     if (path[0] === 'shop' && path[1] === 'brand') {
       const bytes = await catalogBody(request, MAX_SOURCE_BYTES);
-      return json(await saveShopBrand(tenant.id, user.id, bytes, header(request, 'x-file-name') || '店铺LOGO'));
+      return json(await saveShopBrand(tenant.id, user.id, bytes, header(request, 'x-file-name') || '店铺LOGO', header(request, 'x-shop-set') || null));
     }
     if (path[0] === 'projects' && path[1] && path[2] === 'extra') {
       const bytes = await catalogBody(request, MAX_SOURCE_BYTES);
@@ -106,9 +107,13 @@ export async function POST(request: NextRequest, context: Context) {
     if (path[0] === 'projects' && path[2] === 'cast') return json(await recast(tenant, user.id, path[1]));
     if (path[0] === 'projects' && path[2] === 'edit') return json(await editSlot(tenant, user.id, path[1], body));
     if (path[0] === 'projects' && path[2] === 'redraw') return json(await redrawSlot(tenant, user.id, path[1], body));
-    if (path[0] === 'shop' && !path[1]) return json(await saveShop(tenant.id, user.id, body));
-    if (path[0] === 'shop' && path[1] === 'make') return json(await makeServices(tenant, user.id));
-    if (path[0] === 'shop' && path[1] === 'corner') return json(await saveShopCorner(tenant.id, user.id, body));
+    // One of several shops (10-22): `set` in the body, none the default.
+    const shopSet = typeof body.set === 'string' ? body.set : null;
+    if (path[0] === 'shop' && !path[1]) return json(await saveShop(tenant.id, user.id, body, shopSet));
+    if (path[0] === 'shop' && path[1] === 'make') return json(await makeServices(tenant, user.id, shopSet));
+    if (path[0] === 'shop' && path[1] === 'corner') return json(await saveShopCorner(tenant.id, user.id, body, shopSet));
+    if (path[0] === 'shop' && path[1] === 'sets' && !path[2]) return json(await createShopSet(tenant.id, user.id, body));
+    if (path[0] === 'shop' && path[1] === 'sets' && path[2]) return json(await updateShopSet(tenant.id, user.id, path[2], body));
     if (path[0] === 'projects' && path[2] === 'current') {
       await projectDetail(tenant.id, path[1]);
       return json(await chooseVersion(tenant.id, path[1], String(body.slot ?? ''), String(body.asset ?? '')));
@@ -122,7 +127,8 @@ export async function DELETE(request: NextRequest, context: Context) {
     const { tenant, user } = await tenantScope(request, true), { path } = await context.params;
     await assertPageAccess(user.id, ['/listing-images']);
     if (path[0] === 'layouts' && path[1]) return json(await deleteLayout(tenant.id, path[1]));
-    if (path[0] === 'shop' && (path[1] === 'logo' || path[1] === 'brand') && !path[2]) return json(await removeShopLogo(tenant.id, user.id, path[1]));
+    if (path[0] === 'shop' && (path[1] === 'logo' || path[1] === 'brand') && !path[2]) return json(await removeShopLogo(tenant.id, user.id, path[1], request.nextUrl.searchParams.get('set')));
+    if (path[0] === 'shop' && path[1] === 'sets' && path[2]) return json(await deleteShopSet(tenant.id, user.id, path[2]));
     if (path[0] !== 'projects' || !path[1]) throw new CatalogHttpError(404, '接口不存在');
     return json(await deleteProject(tenant.id, path[1]));
   } catch (error) { return catalogError(error); }

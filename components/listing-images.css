@@ -384,6 +384,19 @@ button.it:hover img { outline: 2px solid var(--brand); outline-offset: -2px; }
 /* 店铺设置 */
 .lp-phead { display: grid; gap: 4px; margin-bottom: 18px; } .lp-phead h1 { margin: 0; font-size: 24px; } .lp-phead p { margin: 0; color: var(--muted); }
 .lp-shop-grid { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 32px; align-items: start; }
+/* Several shops (10-22): the switcher above the shop's settings. */
+.lp-shopsets { padding: 12px 16px; margin-bottom: 20px; display: grid; gap: 6px; }
+.lp-shopsets .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.lp-shopsets .row > b { font-size: 14px; } .lp-shopsets .grow { flex: 1; }
+.lp-shopsets .lp-chip { cursor: pointer; padding: 4px 12px; font-size: 13px; } .lp-shopsets .lp-chip small { font-weight: 400; }
+.lp-shopsets p { margin: 0; }
+.lp-btn.link.danger { color: var(--danger); }
+/* A question asked on the page (店铺设置): a name, or a yes to deleting. */
+.lp-box.lp-ask { width: min(440px, 100%); }
+.lp-ask h3 { margin: 0; font-size: 17px; } .lp-ask p { margin: 0; font-size: 13px; line-height: 1.6; }
+.lp-ask .lp-in { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; font-size: 14px; background: var(--panel); color: var(--ink); }
+.lp-ask .lp-in:focus { outline: 2px solid color-mix(in srgb, var(--brand) 40%, transparent); border-color: var(--brand); }
+.lp-btn.danger:not(.link) { background: var(--danger); border-color: var(--danger); color: #fff; }
 .lp-snav { position: sticky; top: 16px; display: grid; gap: 2px; }
 .lp-snav a { padding: 7px 12px; border-radius: 8px; color: var(--ink); text-decoration: none; font-size: 13.5px; display: flex; align-items: center; gap: 6px; }
 .lp-snav a:hover { background: var(--panel); }

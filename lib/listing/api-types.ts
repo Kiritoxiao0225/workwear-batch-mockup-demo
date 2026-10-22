@@ -40,6 +40,8 @@ export type Materials = {
   duplicates: [string, string][]; images: { label: string; assetId: string }[];
   /** A copy (「再出一套」): its number, which moves the plan's seed, and the images it carries over. */
   variant?: number; reuse?: Reuse;
+  /** A copy's shop (10-22): the one its first product used, until its plan names another. */
+  shop?: string;
 };
 export type Source = { id: string; label: string; name: string; path: string; shape: string };
 

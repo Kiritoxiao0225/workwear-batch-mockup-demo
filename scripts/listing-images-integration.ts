@@ -49,7 +49,7 @@ try {
   async function call(index: number, path: string, body?: unknown, expected = 200, method: 'GET' | 'POST' | 'DELETE' = body === undefined ? 'GET' : 'POST', headers: Record<string, string> = {}) {
     const req = new NextRequest('http://localhost:3189/api/listing/' + path, { method, headers: { origin: 'http://localhost:3189', cookie: 'catalog_session=' + tokens[index], 'content-type': 'application/json', ...headers },
       ...(body === undefined ? {} : { body: Buffer.isBuffer(body) ? new Uint8Array(body) : JSON.stringify(body) }) });
-    const response = await routes[method](req, { params: Promise.resolve({ path: path.split('/') }) });
+    const response = await routes[method](req, { params: Promise.resolve({ path: path.split('?')[0].split('/') }) });
     assert.equal(response.status, expected, response.status === expected ? '' : await response.text()); return response;
   }
   const image = (w: number, h: number, color: string) => sharp({ create: { width: w, height: h, channels: 3, background: color } }).jpeg().toBuffer();
@@ -635,6 +635,82 @@ try {
   await db().query('UPDATE credit_accounts SET balance_cents=$2 WHERE tenant_id=$1', [tenants[0], beforeCorner]);
   pass('删除 LOGO：只删自己店的；删店铺 LOGO 连开关一起关；删样例 LOGO 后胸口改印「LOGO」字样、印绣工艺图整张重画成抽象图案');
   pass('胸口印样例 LOGO：出图带上店铺设置里的样例 LOGO；店铺 LOGO：没传 LOGO 打不开；开了以后新出的方图左上角留空、看图和下载都贴上（深底变白）；第 2 张服务图不贴；竖版照着留空也贴；别人看不到；换 LOGO 马上换、关掉马上恢复原图，之后出的图不再留空');
+
+  // ---- 多套店铺（10-22）：一个账号几套店铺，各有自己的 LOGO、服务和服务图；一款用一套，换色首图可以另选 ----
+  const beforeSets = await balance(tenants[0]);
+  const firstShop = await (await call(0, 'shop')).json();
+  assert.deepEqual(firstShop.sets, [{ id: 'main', name: '我的店铺', isDefault: true }]);
+  await call(0, 'shop/sets', { name: ' ' }, 400);
+  const shopTwo = await (await call(0, 'shop/sets', { name: '二店' })).json(), S2 = shopTwo.set as string;
+  assert.match(S2, /^s[0-9a-f]{8}$/);
+  // It starts from the default shop's services and crafts, with no LOGOs and no images.
+  assert.deepEqual([shopTwo.sets.map((x: { name: string }) => x.name), shopTwo.shop.items, shopTwo.shop.brand, shopTwo.shop.logo, Object.keys(shopTwo.shop.made)],
+    [['我的店铺', '二店'], firstShop.shop.items, null, null, []]);
+  await call(0, 'shop/sets', { name: '二店' }, 409);
+  assert.equal((await (await call(1, 'shop')).json()).sets.length, 1);
+  await call(1, `shop/sets/${S2}`, { name: '偷改' }, 404);
+  assert.equal((await (await call(0, 'shop?set=s00000000')).json()).set, 'main');
+  // Its own LOGOs and corner switch; the first shop's stay as they were.
+  await call(0, 'shop/brand', await brandPng('#1f2a44'), 200, 'POST', { ...octet, 'x-shop-set': S2 });
+  await call(0, 'shop/logo', await image(200, 200, '#00aa00'), 200, 'POST', { ...octet, 'x-shop-set': S2 });
+  assert.equal((await (await call(0, 'shop/corner', { on: true, set: S2 })).json()).shop.corner, true);
+  const firstNow = (await (await call(0, 'shop')).json()).shop;
+  assert.deepEqual([firstNow.brand, firstNow.corner, firstNow.logo], [null, false, null]);
+  // Its own service images in its own slots, the crafts one with its own sample LOGO; the first shop's are untouched.
+  await call(0, 'shop', { set: S2, items: shopTwo.shop.items.map((x: Item, i: number) => i === 0 ? { ...x, note: '二店的说明' } : x), crafts: shopTwo.shop.crafts });
+  assert.equal((await (await call(0, 'shop/make', { set: S2 })).json()).images, 4);
+  const s2jobs = await imageJobs(shop0.project, true);
+  assert.deepEqual(s2jobs.map(j => j.slot).sort(), ['A-dark', 'A-light', 'B-light', 'D-warm'].map(x => `service:${S2}~${x}`));
+  for (const j of s2jobs) await make(j);
+  assert.equal(prompt(`service:${S2}~D-warm`).refs, 2);
+  const s2 = await (await call(0, `shop?set=${S2}`)).json();
+  assert.deepEqual([Object.keys(s2.shop.made).sort(), s2.shop.made['A-dark'].words[0], s2.making], [['A-dark', 'A-light', 'B-light', 'D-warm'], `${ticked[0].title}｜二店的说明`, []]);
+  assert.equal((await (await call(0, 'shop')).json()).shop.made['A-dark'].asset, firstShop.shop.made['A-dark'].asset);
+  // 点图修改 works on its images too.
+  await call(0, `projects/${shop0.project}/redraw`, { slot: `service:${S2}~A-dark`, ask: '标题再大一点' });
+  for (const j of await imageJobs(shop0.project, true)) await make(j);
+  pass('多套店铺：新建一套照默认店铺的服务和工艺起步、没有 LOGO 和图；重名拦住、别的账号看不到改不了；每套的 LOGO、左上角开关、服务、服务图各管各的（槽位分开，工艺图用这套的样例 LOGO）；点图修改照样能用');
+
+  // A product for the second shop, with another colour's cover for the first one.
+  const sixth = randomUUID();
+  await call(0, 'projects', { id: sixth, name: '二店款', layout: 'M3', counts: counts(5, 0, 0) });
+  await upload(0, sixth, await image(600, 600, '#e8621d'), 'SKU图/爱马仕橙.jpg');
+  await upload(0, sixth, await image(600, 600, '#1d2a44'), 'SKU图/藏青.jpg');
+  await call(0, `projects/${sixth}/plan`, {});
+  const [OR6, NV6] = await Promise.all(['SKU图/爱马仕橙.jpg', 'SKU图/藏青.jpg'].map(async path => ((await detailOf(sixth)).sources as { path: string; label: string }[]).find(x => x.path === path)!.label));
+  await toGenerating(sixth, { images: [{ id: OR6, kind: '颜色款图', color: '爱马仕橙', front: true }, { id: NV6, kind: '颜色款图', color: '藏青', front: true }],
+    colors: [{ name: '爱马仕橙', hex: '#e8621d', from: [OR6] }, { name: '藏青', hex: '#1d2a44', from: [NV6] }], points: [], category: 'workwear' },
+  m => { const d = draftFrom(m, commute, counts(5, 0, 0)); return { ...d, logo: { mode: '样例' as const }, shop: S2, extra: [{ color: d.colors.find(c => c.name !== d.main)!.name, layout: '', shop: 'main' }] }; },
+  { product: { name: '二店款', garment: ['连帽'] } });
+  for (const j of await imageJobs(sixth, true)) await make(j);
+  const stored6 = (await db().query('SELECT plan FROM listing_projects WHERE id=$1', [sixth])).rows[0].plan;
+  assert.deepEqual([stored6.draft.shop, stored6.draft.extra[0].shop], [S2, 'main']);
+  const other = (await detailOf(sixth)).slots.find((x: { slot: string }) => x.slot.startsWith('square:1+')).slot as string;
+  // The product's images: its shop's service image, its sample LOGO on the chest, its LOGO in the corner.
+  assert.ok((await bytesOf((await slotOf(sixth, 'square:2')).image)).equals(await bytesOf(s2.shop.made['D-warm'].asset)));
+  assert.match(prompt('square:1').prompt, /胸口左侧印客户的 LOGO/);
+  assert.equal((await receiptOf(sixth, 'square:1')).corner, true);
+  assert.ok(await pixel(await bytesOf((await slotOf(sixth, 'square:1')).image), 80, 80) > 200);
+  // The other colour's cover goes by the first shop: no sample LOGO (「LOGO」 printed), no corner.
+  assert.match(prompt(other).prompt, /胸口左侧印一个白色「LOGO」字样/);
+  assert.equal((await receiptOf(sixth, other))?.corner, undefined);
+  const zip6 = await JSZip.loadAsync(Buffer.from(await (await call(0, `projects/${sixth}/download`)).arrayBuffer()));
+  const entry6 = async (test: (name: string) => boolean) => Buffer.from(await zip6.file(Object.keys(zip6.files).find(test)!)!.async('uint8array'));
+  assert.ok(await pixel(await entry6(n => n.startsWith('1比1主图-01')), 80, 80) > 200);
+  assert.ok(await pixel(await entry6(n => n.startsWith('换色首图-') && n.includes('/1比1主图-01')), 80, 80) < 80);
+  pass('一款用哪套店铺：服务图复制这套的、胸口印这套的样例 LOGO、左上角贴这套的店铺 LOGO（看图和下载都是）；换色首图另选的店铺只管它自己那几张');
+
+  // The default shop: new products use it; it cannot be deleted, nor can the first one. A deleted shop's products fall back to the default.
+  assert.equal((await (await call(0, `shop/sets/${S2}`, { isDefault: true })).json()).sets.find((x: { isDefault: boolean }) => x.isDefault).id, S2);
+  assert.equal((await (await call(0, 'shop')).json()).set, S2);
+  await call(0, `shop/sets/${S2}`, undefined, 409, 'DELETE');
+  await call(0, 'shop/sets/main', undefined, 409, 'DELETE');
+  await call(0, 'shop/sets/main', { isDefault: true });
+  await call(0, `shop/sets/main`, { name: '一店' });
+  assert.deepEqual((await (await call(0, `shop/sets/${S2}`, undefined, 200, 'DELETE')).json()).sets, [{ id: 'main', name: '一店', isDefault: true }]);
+  assert.ok(await pixel(await bytesOf((await slotOf(sixth, 'square:1')).image), 80, 80) < 80);
+  await db().query('UPDATE credit_accounts SET balance_cents=$2 WHERE tenant_id=$1', [tenants[0], beforeSets]);
+  pass('默认店铺：设成默认的新款就用它；默认的和第一套删不了；第一套能改名；删了的店铺，用它的款跟着默认店铺走（左上角马上跟着变）');
 
   // ---- 内胆款（10-22）：整理认出类型和 SKU 版本（复核过的才算）；定妆照穿着内胆；SKU 按颜色 × 版本出，有实拍直接用，你加的版本照参考图画 ----
   const lined = randomUUID();

@@ -68,7 +68,11 @@ export type SkuPeople = (typeof SKU_PEOPLE)[number];
 export const GENDERS: Gender[] = ['男', '女'];
 export type Draft = {
   category: string; categoryWhy: string; titles: Partial<Record<Task, string[]>>; points: Point[]; colors: PlanColor[]; main: string; parts: Part[];
-  slots: Slot[]; long: { title: string }; layout: string; counts: Counts; extra: { color: string; layout: string }[]; model: Model;
+  slots: Slot[]; long: { title: string }; layout: string; counts: Counts;
+  /** Covers in other colours (换色首图); `shop`: the shop that cover is for, when not the product's (10-22). */
+  extra: { color: string; layout: string; shop?: string }[]; model: Model;
+  /** Which of the account's shops the product's images are for (10-22): its service image, LOGOs and badge. None: the default one. */
+  shop?: string;
   /** Left from the trial of 2026-10-12 (images by the AI's themes of points); no longer used. */
   themes?: unknown[];
   /**

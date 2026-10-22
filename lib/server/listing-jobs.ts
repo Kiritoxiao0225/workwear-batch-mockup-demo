@@ -20,6 +20,7 @@ import { buildPlan, writeRequest } from './listing-write';
 import { colourSources, planViews, single, type PlanSource, type PlanView } from './listing-plan-views';
 import { assertListingProviderConfigured, callPlanModel, LISTING_PLAN_MODEL, listingPlanProvider, listingWorkerConcurrency, type PlanCall } from './listing-provider';
 import { addSourceImage, clearOldSources, sourceImages } from './listing-store';
+import { liveShop } from './listing-shop';
 import { markPlain } from './listing-plain';
 import { sweepExpiredReservations } from './quota';
 import sharp from 'sharp';
@@ -233,6 +234,8 @@ export type Materials = {
   wear?: Organized['wear'];
   sorted: Omit<Organized, 'look' | 'wear'>; chosen: ReturnType<typeof chooseMaterials>; duplicates: [string, string][]; model: string; images: { label: string; assetId: string }[]; draft?: SubmittedDraft & { runId: string };
   from?: string; baseName?: string; variant?: number; reuse?: Reuse;
+  /** A copy's shop (10-22): the one its first product used, until its plan names another. */
+  shop?: string;
 };
 
 /**
@@ -278,6 +281,10 @@ export async function submitDraft(tenant: Tenant, user: string, projectId: strin
     // With square images the long image is the cover laid out again, in the cover's words.
     if (draft.counts.long && !draft.counts.square && !draft.long.title) throw new CatalogHttpError(400, '长图还没有字');
     if (draft.extra.some(e => !names.includes(e.color) || e.color === draft.main) || new Set(draft.extra.map(e => e.color)).size !== draft.extra.length) throw new CatalogHttpError(400, '加的那套首图颜色不对');
+    // The shop the product is for (10-22): the plan's choice, a copy's first product's, else the shop that is the default now,
+    // so making another shop the default later does not change a product already started.
+    draft.shop = await liveShop(tenant.id, draft.shop ?? m.shop);
+    for (const e of draft.extra) if (e.shop) e.shop = await liveShop(tenant.id, e.shop);
     const direct = new Set(directKeys(draft.colors, m.sorted.images));
     // Round one is held now; 「出竖版」 holds round two.
     const photos = new Set(Object.keys(skuPhotos(draft, m.sorted.images, skuPair(layout))));

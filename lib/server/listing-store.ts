@@ -101,6 +101,16 @@ export type StoredPlan = {
   place?: string;
 };
 
+/**
+ * The shop an image of a product is for (10-22): a cover in another colour (slot `…+<sku>`) may name
+ * its own in 换色首图, else the product's; none: the account's default shop.
+ */
+export function slotShop(stored: Pick<StoredPlan, 'draft' | 'colors'> | null | undefined, slot: string): string | undefined {
+  const sku = slot.split('+')[1], d = stored?.draft;
+  const extra = sku ? d?.extra.find(e => stored?.colors.find(c => c.name === e.color)?.sku === sku) : undefined;
+  return extra?.shop ?? d?.shop;
+}
+
 export async function listProjects(tenant: string) {
   const rows = (await catalogDatabase().query(
     `SELECT p.id,p.name,p.layout,p.counts,p.status,p.error,p.updated_at,p.created_at,p.sources_cleared_at,COALESCE((p.plan->>'round')::int,0) AS round,
@@ -127,8 +137,8 @@ export async function projectDetail(tenant: string, id: string) {
   return { ...p, plan: p.plan?.draft ?? null, round: p.plan?.round ?? 0, images: sources.length, sources };
 }
 
-/** A main image's slot: `square:2`, `long:1`, or a cover of an extra colour set, `square:1+M23`; on the shop's row, `service:A-light`. */
-export const MAIN_SLOT = /^((square|portrait|long):\d(\+\w+)?|service:[A-Za-z-]{1,12})$/;
+/** A main image's slot: `square:2`, `long:1`, or a cover of an extra colour set, `square:1+M23`; on the shop's row, `service:A-light` (another shop's `service:s1a2b3c4d~A-light`). */
+export const MAIN_SLOT = /^((square|portrait|long):\d(\+\w+)?|service:(s[0-9a-f]{8}~)?[A-Za-z-]{1,12})$/;
 
 /**
  * Give back the storage of files this tenant no longer uses: a file still shown by another of its

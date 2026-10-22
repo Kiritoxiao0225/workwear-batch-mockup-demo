@@ -17,6 +17,7 @@ import { skuPhotos, skuWho } from "@/lib/listing/sku-card";
 import { skuPair } from "@/lib/listing/templates";
 import { EditDialog } from "./listing-edit";
 import { draftPrice, layoutOf, PriceInfo, type Prices } from "./listing-plan";
+import { useShopSets } from "./listing-service";
 
 const MAIN = /^(square|portrait|long):/;
 const SHAPE: Record<string, string> = { square: "1 / 1", portrait: "3 / 4", long: "2 / 3", sku: "1 / 1", skumodel: "3 / 4", product: "1 / 1", cast: "3 / 4" };
@@ -31,7 +32,9 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
   // A SKU image by version is named for its colour and version (sku-versions.ts).
   const keys = colorKeys(colors), items = plan ? skuItemsOf(plan) : [], nameOf = (key: string) => items.find(i => i.key === key)?.label ?? colors[keys.indexOf(key)]?.name ?? key;
   const free = colors.filter(c => c.name !== main && !plan?.extra.some(e => e.color === c.name));
-  const [adding, setAdding] = useState<{ color: string; layout: string } | null>(null);
+  const [adding, setAdding] = useState<{ color: string; layout: string; shop?: string } | null>(null);
+  // Another colour's cover may be for another shop (10-22); none: the product's.
+  const shops = useShopSets(), ownShop = shops.find(s => s.id === plan?.shop) ?? shops.find(s => s.isDefault);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   /** Versions made since the dialog opened: they show as new, not in the history. */
@@ -141,6 +144,8 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
           {adding ? <>
             <div className="grow">再加一套首图：颜色 <select value={adding.color} onChange={e => setAdding({ ...adding, color: e.target.value })}>{free.map(c => <option key={c.name}>{c.name}</option>)}</select>
               {" "}版式 <select value={adding.layout} onChange={e => setAdding({ ...adding, layout: e.target.value })}><option value="">跟主推套一样</option>{layouts.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select>
+              {shops.length > 1 && <>{" "}店铺 <select value={adding.shop ?? ""} onChange={e => setAdding({ color: adding.color, layout: adding.layout, ...(e.target.value ? { shop: e.target.value } : {}) })}>
+                <option value="">跟这款一样（{ownShop?.name}）</option>{shops.filter(s => s.id !== ownShop?.id).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></>}
               {" "}{detail.status === "done" ? "1:1 首图 + 3:4 首图 + 长图" : "现在出 1:1 首图，竖版跟着出竖版一起出"}{prices.exempt ? "" : `，每张 ${prices.image} 积分`}</div>
             <button type="button" className="lp-btn" onClick={() => setAdding(null)}>取消</button>
             <button type="button" className="lp-btn primary" disabled={busy} onClick={() => void act("sets", adding, `「${adding.color}」的首图开始出了`).then(() => setAdding(null))}>开始出这一套</button>
