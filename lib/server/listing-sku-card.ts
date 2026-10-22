@@ -272,10 +272,11 @@ export async function renderSkuCard(c: SkuCard): Promise<Buffer> {
   if (c.liner) {
     // Under the title: the liner itself (its photo's middle, where the garment is) with its name across the bottom.
     const box = { w: 190, h: 150 }, meta = await sharp(c.liner.photo).metadata(), w = meta.width ?? 1, h = meta.height ?? 1;
-    // A white image is the liner whole; a photo of someone in it, its middle.
+    // A white image is the liner whole; a photo of someone in it, its middle from the neck down (10-22:
+    // starting at 18% showed the chin and nostrils; at 27% the collar is whole and the face is out).
     const crop = c.liner.whole ? await sharp(c.liner.photo).rotate().flatten({ background: '#ffffff' }).trim({ threshold: 8 }).resize(box.w * 2 - 40, box.h * 2 - 100, { fit: 'contain', background: '#ffffff' })
       .extend({ top: 10, bottom: 90, left: 20, right: 20, background: '#ffffff' }).png().toBuffer()
-      : await sharp(c.liner.photo).rotate().extract({ left: Math.round(w * 0.15), top: Math.round(h * 0.18), width: Math.round(w * 0.7), height: Math.round(h * 0.5) })
+      : await sharp(c.liner.photo).rotate().extract({ left: Math.round(w * 0.15), top: Math.round(h * 0.27), width: Math.round(w * 0.7), height: Math.round(h * 0.5) })
       .resize(box.w * 2, box.h * 2, { fit: 'cover' }).png().toBuffer();
     ctx.save(); roundRect(ctx, L, y + 4, box.w, box.h, 14); ctx.clip();
     ctx.fillStyle = '#ffffff'; ctx.fillRect(L, y + 4, box.w, box.h);
