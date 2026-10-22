@@ -58,6 +58,8 @@ export type Version = { id: string; words: Words | null; change?: string; elemen
 export type SlotState = {
   slot: string; status: 'queued' | 'running' | 'succeeded' | 'failed'; error: string | null; image: string | null;
   history: Version[]; words: Words | null; task?: Task; colors?: string[];
+  /** Queued again after a passing failure (10-22): how many times, and (as `error`) what went wrong last; `retryAt` when it is tried next. */
+  retries?: number; retryAt?: string;
   /**
    * The latest 「点图修改」 on this image: the model redraws the current image as asked (and after a
    * reference image, if any). The result joins the history without replacing the image; 「采用」

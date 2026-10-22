@@ -397,6 +397,82 @@ try {
   assert.equal((await detailOf(two)).status, 'square');
   pass('连带重做按顺序执行：产品图做好之后才出定妆照，再出 SKU 模特图和方图、拼 SKU 图，用的是新做的产品图');
 
+  // ---- 临时故障（中转超时、限速）不判失败：放回队列等一会儿再试，依赖它的图一起等；只按出成的图扣费 ----
+  const productJob = async () => (await db().query(`SELECT id,status,retries,retry_at>now() later,error FROM listing_jobs WHERE project_id=$1 AND slot=$2 ORDER BY created_at DESC LIMIT 1`, [two, `product:${M_SKU}`])).rows[0];
+  const until = async (ok: () => Promise<boolean>) => { for (let i = 0; i < 80 && !(await ok()); i++) await new Promise(r => setTimeout(r, 250)); };
+  const beforeRetry = await balance(tenants[0]);
+  const retried = await (await call(0, `projects/${two}/redo`, { slot: `product:${M_SKU}`, note: '' })).json();
+  let flaky = 0;
+  const worker3 = await startListingWorker({ concurrency: 2, recognize, generate: async (input, hooks) => {
+    await hooks.beforeSubmit();
+    if (input.prompt.startsWith('从参考图') && flaky++ === 0) throw Object.assign(new Error('出图连接中断或超时'), { notCharged: true, retry: true });
+    return { bytes: png, taskId: '', credits: null, durationMs: 1 };
+  } });
+  await until(async () => (await productJob()).retries === 1);
+  const waiting = await productJob();
+  assert.deepEqual([waiting.status, waiting.later, waiting.error], ['queued', true, '出图连接中断或超时']);
+  await new Promise(r => setTimeout(r, 2500));
+  assert.equal((await db().query(`SELECT count(*)::int n FROM listing_jobs WHERE project_id=$1 AND status NOT IN ('queued','running')
+    AND run_id=(SELECT run_id FROM listing_jobs WHERE project_id=$1 AND slot=$2 ORDER BY created_at DESC LIMIT 1)`, [two, `product:${M_SKU}`])).rows[0].n, 0);
+  const retrying = await slotOf(two, `product:${M_SKU}`);
+  assert.deepEqual([retrying.status, retrying.retries, typeof retrying.retryAt], ['queued', 1, 'string']);
+  await db().query(`UPDATE listing_jobs SET retry_at=now() WHERE id=$1`, [waiting.id]);
+  await drain(two); await worker3.close();
+  assert.deepEqual([(await productJob()).status, (await productJob()).retries], ['succeeded', 1]);
+  assert.equal((await db().query(`SELECT count(*)::int n FROM listing_jobs WHERE project_id=$1 AND status<>'succeeded'
+    AND run_id=(SELECT run_id FROM listing_jobs WHERE project_id=$1 AND slot=$2 ORDER BY created_at DESC LIMIT 1)`, [two, `product:${M_SKU}`])).rows[0].n, 0);
+  assert.ok(retried.images > 1);
+  assert.equal(beforeRetry - await balance(tenants[0]), unit);
+  pass('临时故障：这张放回队列、到时间再试，页面显示第几次重试；依赖它的图一直等着不判失败；重试成功后整批出完，失败的那次不扣费');
+
+  // ---- 停止出图：没出的图都不出、积分退回；正在重试的不再放回队列 ----
+  const beforeStop = await balance(tenants[0]);
+  await call(1, `projects/${two}/stop`, {}, 404);
+  await call(0, `projects/${two}/stop`, {}, 409);
+  const toStop = await (await call(0, `projects/${two}/redo`, { slot: `product:${M_SKU}`, note: '' })).json();
+  const worker4 = await startListingWorker({ concurrency: 2, recognize, generate: async (_input, hooks) => {
+    await hooks.beforeSubmit(); throw Object.assign(new Error('出图没有成功（HTTP 429，转接限速，稍后重做）'), { notCharged: true, retry: true });
+  } });
+  await until(async () => (await productJob()).retries === 1);
+  await worker4.close();
+  assert.equal((await (await call(0, `projects/${two}/stop`, {})).json()).stopped, toStop.images);
+  const afterStop = await detailOf(two);
+  assert.equal(afterStop.status, 'square');
+  assert.equal(afterStop.slots.filter((x: { status: string; error: string }) => x.status === 'failed' && /已停止/.test(x.error)).length, toStop.images);
+  assert.equal(await balance(tenants[0]), beforeStop);
+  pass('停止出图：别人停不了、没在出图时不能停；还没出和等着重试的图都标「已停止」，冻结的积分全部退回');
+
+  // ---- 后台中断（发布、重启）：中转的图放回队列，不再标「后台中断」 ----
+  await call(0, `projects/${two}/redo`, { slot: `product:${M_SKU}`, note: '' });
+  const cut = await productJob();
+  await db().query(`UPDATE listing_jobs SET status='running',owner=$2,lease_until=now()-interval '1 minute' WHERE id=$1`, [cut.id, randomUUID()]);
+  await db().query(`INSERT INTO listing_attempts(id,job_id,provider,model,status) VALUES($1,$2,'cliproxy','gpt-image-2','submitted')`, [randomUUID(), cut.id]);
+  const worker5 = await startListingWorker({ concurrency: 2, recognize, generate: async () => { throw new Error('不该在这里出图'); } });
+  await until(async () => (await productJob()).status === 'queued');
+  await worker5.close();
+  const swept = await productJob();
+  assert.deepEqual([swept.status, swept.retries, swept.later, swept.error], ['queued', 1, true, '后台重启，已重新排队']);
+  assert.equal((await db().query(`SELECT status FROM listing_attempts WHERE job_id=$1`, [cut.id])).rows[0].status, 'failed');
+  await call(0, `projects/${two}/stop`, {});
+  pass('后台中断：中转出的图放回队列稍后接着出，那次请求记为失败不扣费');
+
+  // ---- 等前一步的图不占领任务的名额：30 张卡片在等，排在后面的别的商品照常出 ----
+  const blockedRun = randomUUID(), holder = (await db().query(`SELECT tenant_id,created_by FROM listing_projects WHERE id=$1`, [two])).rows[0];
+  await db().query(`INSERT INTO listing_jobs(id,tenant_id,project_id,created_by,step,run_id,slot,input,depends,status,stopped) VALUES($1,$2,$3,$4,'image',$5,'skumodel:wait','{"kind":"skuModel","sku":"x"}','{}','running',true)`,
+    [randomUUID(), holder.tenant_id, two, holder.created_by, blockedRun]);
+  for (let k = 0; k < 31; k++) await db().query(`INSERT INTO listing_jobs(id,tenant_id,project_id,created_by,step,run_id,slot,input,depends,created_at) VALUES($1,$2,$3,$4,'image',$5,$6,'{"kind":"sku","sku":"x","card":true}',$7,clock_timestamp())`,
+    [randomUUID(), holder.tenant_id, two, holder.created_by, blockedRun, `sku:wait${k}`, ['skumodel:wait']]);
+  const queuedFirst = (await db().query(`SELECT count(*)::int n FROM listing_jobs WHERE run_id=$1 AND status='queued'`, [blockedRun])).rows[0].n;
+  assert.equal(queuedFirst, 31);
+  await call(0, `projects/${id}/redo`, { slot: 'square:2', note: '' });
+  const behind = (await imageJobs(id, true))[0];
+  const worker6 = await startListingWorker({ concurrency: 2, recognize, generate: async (_input, hooks) => { await hooks.beforeSubmit(); return { bytes: png, taskId: '', credits: null, durationMs: 1 }; } });
+  await until(async () => (await db().query(`SELECT status FROM listing_jobs WHERE id=$1`, [behind.id])).rows[0].status === 'succeeded');
+  await worker6.close();
+  assert.equal((await db().query(`SELECT status FROM listing_jobs WHERE id=$1`, [behind.id])).rows[0].status, 'succeeded');
+  await db().query(`DELETE FROM listing_jobs WHERE run_id=$1`, [blockedRun]);
+  pass('领任务：等前一步的图不占前 30 个名额，排在后面的图照常出');
+
   // ---- 加一套首图：换颜色、可换版式；出过竖版后也跟着出 3:4 和长图 ----
   const third = randomUUID();
   await call(0, 'projects', { id: third, name: '两色款', layout: 'M3', counts: counts(1, 1, 1) });

@@ -7,7 +7,7 @@ import { addReference, addSourceImage, chooseVersion, createProject, deleteProje
 import { addExtraImage, imagePrices, planPrice, requestPlan, submitDraft } from '@/lib/server/listing-jobs';
 import { INNERS } from '@/lib/listing/wear';
 import { copyProject } from '@/lib/server/listing-copy';
-import { addSet, adoptDrawn, downloadZip, drawMaterial, drawState, editSlot, recast, redoSkus, redoSlot, redrawSlot, slotStates, startVerticals } from '@/lib/server/listing-generation';
+import { addSet, adoptDrawn, downloadZip, drawMaterial, drawState, editSlot, recast, redoSkus, redoSlot, redrawSlot, slotStates, startVerticals, stopImages } from '@/lib/server/listing-generation';
 import { createShopSet, deleteShopSet, makeServices, removeShopLogo, saveShop, saveShopBrand, saveShopCorner, saveShopLogo, shopBrand, shopOfAsset, shopState, updateShopSet } from '@/lib/server/listing-shop';
 import { cornerAssets, pasteShopLogo } from '@/lib/server/listing-corner';
 import { SKU_PEOPLE } from '@/lib/listing/draft';
@@ -100,6 +100,7 @@ export async function POST(request: NextRequest, context: Context) {
     if (path[0] === 'projects' && path[2] === 'sets') return json(await addSet(tenant, user.id, path[1], body));
     if (path[0] === 'projects' && path[2] === 'copies') return json(await copyProject(tenant.id, user.id, path[1], body));
     if (path[0] === 'projects' && path[2] === 'redo') return json(await redoSlot(tenant, user.id, path[1], String(body.slot ?? ''), String(body.note ?? '')));
+    if (path[0] === 'projects' && path[2] === 'stop') return json(await stopImages(tenant, path[1]));
     if (path[0] === 'projects' && path[2] === 'draw') return json(await drawMaterial(tenant, user.id, path[1], body));
     if (path[0] === 'projects' && path[2] === 'adopt') return json(await adoptDrawn(tenant.id, path[1], body));
     if (path[0] === 'projects' && path[2] === 'skus') return json(await redoSkus(tenant, user.id, path[1], undefined, SKU_PEOPLE.find(p => p === body.people)));

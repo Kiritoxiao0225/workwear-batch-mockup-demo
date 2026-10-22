@@ -325,6 +325,21 @@ export async function redoSkus(tenant: Tenant, user: string, projectId: string, 
   });
 }
 
+/**
+ * 「停止出图」 (10-22): the product's images not yet made are not made; what was held for them goes
+ * back when each run settles. One being made now finishes (a request sent is not called back), and
+ * is not tried again if it fails.
+ */
+export async function stopImages(tenant: Tenant, projectId: string) {
+  const runs = await catalogTransaction(async c => {
+    await lockProject(c, tenant, projectId, ['generating'], '这一款现在没在出图');
+    await c.query(`UPDATE listing_jobs SET stopped=true WHERE project_id=$1 AND step IN ('product','image') AND status IN ('queued','running')`, [projectId]);
+    return (await c.query(`UPDATE listing_jobs SET status='failed',error=$2,retry_at=NULL,updated_at=now() WHERE project_id=$1 AND step IN ('product','image') AND status='queued' RETURNING run_id`, [projectId, STOPPED])).rows;
+  });
+  for (const runId of new Set(runs.map(r => r.run_id as string))) await finishRun(runId, tenant.id, projectId);
+  return { stopped: runs.length };
+}
+
 /** Make one image again from what it was made with (a 画板 change is not repeated); earlier versions stay. */
 export async function redoSlot(tenant: Tenant, user: string, projectId: string, slot: string, note: string) {
   // A SKU image on the template is made again by the current rules, its model with it.
@@ -875,9 +890,20 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
     const message = (error instanceof Error ? error.message : '出图失败').slice(0, 300);
     const notCharged = !!(error as { notCharged?: boolean }).notCharged;
     if (submitted) await db().query(`UPDATE listing_attempts SET status=CASE WHEN status='succeeded' THEN status WHEN $2 THEN 'failed' ELSE 'unknown' END,finished_at=now() WHERE id=$1`, [attemptId, notCharged]);
+    // A passing failure that cost nothing (the relay timed out, was rate-limited or broke): back in the
+    // queue to be tried again later, as often as it takes, unless the user stopped the product (10-22).
+    if (notCharged && (error as { retry?: boolean }).retry) {
+      const back = (await db().query(`UPDATE listing_jobs SET status='queued',owner=NULL,lease_until=NULL,retries=retries+1,retry_at=now()+make_interval(secs=>$2),error=$3,updated_at=now()
+        WHERE id=$1 AND status='running' AND NOT stopped RETURNING retries`, [job.id, retryDelay(await retriesOf(job.id)), message])).rows[0];
+      if (back) {
+        if (back.retries % RETRY_ALARM === 0) console.error('[listing] image still failing after retries', JSON.stringify({ job: job.id, project: job.project_id, slot: job.slot, retries: back.retries, reason: message }));
+        return;
+      }
+    }
+    const stopped = !!(await db().query('SELECT 1 FROM listing_jobs WHERE id=$1 AND stopped', [job.id])).rowCount;
     const status = submitted && !notCharged ? 'unknown' : 'failed';
     await db().query(`UPDATE listing_jobs SET status=$2,error=$3,lease_until=NULL,updated_at=now() WHERE id=$1 AND status IN ('queued','running')`,
-      [job.id, status, status === 'unknown' ? `${message}。可能已产生费用，由管理员核对` : `${message}。这张没扣费，可以重做`]);
+      [job.id, status, status === 'unknown' ? `${message}。可能已产生费用，由管理员核对` : stopped ? STOPPED : `${message}。这张没扣费，可以重做`]);
   } finally {
     await finishRun(job.run_id, job.tenant_id, job.project_id);
   }
@@ -913,6 +939,13 @@ async function findElements(assetId: string, bytes: Buffer, t: Template, w: Word
   } catch (error) { console.error('[listing] recognize', error instanceof Error ? error.message : error); }
 }
 
+/** The wait before an image that failed for a passing reason is tried again: 1, 2, 5, then every 10 minutes, a little apart so retries do not arrive together. */
+export const retryDelay = (retries: number) => [60, 120, 300, 600][Math.min(retries, 3)] + Math.round(Math.random() * 20);
+/** Every this many retries (about an hour at the longest wait) the worker log says an image is still failing. */
+export const RETRY_ALARM = 6;
+const retriesOf = async (id: string) => Number((await db().query('SELECT retries FROM listing_jobs WHERE id=$1', [id])).rows[0]?.retries ?? 0);
+const STOPPED = '已停止，这张没做，没扣费';
+
 /** A job whose prerequisite failed is not made, and costs nothing. */
 export async function failBlocked(job: { id: string; run_id: string; tenant_id: string; project_id: string }, reason: string) {
   await db().query(`UPDATE listing_jobs SET status='failed',error=$2,updated_at=now() WHERE id=$1 AND status='queued'`, [job.id, `${reason}，这张没做，没扣费`]);
@@ -940,7 +973,7 @@ export async function slotStates(projectId: string) {
   const p = (await db().query('SELECT plan FROM listing_projects WHERE id=$1', [projectId])).rows[0];
   const d = (p?.plan as StoredPlan | null)?.draft;
   // Images drawn on the plan (draw:) are not the product's: they join the material when adopted.
-  const jobs = (await db().query(`SELECT DISTINCT ON (slot) slot,status,error,input FROM listing_jobs WHERE project_id=$1 AND slot IS NOT NULL AND input->>'kind' NOT IN ('redraw','draw') ORDER BY slot, created_at DESC`, [projectId])).rows as { slot: string; status: string; error: string | null; input: JobInput }[];
+  const jobs = (await db().query(`SELECT DISTINCT ON (slot) slot,status,error,input,retries,retry_at FROM listing_jobs WHERE project_id=$1 AND slot IS NOT NULL AND input->>'kind' NOT IN ('redraw','draw') ORDER BY slot, created_at DESC`, [projectId])).rows as { slot: string; status: string; error: string | null; input: JobInput; retries: number; retry_at: Date | null }[];
   const redraws = new Map(((await db().query(`SELECT DISTINCT ON (slot) id,slot,status,error FROM listing_jobs WHERE project_id=$1 AND input->>'kind' = 'redraw' ORDER BY slot, created_at DESC`, [projectId])).rows as { id: string; slot: string; status: string; error: string | null }[])
     .map(r => [r.slot, { job: r.id, status: r.status === 'queued' || r.status === 'running' ? 'running' as const : r.status === 'succeeded' ? 'succeeded' as const : 'failed' as const, error: r.error }]));
   const outputs = await latestOutputs(projectId);
@@ -954,7 +987,8 @@ export async function slotStates(projectId: string) {
     });
     const image = outputs.get(j.slot)?.id ?? null, index = 'index' in j.input ? j.input.index : undefined;
     const task = index !== undefined && index >= 0 ? d?.slots[index]?.task : undefined, redraw = redraws.get(j.slot);
-    return { slot: j.slot, status: j.status, error: j.error, image, history, words: history.find(v => v.id === image)?.words ?? wordsOfInput(j.input), ...(task ? { task } : {}),
+    const waiting = j.status === 'queued' && j.retries > 0 ? { retries: j.retries, ...(j.retry_at ? { retryAt: j.retry_at.toISOString() } : {}) } : {};
+    return { slot: j.slot, status: j.status, error: j.error, image, history, words: history.find(v => v.id === image)?.words ?? wordsOfInput(j.input), ...(task ? { task } : {}), ...waiting,
       ...(j.input.kind === 'main' ? { colors: j.input.colors } : {}), ...(redraw ? { redraw } : {}) };
   });
 }

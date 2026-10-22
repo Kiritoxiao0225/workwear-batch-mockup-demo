@@ -21,6 +21,8 @@ import { useShopSets } from "./listing-service";
 
 const MAIN = /^(square|portrait|long):/;
 const SHAPE: Record<string, string> = { square: "1 / 1", portrait: "3 / 4", long: "2 / 3", sku: "1 / 1", skumodel: "3 / 4", product: "1 / 1", cast: "3 / 4" };
+/** How long until an image waiting to be tried again is tried: 「1 分钟」, or 「片刻」 when it is due. */
+const retryIn = (at: string) => { const m = Math.ceil((Date.parse(at) - Date.now()) / 60_000); return m > 0 ? `${m} 分钟` : "片刻"; };
 const numOf = (slot: string) => slot.startsWith("long") ? "长图" : `第 ${slot.split(":")[1].split("+")[0]} 张`;
 
 export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError, onClose }: {
@@ -58,11 +60,12 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
             ? <button type="button" className="lp-out-open" title="按要求修改" onClick={() => edit(s.slot)}><img src={assetUrl(s.image)} alt={label} loading="lazy" /><span className="lp-out-tag">按要求修改</span></button>
             : <a href={assetUrl(s.image)} target="_blank" rel="noreferrer"><img src={assetUrl(s.image)} alt={label} loading="lazy" /></a>)}
           {s.history.length > 1 && version > 0 && <span className="lp-out-ver">第 {version} 版</span>}
-          {wait && <span className="lp-out-wait">{s.status === "running" ? "出图中…" : "排队中"}</span>}
+          {wait && <span className="lp-out-wait">{s.status === "running" ? s.retries ? `第 ${s.retries + 1} 次出图中…` : "出图中…" : s.retries ? "等待自动重试" : "排队中"}</span>}
           {bad && <span className="lp-out-wait">没做出来</span>}
         </div>
         <b title={label}>{label}</b>
         {bad && s.error && <small className="lp-out-why">{s.error}</small>}
+        {wait && !!s.retries && <small className="lp-muted">上次没出来（{s.error ?? "出图失败"}），会自动再试，不扣费{s.status === "queued" && s.retryAt ? `，约 ${retryIn(s.retryAt)}后` : ""}</small>}
         {s.redraw?.status === "running" && <small className="lp-muted">正在按你说的改…</small>}
         {!wait && !editable && (kind !== "cast" || bad) && <button type="button" className="lp-btn sm" onClick={() => onRedo(s.slot, label)}>重新生成</button>}
       </div>);
@@ -113,7 +116,7 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
     <div className="lp-modal" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="lp-box lp-plan" role="dialog" aria-modal="true" aria-label="出好的图">
         <div className="lp-box-head"><div><h3>{generating ? "出图中" : detail.status === "square" ? "方图出好了" : "出好的图"} · {detail.name}</h3>
-          <p className="lp-sub">{generating ? `做好 ${made}/${detail.slots.length} 张，关掉也会继续。` : `哪张主图不满意就点它：写想怎么改，可以加一张参考图，生成后点「采用」换上，原图留在历史里。${detail.status === "square" ? "改满意了，再出竖版。" : ""}`}</p></div>
+          <p className="lp-sub">{generating ? `做好 ${made}/${detail.slots.length} 张，关掉也会继续；网络或出图通道出问题的会自动重试，直到出来或点「停止出图」。` : `哪张主图不满意就点它：写想怎么改，可以加一张参考图，生成后点「采用」换上，原图留在历史里。${detail.status === "square" ? "改满意了，再出竖版。" : ""}`}</p></div>
           <div className="grow" /><button type="button" className="lp-btn sm ghost" onClick={onClose}>关闭</button></div>
         <div className="lp-box-body">
           {detail.status === "square" && later && later.images > 0 && (
@@ -158,6 +161,7 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
                 </div>
               </details>)}
             <div className="grow" />
+            {generating && <button type="button" className="lp-btn" disabled={busy} onClick={() => { if (window.confirm("停止出图：还没出的图都不出了，冻结的积分退回；正在出的那几张会出完。之后可以单张重新生成。")) void act("stop", {}, "已停止，没出的图不扣费"); }}>停止出图</button>}
             {free.length > 0 && !generating && <button type="button" className="lp-btn" onClick={() => setAdding({ color: free[0].name, layout: "" })}>＋ 再加一套首图（换颜色）</button>}
             {made > 0 && <a className="lp-btn primary" href={downloadUrl(detail.id)} onClick={e => { if (downloadUrl(detail.id).startsWith("#")) { e.preventDefault(); onError("演示页不能下载，上线后这里下载全部图"); } }}>下载这一款</a>}
           </>}

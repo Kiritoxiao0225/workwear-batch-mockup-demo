@@ -385,10 +385,10 @@ export async function executeWrite(job: JobRow, provider: Provider = (request, h
 }
 
 /**
- * Runs up to `LISTING_WORKER_CONCURRENCY` jobs at once (images mostly wait on the provider; 4 on
- * the Codex relay, which rate-limits more). An
- * image job starts only when the images it builds on exist; if one of them failed, it is
- * skipped and costs nothing.
+ * Runs up to `LISTING_WORKER_CONCURRENCY` jobs at once (images mostly wait on the provider; 2 on
+ * the Codex relay, which is slower the more it is sent). An image job starts only when the images
+ * it builds on exist; while one of them waits to be tried again it waits too, and if one of them
+ * failed for good, it is skipped and costs nothing.
  */
 /** How long one round of the worker loop may take before it is left behind; a round is normally well under a second. */
 const ROUND_LIMIT_MS = 120_000;
@@ -409,7 +409,13 @@ export async function startListingWorker({ canAccept = () => true, concurrency =
   await heartbeat();
   const beatTimer = setInterval(() => { void heartbeat().catch(() => {}); }, 15000);
   const sweep = async () => {
-    // A job whose worker vanished: never resend; plans settle here, image runs when they finish.
+    // An image whose worker vanished (a release, a restart) before anything that could cost money was
+    // sent, or on the relay, where nothing costs: back in the queue (10-22: a release cut off 8 of 6609's).
+    const requeued = (await db().query(`UPDATE listing_jobs j SET status='queued',owner=NULL,lease_until=NULL,retries=retries+1,retry_at=now()+interval '20 seconds',error='后台重启，已重新排队',updated_at=now()
+      WHERE status='running' AND lease_until<now() AND step IN ('product','image') AND NOT stopped
+        AND NOT EXISTS (SELECT 1 FROM listing_attempts a WHERE a.job_id=j.id AND a.provider<>'cliproxy' AND a.status<>'failed') RETURNING id`)).rows;
+    if (requeued.length) await db().query(`UPDATE listing_attempts SET status='failed',finished_at=now() WHERE job_id = ANY($1) AND status='submitted'`, [requeued.map(j => j.id)]);
+    // Any other job whose worker vanished: never resend; plans settle here, image runs when they finish.
     const expired = (await db().query(`UPDATE listing_jobs SET status='unknown',error='后台中断，未重复调用模型；可能已产生费用，由管理员核对',lease_until=NULL
       WHERE status='running' AND lease_until<now() RETURNING id,tenant_id,project_id,step,run_id`)).rows;
     for (const j of expired) {
@@ -429,7 +435,11 @@ export async function startListingWorker({ canAccept = () => true, concurrency =
   type Claimed = { id: string; tenant_id: string; project_id: string; step: string; run_id: string; slot: string; input: JobInput; depends: string[] };
   const claim = () => catalogTransaction(async c => {
     const queued = (await c.query(`SELECT j.id,j.tenant_id,j.project_id,j.step,j.run_id,j.slot,j.input,j.depends FROM listing_jobs j JOIN tenants t ON t.id=j.tenant_id
-      WHERE j.status='queued' AND NOT t.disabled ORDER BY j.created_at FOR UPDATE OF j SKIP LOCKED LIMIT 30`)).rows as Claimed[];
+      WHERE j.status='queued' AND (j.retry_at IS NULL OR j.retry_at<=now()) AND NOT t.disabled
+        -- Not one still waiting for an image of its run (being made, or waiting to be tried again): a long
+        -- wait must not fill the 30 and hold back the jobs behind it.
+        AND NOT EXISTS (SELECT 1 FROM listing_jobs d WHERE d.run_id=j.run_id AND d.slot = ANY(j.depends) AND d.status IN ('queued','running'))
+      ORDER BY j.created_at FOR UPDATE OF j SKIP LOCKED LIMIT 30`)).rows as Claimed[];
     for (const j of queued) {
       if (j.depends.length) {
         // A prerequisite remade in the same run must finish first: an older image of that slot
