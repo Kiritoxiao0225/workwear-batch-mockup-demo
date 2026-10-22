@@ -21,8 +21,12 @@ export function assertListingProviderConfigured(env: Env = process.env) {
 export const listingPlanProvider = (env: Env = process.env): 'cliproxy' | 'evolink' => env.LISTING_PLAN_PROVIDER?.trim() === 'cliproxy' ? 'cliproxy' : 'evolink';
 /** Where the images are made: EvoLink unless moved to the Codex relay. */
 export const listingImageProvider = (env: Env = process.env): 'cliproxy' | 'evolink' => env.LISTING_IMAGE_PROVIDER?.trim() === 'cliproxy' ? 'cliproxy' : 'evolink';
-/** The relay rate-limits several images at once: a worker runs fewer of them. */
-export const listingWorkerConcurrency = (env: Env = process.env) => Number(env.LISTING_WORKER_CONCURRENCY) || (listingImageProvider(env) === 'cliproxy' ? 4 : 6);
+/**
+ * The relay makes about one image every 30 s however many it is sent, so more at once only makes
+ * each slower: on 10-22 eight at once (4 on each of two workers) took 90–280 s and half passed the
+ * timeout. A worker runs two.
+ */
+export const listingWorkerConcurrency = (env: Env = process.env) => Number(env.LISTING_WORKER_CONCURRENCY) || (listingImageProvider(env) === 'cliproxy' ? 2 : 6);
 
 export type PlanCall = { content: string; model: string; requestId: string; usage: unknown; durationMs: number };
 
@@ -87,6 +91,8 @@ const mimeOf = (bytes: Buffer) => bytes[0] === 0xff && bytes[1] === 0xd8 ? 'imag
 const RATIOS = { square: '1:1', portrait: '3:4', long: '2:3' } as const;
 /** How long to wait before each retry of a relay image, in ms (doubled after a rate limit). */
 const RELAY_RETRY_WAITS = [20_000, 45_000];
+/** A relay image that came back did so within 290 s on 10-22; past 8 minutes it is not coming. */
+const RELAY_TIMEOUT_MS = 480_000;
 // The provider's words help (a refusal reads differently from a timeout); links and token-like runs
 // stay out of what the tenant sees.
 export const providerReason = (text: string) => text.replace(/https?:\/\/\S+/gu, '[链接]').replace(/[A-Za-z0-9_\-+/=]{24,}/gu, '…').slice(0, 80);
@@ -105,7 +111,7 @@ export async function generateListingImage(input: { prompt: string; references: 
     await options.beforeSubmit();
     for (let tried = 0; ; tried++) {
       try {
-        const call = await cliproxyListingImage({ prompt: input.prompt, images: input.references, size: RELAY_SIZES[input.ratio], mask: input.mask });
+        const call = await cliproxyListingImage({ prompt: input.prompt, images: input.references, size: RELAY_SIZES[input.ratio], mask: input.mask, timeoutMs: RELAY_TIMEOUT_MS });
         if (tried) console.info('[listing] relay image made after', tried, 'retries');
         return { bytes: call.bytes, taskId: '', credits: null, durationMs: call.durationMs };
       } catch (error) {
