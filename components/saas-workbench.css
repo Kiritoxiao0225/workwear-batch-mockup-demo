@@ -1,7 +1,7 @@
 .saas-app {
   --danger-soft: #fdecea;
   --warning-soft: #fff8e9;
-  --brand-soft: #e6f4ec;
+  --brand-soft: #eceae4;
   font:
     14px/1.6 -apple-system,
     BlinkMacSystemFont,
@@ -103,7 +103,7 @@
     text-decoration: none;
   }
   .button:hover:not(:disabled) {
-    border-color: #6ba98d;
+    border-color: #9a907a;
   }
   .button:disabled {
     opacity: 0.5;
@@ -175,8 +175,8 @@
     white-space: nowrap;
   }
   .tag.ok {
-    background: var(--brand-soft);
-    color: var(--brand);
+    background: var(--success-soft);
+    color: var(--success);
   }
   .tag.warn {
     background: var(--warning-soft);
@@ -212,7 +212,7 @@
   }
   .notice.info {
     background: var(--brand-soft);
-    border-color: #b9dcc9;
+    border-color: #d8d4ca;
     color: var(--brand-strong);
   }
   .notice b {
@@ -305,13 +305,13 @@
     display: grid;
     place-items: center;
     background: var(--panel-muted);
-    color: #b4c2ba;
+    color: #c1bdb5;
     font-size: 11px;
     background-image:
-      linear-gradient(45deg, #eef1ee 25%, transparent 25%),
-      linear-gradient(-45deg, #eef1ee 25%, transparent 25%),
-      linear-gradient(45deg, transparent 75%, #eef1ee 75%),
-      linear-gradient(-45deg, transparent 75%, #eef1ee 75%);
+      linear-gradient(45deg, #f1f0ee 25%, transparent 25%),
+      linear-gradient(-45deg, #f1f0ee 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, #f1f0ee 75%),
+      linear-gradient(-45deg, transparent 75%, #f1f0ee 75%);
     background-size: 18px 18px;
     background-position:
       0 0,
@@ -1036,10 +1036,10 @@
   position: fixed;
   inset: 18px;
   z-index: 100;
-  background: #f3f6f4;
-  border: 1px solid #d9e2dc;
+  background: #f6f5f3;
+  border: 1px solid #e1dfda;
   border-radius: 12px;
-  box-shadow: 0 0 0 100vmax #17211c88;
+  box-shadow: 0 0 0 100vmax #201e1888;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1050,7 +1050,7 @@
   justify-content: space-between;
   padding: 12px 20px;
   background: white;
-  border-bottom: 1px solid #d9e2dc;
+  border-bottom: 1px solid #e1dfda;
 }
 .saas-editor-overlay iframe {
   border: 0;
@@ -1066,7 +1066,7 @@
   flex-wrap: wrap;
   margin-bottom: 14px;
   padding: 9px 14px;
-  border: 1px solid #b9dcc9;
+  border: 1px solid #d8d4ca;
   border-radius: 10px;
   background: var(--brand-soft);
   color: var(--brand-strong);
@@ -1091,7 +1091,7 @@
   font: inherit;
   font-size: 12.5px;
   padding: 3px 8px;
-  border: 1px solid #9cc8b3;
+  border: 1px solid #bcb6a8;
   border-radius: 7px;
   background: var(--panel);
   color: var(--ink);
@@ -1192,13 +1192,13 @@
   gap: 9px;
   margin-top: 10px;
   padding: 8px 10px;
-  border: 1px dashed #b9dcc9;
+  border: 1px dashed #d8d4ca;
   border-radius: 9px;
   background: var(--brand-soft);
 }
 .saas-app .studio-page .organize .button {
   flex: 0 0 auto;
-  border-color: #9cc8b3;
+  border-color: #bcb6a8;
   color: var(--brand-strong);
   font-weight: 600;
 }
@@ -1276,21 +1276,21 @@
   outline-offset: 1px;
 }
 .saas-app .studio-page .stage-switch .sw.checker {
-  background: conic-gradient(#dfe5e1 25%, #fff 0 50%, #dfe5e1 0 75%, #fff 0) 0 0 / 8px 8px;
+  background: conic-gradient(#e5e3df 25%, #fff 0 50%, #e5e3df 0 75%, #fff 0) 0 0 / 8px 8px;
 }
 .saas-app .studio-page .stage-switch .sw.white {
   background: #fff;
 }
 .saas-app .studio-page .stage-switch .sw.dark,
 .saas-app .studio-page .preview .thumb.stage-dark {
-  background: #26332d;
+  background: #1d1d21;
 }
 .saas-app .studio-page .preview .thumb.stage-white {
   background: #fff;
 }
 .saas-app .studio-page .preview .thumb.stage-dark .empty,
 .saas-app .studio-page .preview .thumb.stage-dark .empty h3 {
-  color: #c9d6d0;
+  color: #d6d4ce;
 }
 .saas-app .studio-page .result-tools {
   align-items: center;
@@ -1308,7 +1308,7 @@
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--panel);
-  box-shadow: 0 8px 24px rgba(20, 40, 30, 0.12);
+  box-shadow: 0 8px 24px rgba(20, 20, 22, 0.12);
 }
 .saas-app .studio-page .more-menu button {
   display: block;
@@ -1356,7 +1356,10 @@
   gap: 2px 7px;
 }
 .saas-app .studio-page .hist .state.ok {
-  color: var(--brand);
+  color: var(--success);
+}
+.saas-app .studio-page .hist .state.bad {
+  color: var(--danger);
 }
 .saas-app .studio-page .hist .state.run {
   color: #8a560e;
@@ -1412,7 +1415,7 @@
   display: grid;
   place-items: center;
   padding: 16px;
-  background: #17211c66;
+  background: #201e1866;
 }
 .saas-app .studio-ask-box {
   width: min(360px, 100%);
@@ -1423,7 +1426,7 @@
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--panel);
-  box-shadow: 0 12px 32px #17211c33;
+  box-shadow: 0 12px 32px #201e1833;
 }
 .saas-app .studio-ask-box h3 {
   font-size: 15px;
@@ -1656,7 +1659,7 @@
   gap: 8px;
   padding: 16px 22px;
   border-radius: 14px;
-  background: rgba(15, 22, 19, 0.5);
+  background: rgba(21, 20, 16, 0.5);
 }
 .saas-app .studio-page .stage-wait b {
   font-size: 16px;
@@ -1682,4 +1685,51 @@
   .saas-app .studio-page .preview .thumb img {
     transition: none;
   }
+}
+
+/* 先见：图稿预览区四角放印刷裁切角标（品牌图形），空白时放一个「图会出现在这里」的画框图标，太阳是朱砂印点 */
+.saas-app .studio-page .preview .thumb::after {
+  content: "";
+  position: absolute;
+  inset: 16px;
+  z-index: 2;
+  pointer-events: none;
+  --mark: var(--line-control);
+  background:
+    linear-gradient(var(--mark), var(--mark)) left top / 18px 1.5px no-repeat,
+    linear-gradient(var(--mark), var(--mark)) left top / 1.5px 18px no-repeat,
+    linear-gradient(var(--mark), var(--mark)) right top / 18px 1.5px no-repeat,
+    linear-gradient(var(--mark), var(--mark)) right top / 1.5px 18px no-repeat,
+    linear-gradient(var(--mark), var(--mark)) left bottom / 18px 1.5px no-repeat,
+    linear-gradient(var(--mark), var(--mark)) left bottom / 1.5px 18px no-repeat,
+    linear-gradient(var(--mark), var(--mark)) right bottom / 18px 1.5px no-repeat,
+    linear-gradient(var(--mark), var(--mark)) right bottom / 1.5px 18px no-repeat;
+}
+.saas-app .studio-page .proof-icon {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: 6px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+.saas-app .studio-page .proof-icon svg {
+  width: 28px;
+  height: 28px;
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.saas-app .studio-page .proof-icon circle {
+  fill: var(--seal);
+  stroke: none;
+}
+.saas-app .studio-page .start-hint {
+  margin: 0;
+  text-align: center;
 }

@@ -82,13 +82,12 @@ export function LoginClient({ next, initialMode = 'login', sessionExpired = fals
   const subtitle = { login: '登录后，继续制作你的图稿和电商主图。', register: '验证邮箱并设置密码，即可创建账号。', reset: '通过注册邮箱验证身份，找回你的账号。', setup: '为已通过验证码注册的账号补充登录密码。' }[mode];
   const emailReady = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email.trim());
   return <div className="login-wrap auth-wrap">
-    <aside className="login-aside"><div className="brand"><span className="brand-mark" aria-hidden="true">衣</span><span><strong>工作服效果图</strong><small>图稿与电商主图制作台</small></span></div>
-      <h2>传参考图和商品素材<br/>拿到能直接用的图稿和主图</h2>
-      <ul><li>图稿生成：照参考图和要求出 Logo、图案，可局部修补、无损放大、去背景</li><li>电商主图：拖入商品文件夹，AI 整理素材、排好方案，确认后出整套主图</li><li>制作都在后台排队，关掉页面也会继续</li><li>按实际发生的动作计费，失败不扣</li></ul>
+    <aside className="login-aside"><div className="brand"><img className="brand-logo" src="/foresee/foresee-logo-h.svg" alt="先见 Foresee" width={162} height={30}/></div>
+      <h2 className="login-slogan">所想，即所见。</h2>
       <p className="login-foot">内测期间需管理员开通额度后才能发起制作</p>
     </aside>
     <main className="login-main">
-      <div className="auth-mobile-brand"><b>衣</b>工作服效果图</div>
+      <div className="auth-mobile-brand"><img src="/foresee/foresee-logo-h.svg" alt="先见 Foresee" width={140} height={26}/></div>
       {mode !== 'login' && <a className="auth-back" href={href('login')}>← 返回登录</a>}
       <h1>{title}</h1><p className="login-sub">{subtitle}</p>
       {mode !== 'login' && <div className="auth-steps" aria-label={`第 ${step} 步，共 2 步`}><span className={step === 1 ? 'active' : ''}><b>{step === 2 ? '✓' : '1'}</b>验证邮箱</span><i/><span className={step === 2 ? 'active' : ''}><b>2</b>{mode === 'reset' ? '重置密码' : '设置密码'}</span></div>}

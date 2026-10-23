@@ -79,9 +79,8 @@ export function AppHeader({ beforeLogout }: { beforeLogout?: () => Promise<boole
   }, []);
   return (
     <header className="product-header" aria-label="工作台顶部导航">
-      <Link className="product-header__brand" href={HOME_PAGE} aria-label="工作服效果图首页">
-        <span className="product-header__mark">衣</span>
-        <strong>工作服效果图</strong>
+      <Link className="product-header__brand" href={HOME_PAGE} aria-label="先见 Foresee 首页">
+        <img className="product-header__logo" src="/foresee/foresee-logo-h.svg" alt="先见 Foresee" width={156} height={29}/>
       </Link>
       <div className="product-header__controls">
         <nav className="product-header__nav" aria-label="主导航">

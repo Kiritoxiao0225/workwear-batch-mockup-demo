@@ -939,6 +939,7 @@ export function ArtworkStudioClient() {
                   {planning ? "AI 正在拆…" : busy ? "正在提交…" : splitting ? "让 AI 拆分" : "开始制作"}
                 </button>
               </div>
+              {!working && !text.trim() && <p className="tiny muted start-hint">写好制作要求，就能开始制作。</p>}
               {prices && !prices.exempt && (
                 <p className="tiny muted">按上限冻结，跑完按实际结算，多余退回。</p>
               )}
@@ -949,7 +950,7 @@ export function ArtworkStudioClient() {
               <div className="row">
                 <h3>结果</h3>
                 <span
-                  className={"tag " + (job?.status === "returned" ? "ok" : "")}
+                  className={"tag " + (job?.status === "returned" ? "ok" : job?.status === "failed" ? "bad" : "")}
                 >
                   {plan ? "待确认" : job ? statusText(job.status) : active ? historyStatus(active) : "待制作"}
                 </span>
@@ -1049,6 +1050,11 @@ export function ArtworkStudioClient() {
                     </div>
                   ) : (
                     <div className="empty">
+                      {!job && (
+                        <span className="proof-icon" aria-hidden="true">
+                          <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="m3.5 17 5.5-5.5 4 4 2.5-2.5 5 4.5" /><circle cx="16" cy="8.5" r="1.8" /></svg>
+                        </span>
+                      )}
                       <h3>{job ? statusText(job.status) : "图稿将在这里显示"}</h3>
                       <p>
                         {job?.error ||
@@ -1084,7 +1090,7 @@ export function ArtworkStudioClient() {
                 )}
               </div>
             )}
-            {!plan && job?.error && <p className="notice warn tiny">{job.error}</p>}
+            {!plan && file && job?.error && <p className="notice bad tiny">{job.error}</p>}
             {!plan && !job?.error && job?.warning && <p className="notice warn tiny">{job.warning}</p>}
             {plan ? (
               <div className="col-foot result-tools">
@@ -1191,7 +1197,7 @@ export function ArtworkStudioClient() {
                     <div>
                       <div className="t">{caseTitle(c)}</div>
                       <div className="s">
-                        <span className={"state " + (busyCase ? "run" : j?.status === "returned" ? "ok" : "")}>
+                        <span className={"state " + (busyCase ? "run" : j?.status === "returned" ? "ok" : j?.status === "failed" ? "bad" : "")}>
                           {historyStatus(c)}
                         </span>
                         {j?.output && <span>{specLabel(j.output)}</span>}
