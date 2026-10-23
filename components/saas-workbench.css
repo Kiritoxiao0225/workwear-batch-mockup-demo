@@ -1590,12 +1590,10 @@
   }
 }
 
-/* Studio on wide screens: the input column is only as tall as its form, so the start button sits
-   right under it instead of at the bottom of the screen. A long form still scrolls inside the
-   column with the button pinned. */
+/* Studio on wide screens: the three columns share one height so their bottom edges line up; the
+   start button stays pinned at the foot of the input column and a long form scrolls above it. */
 @media (min-width: 1041px) {
   .saas-app .studio-page .col-left {
-    align-self: start;
     max-height: 100%;
   }
 }
