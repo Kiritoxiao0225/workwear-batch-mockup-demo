@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { settleWear, versionName } from './wear';
+import { coveredZip, settleWear, versionName, wearLine, zippedWear } from './wear';
 
 // 1888 as its material has it (10-21): four shells alone, the same four over a black down liner, a beige fleece liner worn alone.
 const images = [
@@ -50,5 +50,22 @@ describe('settleWear: what the material shows, never pieced together (10-21)', (
     expect(settleWear({ type: '内胆', versions: [{ kind: '单外壳', from: ['M1'] }] }, images, colors)).toMatchObject({ type: '薄款', versions: [] });
     expect(settleWear({ type: '一体', versions: [{ kind: '单外壳', from: ['M1'] }] }, images, colors)).toMatchObject({ type: '一体', versions: [] });
     expect(settleWear({ type: '厚款' }, images, colors)).toBeNull();
+  });
+});
+
+// 6609 (10-23): a flap hides the zip when closed; 「拉链拉到胸口」 drew a pull floating on the flap.
+describe('a zip under a flap', () => {
+  const g6609 = ['前中为全开合拉链，外覆宽直门襟，闭合时遮住链齿；领口和门襟下端可见圆形按扣。', '下摆平直'];
+  it('is read from the garment\'s own description, and an open zip is not', () => {
+    expect(coveredZip(g6609)).toBe(true);
+    expect(coveredZip(['门襟拉链外露，拉到胸口', '帽子可拆，拉链连接'])).toBe(false);
+  });
+  it('is worn closed with no pull, open with the pull at the hem, and an open zip as before', () => {
+    expect(wearLine(undefined, undefined, undefined, true)).toMatch(/门襟合到胸口.*不画拉头和链齿/);
+    expect(wearLine(undefined)).toBeNull();
+    expect(wearLine('一体', undefined, undefined, true)).toMatch(/^门襟一直合到最顶，拉链藏在门襟下面/);
+    expect(wearLine('一体')).toMatch(/^拉链一直拉到最顶/);
+    expect(wearLine('内胆', 3, '黑色', true)).toMatch(/拉头在下摆底端，衣服中间不出现单独的拉头/);
+    expect(zippedWear(true)).toMatch(/门襟一直合到最顶/); expect(zippedWear(false)).toMatch(/^拉链一直拉到最顶/);
   });
 });

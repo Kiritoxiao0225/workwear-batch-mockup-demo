@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { BUILT_IN_LAYOUTS, cellZones } from '../listing/templates';
-import { enOf, SPECS, specFor, specPrompt, type Fill } from './listing-specs';
+import { accentOf, enOf, SPECS, specFor, specPrompt, type Fill } from './listing-specs';
 
 const fill: Fill = { title: '三合一 冲锋衣', sub: '面料结构紧密', tags: ['团体定制'], facts: [{ label: '面料科技', word: '德国SUPER-TEX' }],
   cells: ['严密防风', '持久保暖', '深度呼吸', '防风防水'].map(text => ({ text, note: '说明', recipe: '面料特写', en: enOf(text) })),
@@ -116,5 +116,20 @@ describe('the words fit their boxes (10-19)', () => {
     const both = prompt([{ label: '面料科技', word: '石墨烯远红外蓄热纤维' }, { label: '面料特点', word: '双经双纬T400D面料' }]);
     expect(both).toMatch(/大号粗体字「双经双纬T400D面料」，一行写完、不换行/);
     for (const z of tops(both)) expect(z.top + z.height).toBeLessThanOrEqual(76);
+  });
+});
+
+describe('无模特 cover (10-23)', () => {
+  const zones = (f: Partial<Fill>) => SPECS.M5.首图!.zones({ ...fill, ...f }).join('\n');
+  it('closes a zip under a flap whole on the invisible mannequin, and opens a bare zip a little as before', () => {
+    expect(zones({ covered: true })).toMatch(/门襟整条合上、拉到领口，拉链藏在门襟下面看不见/);
+    expect(zones({})).toMatch(/拉链拉开一点/);
+  });
+  it('says the title colours outright: dark then the garment\'s colour, a light garment\'s darkened to grey, never the sample\'s', () => {
+    expect(accentOf('#DDDED8')).toMatch(/^中灰色 #[0-9A-F]{6}（衣服主色加深）$/); expect(accentOf('#A51C28')).toBe('衣服主色 #A51C28'); expect(accentOf(undefined)).toBe('中灰色 #808080');
+    const white = [{ name: '白+黑', hex: '#DDDED8' }];
+    expect(zones({ title: '锁温', colors: white })).toMatch(/一行两色：「锁」深色，「温」用中灰色 #[0-9A-F]{6}（衣服主色加深）；整行字号一样，颜色只按这里写的，不照示例图/);
+    expect(zones({ title: '防水透气', colors: [{ name: '安哥拉红', hex: '#A51C28' }] })).toMatch(/「防水」深色，「透气」用衣服主色 #A51C28/);
+    expect(zones({ title: '锁温 保暖', colors: [{ name: '安哥拉红', hex: '#A51C28' }] })).toMatch(/第一行「锁温」用衣服主色 #A51C28/);
   });
 });

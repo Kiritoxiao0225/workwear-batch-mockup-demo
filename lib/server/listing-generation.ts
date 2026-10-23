@@ -19,8 +19,8 @@
 import { addExtraImage } from './listing-jobs';
 import { INNERS } from '../listing/wear';
 import { itemReference, linerAlone, linerColorOf, linerFor, skuItems } from '../listing/sku-versions';
-import { LINER_ALONE_WEAR, linerSubject, versionName, ZIPPED_WEAR } from '../listing/wear';
-import { wearLine } from '../listing/wear';
+import { LINER_ALONE_WEAR, linerSubject, versionName } from '../listing/wear';
+import { coveredZip, wearLine, zippedWear } from '../listing/wear';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -565,7 +565,7 @@ type MainInput = Extract<JobInput, { kind: 'main' }>;
  * Null when the master has no spec for the image, or the plan gave it another number of cards.
  */
 export async function specShot(o: { stored: StoredPlan; projectId: string; input: MainInput; slot: string; layout: Layout; output: (slot: string) => Promise<Buffer>; cast: Buffer | null;
-  logo: { bytes: Buffer | null; line: string } | null; badge: () => Promise<string>; corner?: boolean; wear?: string | null }) {
+  logo: { bytes: Buffer | null; line: string } | null; badge: () => Promise<string>; corner?: boolean; wear?: string | null; covered?: boolean }) {
   const d = o.stored.draft, s = d.slots[o.input.index], task = s.task as Task;
   const spec = specFor(o.layout.id, task, o.input.words.cells.length);
   if (!spec || (spec.people && !o.cast)) return null;
@@ -585,7 +585,7 @@ export async function specShot(o: { stored: StoredPlan; projectId: string; input
     color: used[0]?.name ?? colors[0].name, colors: used, all: colors, light: luma(used[0]?.hex ?? '#ffffff') > 150,
     who: o.layout.templates.首图.square.people >= 2 && task === '首图' ? `参考图${cast}里的一男一女并排站，男生在左、身体朝右微侧，女生在右` : `参考图${cast}里的${lead}`,
     ...(task === '首图' ? { act: c.act, scene: c.scene || undefined } : {}), badge: c.badge ?? '',
-    castRef: cast, place: o.stored.place, wear: o.wear,
+    castRef: cast, place: o.stored.place, wear: o.wear, covered: o.covered,
   };
   const prompt = specPrompt({ master: o.layout.id, task, taskLabel: TASK_LABEL[task], n: o.input.n, total: o.input.total, spec, fill, garment: o.stored.garment,
     logo: spec.fabric ? null : o.logo?.line ?? null, refs: { garment: spec.fabric ? used.slice(0, 1) : used, cast, logo, sample }, corner: o.corner });
@@ -754,6 +754,8 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
       const linerFile = linerAsset ? (await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [linerAsset])).rows[0]?.file_id : undefined;
       const liner = linerFile ? await sharp(await fileOf(linerFile), { limitInputPixels: 60_000_000 }).rotate().resize(1536, 1536, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer() : null;
       const wearType = d.wear?.type === '内胆' && !liner ? undefined : d.wear?.type;
+      // A zip under a flap is drawn as the material shows it: the flap closed, no pull (10-23).
+      const covered = coveredZip(stored.garment ?? []);
       if (input.kind === 'skuModel') {
         // The cast's own halves when drawn from the material (one face per image), else the cast of two.
         const who = input.who ?? d.model.lead, halves = input.pair ? GENDERS.every(g => outputs.has(`cast:${g}`)) : outputs.has(`cast:${who}`);
@@ -780,8 +782,8 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
           // Over its liner: the material's photo of this shell over it (10-22); the shell alone: as before; no version: by the wear.
           const linerRef = v?.kind === '外壳加内胆' && ref ? references.push(ref) : !v && wearType === '内胆' && liner ? references.push(liner) : undefined;
           // Over a liner with nothing clear to draw it from: zipped up, the liner unseen (10-22).
-          const wear = v?.kind === '单外壳' ? null : v?.kind === '外壳加内胆' && !ref ? ZIPPED_WEAR
-            : wearLine(v ? '内胆' : wearType, linerRef, v ? linerColor || linerColorOf(sortedImages, refLabel) : undefined);
+          const wear = v?.kind === '单外壳' ? wearLine(undefined, undefined, undefined, covered) : v?.kind === '外壳加内胆' && !ref ? zippedWear(covered)
+            : wearLine(v ? '内胆' : wearType, linerRef, v ? linerColor || linerColorOf(sortedImages, refLabel) : undefined, covered);
           prompt = skuModelPrompt({ color: it.name, garment, lead: who, who: input.pair ? 'pair' : 'lead', halves, logo: null, place: stored.place, pose, wear, linerRef });
         }
         ratio = 'portrait';
@@ -808,12 +810,12 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         const photo = source ? await sharp(await fileOf(source.file_id), { limitInputPixels: 60_000_000 }).rotate().resize(1536, 1536, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer() : null;
         references = [await output(`product:${main.sku}`), ...(photo ? [photo] : [])];
         const linerRef = wearType === '内胆' && liner ? references.push(liner) : undefined;
-        prompt = castOnePrompt({ color: main.name, garment, who: input.who, photo: !!photo, wear: wearLine(wearType, linerRef), linerRef });
+        prompt = castOnePrompt({ color: main.name, garment, who: input.who, photo: !!photo, wear: wearLine(wearType, linerRef, undefined, covered), linerRef });
         ratio = 'portrait';
       } else if (input.kind === 'cast') {
         references = [await output(`product:${main.sku}`)];
         const linerRef = wearType === '内胆' && liner ? references.push(liner) : undefined;
-        prompt = castPrompt({ color: main.name, garment, wear: wearLine(wearType, linerRef), linerRef });
+        prompt = castPrompt({ color: main.name, garment, wear: wearLine(wearType, linerRef, undefined, covered), linerRef });
         ratio = 'portrait';
       } else if (input.kind === 'sku') {
         const people = layout.sku.people > 0 && hasCast;
@@ -837,7 +839,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         // A square image its master has a spec for: drawn the way the master's sample was.
         const shot = await specShot({ corner, stored, projectId: job.project_id, input, slot: job.slot, layout, output, cast: hasCast ? await output('cast') : null,
           logo: logoBytes && logoLine ? { bytes: logoBytes, line: logoLine } : logoLine ? { bytes: null, line: logoLine } : null,
-          badge: async () => (await shopSettings(job.tenant_id, shopSet)).settings?.items.some(x => x.on && x.title === '免费印绣') ? '免费印绣' : '', wear: wearLine(wearType) });
+          badge: async () => (await shopSettings(job.tenant_id, shopSet)).settings?.items.some(x => x.on && x.title === '免费印绣') ? '免费印绣' : '', wear: wearLine(wearType, undefined, undefined, covered), covered });
         if (shot) { references = shot.references; prompt = shot.prompt; ratio = 'square'; }
       }
       if (!prompt && input.kind === 'main' && !input.edit) {
@@ -858,7 +860,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         await withPartPhotos(stored, job.project_id, content.cells, references);
         prompt = mainPrompt({ ratio, task: input.index >= 0 ? TASK_LABEL[d.slots[input.index].task as Task] : '长图', template: t, layout, content,
           used, all: colors, garment, lead: d.model.lead, fromSku: multi, cast, n: input.ratio === 'long' ? undefined : input.n, total: input.total,
-          logo: shows ? logoLine : null, logoRef, fabric, place: stored.place, corner, wear: wearLine(wearType) });
+          logo: shows ? logoLine : null, logoRef, fabric, place: stored.place, corner, wear: wearLine(wearType, undefined, undefined, covered) });
       }
     }
     if (input.note) prompt += `\n\n补充要求：${input.note}`;

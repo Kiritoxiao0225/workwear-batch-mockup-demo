@@ -184,7 +184,8 @@ export function coverScene(place: PlaceId, sell: Sell, pick: { act?: number; loo
   const act = acts[(pick.act ?? 0) % acts.length], look = looks[(pick.look ?? 0) % looks.length];
   return {
     line: `${p.name} · ${look.name}，${act}`,
-    bg: `实景：${look.text}`, person: `${act}；拉链停在胸口、不敞开；${s.show}`,
+    // How the zip is worn is the wear's (wear.ts): said here too, 「停在胸口、不敞开」 fought 有内胆's open jacket (10-23).
+    bg: `实景：${look.text}`, person: `${act}；${s.show}`,
     hint: p.fits.includes(sell) ? '' : `「${sell}」在${p.name}不好演，建议换成${p.fits.join('、')}；或者把地点换掉`,
   };
 }

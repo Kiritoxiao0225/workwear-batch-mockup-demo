@@ -6,7 +6,7 @@
  * image shows no garment), the cast (the models every image with people is drawn from) and these
  * words. Only the shop's service images learn from a (washed) competitor sample.
  */
-import { linerRefLine } from '../listing/wear';
+import { coveredZip, linerRefLine } from '../listing/wear';
 /** How the garment was worn on every image before 10-22, and still for 春秋薄款. */
 const NOW = '拉链拉到胸口，里面是白色圆领 T 恤';
 import { CORNER_BAND, CORNER_KEEP, CORNER_LINE, cornerStay, cornerTemplate } from '../listing/corner';
@@ -126,7 +126,9 @@ export function skuModelPrompt(input: { color: string; garment: string[]; lead: 
 - 两人穿同一件衣服（这个颜色）`
     : `- 只有一位${person}，就是参考图2里的${person}：脸型、五官、发型、肤色、身材都和参考图2一模一样。
 - ${input.lead === '男' ? '他' : '她'}穿这件衣服`;
-  const n = input.pose ?? 0, pose = pair ? PAIR_POSES[n % PAIR_POSES.length] : SKU_POSES[n % SKU_POSES.length];
+  // No hand on the pull of a zip under a flap: there is none to see (10-23).
+  const poses = coveredZip(input.garment) ? SKU_POSES.filter(p => !p.includes('拉链头')) : SKU_POSES;
+  const n = input.pose ?? 0, pose = pair ? PAIR_POSES[n % PAIR_POSES.length] : poses[n % poses.length];
   return `为服装商品的 SKU 图生成一张${pair ? '双人' : '单人'}模特实拍图，竖版 3:4。
 ${input.subject ?? `参考图1是这件衣服「${input.color}」的白底产品图，衣服的颜色和款式以它为准。`}${castRefs}，只用来认人${only}${input.logoRef ? `；参考图${input.logoRef}是客户的 LOGO，只用来印在衣服胸口` : ''}。${input.linerRef ? linerRefLine(input.linerRef) : ''}
 

@@ -79,17 +79,29 @@ export function settleWear(raw: { type?: string; why?: string; versions?: { kind
 }
 
 /**
+ * Whether the garment's own description (the writing step's, from the material) says a flap covers
+ * its zip when closed. 10-23, 6609: 「拉链拉到胸口」 on a jacket whose 门襟 hides the zip drew a pull
+ * floating on the flap; zipped up, the material shows the flap whole and no pull at all.
+ */
+export const coveredZip = (garment: string[]) => garment.some(l => /(遮住|盖住|遮盖|覆盖|挡住)[^。；]{0,6}(链齿|拉链)/.test(l));
+/** How a zip under a flap looks closed, as the material shows it. */
+export const COVERED_ZIP = '拉链藏在门襟下面看不见（不画拉头和链齿），门襟上有按扣的照样画出';
+/** An open jacket: where its pull is (10-23: a pull drawn on its own in the middle of the jacket). */
+const OPEN_PULL = '拉开后拉头在下摆底端，衣服中间不出现单独的拉头';
+
+/**
  * How the jacket is worn on every image with people, by its type (the comparison images of 10-21):
  * 有内胆 open over its liner, 一体 zipped to the top. `liner`: the reference image that shows the
- * liner, on the cast and the SKU models; the main images copy the cast. Null: as before, zipped to
- * the chest over a white T-shirt.
+ * liner, on the cast and the SKU models; the main images copy the cast. `covered`: its zip is under
+ * a flap (coveredZip). Null: as before, zipped to the chest over a white T-shirt.
  */
-export function wearLine(type: WearType | undefined, liner?: number, color?: string): string | null {
-  if (type === '一体') return '拉链一直拉到最顶，领子立起来护住脖子和下巴，看不到里面的 T 恤；衣服里面有填充，整体蓬松厚实，一看就是秋冬保暖款，不是一层薄外壳';
+export function wearLine(type: WearType | undefined, liner?: number, color?: string, covered = false): string | null {
+  if (type === '一体') return `${covered ? `门襟一直合到最顶，${COVERED_ZIP}` : '拉链一直拉到最顶'}，领子立起来护住脖子和下巴，看不到里面的 T 恤；衣服里面有填充，整体蓬松厚实，一看就是秋冬保暖款，不是一层薄外壳`;
   // The liner's colour said outright (10-22: drawn from a couple photo, 翠绿 took the light grey liner of the woman beside).
   if (type === '内胆') return liner
-    ? `外套拉链拉开、敞着穿，里面穿着这款配套的${color ? `${color}` : ''}内胆（参考图${liner}里外套下面那一件：${color ? `${color}，` : '颜色、'}材质、绗缝格子和领子都照它${color ? `；参考图里别人身上的别的颜色内胆不算` : ''}），内胆拉链拉到领口；一眼看得出是外壳加内胆两层，整体厚实保暖`
-    : '外套拉链拉开、敞着穿，里面穿着内胆（内胆的样子和定妆照里一样），内胆拉链拉到领口；一眼看得出是外壳加内胆两层，整体厚实保暖';
+    ? `外套拉链拉开、敞着穿，${OPEN_PULL}，里面穿着这款配套的${color ? `${color}` : ''}内胆（参考图${liner}里外套下面那一件：${color ? `${color}，` : '颜色、'}材质、绗缝格子和领子都照它${color ? `；参考图里别人身上的别的颜色内胆不算` : ''}），内胆拉链拉到领口；一眼看得出是外壳加内胆两层，整体厚实保暖`
+    : `外套拉链拉开、敞着穿，${OPEN_PULL}，里面穿着内胆（内胆的样子和定妆照里一样），内胆拉链拉到领口；一眼看得出是外壳加内胆两层，整体厚实保暖`;
+  if (covered) return `门襟合到胸口，领口敞开一点露出里面的白色圆领 T 恤；${COVERED_ZIP}`;
   return null;
 }
 /** The reference line for the liner photo: only the liner is taken from it. */
@@ -111,3 +123,5 @@ export const linerSubject = (inner: string, color: string) => `参考图1是这�
  * top, the liner unseen, so it is never drawn wrong; the card's pill and thumbnail say which liner.
  */
 export const ZIPPED_WEAR = '拉链一直拉到最顶，领子立起来，看不到里面穿的是什么；整体厚实保暖';
+/** ZIPPED_WEAR for a zip under a flap. */
+export const zippedWear = (covered: boolean) => covered ? `门襟一直合到最顶，${COVERED_ZIP}，领子立起来，看不到里面穿的是什么；整体厚实保暖` : ZIPPED_WEAR;

@@ -16,6 +16,23 @@ import { CORNER_BAND, cornerZones } from '../listing/corner';
 import { crowdLine, DEFAULT_PLACE } from './listing-crowd';
 import { NO_CHEST, OWN_MARKS, SAME_STYLE } from './listing-lines';
 import { bigWords, bigWordsLine, fitHeight } from '../listing/point-words';
+import { COVERED_ZIP } from '../listing/wear';
+
+/**
+ * The colour of a cover's accent words on a white page: the garment's own when it reads there, a light
+ * one (白、浅灰…) darkened to a mid grey of the same tone (10-23: the user liked 「锁」 dark with 「温」
+ * grey; left to the model it came out orange from the sample, all grey or all black).
+ */
+export const accentOf = (hex?: string) => {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/iu.exec(hex ?? '');
+  if (!m) return '中灰色 #808080';
+  const rgb = [m[1], m[2], m[3]].map(x => parseInt(x, 16)), lum = (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) / 255;
+  if (lum <= 0.6) return `衣服主色 ${hex}`;
+  const grey = '#' + rgb.map(c => Math.round(c * 0.5 / lum).toString(16).padStart(2, '0')).join('').toUpperCase();
+  return `中灰色 ${grey}（衣服主色加深）`;
+};
+/** A one-line title split for two colours: the first half dark, the rest the accent (「锁温」: 「锁」「温」). */
+const halves = (t: string) => { const c = [...t.trim()], k = Math.ceil(c.length / 2); return [c.slice(0, k).join(''), c.slice(k).join('')]; };
 
 /** What a spec fills its open places with. */
 export type Fill = {
@@ -36,6 +53,8 @@ export type Fill = {
   castRef?: number; place?: string;
   /** How the people wear it, by the garment's type (wear.ts wearLine); none: zipped to the chest as before. */
   wear?: string | null;
+  /** Its zip is under a flap (wear.ts coveredZip): closed, no pull shows. */
+  covered?: boolean;
 };
 export type Spec = {
   /** The sample image (public path), sent as the layout reference. */
@@ -109,7 +128,7 @@ export const SPEC_STYLE: Record<string, { all: string; cover: string }> = {
   M4: { all: '色调浅灰白，干净偏冷；没有户外场景；字体标题深色粗黑体；说明字深灰细黑体，字号不要太小；标签和卡片绿色圆角胶囊标签、白字；卡片白色圆角、细浅灰边、轻投影；光正面柔光箱，棚拍，有轻微渐变和脚下阴影。',
     cover: '色调浅灰白，干净偏冷；没有户外场景；字体标题深色粗黑体；标签绿色圆角胶囊、白字；光正面柔光箱，棚拍，有轻微渐变和脚下阴影。' },
   M5: { all: '色调纯白、浅灰，最干净；没有人；字体标题粗黑体深色，重点字用衣服主色；说明字细黑体深灰；标签和卡片线描圆形图标；卡片白底；光柔和顶光，衣服下方有落地投影。',
-    cover: '色调纯白、浅灰，最干净；没有人；字体标题粗黑体深色，重点字用衣服主色；说明字细黑体深灰；线描圆形图标；光柔和顶光，衣服下方有落地投影。' },
+    cover: '色调纯白、浅灰，最干净；没有人；字体标题粗黑体，颜色按上面版式里写的；说明字细黑体深灰；线描圆形图标；光柔和顶光，衣服下方有落地投影。' },
 };
 
 /** The fabric of fabric-only images on the light masters: words dark on light fabric, white on dark. */
@@ -296,9 +315,12 @@ export const SPECS: Record<string, Partial<Record<Task, Spec>>> = {
     // The user liked our own cover (主色、深色两行标题 + 粗字卖点 + 圆形图标) better than the competitor's small type (10-13).
     首图: { sample: '/listing-images/masters/M5-1.jpg', own: true, cells: 0,
       zones: f => [
-        '左20% 上6% 宽72% 高90%：衣服：画面里没有人，这件衣服立体地“穿”在看不见的人身上（隐形人台），拉链拉开一点，帽子立起，略微侧转。',
-        two(f.title)[1] ? `左3% 上12% 宽32% 高13%：两行大标题：第一行「${two(f.title)[0]}」用衣服主色 ${f.colors[0]?.hex ?? ''}，第二行「${two(f.title)[1]}」深色；粗黑体，每行字高约占画面 ${H(longer(two(f.title)[0], two(f.title)[1]), 32, 6)}%。`
-          : `左3% 上12% 宽32% 高13%：大标题「${f.title}」，深色粗黑体，字高约占画面 ${H(f.title, 32, 6)}%。`,
+        // A zip under a flap closed whole (10-23: 「拉开一点」 drew the flap and the zip apart, a pull hanging at the hem).
+        `左20% 上6% 宽72% 高90%：衣服：画面里没有人，这件衣服立体地“穿”在看不见的人身上（隐形人台），${f.covered ? `门襟整条合上、拉到领口，${COVERED_ZIP}` : '拉链拉开一点'}，帽子立起，略微侧转。`,
+        // Title colours said outright, not left to the sample (10-23: one run orange from the sample's jacket, one grey).
+        two(f.title)[1] ? `左3% 上12% 宽32% 高13%：两行大标题：第一行「${two(f.title)[0]}」用${accentOf(f.colors[0]?.hex)}，第二行「${two(f.title)[1]}」深色；粗黑体，每行字高约占画面 ${H(longer(two(f.title)[0], two(f.title)[1]), 32, 6)}%；字的颜色只按这里写的，不照示例图。`
+          : halves(f.title)[1] ? `左3% 上12% 宽32% 高13%：大标题「${f.title}」，粗黑体，一行两色：「${halves(f.title)[0]}」深色，「${halves(f.title)[1]}」用${accentOf(f.colors[0]?.hex)}；整行字号一样，颜色只按这里写的，不照示例图，字高约占画面 ${H(f.title, 32, 6)}%。`
+          : `左3% 上12% 宽32% 高13%：大标题「${f.title}」，深色粗黑体，颜色不照示例图，字高约占画面 ${H(f.title, 32, 6)}%。`,
         f.tags[0] && `左3% 上28% 宽26% 高7%：深色粗黑体「${f.tags[0]}」，字高约占画面 ${H(f.tags[0], 26, 5)}%。`,
         ...f.tags.slice(1, 3).map((t, i) => `左3% 上${42 + i * 16}% 宽14% 高13%：深色线描圆形图标，下方深灰字「${t}」，字高约占画面 ${H(t, 14, 2.8)}%。`),
         '画面里没有任何人。',
