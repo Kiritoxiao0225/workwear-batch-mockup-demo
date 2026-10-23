@@ -1361,6 +1361,86 @@
 .saas-app .studio-page .hist .state.run {
   color: #8a560e;
 }
+/* 删除 is a small × in the record's top-right corner, shown on hover and on the open record. */
+.saas-app .studio-page .hist-row {
+  position: relative;
+}
+.saas-app .studio-page .hist-row .hist .t {
+  padding-right: 16px;
+}
+.saas-app .studio-page .hist-del {
+  position: absolute;
+  top: 7px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+}
+.saas-app .studio-page .hist-row:hover .hist-del,
+.saas-app .studio-page .hist-row.active .hist-del,
+.saas-app .studio-page .hist-del:focus-visible {
+  opacity: 1;
+}
+.saas-app .studio-page .hist-del:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: #e9c4c1;
+  background: var(--panel);
+}
+.saas-app .studio-page .hist-del:disabled {
+  cursor: default;
+}
+@media (hover: none) {
+  .saas-app .studio-page .hist-del {
+    opacity: 1;
+  }
+}
+.saas-app .studio-ask {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: #17211c66;
+}
+.saas-app .studio-ask-box {
+  width: min(360px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px 18px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: 0 12px 32px #17211c33;
+}
+.saas-app .studio-ask-box h3 {
+  font-size: 15px;
+}
+.saas-app .studio-ask-box .t {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.saas-app .studio-ask-box .row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
 .saas-app .studio-page .spin {
   width: 14px;
   height: 14px;

@@ -141,13 +141,14 @@ export function ArtworkStudioClient() {
     [resolution, setResolution] = useState<OutputResolution>("1K"),
     [firstRefSize, setFirstRefSize] = useState<Size | null>(null),
     [stage, setStage] = useState<Stage>("checker"),
-    [handoff, setHandoff] = useState<ArtworkHandoff | null>(null);
+    [handoff, setHandoff] = useState<ArtworkHandoff | null>(null),
+    [removing, setRemoving] = useState<Case | null>(null);
   // An administrator may hold this account to one route: then that one is used and there is no choice.
   const locked = data?.imageRoute ?? null,
     provider = locked ?? picked;
   const input = useRef<HTMLInputElement>(null),
     textarea = useRef<HTMLTextAreaElement>(null),
-    request = useRef<{ snapshot: string; id: string } | null>(null),
+    request = useRef<{ snapshot: string; id: string; caseId?: string } | null>(null),
     // A case that "AI 整理" created and nobody has produced from yet; 开始制作 continues it.
     organized = useRef<{ caseId: string; refs: string } | null>(null),
     running = useRef(false);
@@ -444,6 +445,7 @@ export function ArtworkStudioClient() {
       // The count is read from the record's own text, so edited text needs a new record.
       if (c && split && c.sourceText !== text) c = null;
       if (!c) c = await readCase(await createStudioCase(text, refs, request.current.id));
+      request.current.caseId = c.caseId;
       setSelected(c.caseId);
       setPick(null);
       // An uncertain submit is read back, never turned into a second paid request.
@@ -535,6 +537,20 @@ export function ArtworkStudioClient() {
       setBusy(false);
       running.current = false;
     }
+  }
+  // 删除: the record leaves 我的图稿. The server keeps it hidden with its pictures and charges, and
+  // refuses while anything on it is still being made.
+  async function removeRecord(c: Case) {
+    await batchAPI("/api/cases/remove", { caseId: c.caseId });
+    if (selected === c.caseId) {
+      setSelected(null);
+      setPick(null);
+    }
+    if (plan?.caseId === c.caseId) setPlan(null);
+    if (organized.current?.caseId === c.caseId) organized.current = null;
+    if (request.current?.caseId === c.caseId) request.current = null;
+    setNotice("已删除这条图稿");
+    await reload();
   }
   // 放大到 2K/4K: the picture on screen enlarged as a record of its own, charged as 无损放大. The
   // server copies the result file itself, so nothing is downloaded or uploaded here.
@@ -1155,11 +1171,11 @@ export function ArtworkStudioClient() {
                   f = resultFile(r.find((x) => resultFile(x))),
                   busyCase = j ? r.some(pending) : c.analysis?.status === "running";
                 return (
+                  <div className={"hist-row" + (c.caseId === active?.caseId ? " active" : "")} key={c.caseId}>
                   <button
                     className={
                       "hist " + (c.caseId === active?.caseId ? "active" : "")
                     }
-                    key={c.caseId}
                     disabled={working}
                     onClick={() => selectCase(c)}
                   >
@@ -1185,6 +1201,12 @@ export function ArtworkStudioClient() {
                       </div>
                     </div>
                   </button>
+                  {!busyCase && (
+                    <button type="button" className="hist-del" disabled={working} aria-label="删除这条图稿" title="删除" onClick={() => setRemoving(c)}>
+                      ×
+                    </button>
+                  )}
+                  </div>
                 );
               })}
               {shown.length > visible.length && (
@@ -1200,6 +1222,52 @@ export function ArtworkStudioClient() {
         </div>
       </main>
       <SaasEditors target={target} onClose={close} onSaved={saved} />
+      {removing && (
+        <RemoveDialog title={caseTitle(removing)} onClose={() => setRemoving(null)} onConfirm={() => removeRecord(removing)} />
+      )}
+    </div>
+  );
+}
+// Asked in the page, never with the browser's own confirm box.
+function RemoveDialog({ title, onClose, onConfirm }: { title: string; onClose: () => void; onConfirm: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  const go = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      await onConfirm();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  };
+  return (
+    <div
+      className="studio-ask"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !busy) onClose();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && !busy) onClose();
+      }}
+    >
+      <div className="studio-ask-box" role="dialog" aria-modal="true" aria-label="删除这条图稿">
+        <h3>删除这条图稿？</h3>
+        <p className="t">{title}</p>
+        <p className="small muted">删掉后页面上就找不回了；已经扣的积分不退。</p>
+        {error && <p className="notice warn tiny">{error}</p>}
+        <div className="row">
+          <button type="button" className="button sm" disabled={busy} onClick={onClose}>
+            取消
+          </button>
+          <button type="button" className="button sm danger" disabled={busy} autoFocus onClick={() => void go()}>
+            {busy ? "稍等…" : "删除"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

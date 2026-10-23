@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import sharp from 'sharp';
 import { readRequirementState, validateRequirementDraft } from './requirements.mjs';
 import { STUDIO_PLAN_MAX } from './studio-plan.mjs';
-import { jsonFile, saveJSON, atomicFile, assetPath, hash, fail, readBytes } from '../adapters/a-files.mjs';
+import { jsonFile, saveJSON, atomicFile, assetPath, hash, fail, readBytes, listDirectories } from '../adapters/a-files.mjs';
 
 /**
  * Manual requirement intake.
@@ -198,6 +198,17 @@ export async function updateCase(root, body) {
   return { caseId: current.caseId, sourceRevision:current.sourceRevision||0, changed: changedText || changedImages, imageCount: images.length };
 }
 
+// A studio picture keeps running and is charged after its row is hidden, so the row waits until
+// every picture and AI reading on it has finished.
+async function stillMaking(root, caseId) {
+  if ((await readRequirementState(root, caseId)).analyses.some(a => a.status === 'running')) return true;
+  for (const id of await listDirectories(resolve(root, 'production-jobs'))) {
+    const job = await jsonFile(resolve(root, 'production-jobs', id, 'state.json'), null);
+    if (job?.caseId === caseId && ['queued', 'running'].includes(job.status)) return true;
+  }
+  return false;
+}
+
 /**
  * Soft delete. History and any produced artwork stay; the row simply stops being eligible,
  * which is the same signal `active: false` carries for a withdrawn WPS record.
@@ -207,6 +218,7 @@ export async function removeCase(root, body) {
   const current = manifest.cases.find(c => c.caseId === body?.caseId);
   if (!current) throw fail('需求不存在', 404);
   if(!current.sourceRecordId?.startsWith('upload:'))throw fail('此入口只能修改手动录入的需求',403);
+  if (current.entry === 'studio' && await stillMaking(root, current.caseId)) throw fail('这条图稿还在制作，出完再删', 409);
   current.active = false;
   await saveJSON(resolve(root, 'manifest.json'), manifest);
   await saveJSON(resolve(root, 'scope.json'), { cases: Object.fromEntries(manifest.cases.map(c => [c.caseId, { stage: c.active === false ? 'status_excluded' : 'first_generation' }])) });

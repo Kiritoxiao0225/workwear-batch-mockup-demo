@@ -86,6 +86,23 @@ test('软删后不可继续操作，历史保留', async () => {
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('图稿还在出图或 AI 还在看时不能删，出完再删', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'intake-'));
+  try {
+    const { caseId } = await createCase(root, { text: '图稿', entry: 'studio', images: [] });
+    const job = path.resolve(root, 'production-jobs', 'a'.repeat(64), 'state.json');
+    await atomicFile(job, Buffer.from(JSON.stringify({ caseId, status: 'running' })));
+    await assert.rejects(() => removeCase(root, { caseId }), /还在制作/);
+    await atomicFile(job, Buffer.from(JSON.stringify({ caseId, status: 'returned' })));
+    const state = path.resolve(root, 'requirements-state', caseId + '.json');
+    await atomicFile(state, Buffer.from(JSON.stringify({ revision: 0, analyses: [{ id: 'x', status: 'running' }] })));
+    await assert.rejects(() => removeCase(root, { caseId }), /还在制作/);
+    await atomicFile(state, Buffer.from(JSON.stringify({ revision: 0, analyses: [{ id: 'x', status: 'returned' }] })));
+    await removeCase(root, { caseId });
+    assert.equal((await jsonFile(path.resolve(root, 'manifest.json'))).cases[0].active, false);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('拒绝空原文、超量图片和损坏图片', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'intake-'));
   try {
