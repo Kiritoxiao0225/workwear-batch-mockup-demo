@@ -1,4 +1,5 @@
 import sharp from 'sharp';
+import { waitUpTo } from './long-request';
 
 export const CLIPROXY_ARTWORK_MODEL = 'gpt-image-2';
 export const CLIPROXY_ARTWORK_OPTIONS = {
@@ -160,12 +161,12 @@ export async function cliproxyListingImage(input: { prompt: string; images: Buff
     headers['Content-Type'] = 'application/json';
     body = JSON.stringify({ ...options, prompt: input.prompt });
   }
-  const started = Date.now();
+  const started = Date.now(), wait = input.timeoutMs ?? 300_000;
   let result: unknown;
   try {
     const response = await fetch(`${base}/images/${input.images.length ? 'edits' : 'generations'}`, {
-      method: 'POST', headers, body, redirect: 'error', signal: AbortSignal.timeout(input.timeoutMs ?? 300_000),
-    });
+      method: 'POST', headers, body, redirect: 'error', signal: AbortSignal.timeout(wait), dispatcher: waitUpTo(wait),
+    } as RequestInit);
     if (!response.ok) {
       await response.body?.cancel().catch(() => {});
       const reason = response.status === 401 || response.status === 403 ? '转接授权失效' : response.status === 429 ? '转接限速，稍后重做' : '转接服务出错';

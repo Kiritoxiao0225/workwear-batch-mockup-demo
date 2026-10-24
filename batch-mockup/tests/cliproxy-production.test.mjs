@@ -101,7 +101,7 @@ async function studioJob(t, artwork, route) {
   await saveJSON(resolve(root, 'requirements-state/T.json'), { revision: 1, draft, draftSupplementRevision: 0, analyses: [], confirmations: [] });
   const [job] = await reserveProduction(root, { run: {}, cases: [{ caseId: 'T', sourceText: '原文', images: [] }] }, [{ caseId: 'T', revision: 1, supplementRevision: 0 }], { route });
   const input = JSON.parse(await (await import('node:fs/promises')).readFile(resolve(root, 'production-jobs', job.id, 'input.json'), 'utf8'));
-  return { job, input };
+  return { job, input, root };
 }
 
 test('通道在下单时定下：选了原通道就记原通道，没选按默认；换通道是另一单', async t => {
@@ -159,4 +159,111 @@ test('选了原通道就交给 EvoLink；没开通的通道直接说明，不发
   await assert.rejects((await configuredProduction()).generate({ prompt: '徽章', images: [], imageIds: [], provider: 'evolink' }, dir),
     e => e.definiteFailure === true && /原通道暂未开通/u.test(e.message));
   assert.deepEqual(urls, [], '没有发出任何请求');
+});
+
+// 2026-10-24 01:28–02:01: the relay was slow and every picture past 300 s failed for good. A
+// picture the relay did not deliver costs nothing, so it goes back in the queue until it comes or
+// a person presses 停止重试.
+test('新通道没出图：超时、限速、出错、没返回图都可重试且不扣费；授权失效、请求被拒不重试', async t => {
+  const keys = ['ARTWORK_IMAGE_PROVIDER', 'CLIPROXY_API_KEY', 'CLIPROXY_API_BASE_URL', 'A_ANALYSIS_ENV_FILE'];
+  const saved = { fetch: globalThis.fetch, env: Object.fromEntries(keys.map(k => [k, process.env[k]])) };
+  t.after(() => { globalThis.fetch = saved.fetch; for (const k of keys) if (saved.env[k] === undefined) delete process.env[k]; else process.env[k] = saved.env[k]; });
+  Object.assign(process.env, { ARTWORK_IMAGE_PROVIDER: 'cliproxy', CLIPROXY_API_KEY: 'test-key', CLIPROXY_API_BASE_URL: 'https://proxy.invalid/v1' });
+  delete process.env.A_ANALYSIS_ENV_FILE;
+  const dir = await mkdtemp(resolve(tmpdir(), 'cliproxy-retry-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const providers = await configuredProduction();
+  const run = () => providers.generate({ prompt: '徽章', images: [], imageIds: [], transparentBackground: false }, dir);
+  let init;
+  globalThis.fetch = async (url, options) => { init = options; throw new TypeError('fetch failed', { cause: Object.assign(new Error('Headers Timeout Error'), { code: 'UND_ERR_HEADERS_TIMEOUT' }) }); };
+  await assert.rejects(run(), e => e.relayRetry === true && e.definiteFailure === true);
+  assert.ok(init.dispatcher, '自带等待上限，不吃 Node 默认的 300 秒');
+  for (const status of [429, 502, 504]) {
+    globalThis.fetch = async () => new Response('{}', { status });
+    await assert.rejects(run(), e => e.relayRetry === true && e.definiteFailure === true, String(status));
+  }
+  globalThis.fetch = async () => new Response(JSON.stringify({ data: [] }), { status: 200 });
+  await assert.rejects(run(), e => e.relayRetry === true && /没有返回图片/u.test(e.message));
+  for (const status of [400, 401, 403]) {
+    globalThis.fetch = async () => new Response('{}', { status });
+    await assert.rejects(run(), e => !e.relayRetry && e.definiteFailure === true, String(status));
+  }
+});
+
+test('新通道没出图就回队列：1、2、5、10 分钟后再试，一直试到出图；中途不扣费', async t => {
+  const { stepAttempts } = await import('../runtime/service.mjs');
+  const { job, root: jobRoot } = await studioJob(t, { provider: 'cliproxy', transparentBackground: false });
+  const miss = () => { throw Object.assign(new Error('新通道连接中断或超时', { cause: Object.assign(new Error('Headers Timeout Error'), { code: 'UND_ERR_HEADERS_TIMEOUT' }) }), { definiteFailure: true, relayRetry: true }); };
+  const waits = [];
+  for (let n = 1; n <= 5; n++) {
+    const before = Date.now();
+    const r = await executeProduction(jobRoot, job.id, { generate: miss });
+    assert.equal(r.status, 'queued');
+    assert.equal(r.retries, n);
+    assert.equal(r.steps.at(-1).status, 'failed', '没出图不算钱');
+    assert.match(r.error, /等待服务响应超时.*分钟后自动重试（已试 \d 次），新通道不扣费/u);
+    waits.push(Math.round((Date.parse(r.retryAt) - before) / 60_000));
+    assert.deepEqual(stepAttempts(r), [], '重试期间没有可收费的调用');
+  }
+  assert.deepEqual(waits, [1, 2, 5, 10, 10]);
+  const done = await executeProduction(jobRoot, job.id, { generate: async () => ({ bytes: await png(64, 64, '#fff') }) });
+  assert.equal(done.status, 'returned');
+  assert.equal(done.error, null);
+  assert.equal(done.retryAt, undefined);
+  assert.equal(stepAttempts(done).length, 1, '只收出图那一次');
+});
+
+test('原通道不自动重试；余额不足说清楚换新通道', async t => {
+  const keys = ['ARTWORK_IMAGE_PROVIDER', 'EVOLINK_API_KEY', 'A_ANALYSIS_ENV_FILE'];
+  const saved = { fetch: globalThis.fetch, env: Object.fromEntries(keys.map(k => [k, process.env[k]])) };
+  t.after(() => { globalThis.fetch = saved.fetch; for (const k of keys) if (saved.env[k] === undefined) delete process.env[k]; else process.env[k] = saved.env[k]; });
+  Object.assign(process.env, { ARTWORK_IMAGE_PROVIDER: 'evolink', EVOLINK_API_KEY: 'evo-key' });
+  delete process.env.A_ANALYSIS_ENV_FILE;
+  const dir = await mkdtemp(resolve(tmpdir(), 'evolink-402-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  globalThis.fetch = async () => new Response('{}', { status: 402 });
+  await assert.rejects((await configuredProduction()).generate({ prompt: '徽章', images: [], imageIds: [], provider: 'evolink' }, dir),
+    e => !e.relayRetry && e.definiteFailure === true && /余额不足.*新通道/u.test(e.message));
+});
+
+test('后台：重试中的任务交还队列时间；停止重试就结束并退回；出图途中被打断也回队列', async t => {
+  const { executeTask, markInterrupted } = await import('../runtime/service.mjs');
+  const { job, root } = await studioJob(t, { provider: 'cliproxy', transparentBackground: false });
+  await saveJSON(resolve(root, 'manifest.json'), { run: {}, cases: [{ caseId: 'T', entry: 'studio', sourceText: '原文', images: [] }] });
+  const task = { kind: 'production', workspace: 'main', payload: { jobId: job.id, caseId: 'T' } };
+  const miss = { generate: () => { throw Object.assign(new Error('生图接口HTTP 502（新通道暂时出错）'), { definiteFailure: true, relayRetry: true }); } };
+  const r = await executeTask(root, task, () => {}, { productionFactory: async () => miss });
+  assert.ok(Date.parse(r.retryAt) > Date.now(), 'worker 按这个时间把队列行放回去');
+  await executeTask(root, { ...task, payload: { ...task.payload, stop: true } }, () => {}, { productionFactory: async () => { throw Error('停止后不应再出图'); } });
+  const { readProductionJobs } = await import('../application/production.mjs');
+  const stopped = (await readProductionJobs(root)).find(j => j.id === job.id);
+  assert.equal(stopped.status, 'failed');
+  assert.match(stopped.error, /已停止自动重试（试了 1 次没出图），没有扣费/u);
+
+  const other = await studioJob(t, { provider: 'cliproxy', transparentBackground: true });
+  const path = resolve(other.root, 'production-jobs', other.job.id, 'state.json');
+  const { jsonFile } = await import('../adapters/a-files.mjs');
+  const s = await jsonFile(path);
+  Object.assign(s, { status: 'running', phase: 'generate', steps: [{ name: 'generate', status: 'running', attemptId: 'x', startedAt: new Date().toISOString() }] });
+  await saveJSON(path, s);
+  const back = await markInterrupted(other.root, { kind: 'production', workspace: 'main', payload: { jobId: other.job.id } });
+  assert.ok(back.retryAt);
+  const after = await jsonFile(path);
+  assert.equal(after.status, 'queued');
+  assert.equal(after.steps[0].status, 'failed');
+});
+
+test('参考图发给新通道前缩到长边 1536：大照片转 JPEG，透明图保留 PNG，小图原样', async () => {
+  const { relayReference } = await import('../adapters/production-images.mjs');
+  const photo = await sharp({ create: { width: 2976, height: 4464, channels: 3, background: '#a85' } }).jpeg().toBuffer();
+  const sized = await relayReference(photo);
+  assert.equal(sized.format, 'jpeg');
+  assert.equal(await sizeOf(sized.bytes), '1024x1536');
+  const logo = await sharp({ create: { width: 3000, height: 1000, channels: 4, background: '#0000' } }).png().toBuffer();
+  const kept = await relayReference(logo);
+  assert.equal(kept.format, 'png');
+  assert.equal(await sizeOf(kept.bytes), '1536x512');
+  assert.equal((await sharp(kept.bytes).metadata()).hasAlpha, true);
+  const small = await png(40, 40);
+  assert.equal((await relayReference(small)).bytes, small, '小图不动');
 });

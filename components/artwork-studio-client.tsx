@@ -14,6 +14,7 @@ import {
   previewURL,
   resultFile,
   statusText,
+  jobStatusText,
   uploadImages,
   usePrices,
   useWorkbench,
@@ -552,6 +553,17 @@ export function ArtworkStudioClient() {
     setNotice("已删除这条图稿");
     await reload();
   }
+  // 停止重试: a 新通道 picture that keeps missing stops at its next turn; one being drawn right now
+  // still arrives. Nothing was charged for the misses.
+  async function stopRetry(j: Job) {
+    try {
+      await batchAPI("/api/production/stop", { jobId: j.id });
+      setNotice("已停止自动重试；如果这一次正好出图，图会照常显示");
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : String(e));
+    }
+    await reload();
+  }
   // 放大到 2K/4K: the picture on screen enlarged as a record of its own, charged as 无损放大. The
   // server copies the result file itself, so nothing is downloaded or uploaded here.
   async function upscaleResult(resolution: "2K" | "4K") {
@@ -620,7 +632,7 @@ export function ArtworkStudioClient() {
       done = r.filter((j) => j.status === "returned").length;
     if (r.length > 1)
       return r.some(pending) ? `制作中 ${done}/${r.length}` : `已出 ${done}/${r.length} 张`;
-    if (r[0]) return statusText(r[0].status);
+    if (r[0]) return jobStatusText(r[0]);
     const split = c.analysis?.mode === "plan";
     if (c.analysis?.status === "running") return split ? "AI 看要求中" : "AI 整理中";
     if (c.analysis?.status === "returned")
@@ -952,7 +964,7 @@ export function ArtworkStudioClient() {
                 <span
                   className={"tag " + (job?.status === "returned" ? "ok" : job?.status === "failed" ? "bad" : "")}
                 >
-                  {plan ? "待确认" : job ? statusText(job.status) : active ? historyStatus(active) : "待制作"}
+                  {plan ? "待确认" : job ? jobStatusText(job) : active ? historyStatus(active) : "待制作"}
                 </span>
                 {round.length > 1 && job && (
                   <span className="tiny muted">
@@ -1042,6 +1054,18 @@ export function ArtworkStudioClient() {
                         </div>
                       )}
                     </>
+                  ) : jobPending && job.retries ? (
+                    <div className="empty" role="status">
+                      <i className="spin big" aria-hidden="true" />
+                      <h3>{job.status === "running" ? `正在重试（第 ${job.retries + 1} 次）` : "新通道这次没出图，等待自动重试"}</h3>
+                      <p>
+                        {job.status === "queued" && job.retryAt ? `${when(job.retryAt)} 再试；` : ""}
+                        {job.error}。关掉页面也会继续。
+                      </p>
+                      <button className="button sm" onClick={() => void stopRetry(job)}>
+                        停止重试
+                      </button>
+                    </div>
                   ) : jobPending ? (
                     <div className="empty" role="status">
                       <i className="spin big" aria-hidden="true" />
@@ -1055,7 +1079,7 @@ export function ArtworkStudioClient() {
                           <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="m3.5 17 5.5-5.5 4 4 2.5-2.5 5 4.5" /><circle cx="16" cy="8.5" r="1.8" /></svg>
                         </span>
                       )}
-                      <h3>{job ? statusText(job.status) : "图稿将在这里显示"}</h3>
+                      <h3>{job ? jobStatusText(job) : "图稿将在这里显示"}</h3>
                       <p>
                         {job?.error ||
                           "添加参考图、写好要求，点左下「开始制作」。"}
@@ -1072,7 +1096,7 @@ export function ArtworkStudioClient() {
                           key={j.id}
                           className={"thumb stage-" + stage}
                           aria-pressed={j.id === job?.id}
-                          title={`${n + 1}. ${j.name} · ${statusText(j.status)}`}
+                          title={`${n + 1}. ${j.name} · ${jobStatusText(j)}`}
                           onClick={() => setPick(j.id)}
                         >
                           {f ? (

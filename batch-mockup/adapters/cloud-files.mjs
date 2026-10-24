@@ -130,6 +130,12 @@ export async function cloudStorage(action, { workspace = workspaceId(), lease } 
   };
   return withFileStorage(adapter,async()=>{const result=await action(adapter);await adapter.flush();return result;});
 }
+/** 停止重试 from the page: true when the job still has a queue row that can take the flag. */
+export async function flagStop(workspace,id){
+ const r=await catalogDatabase().query(`UPDATE batch_queue SET payload=payload||'{"stop":true}'::jsonb,updated_at=now()
+  WHERE workspace=$1 AND id=$2 AND kind='production' AND status IN ('queued','running') RETURNING id`,[workspace,id]);
+ return r.rowCount>0;
+}
 export async function queueHealth(workspace='main'){const r=await catalogDatabase().query("SELECT max(heartbeat_at) AS last FROM batch_workers WHERE heartbeat_at>now()-interval '45 seconds' AND (($1='main' AND id NOT LIKE 'external:%') OR ($1<>'main' AND id LIKE 'external:%'))",[workspace]);return !!r.rows[0]?.last;}
 
 export async function queueActivity(workspace=workspaceId()){const rows=await catalogDatabase().query("SELECT id,kind,payload->>'caseId' AS case_id,status,updated_at FROM batch_queue WHERE workspace=$1 AND (status IN ('queued','running') OR updated_at>now()-interval '1 day') ORDER BY updated_at DESC LIMIT 100",[workspace]);return rows.rows.map(r=>({id:r.id,kind:r.kind,caseId:r.case_id,status:r.status,updatedAt:r.updated_at}));}

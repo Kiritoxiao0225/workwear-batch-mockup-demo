@@ -20,6 +20,17 @@ export function notSent(error){
   return leaves.length>0&&leaves.every(e=>['connect','getaddrinfo'].includes(e.syscall)||e.code==='UND_ERR_CONNECT_TIMEOUT');
 }
 const STAGES={generate:'生图',enhance:'高清',cutout:'抠图','upscale-1':'放大','upscale-2':'放大'};
+// 新通道 (the Codex relay) costs nothing per picture, so one it did not deliver goes back in the
+// queue until it comes or a person presses 停止重试: 1, 2, 5, then every 10 minutes.
+export const RETRY_WAITS_MS=[60_000,120_000,300_000,600_000];
+export const retryWait=retries=>RETRY_WAITS_MS[Math.min(retries,RETRY_WAITS_MS.length)-1];
+/** Back in the queue after a relay miss; the batch worker holds the queue row until `retryAt`. */
+export function scheduleRetry(job,reason){
+  job.retries=(job.retries||0)+1;const wait=retryWait(job.retries);
+  job.status='queued';job.phase='retry';job.retryAt=new Date(Date.now()+wait).toISOString();
+  job.error=`${reason.replace(/[。；]+$/u,'')}；${wait/60_000} 分钟后自动重试（已试 ${job.retries} 次），新通道不扣费`;
+  return job;
+}
 const errorText=(e,stage)=>(artworkNetworkFailure(e,stage)?.message||String(e?.message||e?.code||e))+(notSent(e)?'请求没有发出，不扣费，可直接重新制作。':'');
 const dirFor=(root,id)=>{if(!/^[a-f0-9]{64}$/u.test(id))throw fail('制作编号无效');return resolve(root,'production-jobs',id);};
 export async function readProductionJobs(root) {
@@ -155,7 +166,7 @@ export async function executeProduction(root,id,providers,onProgress=()=>{}) {
     if(fallback)job.warning=(job.warning?job.warning+'；':'')+'火山高清放大没成功，已直接按比例放大到目标尺寸，细节会软一些';
     await save();
   }
-  job.status='running';job.startedAt=stamp();await save();
+  job.status='running';job.startedAt||=stamp();delete job.retryAt;await save();
   try {
     const images=[];for(const img of input.images){const path=assetPath(root,img.asset),bytes=await read(path);if(hash(bytes)!==img.sha256)throw new Error('固定原图校验失败');images.push({...img,path:await materialize(path)});}
     if(hash(input.prompt)!==input.promptSHA256)throw new Error('固定正文校验失败');
@@ -194,7 +205,9 @@ export async function executeProduction(root,id,providers,onProgress=()=>{}) {
     if(drawn)job.warning=(job.warning?job.warning+'；':'')+drawn;
     if(input.output&&input.output.resolution!=='1K'&&!job.upscale)await enlarge(input.output.resolution);
     job.status='returned';job.phase='done';job.error=null;
-  }catch(e){job.status=job.raw?'partial':e.definiteFailure||notSent(e)||!contacted?'failed':'unknown';job.error=errorText(e,contacted?STAGES[job.phase]||'制作':'读取素材');}
+  }catch(e){
+    if(e.relayRetry&&!job.raw&&job.phase==='generate'){scheduleRetry(job,errorText(e,STAGES.generate));await save();return job;}
+    job.status=job.raw?'partial':e.definiteFailure||notSent(e)||!contacted?'failed':'unknown';job.error=errorText(e,contacted?STAGES[job.phase]||'制作':'读取素材');}
   job.finishedAt=stamp();job.elapsedMs=Date.parse(job.finishedAt)-Date.parse(job.startedAt);await save();return job;
 }
 export async function createProductionWorker(root,providerFactory,{concurrency=3,onProgress=()=>{}}={}) {
@@ -203,6 +216,7 @@ export async function createProductionWorker(root,providerFactory,{concurrency=3
   for(const j of await readProductionJobs(root))if(j.status==='running'){j.status='unknown';j.error='服务中断，原制作结果未知；未自动重发';await saveJSON(resolve(dirFor(root,j.id),'state.json'),j);}
   async function pump(){if(closed)return;for(const j of await readProductionJobs(root)){
     if(active>=concurrency)break;if(j.status!=='queued'||running.has(j.id))continue;
+    if(j.retryAt&&Date.parse(j.retryAt)>Date.now()){setTimeout(()=>void pump(),Date.parse(j.retryAt)-Date.now()).unref?.();continue;}
     running.add(j.id);active++;
     void (async()=>{try{providers||=await providerFactory();await executeProduction(root,j.id,providers,onProgress);}catch(e){j.status='failed';j.error=e.message;await saveJSON(resolve(dirFor(root,j.id),'state.json'),j);}finally{active--;running.delete(j.id);void pump();}})();
   }}

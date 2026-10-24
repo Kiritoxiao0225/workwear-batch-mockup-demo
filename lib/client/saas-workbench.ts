@@ -46,6 +46,9 @@ export type Job = {
   /** Jobs made before 出图通道 existed record their route only here. */
   policy?: { generation?: { provider?: string } };
   steps?: { name: string; status: string; elapsedMs?: number }[];
+  /** 新通道 misses so far; while queued it waits until `retryAt` and tries again. */
+  retries?: number;
+  retryAt?: string;
 };
 export type Case = {
   caseId: string;
@@ -313,6 +316,9 @@ export const statusText = (status?: string) =>
     unknown: "结果未知",
     invalid_output: "识别结果待核对",
   })[status || ""] || "草稿";
+/** A job's own status, with 「等待重试」 for a relay miss waiting for its next try. */
+export const jobStatusText = (job: Pick<Job, "status" | "retries">) =>
+  job.status === "queued" && job.retries ? "等待重试" : statusText(job.status);
 export async function copyImage(asset: string) {
   const r = await fetch(assetURL(asset));
   if (!r.ok) throw new Error("图片读取失败");

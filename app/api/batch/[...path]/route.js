@@ -5,7 +5,7 @@ import { catalogUser } from '@/lib/server/catalog-auth';
 import { tenantScope, isInternalTenant } from '@/lib/server/tenant-scope';
 import { catalogBody } from '@/lib/server/catalog-http';
 import { assertPageAccess,artworkRouteOf } from '@/lib/server/page-access';
-import { cloudStorage,CLOUD_ROOT,queueHealth,queueActivity } from '@/batch-mockup/adapters/cloud-files.mjs';
+import { cloudStorage,CLOUD_ROOT,queueHealth,queueActivity,flagStop } from '@/batch-mockup/adapters/cloud-files.mjs';
 import { service } from '@/batch-mockup/runtime/service.mjs';
 import { enqueueWpsSync,readWpsSyncStatus } from '@/batch-mockup/runtime/sync-scheduler.mjs';
 import { assetResponse } from '@/batch-mockup/runtime/asset-response.mjs';
@@ -57,7 +57,7 @@ async function handle(request,context){
   // Upload chunks are kept in batch_documents outside the storage quota; they are rate limited per workspace instead.
   if(write&&['api/cases/image','api/supplements/chunk','api/production/edit/chunk'].includes(path))await limitUploads('upload-chunk:'+workspace,CHUNK_WINDOWS);
   const body=write?JSON.parse((await catalogBody(request,4*1024*1024)).toString('utf8')):Object.fromEntries(url.searchParams);
-  const result=await cloudStorage(async adapter=>{if(!['api/mockups','api/mockups/prepare','api/garments','api/wps/sync'].includes(path))await adapter.preload();return service(CLOUD_ROOT,'/'+path,request.method,body,{enqueue:task=>adapter.enqueue(task),scheduleSync:()=>enqueueWpsSync(),workspace,wpsOnly,route});},{workspace});
+  const result=await cloudStorage(async adapter=>{if(!['api/mockups','api/mockups/prepare','api/garments','api/wps/sync'].includes(path))await adapter.preload();return service(CLOUD_ROOT,'/'+path,request.method,body,{enqueue:task=>adapter.enqueue(task),scheduleSync:()=>enqueueWpsSync(),stopProduction:id=>flagStop(workspace,id),workspace,wpsOnly,route});},{workspace});
   if(path==='api/requirements'){
    result.storage='cloud';result.imageRoute=route;[result.workerOnline,result.activity,result.wpsSync]=await Promise.all([queueHealth(workspace),queueActivity(workspace),internal?readWpsSyncStatus():null]);
    if(wpsOnly){const ids=new Set(result.cases.map(item=>item.caseId));result.activity=result.activity.filter(item=>item.kind==='sync'||ids.has(item.caseId));}

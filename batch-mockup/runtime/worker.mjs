@@ -16,6 +16,7 @@ export async function claimNextTask(owner, scope) {
   await client.query("SELECT pg_advisory_xact_lock(hashtext('batch-queue-claim'))");
   const row = (await client.query(`SELECT q.id FROM batch_queue q
    WHERE q.status='queued'
+    AND (q.payload->>'retryAt' IS NULL OR (q.payload->>'retryAt')::timestamptz<=now() OR q.payload->>'stop'='true')
     AND (($1='main' AND q.workspace='main') OR ($1='external' AND q.workspace<>'main'
       AND q.kind<>'sync' AND EXISTS(SELECT 1 FROM tenants t WHERE t.workspace=q.workspace AND NOT t.disabled)
       AND (SELECT count(*) FROM batch_queue r WHERE r.workspace=q.workspace AND r.status='running')<2))
@@ -35,6 +36,16 @@ export async function expireTasks(scope) {
  WHERE status='running' AND lease_until<now()
  AND (($1='main' AND workspace='main') OR ($1='external' AND workspace<>'main')) RETURNING *`, [scope]);
 }
+/**
+ * A relay picture that did not come waits in the queue until `retryAt` (production.mjs). The payload
+ * is merged, not replaced, so a 停止重试 pressed meanwhile is kept. `from` is the row's state now:
+ * 'running' after a miss, 'unknown' after expireTasks or a failed run.
+ */
+export function requeueTask(id,retryAt,from,owner=null){
+ return catalogDatabase().query(`UPDATE batch_queue SET status='queued',owner=NULL,lease_until=NULL,error=NULL,
+  payload=payload||jsonb_build_object('retryAt',$2::text),updated_at=now()
+  WHERE id=$1 AND status=$3 AND ($4::text IS NULL OR owner=$4)`,[id,retryAt,from,owner]);
+}
 // Most of a generation is spent waiting on the provider, so a worker can hold many at once.
 export function workerConcurrency(value = process.env.BATCH_WORKER_CONCURRENCY || '3') {
  const n = Number(value);
@@ -49,13 +60,15 @@ export async function startBatchWorker({scope = workerScope(), concurrency = wor
   try{
    if(admission.check().paused)return;
    const expired=await expireTasks(scope);
-   for(const task of expired.rows)if(task.status==='unknown')await cloudStorage(()=>markInterrupted(CLOUD_ROOT,task),{workspace:task.workspace});
+   for(const task of expired.rows)if(task.status==='unknown'){const r=await cloudStorage(()=>markInterrupted(CLOUD_ROOT,task),{workspace:task.workspace});if(r?.retryAt)await requeueTask(task.id,r.retryAt,'unknown');}
    while(running.size<concurrency&&!closed&&!admission.check().paused){
     const task=await claimNextTask(owner,scope);
     if(!task)break;
     const work=(async()=>{
-     try{await cloudStorage(async adapter=>{await adapter.preload();return executeTask(CLOUD_ROOT,task,t=>adapter.enqueue(t));},{workspace:task.workspace,lease:{id:task.id,owner}});await db.query("UPDATE batch_queue SET status='finished',lease_until=NULL,updated_at=now() WHERE id=$1 AND owner=$2 AND status='running'",[task.id,owner]);}
-     catch(e){if(['mockup','sync'].includes(task.kind)&&e.status===409&&(task.payload.attempt||0)<3){await db.query("UPDATE batch_queue SET status='queued',owner=NULL,lease_until=NULL,payload=$3,updated_at=now() WHERE id=$1 AND owner=$2",[task.id,owner,{...task.payload,attempt:(task.payload.attempt||0)+1}]);return;}await db.query("UPDATE batch_queue SET status=$3,error=$4,lease_until=NULL,updated_at=now() WHERE id=$1 AND owner=$2 AND status='running'",[task.id,owner,['mockup','sync'].includes(task.kind)?'failed':'unknown',String(e.message).slice(0,1200)]);if(['production','analysis'].includes(task.kind))await cloudStorage(()=>markInterrupted(CLOUD_ROOT,task),{workspace:task.workspace}).catch(()=>{});console.error('[batch-worker]',task.kind,task.id,e.message);}
+     try{const result=await cloudStorage(async adapter=>{await adapter.preload();return executeTask(CLOUD_ROOT,task,t=>adapter.enqueue(t));},{workspace:task.workspace,lease:{id:task.id,owner}});
+      if(result?.retryAt){await requeueTask(task.id,result.retryAt,'running',owner);return;}
+      await db.query("UPDATE batch_queue SET status='finished',lease_until=NULL,updated_at=now() WHERE id=$1 AND owner=$2 AND status='running'",[task.id,owner]);}
+     catch(e){if(['mockup','sync'].includes(task.kind)&&e.status===409&&(task.payload.attempt||0)<3){await db.query("UPDATE batch_queue SET status='queued',owner=NULL,lease_until=NULL,payload=$3,updated_at=now() WHERE id=$1 AND owner=$2",[task.id,owner,{...task.payload,attempt:(task.payload.attempt||0)+1}]);return;}await db.query("UPDATE batch_queue SET status=$3,error=$4,lease_until=NULL,updated_at=now() WHERE id=$1 AND owner=$2 AND status='running'",[task.id,owner,['mockup','sync'].includes(task.kind)?'failed':'unknown',String(e.message).slice(0,1200)]);if(['production','analysis'].includes(task.kind)){const r=await cloudStorage(()=>markInterrupted(CLOUD_ROOT,task),{workspace:task.workspace}).catch(()=>null);if(r?.retryAt)await requeueTask(task.id,r.retryAt,'unknown').catch(()=>{});}console.error('[batch-worker]',task.kind,task.id,e.message);}
     })().finally(()=>running.delete(work));running.add(work);
     // Ramp up one task per tick so decoded snapshots become visible to the next memory sample.
     break;

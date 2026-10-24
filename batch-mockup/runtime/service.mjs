@@ -3,7 +3,8 @@ import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { jsonFile,readBytes,saveJSON,fail,checkpoint,hash } from '../adapters/a-files.mjs';
 import { requirementWorkbench,readRequirementState,saveRequirementDraft,reserveRequirementAnalysis,finishRequirementAnalysis,acknowledgeReminder } from '../application/requirements.mjs';
-import { readProductionJobs,reserveProduction,executeProduction } from '../application/production.mjs';
+import { readProductionJobs,reserveProduction,executeProduction,scheduleRetry } from '../application/production.mjs';
+import { imageProviderFor } from '../adapters/production-images.mjs';
 import { readRepairInput,saveProductionRepair } from '../application/production-repair.mjs';
 import { saveSupplement } from '../application/supplements.mjs';
 import { createCase, updateCase, removeCase, stageCaseImage, prepareStudio } from '../application/intake.mjs';
@@ -136,6 +137,15 @@ export async function service(root,path,method,body={},options={}){
    }
    return {jobs};
   }
+  // 停止重试: the queue row is flagged and the worker ends the job when it next picks it up, so a
+  // picture the relay is drawing right now still arrives.
+  if(path==='/api/production/stop'){
+   const job=(await readProductionJobs(root)).find(j=>j.id===body.jobId);
+   if(!job)throw fail('未找到这张图稿',404);
+   if(!['queued','running'].includes(job.status)||!job.retries)throw fail('这张图稿不在自动重试中',409);
+   if(!options.stopProduction||!await options.stopProduction(job.id))throw fail('后台任务已结束，请刷新',409);
+   return {stopping:true};
+  }
   if(path==='/api/production/edit/chunk')return saveEditChunk(root,body);
   if(path==='/api/production/edit'){const saved=await saveProductionEdit(root,body),input=await readProductionEdit(root,body.jobId);await queue({id:randomUUID(),kind:'mockup',payload:{caseId:input.caseId}});return saved;}
   if(path==='/api/production/repair'){
@@ -204,6 +214,13 @@ export async function executeTask(root,task,enqueue,dependencies={}){
  }
  if(task.kind==='production'){
   const queuedJob=await jsonFile(resolve(root,'production-jobs',task.payload.jobId,'state.json'));
+  if(task.payload.stop&&queuedJob.status==='queued'){
+   queuedJob.status='failed';queuedJob.phase='stopped';delete queuedJob.retryAt;
+   queuedJob.error=`已停止自动重试（试了 ${queuedJob.retries||0} 次没出图），没有扣费`;
+   queuedJob.finishedAt=new Date().toISOString();
+   await saveJSON(resolve(root,'production-jobs',task.payload.jobId,'state.json'),queuedJob);await checkpoint();
+   await settleCredits(task.workspace||'main',task.payload.jobId,stepAttempts(queuedJob));return;
+  }
   if(queuedJob.status==='queued')await assertCreditReservation(task.workspace||'main',task.payload.jobId);
   if(task.payload.automatic){
    const c=(await requirementWorkbench(root,manifest)).cases.find(c=>c.caseId===task.payload.caseId);
@@ -217,6 +234,8 @@ export async function executeTask(root,task,enqueue,dependencies={}){
   }
   await executeProduction(root,task.payload.jobId,await (dependencies.productionFactory||configuredProduction)());
   const finished=await jsonFile(resolve(root,'production-jobs',task.payload.jobId,'state.json'),null);
+  // A relay miss waiting for its next try keeps its hold; the worker puts the queue row back.
+  if(finished?.status==='queued'&&finished.retryAt)return {retryAt:finished.retryAt};
   await settleCredits(task.workspace||'main',task.payload.jobId,stepAttempts(finished));
   await checkpoint();
   if(manifest.cases.find(c=>c.caseId===task.payload.caseId)?.entry!=='studio')await enqueue({id:randomUUID(),kind:'mockup',payload:{caseId:task.payload.caseId}});
@@ -232,5 +251,12 @@ export async function executeTask(root,task,enqueue,dependencies={}){
  */
 export async function markInterrupted(root,task){
  if(task.kind==='analysis'){const before=await readRequirementState(root,task.payload.caseId);const a=before.analyses.find(x=>x.id===task.payload.analysisId);if(a?.status==='running')await finishRequirementAnalysis(root,await jsonFile(resolve(root,'manifest.json')),task.payload.caseId,task.payload.analysisId,null,new Error('后台中断，未自动重试'));await checkpoint();await settleCredits(task.workspace||'main',task.payload.analysisId,a?[attempt('analyze',['returned','invalid_output'].includes(a.status),{attemptId:a.attemptId||a.id})]:[]);}
- if(task.kind==='production'){const path=resolve(root,'production-jobs',task.payload.jobId,'state.json'),s=await jsonFile(path,null);if(s?.status==='running'){s.status='unknown';s.error='后台中断，原请求结果未知；没有自动重复付费';await saveJSON(path,s);}await checkpoint();await settleCredits(task.workspace||'main',task.payload.jobId,stepAttempts(s));}
+ if(task.kind==='production'){const path=resolve(root,'production-jobs',task.payload.jobId,'state.json'),s=await jsonFile(path,null);
+  // Cut off while the relay was drawing (a release, a lease lost): nothing to pay for, so it is tried again.
+  const generating=s?.steps?.at(-1);
+  if(s?.status==='running'&&s.phase==='generate'&&!s.raw&&generating?.name==='generate'&&generating.status==='running'&&imageProviderFor(s.provider)==='cliproxy'){
+   Object.assign(generating,{status:'failed',error:'后台中断，这次没出图'});
+   scheduleRetry(s,'后台中断，这次没出图');await saveJSON(path,s);await checkpoint();return {retryAt:s.retryAt};
+  }
+  if(s?.status==='running'){s.status='unknown';s.error='后台中断，原请求结果未知；没有自动重复付费';await saveJSON(path,s);}await checkpoint();await settleCredits(task.workspace||'main',task.payload.jobId,stepAttempts(s));}
 }

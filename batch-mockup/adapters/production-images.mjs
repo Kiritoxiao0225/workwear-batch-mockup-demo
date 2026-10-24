@@ -6,8 +6,26 @@ import sharp from 'sharp';
 import { saveJSON, atomicFile, checkpoint } from './a-files.mjs';
 import { evolinkGenerate, evolinkKey, costRates, referenceImages, TRANSPARENT_NOTE } from './evolink.mjs';
 import { drawSize } from '../../lib/artwork-output-size.ts';
+import { waitUpTo } from '../../lib/server/long-request.ts';
 
 const repo = process.cwd();
+/** A relay picture past 8 minutes is not coming (the slowest that came back on 10-23 took 443 s). */
+export const RELAY_WAIT_MS = 480_000;
+// The relay runs on a subscription, so a picture it did not deliver costs nothing (definiteFailure)
+// and is worth trying again (relayRetry): production.mjs puts the job back in the queue.
+/**
+ * References go to the relay at most 1536 px on the long edge, as 电商主图 has always sent them.
+ * Four phone photos (22 MB) never came back within 10 minutes on 2026-10-24, while every request
+ * under 15 MB did. Transparency stays PNG; the rest becomes JPEG.
+ */
+export async function relayReference(original) {
+  const image = sharp(original, { limitInputPixels: 60_000_000 }), m = await image.metadata();
+  const upright = (m.orientation || 1) >= 5 ? { width: m.height, height: m.width } : m;
+  if (Math.max(upright.width, upright.height) <= 1536 && original.length <= 2_000_000 && ['png', 'jpeg', 'webp'].includes(m.format)) return { bytes: original, format: m.format };
+  const sized = image.rotate().resize(1536, 1536, { fit: 'inside', withoutEnlargement: true });
+  return m.hasAlpha ? { bytes: await sized.png().toBuffer(), format: 'png' } : { bytes: await sized.jpeg({ quality: 90 }).toBuffer(), format: 'jpeg' };
+}
+const relayMiss = (message, cause) => Object.assign(new Error(message, cause ? { cause } : undefined), { definiteFailure: true, relayRetry: true });
 const GENERATION = {
   // The Codex relay returns transparency directly too, but ignores `size`: the proportion goes in the prompt.
   cliproxy: { provider: 'cliproxy', model: 'gpt-image-2', size: 'auto', quality: 'medium', background: 'transparent', output_format: 'png', response_format: 'b64_json', n: 1, references: 'artwork', aspect: 'prompt' },
@@ -148,16 +166,23 @@ export async function configuredProduction() {
     if (images.length) {
       const f = new FormData(); Object.entries(options).forEach(([k,v]) => f.set(k, String(v))); f.set('prompt', prompt);
       for (const i of images) {
-        const bytes = await readFile(i.path); const m = await sharp(bytes).metadata();
-        f.append('image[]', new Blob([bytes], { type: `image/${m.format}` }), `image-${i.index}.${m.format}`);
+        const { bytes, format } = await relayReference(await readFile(i.path));
+        f.append('image[]', new Blob([bytes], { type: `image/${format}` }), `image-${i.index}.${format}`);
       } body = f;
     } else { headers['Content-Type'] = 'application/json'; body = JSON.stringify({ ...options, prompt }); }
     await saveJSON(resolve(dir, 'request.json'), { endpoint: '/images/' + (images.length ? 'edits' : 'generations'), ...options, prompt, images: images.map(i => ({ id:i.id,index:i.index,sha256:i.sha256,bytes:i.bytes,asset:i.asset })) });
-    const r = await fetch(base.href.replace(/\/$/u,'')+'/images/'+(images.length?'edits':'generations'), { method:'POST',headers,body,redirect:'error',signal:AbortSignal.timeout(600000) });
-    const raw = await r.text(); await record(dir,'response.json',raw);
+    let r, raw;
+    try {
+      r = await fetch(base.href.replace(/\/$/u,'')+'/images/'+(images.length?'edits':'generations'), { method:'POST',headers,body,redirect:'error',signal:AbortSignal.timeout(RELAY_WAIT_MS),dispatcher:waitUpTo(RELAY_WAIT_MS) });
+      raw = await r.text();
+    } catch (error) { throw relayMiss('新通道连接中断或超时', error); }
+    await record(dir,'response.json',raw);
     await saveJSON(resolve(dir,'http.json'),{status:r.status,requestId:r.headers.get('x-request-id')});
+    // Rate limits and relay faults pass; lost authorisation or a refused request comes back the same way.
+    if (r.status===408||r.status===429||r.status>=500) throw relayMiss(`生图接口HTTP ${r.status}（${r.status===429?'新通道限速':'新通道暂时出错'}）`);
     if (!r.ok) throw Object.assign(new Error(`生图接口HTTP ${r.status}；没有自动重试`), { definiteFailure:r.status>=400&&r.status<500 });
-    const result=JSON.parse(raw); if(result.data?.length!==1||typeof result.data[0].b64_json!=='string') throw new Error('生图返回不完整；回执已保存，没有自动重试');
+    let result; try { result=JSON.parse(raw); } catch { throw relayMiss('新通道返回不完整'); }
+    if(result.data?.length!==1||typeof result.data[0].b64_json!=='string') throw relayMiss('新通道没有返回图片');
     const fitted = await fitDrawing(Buffer.from(result.data[0].b64_json,'base64'), input.size, input.aspect);
     return { ...fitted, cost: { provider: 'codex', cny: 0, method: 'subscription' }, transparentRequested: options.background === 'transparent' };
   }

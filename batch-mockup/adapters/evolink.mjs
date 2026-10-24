@@ -93,6 +93,8 @@ export async function evolinkGenerate(input, dir, { env = process.env, pollMs = 
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const createdText = await created.text(); await atomicFile(`${dir}/created.json`, scrub(createdText)); await checkpoint();
   let task; try { task = JSON.parse(createdText); } catch {}
+  // 402: the account ran dry (2026-10-24 01:21, a tenant then retried it three times on 原通道).
+  if (created.status === 402) { forgetUploads(used); throw Object.assign(new Error('原通道暂时不可用（余额不足），没有扣费；请换「新通道」重新制作'), { definiteFailure: true }); }
   // A rejected submission may mean a reused file has expired early; upload afresh next time.
   if (!created.ok || !task?.id) { forgetUploads(used); throw Object.assign(new Error(`EvoLink 生图提交失败 HTTP ${created.status}；没有自动重试`), { definiteFailure: created.status >= 400 && created.status < 500 }); }
   await saveJSON(`${dir}/task.json`, { taskId: task.id });
