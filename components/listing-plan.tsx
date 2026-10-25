@@ -21,7 +21,7 @@ import { proofById } from "@/lib/listing/proofs";
 import { auditDraft, type AuditFix } from "@/lib/listing/audit";
 import { skuPhotos, skuWho } from "@/lib/listing/sku-card";
 import { linerPhoto, versionName, WEAR_LABEL, WEARS } from "@/lib/listing/wear";
-import { draftVersions, INNERS, linerAlone, linerColors, linerFor, linersSeen, VERSION_KINDS, type DraftVersion } from "@/lib/listing/sku-versions";
+import { draftVersions, INNERS, linerAlone, linerByColor, linerColors, linerFor, linersSeen, mainLiner, VERSION_KINDS, type DraftVersion } from "@/lib/listing/sku-versions";
 import { LinerDialog } from "./listing-liner";
 import type { LinerTag } from "@/lib/listing/client-api";
 import { capacity, cellZones, mostCells, PEOPLE_LABEL, skuPair, type Layout } from "@/lib/listing/templates";
@@ -275,9 +275,22 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
         return (<label key={t} className={"lp-chip" + (wearType === t ? " on" : "") + (off ? " off" : "")} title={off ? "素材里没有外套里穿着内胆的照片" : ""}>
           <input type="radio" name="wear" hidden disabled={off} checked={wearType === t} onChange={() => set({ wear: t === "内胆" ? { type: t, liner } : { type: t } })} />{WEAR_LABEL[t]}</label>);
       })}</div>
-        <p className="lp-say">{wearType === "内胆" ? <>外套敞开，里面穿着内胆，一眼看得出两层、厚实。内胆照这张素材画：{draft.wear?.liner && byLabel.get(draft.wear.liner) ? <a className="lp-liner-pic" href={byLabel.get(draft.wear.liner)!.url} target="_blank" rel="noreferrer" title={byLabel.get(draft.wear.liner)!.path}><img src={byLabel.get(draft.wear.liner)!.url} alt="" /></a> : draft.wear?.liner}</>
+        <p className="lp-say">{wearType === "内胆" ? <>外套敞开，里面穿着内胆，一眼看得出两层、厚实。{!linerByColor(draft) && <>内胆照这张素材画：{draft.wear?.liner && byLabel.get(draft.wear.liner) ? <a className="lp-liner-pic" href={byLabel.get(draft.wear.liner)!.url} target="_blank" rel="noreferrer" title={byLabel.get(draft.wear.liner)!.path}><img src={byLabel.get(draft.wear.liner)!.url} alt="" /></a> : draft.wear?.liner}</>}</>
           : wearType === "一体" ? "拉链拉到顶、领子立起来，看着蓬松厚实。" : "拉链拉到胸口，里面白 T，和以前一样。"}
-          {materials.wear.why && <span className="lp-muted">（整理时看到：{materials.wear.why}）</span>}</p></div>
+          {materials.wear.why && <span className="lp-muted">（整理时看到：{materials.wear.why}）</span>}</p>
+        {wearType === "内胆" && linerByColor(draft) && (() => {
+          // 10-25: the cast and every main image wear the liner of the colour they show, as its SKU image does.
+          const lined = (draft.versions ?? []).filter(v => v.on && v.kind === "外壳加内胆" && v.inner && v.colors.length);
+          return (<div className="lp-main-liners">
+            <span className="lp-small">定妆照和主图里每个颜色穿的内胆{lined.length > 1 && <> · 优先穿 <select value={lined.some(v => v.key === draft.wear?.main) ? draft.wear!.main : ""} onChange={e => set({ wear: { ...draft.wear!, main: e.target.value || undefined } })}>
+              <option value="">素材里这个颜色最常搭的那件</option>{lined.map(v => <option key={v.key} value={v.key}>{v.inner}内胆</option>)}</select></>}：</span>
+            {live(draft).map(c => {
+              const m = mainLiner(linerImages, draft, c.name), img = m?.ref ? byLabel.get(m.ref) : undefined;
+              return (<span key={c.name} className="lp-liner-tile" title={m?.ref && img ? img.path : ""}>{img ? <a href={img.url} target="_blank" rel="noreferrer"><img src={img.url} alt="" /></a> : <span className="none">拉链拉上</span>}
+                <small><b>{c.name}</b> {m?.color && img ? `配${m.color}${m.version.inner}` : "看不到内胆"}</small></span>);
+            })}
+            <small className="lp-muted">要改某个颜色配哪件，在下面「SKU 版本」里改它的内胆颜色，主图跟着变。</small></div>);
+        })()}</div>
     </>}
     {layout.sku.specCard && (wearType === "内胆" || !!draft.versions?.length) && (() => {
       // Each version's SKU images: how many show the material's own photo (free) and how many are drawn.

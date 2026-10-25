@@ -90,20 +90,37 @@ export const COVERED_ZIP = '拉链藏在门襟下面看不见（不画拉头和�
 const OPEN_PULL = '拉开后拉头在下摆底端，衣服中间不出现单独的拉头';
 
 /**
+ * How long the liner is (10-25: drawn on its own it stopped at the waist, the shell's lining showing
+ * below it on most main and SKU images). A 3-in-1's liner zips into the shell, so it is about as long;
+ * said in centimetres alone it still ended at the trousers' waistband, so the waistband is named.
+ */
+export const LINER_LENGTH = '内胆是扣在外套里面的，和外套几乎一样长：内胆下摆盖过裤腰、一直垂到臀部，只比外套下摆短一指宽；敞开的门襟里从领口到下摆一路都是内胆，内胆下面不露出一截外套里布，不能在裤腰或腰上就断掉';
+
+/**
  * How the jacket is worn on every image with people, by its type (the comparison images of 10-21):
  * 有内胆 open over its liner, 一体 zipped to the top. `liner`: the reference image that shows the
- * liner, on the cast and the SKU models; the main images copy the cast. `covered`: its zip is under
+ * liner, on the cast, the SKU models and (10-25) a main image of one colour. `covered`: its zip is under
  * a flap (coveredZip). Null: as before, zipped to the chest over a white T-shirt.
  */
 export function wearLine(type: WearType | undefined, liner?: number, color?: string, covered = false): string | null {
   if (type === '一体') return `${covered ? `门襟一直合到最顶，${COVERED_ZIP}` : '拉链一直拉到最顶'}，领子立起来护住脖子和下巴，看不到里面的 T 恤；衣服里面有填充，整体蓬松厚实，一看就是秋冬保暖款，不是一层薄外壳`;
   // The liner's colour said outright (10-22: drawn from a couple photo, 翠绿 took the light grey liner of the woman beside).
   if (type === '内胆') return liner
-    ? `外套拉链拉开、敞着穿，${OPEN_PULL}，里面穿着这款配套的${color ? `${color}` : ''}内胆（参考图${liner}里外套下面那一件：${color ? `${color}，` : '颜色、'}材质、绗缝格子和领子都照它${color ? `；参考图里别人身上的别的颜色内胆不算` : ''}），内胆拉链拉到领口；一眼看得出是外壳加内胆两层，整体厚实保暖`
-    : `外套拉链拉开、敞着穿，${OPEN_PULL}，里面穿着内胆（内胆的样子和定妆照里一样），内胆拉链拉到领口；一眼看得出是外壳加内胆两层，整体厚实保暖`;
+    ? `外套拉链拉开、敞着穿，${OPEN_PULL}，里面穿着这款配套的${color ? `${color}` : ''}内胆（参考图${liner}里外套下面那一件：${color ? `${color}，` : '颜色、'}材质、长度、绗缝格子和领子都照它${color ? `；参考图里别人身上的别的颜色内胆不算` : ''}），内胆拉链拉到领口；${LINER_LENGTH}；一眼看得出是外壳加内胆两层，整体厚实保暖`
+    : `外套拉链拉开、敞着穿，${OPEN_PULL}，里面穿着内胆（内胆的样子和定妆照里一样），内胆拉链拉到领口；${LINER_LENGTH}；一眼看得出是外壳加内胆两层，整体厚实保暖`;
   if (covered) return `门襟合到胸口，领口敞开一点露出里面的白色圆领 T 恤；${COVERED_ZIP}`;
   return null;
 }
+/**
+ * Several colours on one image, each over its own liner (10-25): the liner each shell wears said by
+ * name, as its SKU image has it; `liner` '' or none is zipped up, the liner unseen.
+ */
+export function groupWear(list: { shell: string; liner?: string }[], covered = false): string {
+  const open = list.filter(x => x.liner), shut = list.filter(x => !x.liner);
+  return [open.length && `外套拉链拉开、敞着穿，${OPEN_PULL}，里面穿着各自配套的内胆，内胆拉链拉到领口：${open.map(x => `${x.shell}里面是${x.liner}内胆`).join('，')}，每件按这里写的颜色画、不要互相照搬；${LINER_LENGTH}`,
+    shut.length && `${shut.map(x => x.shell).join('、')}${covered ? `门襟一直合到最顶，${COVERED_ZIP}` : '拉链一直拉到最顶'}，领子立起来，看不到里面穿的是什么`].filter(Boolean).join('；') + '；整体厚实保暖';
+}
+
 /** The reference line for the liner photo: only the liner is taken from it. */
 export const linerRefLine = (n: number) => `参考图${n}是这款的内胆照片，只看外套里面那一件内胆的样子；照片里的人、外套、帽子、背景都不要带过来。`;
 

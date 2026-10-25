@@ -99,3 +99,23 @@ export function linerAlone(images: Img[], inner: string, color?: string): string
 }
 /** The liner colour a shell is shown over in this item's photo (or the one it is drawn from). */
 export const linerColorOf = (images: Img[], label: string | null | undefined) => images.find(i => i.id === label)?.innerColor || undefined;
+
+/**
+ * The liner a shell colour wears on the cast and the main images (10-25: every main image copied the
+ * cast's liner, so 6609's 白色, 白+咖啡 and 翠绿 covers all wore black down; its SKU images, each from
+ * its own photo, were right). Among the ticked versions over a liner in this colour: the user's pick
+ * (`wear.main`), else the one the material shows this shell over most (6609: 白色 over 浅灰 fleece,
+ * 白+咖啡 over 咖啡色 fleece, 安哥拉红 over black down). Its liner colour and the image to draw it
+ * from are the SKU image's (linerFor, itemReference); colour '' is zipped up. Null: no version over a
+ * liner in this colour.
+ */
+export function mainLiner(images: Img[], d: Pick<Draft, 'versions' | 'wear'>, shell: string): { version: DraftVersion; color: string; ref: string | null } | null {
+  const lined = (d.versions ?? []).filter(v => v.on && v.kind === '外壳加内胆' && v.inner && v.colors.includes(shell));
+  const seen = (v: DraftVersion) => images.filter(i => i.role === '主体' && i.color === shell && i.inner === v.inner).length;
+  const version = lined.find(v => v.key === d.wear?.main) ?? [...lined].sort((a, b) => seen(b) - seen(a))[0];
+  if (!version) return null;
+  const color = linerFor(images, version, shell);
+  return { version, color, ref: color ? itemReference(images, { key: '', color: '', name: shell, version, label: '' }, color) : null };
+}
+/** The main images dress each colour in its own liner (mainLiner) once the plan has a version over one. */
+export const linerByColor = (d: Pick<Draft, 'versions' | 'wear'>) => d.wear?.type === '内胆' && (d.versions ?? []).some(v => v.on && v.kind === '外壳加内胆' && v.inner && v.colors.length > 0);

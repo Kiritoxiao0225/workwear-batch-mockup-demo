@@ -91,7 +91,8 @@ export type Draft = {
    * the liner is drawn from), 一体 zipped to the top. From the material's reading, changed on the plan.
    * None (plans before): as before.
    */
-  wear?: { type: WearType; liner?: string };
+  /** `main`: the version over a liner the main images wear (sku-versions.ts mainLiner), else each colour's most-shown one. */
+  wear?: { type: WearType; liner?: string; main?: string };
   /** The SKU versions of a 有内胆 jacket (sku-versions.ts); none: one SKU image per colour, as before. */
   versions?: DraftVersion[];
   /** What the chest shows: nothing, the word 「LOGO」, the shop's sample LOGO (店铺设置, 10-21), or this product's customer LOGO (an uploaded image's label). */
@@ -115,7 +116,7 @@ export function reusedSlots(d: Pick<Draft, 'colors' | 'model' | 'wear'>, reuse?:
   colorKeys(d.colors).forEach((k, i) => { if (k && reuse.colors[k] === d.colors[i].name && reuse.slots.includes(`product:${k}`)) out.add(`product:${k}`); });
   // The cast is worn the copy's way too (10-22): another wear draws it again.
   const m = reuse.model, same = !!m && m.lead === d.model.lead && (m.photos?.男 ?? '') === (d.model.photos?.男 ?? '') && (m.photos?.女 ?? '') === (d.model.photos?.女 ?? '')
-    && (reuse.wear?.type ?? '薄款') === (d.wear?.type ?? '薄款') && (reuse.wear?.liner ?? '') === (d.wear?.liner ?? '');
+    && (reuse.wear?.type ?? '薄款') === (d.wear?.type ?? '薄款') && (reuse.wear?.liner ?? '') === (d.wear?.liner ?? '') && (reuse.wear?.main ?? '') === (d.wear?.main ?? '');
   if (same) for (const s of reuse.slots) if (s === 'cast' || s.startsWith('cast:')) out.add(s);
   return out;
 }

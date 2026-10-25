@@ -161,6 +161,9 @@ describe('the masters', () => {
     const fill = { title: '防水', sub: '', tags: [], facts: [], cells: [], color: '乌梅紫', colors: [], all: [], light: false, who: '参考图2里的女生', badge: '', castRef: 2 };
     expect(specPrompt({ master: 'M1', task: '首图', taskLabel: '首图', n: 1, total: 5, spec: SPECS.M1.首图!, fill: { ...fill, wear: wearLine('一体') }, garment: ['连帽'], logo: null, refs: { garment: [{ name: '乌梅紫' }], cast: 2, sample: 3 } }))
       .toContain('拉链一直拉到最顶');
+    // 10-25: a cover of one colour gets its own liner's photo, not the cast's.
+    const own = specPrompt({ master: 'M1', task: '首图', taskLabel: '首图', n: 1, total: 5, spec: SPECS.M1.首图!, fill: { ...fill, wear: wearLine('内胆', 3, '咖啡色') }, garment: ['连帽'], logo: null, refs: { garment: [{ name: '白+咖啡' }], cast: 2, liner: 3, sample: 4 } });
+    expect(own).toContain('参考图3：这款的内胆照片'); expect(own).toContain('里面穿着这款配套的咖啡色内胆'); expect(own).toContain('参考图4：');
   });
   it('the chest LOGO is about a palm wide, not 「小小的」 (10-21)', () => {
     for (const line of Object.values(LOGO_LINE)) { expect(line).toContain('宽约 8–10 厘米'); expect(line).not.toContain('小小的'); }

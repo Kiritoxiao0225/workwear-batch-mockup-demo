@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { coveredZip, settleWear, versionName, wearLine, zippedWear } from './wear';
+import { coveredZip, groupWear, LINER_LENGTH, settleWear, versionName, wearLine, zippedWear } from './wear';
 
 // 1888 as its material has it (10-21): four shells alone, the same four over a black down liner, a beige fleece liner worn alone.
 const images = [
@@ -67,5 +67,20 @@ describe('a zip under a flap', () => {
     expect(wearLine('一体')).toMatch(/^拉链一直拉到最顶/);
     expect(wearLine('内胆', 3, '黑色', true)).toMatch(/拉头在下摆底端，衣服中间不出现单独的拉头/);
     expect(zippedWear(true)).toMatch(/门襟一直合到最顶/); expect(zippedWear(false)).toMatch(/^拉链一直拉到最顶/);
+  });
+});
+
+describe('the liner on the main images (10-25)', () => {
+  it('is as long as the shell, wherever it shows', () => {
+    expect(wearLine('内胆', 3, '黑色')).toContain(LINER_LENGTH);
+    expect(wearLine('内胆')).toContain(LINER_LENGTH);
+    expect(wearLine('内胆', 3, '黑色')).toMatch(/材质、长度、绗缝格子/);
+  });
+  it('several colours each over their own liner by name; one with none zipped up', () => {
+    const w = groupWear([{ shell: '白色', liner: '浅灰色摇粒绒' }, { shell: '翠绿', liner: '黑色摇粒绒' }, { shell: '咖啡' }]);
+    expect(w).toMatch(/白色里面是浅灰色摇粒绒内胆，翠绿里面是黑色摇粒绒内胆/);
+    expect(w).toMatch(/咖啡拉链一直拉到最顶/);
+    expect(w).toContain(LINER_LENGTH);
+    expect(groupWear([{ shell: '咖啡' }, { shell: '黑色', liner: '' }])).not.toContain('内胆拉链');
   });
 });

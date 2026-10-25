@@ -48,7 +48,7 @@ export const draftSchema = z.object({
   model: z.object({ lead: z.enum(['男', '女']), photos: z.object({ 男: z.string().max(12).optional(), 女: z.string().max(12).optional() }).optional() }),
   scene: z.object({ place: z.string().max(12), sell: z.string().max(12), act: z.number().int().min(0).max(9999).optional(), look: z.number().int().min(0).max(9999).optional() }).optional(),
   skuPeople: z.enum(SKU_PEOPLE).optional(),
-  wear: z.object({ type: z.enum(WEARS), liner: z.string().max(12).optional() }).optional(),
+  wear: z.object({ type: z.enum(WEARS), liner: z.string().max(12).optional(), main: z.string().max(8).optional() }).optional(),
   versions: z.array(z.object({ key: z.string().max(8), kind: z.enum(VERSION_KINDS), inner: z.enum(['', ...INNERS]), colors: z.array(z.string().max(12)).max(16),
     on: z.boolean(), added: z.boolean().optional(), ref: z.string().max(12).optional(), liners: z.record(z.string().max(12), z.string().max(12)).optional() })).max(8).optional(),
   logo: z.object({ mode: z.enum(['不印', 'LOGO', '样例', '客户']), label: z.string().max(12).optional() }).optional(),

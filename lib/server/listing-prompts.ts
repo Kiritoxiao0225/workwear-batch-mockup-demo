@@ -173,15 +173,15 @@ export function mainPrompt(input: {
   place?: string;
   /** The top-left corner is kept for the shop's LOGO (corner.ts). */
   corner?: boolean;
-  /** How the people wear it (wear.ts wearLine); none: as the cast does. */
-  wear?: string | null;
+  /** How the people wear it (wear.ts wearLine); none: as the cast does. `linerRef`: the photo of its liner (10-25). */
+  wear?: string | null; linerRef?: number;
 }) {
   const { content: c, used, all } = input, kept = input.corner ? cornerTemplate(input.template) : null, t = kept?.template ?? input.template;
   // Several colours on several people: the team together, each place its colour (listing-crowd.ts).
   const group = used.length > 1 && t.people > 2;
   const garmentRefs = input.fabric ? `参考图1是这件衣服「${used[0]?.name ?? all[0]?.name}」面料的一小块特写，只用来确定面料的颜色和纹理`
     : used.length > 1 ? used.map((x, i) => `参考图${i + 1}是「${x.name}」的${input.fromSku ? ' SKU 图' : '白底产品图'}`).join('，') : `参考图1是这件衣服的白底产品图`;
-  const refs = `${garmentRefs}${input.fabric ? '' : '，衣服的颜色和款式以它为准'}${input.cast ? `；参考图${input.cast}是这套图的模特定妆照，只用来确定模特长什么样，姿势、场景、构图按下面重新做，不照搬它的背景和站姿` : ''}${input.logoRef ? `；参考图${input.logoRef}是客户的 LOGO，只用来印在衣服胸口` : ''}。`;
+  const refs = `${garmentRefs}${input.fabric ? '' : '，衣服的颜色和款式以它为准'}${input.cast ? `；参考图${input.cast}是这套图的模特定妆照，只用来确定模特长什么样，姿势、场景、构图按下面重新做，不照搬它的背景和站姿` : ''}${input.logoRef ? `；参考图${input.logoRef}是客户的 LOGO，只用来印在衣服胸口` : ''}。${input.linerRef ? linerRefLine(input.linerRef) : ''}`;
   const colorRule = used.length > 1
     ? `- 画面里每件衣服的颜色和对应参考图一致，${SAME_STYLE}；只能出现这 ${used.length} 种颜色，每人一种。`
     : `- 颜色：${used[0]?.name ?? all[0]?.name}，和参考图一致，不偏色；画面里只有这一种衣服颜色。`;
