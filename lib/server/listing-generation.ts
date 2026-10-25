@@ -50,7 +50,7 @@ import { callPlanModel, generateListingImage, LISTING_PLAN_MODEL, listingImageMo
 import { frameRequest, parseFrame, parseRecognized, recognizeRequest, type Expected, type Frame } from './listing-recognize';
 import { liveShop, shopBrand, shopServiceImage, shopSettings } from './listing-shop';
 import { cornerAssets, pasteShopLogo } from './listing-corner';
-import { latestOutputs, MAIN_SLOT, slotShop, storeOutput, type StoredPlan } from './listing-store';
+import { latestOutputs, latestRedraws, MAIN_SLOT, slotShop, storeOutput, type StoredPlan } from './listing-store';
 import { upscaleListingImage } from './listing-upscale';
 import type { Tenant } from './tenant-scope';
 
@@ -694,7 +694,8 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
       if (input.reference) {
         const ref = (await db().query(`SELECT file_id FROM listing_assets WHERE id=$1 AND project_id=$2 AND kind='ref'`, [input.reference, job.project_id])).rows[0];
         if (!ref) throw new CatalogHttpError(404, '参考图找不到了');
-        references.push(await fileOf(ref.file_id));
+        // Like every other reference: a phone original sent whole is slow and fails on the relay.
+        references.push(await sharp(await fileOf(ref.file_id), { limitInputPixels: 60_000_000 }).rotate().resize(1536, 1536, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer());
       }
       ratio = input.ratio;
       corner = await kept(input.base);
@@ -976,8 +977,16 @@ export async function slotStates(projectId: string) {
   const d = (p?.plan as StoredPlan | null)?.draft;
   // Images drawn on the plan (draw:) are not the product's: they join the material when adopted.
   const jobs = (await db().query(`SELECT DISTINCT ON (slot) slot,status,error,input,retries,retry_at FROM listing_jobs WHERE project_id=$1 AND slot IS NOT NULL AND input->>'kind' NOT IN ('redraw','draw') ORDER BY slot, created_at DESC`, [projectId])).rows as { slot: string; status: string; error: string | null; input: JobInput; retries: number; retry_at: Date | null }[];
-  const redraws = new Map(((await db().query(`SELECT DISTINCT ON (slot) id,slot,status,error FROM listing_jobs WHERE project_id=$1 AND input->>'kind' = 'redraw' ORDER BY slot, created_at DESC`, [projectId])).rows as { id: string; slot: string; status: string; error: string | null }[])
-    .map(r => [r.slot, { job: r.id, status: r.status === 'queued' || r.status === 'running' ? 'running' as const : r.status === 'succeeded' ? 'succeeded' as const : 'failed' as const, error: r.error }]));
+  type RedrawRow = { id: string; slot: string; status: string; error: string | null; retries: number; retry_at: Date | null; ask: string; created_at: Date; updated_at: Date; result_asset: string | null; open: boolean; ahead: number | null };
+  // A queued one also says how many images go before it (every product's: the worker takes them in order).
+  const redraws = new Map(((await db().query(`SELECT r.*, CASE WHEN r.status='queued' THEN (SELECT count(*)::int FROM listing_jobs q WHERE q.status IN ('queued','running')
+      AND q.step IN ('product','image') AND q.created_at < r.created_at AND (q.retry_at IS NULL OR q.retry_at <= now())) END AS ahead FROM (${latestRedraws('$1')}) r`, [projectId])).rows as RedrawRow[])
+    .map(r => [r.slot, {
+      job: r.id, status: r.status === 'queued' || r.status === 'running' || r.status === 'succeeded' ? r.status as 'queued' | 'running' | 'succeeded' : 'failed' as const, error: r.error,
+      ask: r.ask, at: r.created_at.toISOString(), ...(r.status === 'queued' || r.status === 'running' ? {} : { done: r.updated_at.toISOString() }), open: r.open,
+      ...(r.retries ? { retries: r.retries } : {}), ...(r.retry_at && r.status === 'queued' ? { retryAt: r.retry_at.toISOString() } : {}),
+      ...(r.ahead !== null ? { ahead: r.ahead } : {}), ...(r.result_asset && r.status === 'succeeded' ? { asset: r.result_asset } : {}),
+    }]));
   const outputs = await latestOutputs(projectId);
   const made = (await db().query(`SELECT a.id,a.slot,a.elements,a.job_id,j.input FROM listing_assets a LEFT JOIN listing_jobs j ON j.id=a.job_id WHERE a.project_id=$1 AND a.slot IS NOT NULL ORDER BY a.created_at`, [projectId])).rows as { id: string; slot: string; elements: Element[] | null; job_id: string | null; input: JobInput | null }[];
   const wordsOfInput = (input: JobInput | null) => input && 'words' in input ? input.words : null;

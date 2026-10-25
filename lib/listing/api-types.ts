@@ -18,6 +18,8 @@ export type Summary = {
   counts?: Counts;
   /** When the uploaded images were cleared (SOURCE_KEEP_DAYS after the last image): no more copies then. */
   sources_cleared_at?: string | null;
+  /** Its 「点图修改」 (10-25): being made, new images waiting to be adopted, failures not yet seen to. */
+  edits?: { running: number; ready: number; failed: number };
 };
 export type Sorted = { id: string; kind: string; color: string; front: boolean; detail: string; text: boolean; logo: boolean; same: string;
   /** Who is in the picture (男 / 女 / 男女 / 多人) and whether a face is clear enough to draw from; missing on material sorted before 10-11. */
@@ -65,7 +67,16 @@ export type SlotState = {
    * reference image, if any). The result joins the history without replacing the image; 「采用」
    * makes it current through `current`.
    */
-  redraw?: { job: string; status: 'running' | 'succeeded' | 'failed'; error: string | null };
+  redraw?: Redraw;
+};
+/**
+ * A 「点图修改」 as the page shows it (10-25): what was asked and when (`at`; `done` once finished),
+ * `ahead` images waiting before a queued one, `asset` the new image. `open`: it still waits for the
+ * user (being made, a new image not adopted, or a failure), until a version is adopted or kept.
+ */
+export type Redraw = {
+  job: string; status: 'queued' | 'running' | 'succeeded' | 'failed'; error: string | null;
+  ask?: string; at?: string; done?: string; open?: boolean; ahead?: number; retries?: number; retryAt?: string; asset?: string;
 };
 export type Detail = Omit<Summary, "slots"> & { plan: Draft | null; materials: Materials | null; slots: SlotState[]; sources: Source[] };
 

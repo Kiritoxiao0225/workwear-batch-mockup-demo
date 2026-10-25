@@ -617,15 +617,29 @@ try {
   await call(0, `projects/${fourth}/redraw`, { slot: 'square:1', ask: '再来一张' }, 409);
   assert.equal(beforeRedraw - await balance(tenants[0]), unit);
   assert.equal((await detailOf(fourth)).status, 'done');
-  assert.equal((await slotOf(fourth, 'square:1')).redraw.status, 'running');
+  // 「改图进度」(10-25): what was asked and when, while it waits; the product counts it.
+  const editsOf = async (project: string) => (await (await call(0, 'projects')).json()).find((p: { id: string }) => p.id === project).edits;
+  const queuedRedraw = (await slotOf(fourth, 'square:1')).redraw;
+  assert.deepEqual([queuedRedraw.status, queuedRedraw.open, queuedRedraw.ask, typeof queuedRedraw.at, queuedRedraw.ahead >= 0], ['queued', true, '背景换成工地，下雨天', 'string', true]);
+  assert.deepEqual(await editsOf(fourth), { running: 1, ready: 0, failed: 0 });
   const [rj] = await imageJobs(fourth, true);
   await make(rj);
   assert.equal(prompt('square:1').refs, 2); assert.match(prompt('square:1').prompt, /要求：背景换成工地，下雨天/); assert.match(prompt('square:1').prompt, /参考图2是用户给的参考/);
   const afterRedraw = await slotOf(fourth, 'square:1'), candidate = afterRedraw.history.find((v: { job?: string }) => v.job === redrawJob);
   assert.deepEqual([afterRedraw.image, afterRedraw.redraw.status, candidate.change, (await detailOf(fourth)).status], [sq1.image, 'succeeded', '背景换成工地，下雨天', 'done']);
   assert.equal((await (await call(0, 'projects')).json()).find((p: { id: string }) => p.id === fourth).cover, `/api/listing/assets/${sq1.image}`);
+  assert.deepEqual([afterRedraw.redraw.open, afterRedraw.redraw.asset, typeof afterRedraw.redraw.done], [true, candidate.id, 'string']);
+  assert.deepEqual(await editsOf(fourth), { running: 0, ready: 1, failed: 0 });
   await call(0, `projects/${fourth}/current`, { slot: 'square:1', asset: candidate.id });
   assert.equal((await slotOf(fourth, 'square:1')).image, candidate.id);
+  assert.deepEqual([(await slotOf(fourth, 'square:1')).redraw.open, await editsOf(fourth)], [false, { running: 0, ready: 0, failed: 0 }]);
+  // 「不用」: the shown image chosen again puts the new one away (it stays in the history).
+  const { job: againJob } = await (await call(0, `projects/${fourth}/redraw`, { slot: 'square:1', ask: '再亮一点' })).json();
+  for (const j of await imageJobs(fourth, true)) await make(j);
+  assert.deepEqual(await editsOf(fourth), { running: 0, ready: 1, failed: 0 });
+  await call(0, `projects/${fourth}/current`, { slot: 'square:1', asset: candidate.id });
+  const keptShown = await slotOf(fourth, 'square:1');
+  assert.deepEqual([keptShown.image, keptShown.redraw.open, !!keptShown.history.find((v: { job?: string }) => v.job === againJob), await editsOf(fourth)], [candidate.id, false, true, { running: 0, ready: 0, failed: 0 }]);
   const svc = shop3.shop.made['D-warm'];
   const { job: svcJob } = await (await call(0, `projects/${shop0.project}/redraw`, { slot: 'service:D-warm', ask: '标题改成「多种工艺 任你选」' })).json();
   for (const j of await imageJobs(shop0.project, true)) await make(j);
@@ -633,7 +647,7 @@ try {
   assert.equal((await (await call(0, 'shop')).json()).shop.made['D-warm'].asset, svc.asset);
   await call(0, `projects/${shop0.project}/current`, { slot: 'service:D-warm', asset: svcVersion.id });
   assert.equal((await (await call(0, 'shop')).json()).shop.made['D-warm'].asset, svcVersion.id);
-  pass('点图修改：别人改不了、没写要求或参考图不对拦住；按一张收费；底图 + 参考图 + 要求出新图，先当候选不替换、商品状态不变；采用后才换上；店铺服务图同样能改、采用后新商品用新的');
+  pass('点图修改：别人改不了、没写要求或参考图不对拦住；按一张收费；底图 + 参考图 + 要求出新图，先当候选不替换、商品状态不变；采用后才换上；店铺服务图同样能改、采用后新商品用新的；改图进度：排队/待采用计数，采用或「不用」后收起');
 
   // ---- 店铺 LOGO：主图左上角留空、程序贴上（看图和下载都是）；第 2 张服务图不贴；关掉或换 LOGO 马上跟着变 ----
   await call(0, 'shop/corner', { on: true }, 400);

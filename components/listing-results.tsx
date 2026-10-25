@@ -7,15 +7,18 @@
  * image from itself, and 「采用」 puts the result in its place; the old one stays in the history.
  * When the square images are right, 「出竖版」 makes the 3:4 images and the 2:3 long image from
  * the plan as the user left it. The cast can be redone, which redraws every image with people.
+ * A change is made in the background (10-25): several can be asked for one after another, and the
+ * 「改图进度」 above the images lists each one until its new image is adopted or put away.
  */
 import { useState } from "react";
 import type { Detail, LayoutCard, SlotState } from "@/lib/listing/api-types";
-import { assetUrl, downloadUrl, post, redrawImage } from "@/lib/listing/client-api";
+import { askRedraw, assetUrl, downloadUrl, post } from "@/lib/listing/client-api";
 import { TASK_LABEL } from "@/lib/listing/category";
 import { colorKeys, SKU_PEOPLE, skuItemsOf, type SkuPeople } from "@/lib/listing/draft";
 import { skuPhotos, skuWho } from "@/lib/listing/sku-card";
 import { skuPair } from "@/lib/listing/templates";
 import { EditDialog } from "./listing-edit";
+import { editTag, EditsBar, type EditItem } from "./listing-edits";
 import { draftPrice, layoutOf, PriceInfo, type Prices } from "./listing-plan";
 import { useShopSets } from "./listing-service";
 
@@ -24,6 +27,9 @@ const SHAPE: Record<string, string> = { square: "1 / 1", portrait: "3 / 4", long
 /** How long until an image waiting to be tried again is tried: 「1 分钟」, or 「片刻」 when it is due. */
 const retryIn = (at: string) => { const m = Math.ceil((Date.parse(at) - Date.now()) / 60_000); return m > 0 ? `${m} 分钟` : "片刻"; };
 const numOf = (slot: string) => slot.startsWith("long") ? "长图" : `第 ${slot.split(":")[1].split("+")[0]} 张`;
+const RATIO: Record<string, string> = { square: "1:1", portrait: "3:4", long: "2:3" };
+/** Where a tile is on the page, for 「找到这张」. */
+const tileId = (slot: string) => "lp-tile-" + slot.replace(/[^\w-]/g, "_");
 
 export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError, onClose }: {
   detail: Detail; layouts: LayoutCard[]; prices: Prices;
@@ -39,9 +45,11 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
   const shops = useShopSets(), ownShop = shops.find(s => s.id === plan?.shop) ?? shops.find(s => s.isDefault);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
-  /** Versions made since the dialog opened: they show as new, not in the history. */
-  const [fresh, setFresh] = useState<string[]>([]);
-  const edit = (slot: string | null) => { setEditing(slot); setFresh([]); };
+  const edit = (slot: string | null) => setEditing(slot);
+  /** Changes being sent (the reference image going up): tagged on the image until the server has them. */
+  const [sending, setSending] = useState<string[]>([]);
+  /** The tile 「找到这张」 points at, lit for a moment. */
+  const [spot, setSpot] = useState<string | null>(null);
   const generating = detail.status === "generating";
   const made = detail.slots.filter(s => s.image).length;
   const later = plan && detail.materials ? draftPrice(plan, detail.materials, layout, prices).later : null;
@@ -53,8 +61,9 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
     const [kind, key] = s.slot.split(":"), wait = s.status === "queued" || s.status === "running", bad = !s.image && !wait;
     const label = kind === "cast" ? `模特定妆照${key ? ` · ${key}` : ""}` : kind === "sku" || kind === "skumodel" || kind === "product" ? nameOf(key) : `${numOf(s.slot)}${s.task ? ` · ${taskOf(s)}` : ""}${s.task !== "服务" && s.words?.title ? ` · ${s.words.title}` : ""}`;
     const version = s.history.findIndex(v => v.id === s.image) + 1, editable = MAIN.test(s.slot) && !!s.image;
+    const change = sending.includes(s.slot) ? { tone: "b", tag: "提交中…" } : s.redraw?.open ? editTag(s.redraw) : null;
     return (
-      <div key={s.slot} className={"lp-out" + (bad ? " bad" : "") + (kind === "cast" ? " cast" : "")}>
+      <div key={s.slot} id={tileId(s.slot)} className={"lp-out" + (bad ? " bad" : "") + (kind === "cast" ? " cast" : "") + (spot === s.slot ? " spot" : "")}>
         <div className="lp-out-img" style={{ aspectRatio: SHAPE[kind] }}>
           {s.image && (editable && !wait
             ? <button type="button" className="lp-out-open" title="按要求修改" onClick={() => edit(s.slot)}><img src={assetUrl(s.image)} alt={label} loading="lazy" /><span className="lp-out-tag">按要求修改</span></button>
@@ -62,11 +71,11 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
           {s.history.length > 1 && version > 0 && <span className="lp-out-ver">第 {version} 版</span>}
           {wait && <span className="lp-out-wait">{s.status === "running" ? s.retries ? `第 ${s.retries + 1} 次出图中…` : "出图中…" : s.retries ? "等待自动重试" : "排队中"}</span>}
           {bad && <span className="lp-out-wait">没做出来</span>}
+          {change && <span className={"lp-out-edit " + change.tone}>{change.tag}</span>}
         </div>
         <b title={label}>{label}</b>
         {bad && s.error && <small className="lp-out-why">{s.error}</small>}
         {wait && !!s.retries && <small className="lp-muted">上次没出来（{s.error ?? "出图失败"}），会自动再试，不扣费{s.status === "queued" && s.retryAt ? `，约 ${retryIn(s.retryAt)}后` : ""}</small>}
-        {s.redraw?.status === "running" && <small className="lp-muted">正在按你说的改…</small>}
         {!wait && !editable && (kind !== "cast" || bad) && <button type="button" className="lp-btn sm" onClick={() => onRedo(s.slot, label)}>重新生成</button>}
       </div>);
   };
@@ -99,14 +108,32 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
     if (window.confirm(`SKU 图全部重新生成：${how}，再按模板重新拼，所有颜色的人一样大。旧版本都留着。`)) void act("skus", { people }, "SKU 图开始重做，做好的会陆续换上");
   };
   const skuNow = plan?.skuPeople ?? "实拍";
-  /** One redraw, waited for; the new version shows as new until the dialog closes. */
+  /** One change, asked for: it is made in the background, its progress shows in 「改图进度」 and on the image. */
   const redraw = async (slot: string, ask: string, file: File | null) => {
-    const made = await redrawImage(detail.id, slot, ask, file);
-    setFresh(f => [...f, made.id]);
-    void onDone("新图好了，满意就点「采用」");
-    return made.url;
+    setSending(x => [...x, slot]);
+    try {
+      await askRedraw(detail.id, slot, ask, file);
+      await onDone("已提交，在后台改：可以接着点别的图提要求，进度看上面的「改图进度」");
+      return null;
+    } catch (error) { onError(`${nameOfSlot(slot)}没提交上：${(error as Error).message}`); throw error; }
+    finally { setSending(x => x.filter(y => y !== slot)); }
   };
+  const nameOfSlot = (slot: string) => {
+    const [kind, rest] = slot.split(":"), set = rest?.split("+")[1], s = detail.slots.find(x => x.slot === slot);
+    return `${numOf(slot)} · ${RATIO[kind] ?? kind}${set ? ` · 加的一套 ${set}` : ""}${s?.task ? ` · ${taskOf(s)}` : ""}`;
+  };
+  const locate = (slot: string) => {
+    document.getElementById(tileId(slot))?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setSpot(slot); setTimeout(() => setSpot(x => x === slot ? null : x), 2200);
+  };
+  // Every change still waiting for the user: being made first, then new images, then failures.
+  const RANK = { queued: 0, running: 0, succeeded: 1, failed: 2 };
+  const edits: EditItem[] = detail.slots.filter(s => s.image && s.redraw?.open).map(s => ({ slot: s.slot, label: nameOfSlot(s.slot), redraw: s.redraw!,
+    image: assetUrl(s.redraw!.status === "succeeded" && s.redraw!.asset ? s.redraw!.asset : s.image!) }))
+    .sort((a, b) => RANK[a.redraw.status] - RANK[b.redraw.status] || (a.redraw.at ?? "").localeCompare(b.redraw.at ?? ""));
+  const keepShown = (slot: string, message: string) => { const s = detail.slots.find(x => x.slot === slot); if (s?.image) void act("current", { slot, asset: s.image }, message); };
   const edited = editing ? detail.slots.find(s => s.slot === editing && s.image) : undefined;
+  const editedNew = edited?.redraw?.open && edited.redraw.status === "succeeded" ? edited.redraw.asset : undefined;
   const heavy: [string, () => void][] = generating ? [] : [
     ...(castSlot?.image ? [[halves ? "重画模特（有人的图全部重画）" : "换一组模特（有人的图全部重画）", recast] as [string, () => void]] : []),
     ...(layout.sku.specCard && detail.slots.some(s => s.slot.startsWith("sku:")) ? SKU_PEOPLE.map(p => [
@@ -119,6 +146,9 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
           <p className="lp-sub">{generating ? `做好 ${made}/${detail.slots.length} 张，关掉也会继续；网络或出图通道出问题的会自动重试，直到出来或点「停止出图」。` : `哪张主图不满意就点它：写想怎么改，可以加一张参考图，生成后点「采用」换上，原图留在历史里。${detail.status === "square" ? "改满意了，再出竖版。" : ""}`}</p></div>
           <div className="grow" /><button type="button" className="lp-btn sm ghost" onClick={onClose}>关闭</button></div>
         <div className="lp-box-body">
+          <EditsBar items={edits} busy={busy} onLocate={locate} onOpen={edit}
+            onAdopt={i => void act("current", { slot: i.slot, asset: i.redraw.asset }, "换上了，原图在历史里")}
+            onKeep={i => keepShown(i.slot, i.redraw.status === "succeeded" ? "保留了原来那张，新图在历史里" : "好的，这条收起了")} />
           {detail.status === "square" && later && later.images > 0 && (
             <div className="lp-alert g lp-next">
               <div><b>下一步：出竖版</b>　3:4 主图 {plan!.counts.portrait} 张{plan!.counts.long ? " + 2:3 长图 1 张" : ""}，内容照现在的方图（包括你改过的），排版按竖图重新排{castSlot ? "，模特还是定妆照里的人" : ""}。
@@ -139,9 +169,12 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
         {edited && <EditDialog title={`修改${numOf(edited.slot)} · ${taskOf(edited)}${edited.slot.startsWith("portrait") ? "（3:4）" : edited.slot.startsWith("long") ? "（2:3）" : ""}`}
           note={edited.task === "服务" ? "只改这一款的，店铺设置里存的服务图不变" : undefined}
           current={assetUrl(edited.image!)} price={prices.exempt ? "" : `${prices.image} 积分`}
-          history={edited.history.filter(v => v.id !== edited.image && !fresh.includes(v.id)).map(v => ({ image: assetUrl(v.id), label: v.change ? `改：${v.change}` : `第 ${edited.history.indexOf(v) + 1} 版` }))}
+          history={edited.history.filter(v => v.id !== edited.image && v.id !== editedNew).map(v => ({ image: assetUrl(v.id), label: v.change ? `改：${v.change}` : `第 ${edited.history.indexOf(v) + 1} 版` }))}
+          background job={edited.redraw} made={editedNew ? [assetUrl(editedNew)] : []}
+          initialAsk={edited.redraw?.open && edited.redraw.status === "failed" ? edited.redraw.ask : ""}
           onGenerate={(ask, file) => redraw(edited.slot, ask, file)}
           onAdopt={image => { const v = edited.history.find(x => assetUrl(x.id) === image); if (v) void act("current", { slot: edited.slot, asset: v.id }, "换上了，原图在历史里").then(() => edit(null)); }}
+          onKeep={() => keepShown(edited.slot, edited.redraw?.status === "succeeded" ? "保留了原来那张，新图在历史里" : "好的，这条收起了")}
           onClose={() => edit(null)} />}
         <div className="lp-box-foot">
           {adding ? <>

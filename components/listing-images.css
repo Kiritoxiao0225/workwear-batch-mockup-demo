@@ -568,3 +568,32 @@ button:hover > .edit-tag, button:focus-visible > .edit-tag { opacity: 1; }
 .lp-liner-body .made img { width: 180px; height: 180px; object-fit: contain; border: 1px solid var(--line); border-radius: 10px; background: #fff; display: block; }
 .lp-liner-body .made figcaption { display: flex; justify-content: space-between; align-items: center; font-size: 12.5px; }
 .lp-liner-body .upload { display: flex; gap: 12px; align-items: center; }
+
+/* 「改图进度」(10-25): every change still waiting, above the images; the same state tagged on each image. */
+.lp-edits { border: 1px solid var(--line); border-radius: 12px; background: var(--panel-muted); padding: 10px 12px; margin-bottom: 16px; }
+.lp-edits-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; font-size: 13px; }
+.lp-edits-head small { color: var(--muted); font-size: 12px; }
+.lp-edits ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.lp-edits li { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 10px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-left: 3px solid #2f6fb8; border-radius: 9px; padding: 6px 8px; }
+.lp-edits li.g { border-left-color: var(--success); } .lp-edits li.r { border-left-color: var(--danger); }
+.lp-edits .th { width: 44px; height: 44px; padding: 0; border: 0; border-radius: 6px; overflow: hidden; background: var(--panel-soft); }
+.lp-edits .th img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.lp-edits .tx { min-width: 0; display: grid; gap: 1px; font-size: 12.5px; }
+.lp-edits .tx b { font-size: 13px; }
+.lp-edits .ask { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lp-edits .st { display: flex; gap: 6px; align-items: baseline; color: var(--ink); }
+.lp-edits .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: #2f6fb8; }
+.lp-edits li.b .dot { animation: lp-pulse 1.2s ease-in-out infinite; }
+.lp-edits li.g .dot { background: var(--success); } .lp-edits li.r .dot { background: var(--danger); } .lp-edits li.r .st { color: var(--danger); }
+.lp-edits .go { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+@keyframes lp-pulse { 50% { opacity: .3; } }
+.lp-out-edit { position: absolute; right: 6px; top: 6px; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; color: #fff; background: #2f6fb8; pointer-events: none; }
+.lp-out-edit.g { background: var(--success); } .lp-out-edit.r { background: var(--danger); }
+.lp-out.spot .lp-out-img { outline: 3px solid var(--brand); outline-offset: 2px; transition: outline-color .3s; }
+.lp-edit-job { display: grid; gap: 2px; font-size: 12.5px; border-radius: 9px; padding: 8px 10px; background: color-mix(in srgb, #2f6fb8 10%, var(--panel)); }
+.lp-edit-job.g { background: var(--success-soft); } .lp-edit-job.r { background: color-mix(in srgb, var(--danger) 10%, var(--panel)); color: var(--danger); }
+.lp-edit-job small { color: var(--muted); font-size: 12px; } .lp-edit-job .lp-btn { justify-self: start; }
+.lp-st-edits { margin-top: 4px; border: 0; background: none; padding: 0; font-size: 12.5px; text-align: left; color: #2f6fb8; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.lp-st-edits.g { color: var(--success); } .lp-st-edits.r { color: var(--danger); }
+@media (max-width: 560px) { .lp-edits li { grid-template-columns: 44px minmax(0, 1fr); } .lp-edits .go { grid-column: 1 / -1; justify-content: flex-start; } }
+@media (prefers-reduced-motion: reduce) { .lp-edits li.b .dot { animation: none; } }

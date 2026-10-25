@@ -21,6 +21,11 @@ const nextConfig: NextConfig = {
     unoptimized: true,
   },
   poweredByHeader: false,
+  experimental: {
+    // Uploads are allowed up to 25MB (MAX_SOURCE_BYTES); the proxy otherwise cuts every request body at
+    // 10MB, and a cut image cannot be read (10-25: 16 「按要求修改」 reference images lost that way).
+    proxyClientMaxBodySize: '25mb',
+  },
   async headers() {
     return [{
       // Framing stays same-origin only: /artwork-studio embeds /api/batch/saas-editors. A full CSP

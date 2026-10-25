@@ -11,11 +11,13 @@ import { AppHeader } from "./app-header";
 import { PageHeader, PageTabs } from "./page-header";
 import type { Config, Detail, LayoutCard, Sorted, Summary } from "@/lib/listing/api-types";
 import { api, assetUrl, downloadUrl, isDemo, post } from "@/lib/listing/client-api";
+import { shrink } from "@/lib/listing/shrink";
 import { checkDraft, DEFAULT_COUNTS, fillParts, type Counts, type Draft, type PriceLine } from "@/lib/listing/draft";
 import { BUILT_IN_LAYOUTS } from "@/lib/listing/templates";
 import { draftPrice, layoutOf, lookMaster, PlanDialog, PriceInfo, startDraft, type Prices } from "./listing-plan";
 import { CopyDialog } from "./listing-copy";
 import { ResultsPanel } from "./listing-results";
+import { editsSummary } from "./listing-edits";
 import { ServiceTip, ShopPage } from "./listing-service";
 import "./listing-images.css";
 
@@ -29,26 +31,6 @@ type Tab = "全部" | "待我处理" | "进行中" | "已完成";
 
 const IMAGE = /\.(jpe?g|png|webp)$/i;
 const SETTINGS_KEY = "listing-images-plan";
-/**
- * Photos go up at most 2048 px on the long side as JPEG: the model never needs more, and an
- * 8 MB camera original becomes well under 1 MB. A small file, or one the browser cannot decode,
- * goes up unchanged.
- */
-async function shrink(file: File): Promise<Blob> {
-  try {
-    const bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, 2048 / Math.max(bitmap.width, bitmap.height));
-    if (scale === 1 && file.size <= 1_500_000) { bitmap.close(); return file; }
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(bitmap.width * scale); canvas.height = Math.round(bitmap.height * scale);
-    const ctx = canvas.getContext("2d")!;
-    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height); bitmap.close();
-    const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, "image/jpeg", 0.9));
-    return blob && blob.size < file.size ? blob : file;
-  } catch { return file; }
-}
-
 /** Every image under each dropped folder; loose files become one product. */
 async function groupsFromDrop(items: DataTransferItemList): Promise<Group[]> {
   const readAll = (reader: FileSystemDirectoryReader) => new Promise<FileSystemEntry[]>((resolve, reject) => {
@@ -158,17 +140,18 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
   const refresh = useCallback(async (full = true) => {
     const list = await api<Summary[]>("projects");
     const before = seen.current;
-    seen.current = Object.fromEntries(list.map(p => [p.id, `${p.status}|${p.updated_at}|${p.made}|${p.broken}`]));
+    seen.current = Object.fromEntries(list.map(p => [p.id, `${p.status}|${p.updated_at}|${p.made}|${p.broken}|${JSON.stringify(p.edits ?? null)}`]));
     setProjects(list);
     // The plan page and the results need the product's material, plan and images.
     const needed = list.filter(p => ["materials", "generating", "square", "done"].includes(p.status)
-      && (full || p.status === "generating" || before[p.id] !== seen.current[p.id]));
+      && (full || p.status === "generating" || !!p.edits?.running || before[p.id] !== seen.current[p.id]));
     const loaded = await Promise.all(needed.map(p => api<Detail>("projects/" + p.id).catch(() => null)));
     setDetails(old => ({ ...old, ...Object.fromEntries(loaded.filter((d): d is Detail => !!d).map(d => [d.id, d])) }));
   }, []);
   useEffect(() => { refresh().catch(error => say(error.message)); }, [refresh, say]);
   /* eslint-enable react-hooks/set-state-in-effect */
-  const busy = projects.some(p => ["planning", "writing", "generating"].includes(p.status)) || Object.keys(uploads).length > 0;
+  // A 「点图修改」 being made keeps the page polling too, so its image and 「改图进度」 change when it is done.
+  const busy = projects.some(p => ["planning", "writing", "generating"].includes(p.status) || !!p.edits?.running) || Object.keys(uploads).length > 0;
   useEffect(() => { if (!busy) return; const t = setInterval(() => void refresh(false).catch(() => {}), 3000); return () => clearInterval(t); }, [busy, refresh]);
 
   const layouts = config?.layouts ?? BUILT_IN;
@@ -303,8 +286,8 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
     setViewing(id);
   };
 
-  const needsMe = (p: Summary) => ["materials", "failed", "square"].includes(p.status) || (p.status === "uploading" && !uploads[p.id] && p.images > 0);
-  const running = (p: Summary) => ["planning", "writing", "generating"].includes(p.status) || !!uploads[p.id];
+  const needsMe = (p: Summary) => ["materials", "failed", "square"].includes(p.status) || (p.status === "uploading" && !uploads[p.id] && p.images > 0) || !!p.edits?.ready || !!p.edits?.failed;
+  const running = (p: Summary) => ["planning", "writing", "generating"].includes(p.status) || !!uploads[p.id] || !!p.edits?.running;
   const TABS: Record<Tab, (p: Summary) => boolean> = { 全部: () => true, 待我处理: needsMe, 进行中: running, 已完成: p => p.status === "done" };
   const ready = projects.filter(p => p.status === "materials" && draftOf(p.id) && !checkDraft(draftOf(p.id)!, plain(draftOf(p.id)!.layout), details[p.id]?.materials?.sorted.images).red.length);
   const readyCost = ready.map(p => { const d = draftOf(p.id)!; return draftPrice(d, details[p.id].materials!, plain(d.layout), prices).now; });
@@ -359,6 +342,7 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
               <div className="mid">
                 <div className="lp-bars" role="img" aria-label={s.step > 4 ? "4 步都做完了" : `第 ${s.step} 步，共 4 步：${STEPS[s.step - 1]}`}>{STEPS.map((n, i) => <i key={n} title={n} className={i + 1 < s.step ? "d" : i + 1 === s.step ? "n" + (s.c === "r" ? " r" : "") : ""} />)}</div>
                 <div className={"lp-st " + s.c}><span className="dot" />{s.text}</div>
+                {p.edits && editsSummary(p.edits) && <button type="button" className={"lp-st-edits" + (p.edits.running ? " b" : p.edits.ready ? " g" : " r")} onClick={() => void open(p.id)}>改图：{editsSummary(p.edits)}</button>}
               </div>
               <div className="thumbs">{squares.map(x => x.image ? <img key={x.slot} src={assetUrl(x.image)} alt="" loading="lazy" /> : <span key={x.slot} className={"ph" + (x.status === "failed" ? " bad" : " ld")} title={x.status === "failed" ? "没做出来" : "出图中"} />)}</div>
               <div className="acts">

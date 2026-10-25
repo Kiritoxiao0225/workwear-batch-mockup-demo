@@ -4,6 +4,7 @@
  * tried without the server, a database or paid model calls.
  */
 import type { SlotState } from './api-types';
+import { shrink } from './shrink';
 
 export const isDemo = () => process.env.NODE_ENV !== 'production' && typeof window !== 'undefined' && window.location.pathname.startsWith('/listing-demo');
 
@@ -20,16 +21,21 @@ export const assetUrl = (id: string) => isDemo() ? (id.startsWith('/') || id.sta
 export const downloadUrl = (projectId: string) => isDemo() ? '#demo-download' : `/api/listing/projects/${projectId}/download`;
 
 /**
- * 「点图修改」 on one image of a product (or of the shop): uploads the reference image if any, asks
- * for the redraw and waits for it (about 40 seconds). Resolves to the new version, not yet adopted.
+ * 「点图修改」 on one image of a product (or of the shop): uploads the reference image if any (made
+ * small first: a phone original is slow and may pass the upload limit) and asks for the redraw. It
+ * is made in the background; the image's `redraw` says how it goes.
  */
+export async function askRedraw(projectId: string, slot: string, ask: string, file: File | null): Promise<string> {
+  const reference = file ? (await api<{ asset: string }>(`projects/${projectId}/refs`, { method: 'POST', body: await shrink(file), headers: { 'Content-Type': 'application/octet-stream', 'x-file-name': encodeURIComponent(file.name) } })).asset : undefined;
+  return (await post<{ job: string }>(`projects/${projectId}/redraw`, { slot, ask, reference })).job;
+}
+/** {@link askRedraw}, then waits for it (about 40 seconds, longer in a queue). Resolves to the new version, not yet adopted. */
 export async function redrawImage(projectId: string, slot: string, ask: string, file: File | null): Promise<{ id: string; url: string }> {
-  const reference = file ? (await api<{ asset: string }>(`projects/${projectId}/refs`, { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream', 'x-file-name': encodeURIComponent(file.name) } })).asset : undefined;
-  const { job } = await post<{ job: string }>(`projects/${projectId}/redraw`, { slot, ask, reference });
-  for (let i = 0; i < 160; i++) {
+  const job = await askRedraw(projectId, slot, ask, file);
+  for (let i = 0; i < 240; i++) {
     await new Promise(r => setTimeout(r, 2500));
     const s = (await api<{ slots: SlotState[] }>(`projects/${projectId}`)).slots.find(x => x.slot === slot);
-    if (s?.redraw?.job !== job || s.redraw.status === 'running') continue;
+    if (s?.redraw?.job !== job || s.redraw.status === 'queued' || s.redraw.status === 'running') continue;
     if (s.redraw.status === 'failed') throw new Error(s.redraw.error || '没生成出来，没扣积分，可以再试一次');
     const made = s.history.find(v => v.job === job);
     if (made) return { id: made.id, url: assetUrl(made.id) };

@@ -111,6 +111,21 @@ export function slotShop(stored: Pick<StoredPlan, 'draft' | 'colors'> | null | u
   return extra?.shop ?? d?.shop;
 }
 
+/**
+ * The newest 「点图修改」 of each slot of the product `project` (an SQL expression), and whether it still
+ * waits for the user (`open`): it is queued or being drawn, or it made a new image not adopted, or it
+ * failed, either newer than the image shown. Adopting a version, or keeping the shown one (choosing it
+ * again), closes it.
+ */
+export const latestRedraws = (project: string) => `SELECT DISTINCT ON (j.slot) j.id, j.slot, j.status, j.error, j.retries, j.retry_at, j.input->>'ask' AS ask, j.created_at, j.updated_at, j.result_asset,
+    CASE WHEN j.status IN ('queued','running') THEN true
+      WHEN j.status = 'succeeded' THEN EXISTS (SELECT 1 FROM listing_assets r WHERE r.id=j.result_asset AND r.chosen_at IS NULL AND r.created_at > COALESCE(cur.at, '-infinity'))
+      ELSE j.updated_at > COALESCE(cur.at, '-infinity') END AS open
+  FROM listing_jobs j
+  LEFT JOIN LATERAL (SELECT max(GREATEST(a.created_at, COALESCE(a.chosen_at, a.created_at))) AS at FROM listing_assets a
+    WHERE a.project_id=j.project_id AND a.slot=j.slot AND (NOT a.candidate OR a.chosen_at IS NOT NULL)) cur ON true
+  WHERE j.project_id=${project} AND j.input->>'kind'='redraw' ORDER BY j.slot, j.created_at DESC`;
+
 export async function listProjects(tenant: string) {
   const rows = (await catalogDatabase().query(
     `SELECT p.id,p.name,p.layout,p.counts,p.status,p.error,p.updated_at,p.created_at,p.sources_cleared_at,COALESCE((p.plan->>'round')::int,0) AS round,
@@ -121,7 +136,9 @@ export async function listProjects(tenant: string) {
             (SELECT count(DISTINCT a.slot)::int FROM listing_assets a WHERE a.project_id=p.id AND a.slot IS NOT NULL) AS made,
             (SELECT count(*)::int FROM (SELECT DISTINCT ON (j.slot) j.status, j.slot FROM listing_jobs j WHERE j.project_id=p.id AND j.slot IS NOT NULL
                ORDER BY j.slot, j.created_at DESC) latest
-               WHERE latest.status IN ('failed','unknown') AND NOT EXISTS (SELECT 1 FROM listing_assets a WHERE a.project_id=p.id AND a.slot=latest.slot)) AS broken
+               WHERE latest.status IN ('failed','unknown') AND NOT EXISTS (SELECT 1 FROM listing_assets a WHERE a.project_id=p.id AND a.slot=latest.slot)) AS broken,
+            (SELECT json_build_object('running', count(*) FILTER (WHERE r.status IN ('queued','running')), 'ready', count(*) FILTER (WHERE r.status='succeeded' AND r.open),
+               'failed', count(*) FILTER (WHERE r.status IN ('failed','unknown') AND r.open)) FROM (${latestRedraws('p.id')}) r) AS edits
        FROM listing_projects p WHERE p.tenant_id=$1 AND p.deleted_at IS NULL AND p.kind='product' ORDER BY p.created_at DESC LIMIT 200`, [tenant])).rows;
   return rows.map(r => ({ ...r, cover: r.cover ? assetUrl(r.cover) : null }));
 }

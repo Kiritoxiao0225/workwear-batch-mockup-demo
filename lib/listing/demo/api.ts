@@ -173,7 +173,11 @@ function makeShop(set?: string | null) {
 
 const summary = (p: Project): Summary => {
   const slots = p.slots.length, ok = p.slots.filter(s => s.image).length, broken = p.slots.filter(s => s.status === 'failed').length;
-  return { id: p.id, name: p.name, layout: p.layout, status: p.status, error: p.error, images: p.images, cover: p.cover, slots, made: ok, broken, created_at: p.created_at, updated_at: p.updated_at, round: p.round };
+  return { id: p.id, name: p.name, layout: p.layout, status: p.status, error: p.error, images: p.images, cover: p.cover, slots, made: ok, broken, created_at: p.created_at, updated_at: p.updated_at, round: p.round, edits: editsOf(p) };
+};
+const editsOf = (p: Project) => {
+  const open = p.slots.map(s => s.redraw).filter(r => r?.open);
+  return { running: open.filter(r => r!.status === 'queued' || r!.status === 'running').length, ready: open.filter(r => r!.status === 'succeeded').length, failed: open.filter(r => r!.status === 'failed').length };
 };
 const find = (id: string) => { const p = projects.find(x => x.id === id); if (!p) throw new Error('商品不存在'); return p; };
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -293,16 +297,20 @@ export async function demoApi(path: string, init?: RequestInit): Promise<unknown
       const s = p.slots.find(x => x.slot === body.slot);
       if (!s?.image) throw new Error('这张还没出好');
       const job = crypto.randomUUID(), base = s.image.split('#')[0];
-      s.redraw = { job, status: 'running', error: null };
+      if (s.redraw?.status === 'queued' || s.redraw?.status === 'running') throw new Error('这张正在改，等它改完再改');
+      const ask = String(body.ask ?? ''), at = new Date().toISOString();
+      // Like the worker: a few seconds in the queue, then drawn.
+      s.redraw = { job, status: 'queued', error: null, ask, at, open: true, ahead: 1 };
+      setTimeout(() => { s.redraw = { job, status: 'running', error: null, ask, at, open: true }; }, 2500);
       setTimeout(() => {
         const tried = s.history.filter(v => v.job).length, alt = REDRAWN[base];
         const id = `${alt && tried % 2 === 0 ? alt : base}#v${s.history.length + 1}`;
-        s.history.push({ id, words: s.words, change: String(body.ask ?? ''), job, elements: elementsOf(id) });
-        s.redraw = { job, status: 'succeeded', error: null };
-      }, 3000);
+        s.history.push({ id, words: s.words, change: ask, job, elements: elementsOf(id) });
+        s.redraw = { job, status: 'succeeded', error: null, ask, at, done: new Date().toISOString(), open: true, asset: id };
+      }, 9000);
       return { job };
     }
-    if (action === 'current') { const s = p.slots.find(x => x.slot === body.slot)!; s.image = body.asset; s.words = s.history.find(v => v.id === body.asset)?.words ?? s.words; return {}; }
+    if (action === 'current') { const s = p.slots.find(x => x.slot === body.slot)!; s.image = body.asset; if (s.redraw) s.redraw = { ...s.redraw, open: false }; s.words = s.history.find(v => v.id === body.asset)?.words ?? s.words; return {}; }
     if (action === 'sets') {
       p.plan = { ...p.plan!, extra: [...p.plan!.extra, { color: body.color, layout: body.layout }] };
       const back = p.status; run(p, [`square:1+${body.color}`, ...(back === 'done' ? [`portrait:1+${body.color}`, `long:1+${body.color}`] : [])], () => { p.status = back; });
