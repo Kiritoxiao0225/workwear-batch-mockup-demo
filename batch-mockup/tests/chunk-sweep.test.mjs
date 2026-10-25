@@ -7,9 +7,9 @@ import { createServer } from 'node:net';
 import { randomBytes } from 'node:crypto';
 import postgres from 'postgres';
 import EmbeddedPostgres from 'embedded-postgres';
-import { sweepUploadChunks } from '../runtime/chunk-sweep.mjs';
+import { sweepAnalysisRequests, sweepUploadChunks } from '../runtime/chunk-sweep.mjs';
 
-test('上传分片：只删超过一天的三类分片，任务状态、清单和新分片都不动', async () => {
+test('上传分片：只删超过一天的三类分片，任务状态、清单和新分片都不动；AI 整理请求也是一天后删，返回结果留着', async () => {
   const root = await mkdtemp(join(tmpdir(), 'chunk-sweep-'));
   const probe = createServer(); await new Promise(ok => probe.listen(0, '127.0.0.1', ok)); const port = probe.address().port; await new Promise(ok => probe.close(ok));
   const password = randomBytes(24).toString('hex');
@@ -33,6 +33,14 @@ test('上传分片：只删超过一天的三类分片，任务状态、清单�
     const left = (await sql.unsafe('SELECT workspace, path FROM batch_documents ORDER BY workspace, path')).map(r => `${r.workspace}:${r.path}`);
     assert.deepEqual(left, ['t-a:intake-chunks/4444/0.json', 't-a:manifest.json', 't-a:production-jobs/job-1/state.json', 't-a:requirements-state/A.json']);
     assert.equal(await sweepUploadChunks({ db }), 0);
+    // AI 整理 requests (the customer's pictures inside as base64): gone a day after, the rest of the evidence stays.
+    await put('t-a', 'analysis-evidence/C1/r1-request.json', 30);
+    await put('t-a', 'analysis-evidence/C1/r1-response.json', 30);
+    await put('main', 'analysis-evidence/C2/r2-request.json', 50);
+    await put('t-a', 'analysis-evidence/C1/r3-request.json', 2);
+    assert.equal(await sweepAnalysisRequests({ db, batch: 1, pauseMs: 0 }), 2);
+    const evidence = (await sql.unsafe("SELECT workspace, path FROM batch_documents WHERE path LIKE 'analysis-evidence/%' ORDER BY path")).map(r => `${r.workspace}:${r.path}`);
+    assert.deepEqual(evidence, ['t-a:analysis-evidence/C1/r1-response.json', 't-a:analysis-evidence/C1/r3-request.json']);
   } finally {
     await sql?.end();
     await server.stop().catch(() => {});

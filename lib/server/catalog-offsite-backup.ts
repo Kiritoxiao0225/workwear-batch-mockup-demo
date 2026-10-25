@@ -3,14 +3,15 @@ import { S3Client, PutObjectCommand, HeadObjectCommand, ListObjectsV2Command, De
 import { catalogDatabase, catalogSession } from './catalog-database';
 import { streamCatalogBackup } from './catalog-backup-stream';
 
-export const BACKUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
-const retentionMs = 7 * 24 * 60 * 60 * 1000;
+// One a day, the newest 3 kept (10-25: every 6 hours for 7 days was 28 copies, 15 GB on R2).
+export const BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+export const BACKUP_KEEP = 3;
 const prefix = 'workwear-mockup/prod/backups/scheduled-v1/';
 export type BackupReceipt = { at: string; snapshotAt?: string; key: string; sha256: string; archiveSHA256: string; archiveMD5?: string; verification?: string; bytes: number; tables: number };
 export async function readBackupReceipt(): Promise<BackupReceipt | null> {
   return (await catalogDatabase().query("SELECT content_json FROM batch_documents WHERE workspace='main' AND path='ops/database-backup.json'")).rows[0]?.content_json ?? null;
 }
-export function backupFresh(receipt: Pick<BackupReceipt, 'at' | 'snapshotAt'> | null, age = 8 * 60 * 60 * 1000) {
+export function backupFresh(receipt: Pick<BackupReceipt, 'at' | 'snapshotAt'> | null, age = BACKUP_INTERVAL_MS + 2 * 60 * 60 * 1000) {
   const timestamp = Date.parse(receipt?.snapshotAt ?? receipt?.at ?? '');
   return Number.isFinite(timestamp) && timestamp <= Date.now() && Date.now() - timestamp < age;
 }
@@ -40,13 +41,14 @@ export async function runOffsiteBackup(force = false): Promise<BackupReceipt | n
           // Cleanup failure does not invalidate an already verified and recorded backup.
           try {
             let token: string | undefined;
+            const archives: string[] = [];
             do {
               const list = await client.send(new ListObjectsV2Command({ Bucket, Prefix: prefix, ContinuationToken: token }), { abortSignal: AbortSignal.timeout(30000) });
-              for (const item of list.Contents || []) if (item.Key && /^\d{4}-\d{2}-\d{2}T[\d.-]+Z-[a-f0-9]{64}\.json\.gz$/.test(item.Key.slice(prefix.length)) && item.LastModified && item.LastModified.getTime() < Date.now() - retentionMs) {
-                await client.send(new DeleteObjectCommand({ Bucket, Key: item.Key }), { abortSignal: AbortSignal.timeout(30000) });
-              }
+              for (const item of list.Contents || []) if (item.Key && /^\d{4}-\d{2}-\d{2}T[\d.-]+Z-[a-f0-9]{64}\.json\.gz$/.test(item.Key.slice(prefix.length))) archives.push(item.Key);
               token = list.IsTruncated ? list.NextContinuationToken : undefined;
             } while (token);
+            // Named by snapshot time, so the newest sort last; the one just made is always among them.
+            for (const old of archives.sort().slice(0, -BACKUP_KEEP)) if (old !== Key) await client.send(new DeleteObjectCommand({ Bucket, Key: old }), { abortSignal: AbortSignal.timeout(30000) });
           } catch { console.error('[database-backup] retention cleanup failed; verified archive retained'); }
           return receipt;
         } finally { await backup.cleanup(); }

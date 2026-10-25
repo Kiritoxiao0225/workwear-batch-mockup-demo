@@ -59,7 +59,17 @@ it('does not export when another backup owns the lock', async () => {
  expect(await runOffsiteBackup(true)).toBeNull(); expect(streamCatalogBackup).not.toHaveBeenCalled();
 });
 it('uses snapshot age rather than upload completion time for freshness', () => {
- expect(backupFresh({ at: new Date().toISOString(), snapshotAt: new Date(Date.now() - 9 * 3600000).toISOString() })).toBe(false);
+ expect(backupFresh({ at: new Date().toISOString(), snapshotAt: new Date(Date.now() - 27 * 3600000).toISOString() })).toBe(false);
+ expect(backupFresh({ at: new Date().toISOString(), snapshotAt: new Date(Date.now() - 20 * 3600000).toISOString() })).toBe(true);
  expect(backupFresh({ at: 'invalid' })).toBe(false);
  expect(backupFresh({ at: new Date(Date.now() + 60000).toISOString() })).toBe(false);
+});
+it('keeps only the newest three backups after a verified upload', async () => {
+ const prefix = 'workwear-mockup/prod/backups/scheduled-v1/', name = (day: number) => `${prefix}2026-10-${day}T00-00-00.000Z-${'a'.repeat(64)}.json.gz`;
+ const listed = [20, 21, 22, 23, 24].map(name);
+ const base = send.getMockImplementation()!;
+ send.mockImplementation(async command => command.kind === 'list' ? { Contents: [...listed, `${prefix}notes.txt`].map(Key => ({ Key })) } : base(command));
+ await runOffsiteBackup(true);
+ const deleted = send.mock.calls.filter(([command]) => command.kind === 'delete').map(([command]) => command.input.Key);
+ expect(deleted).toEqual([name(20), name(21)]);
 });
