@@ -32,7 +32,7 @@ export const listingWorkerConcurrency = (env: Env = process.env) => Number(env.L
 export type PlanCall = { content: string; model: string; requestId: string; usage: unknown; durationMs: number };
 
 /** How long one 整理 / 写画面 call may take; the slowest parts took 287 s in the two weeks to 10-26. */
-const PLAN_TIMEOUT_MS = 600_000;
+export const PLAN_TIMEOUT_MS = 600_000;
 
 export async function callPlanModel(request: object, options: Options): Promise<PlanCall> {
   const env = options.env ?? process.env, transport = options.fetchImplementation ?? fetch;
@@ -96,7 +96,7 @@ const RELAY_SIZES = { square: '1024x1024', portrait: '1152x1536', long: '1024x15
 const mimeOf = (bytes: Buffer) => bytes[0] === 0xff && bytes[1] === 0xd8 ? 'image/jpeg' : bytes.subarray(8, 12).toString() === 'WEBP' ? 'image/webp' : 'image/png';
 const RATIOS = { square: '1:1', portrait: '3:4', long: '2:3' } as const;
 /** A relay image that came back did so within 290 s on 10-22; past 8 minutes it is not coming. */
-const RELAY_TIMEOUT_MS = 480_000;
+export const RELAY_TIMEOUT_MS = 480_000;
 // The provider's words help (a refusal reads differently from a timeout); links and token-like runs
 // stay out of what the tenant sees.
 export const providerReason = (text: string) => text.replace(/https?:\/\/\S+/gu, '[链接]').replace(/[A-Za-z0-9_\-+/=]{24,}/gu, '…').slice(0, 80);
