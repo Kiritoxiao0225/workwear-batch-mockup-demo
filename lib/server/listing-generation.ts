@@ -35,7 +35,7 @@ import { renderSkuCard } from './listing-sku-card';
 import { enOf, sampleBytes, specFor, specPrompt, type Fill } from './listing-specs';
 import { removeFlatArtworkBackground } from './artwork-image-processing';
 import { coverScene, fabricColor, masterInfo, PLACES, REAL_PLACE, SELLS, type PlaceId, type Sell } from '../listing/scene';
-import { SERVICE_IMAGES, type ServiceImageId } from '../listing/service';
+import { SERVICE_IMAGES, skuBadgeText, type ServiceImageId } from '../listing/service';
 import type { SubmittedDraft } from '../listing/draft-schema';
 import { proofById, recipeOf } from '../listing/proofs';
 import { cellZones, fitTemplate, skuPair, type Box, type Layout, type Template } from '../listing/templates';
@@ -48,7 +48,7 @@ import { resolveLayout } from './listing-layouts';
 import { castOnePrompt, castPrompt, drawPrompt, editPrompt, longPrompt, mainPrompt, productPrompt, redrawPrompt, relayoutPrompt, servicePrompt, serviceWordsPrompt, skuModelPrompt, skuPrompt, type Content, type Ratio } from './listing-prompts';
 import { callPlanModel, generateListingImage, LISTING_PLAN_MODEL, listingImageModel, listingImageProvider, type ImageCall, type PlanCall } from './listing-provider';
 import { frameRequest, parseFrame, parseRecognized, recognizeRequest, type Expected, type Frame } from './listing-recognize';
-import { liveShop, shopBrand, shopServiceImage, shopSettings } from './listing-shop';
+import { liveShop, shopBrand, shopServiceImage, shopSettings, shopSkuBadge } from './listing-shop';
 import { cornerAssets, pasteShopLogo } from './listing-corner';
 import { latestOutputs, latestRedraws, MAIN_SLOT, slotShop, storeOutput, type StoredPlan } from './listing-store';
 import { upscaleListingImage } from './listing-upscale';
@@ -321,6 +321,26 @@ export async function redoSkus(tenant: Tenant, user: string, projectId: string, 
     if (jobs.some(j => j.depends.some(d => d.startsWith('cast') && !made.has(d)))) jobs.unshift(...planned.filter(j => j.slot.startsWith('cast')));
     await queueRun(c, tenant, user, projectId, jobs, prices);
     await c.query('UPDATE listing_projects SET plan=$2 WHERE id=$1', [projectId, next]);
+    return { status: 'generating', images: jobs.length };
+  });
+}
+
+/**
+ * 「按店铺设置重拼 SKU 图」 (10-26): every SKU image put together again on the template from the photos it
+ * was made with, so the shop's badge and LOGO as they are now show on it. Nothing is drawn: free.
+ */
+export async function recardSkus(tenant: Tenant, user: string, projectId: string) {
+  const prices = await currentPrices();
+  return catalogTransaction(async c => {
+    await lockProject(c, tenant, projectId, ['square', 'done'], '出过图之后才能重拼 SKU 图');
+    const latest = await latestJobs(c, projectId);
+    if (latest.some(j => j.slot.startsWith('sku') && (j.status === 'queued' || j.status === 'running'))) throw new CatalogHttpError(409, 'SKU 图还在出，等出完再重拼');
+    const made = new Set(latest.filter(j => j.status === 'succeeded').map(j => j.slot));
+    // Only cards whose pictures are all there: one waiting for its model photo is put together when that is drawn.
+    const jobs: PlannedJob[] = latest.filter(j => j.slot.startsWith('sku:') && j.input.kind === 'sku' && j.input.card && j.depends.every(d => made.has(d)))
+      .map(j => ({ slot: j.slot, step: j.step, input: j.input, depends: j.depends, multi: false, free: true }));
+    if (!jobs.length) throw new CatalogHttpError(409, '这一款没有按模板拼的 SKU 图');
+    await queueRun(c, tenant, user, projectId, jobs, prices);
     return { status: 'generating', images: jobs.length };
   });
 }
@@ -739,16 +759,21 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         const frame = photo && (source || stored.place) ? await findFrame(photo, recognize) : null;
         const text = skuCardText({ name: m.name, category: d.category, points: d.points, color: it.name });
         const row = colorRow(it.name);
+        // The shop's badge (店铺设置「SKU 图角标」, 10-26): the material's own words (「男女同码」), or 「男女同款」 when it has
+        // model photos of both, unless the shop wrote its own. Under the title only when the liner or the version is not there;
+        // in the top-left corner it takes the LOGO's place.
+        const badgeSet = await shopSkuBadge(job.tenant_id, shopSet);
+        const words = skuBadgeText(badgeSet, stored.sku?.tag, !!(d.model.photos?.男 && d.model.photos?.女));
+        const badge = words && (badgeSet.place === 'corner' || badgeSet.place === 'right') ? { text: words, place: badgeSet.place } : null;
         await succeed(await renderSkuCard({
           // The shop's own LOGO while it shows one (店铺设置); the sample LOGO is only for the crafts image.
-          ...text, rows: [...text.rows, lined ? { ...row, sub: versionName(v) } : row], logo: await (await shopBrand(job.tenant_id, shopSet))?.bytes().catch(() => null) ?? null,
+          ...text, rows: [...text.rows, lined ? { ...row, sub: versionName(v) } : row], logo: badge?.place === 'corner' ? null : await (await shopBrand(job.tenant_id, shopSet))?.bytes().catch(() => null) ?? null,
           fabric: product ? await fabricCrop(product) : await sharp(photo!).resize(800, 800, { fit: 'cover', position: 'centre' }).png().toBuffer(),
           ...(thumbFile ? { liner: { photo: await fileOf(thumbFile), name: `${v!.inner}内胆`, whole: sorted.find((i: { id: string; kind: string }) => i.id === thumbLabel)?.kind === '静物' } } : {}),
           photo: photo ? { bytes: photo, cutout: false, frame } : { bytes: await removeFlatArtworkBackground(product!, { r: 255, g: 255, b: 255 }), cutout: true },
-          // A version over a liner or the liner alone says so in the dark pill (10-22); else the material's own words
-          // (「男女同码」), or 「男女同款」 when it has model photos of both.
+          // A version over a liner or the liner alone says so in the dark pill (10-22), else the badge when it goes under the title.
           // With its liner's picture under the title the liner speaks for itself; zipped up (none), the pill names the version.
-          tag: lined && !thumbFile ? versionName(v) : lined ? null : stored.sku?.tag?.includes('男女') ? stored.sku.tag : d.model.photos?.男 && d.model.photos?.女 ? '男女同款' : null,
+          tag: lined && !thumbFile ? versionName(v) : lined ? null : badgeSet.place === 'title' ? words : null, badge,
         }));
         return;
       }

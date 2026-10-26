@@ -11,10 +11,11 @@
 import { useEffect, useRef, useState } from "react";
 import { api, post, redrawImage } from "@/lib/listing/client-api";
 import {
-  blockedOf, CRAFTS, MASTER_NAMES, pendingOf, SERVICE_IMAGES, SERVICE_LIBRARY, SERVICE_LIMITS, serviceSlot, SHOP_MAIN, staleOf, wordsFor,
-  type Craft, type ServiceImageDef, type ServiceImageId, type ServiceItem, type ShopService, type ShopSet,
+  blockedOf, CRAFTS, MASTER_NAMES, pendingOf, SERVICE_IMAGES, SERVICE_LIBRARY, SERVICE_LIMITS, serviceSlot, SHOP_MAIN, SKU_BADGE_PLACES, staleOf, wordsFor,
+  type Craft, type ServiceImageDef, type ServiceImageId, type ServiceItem, type ShopService, type ShopSet, type SkuBadge,
 } from "@/lib/listing/service";
 import { EditDialog } from "./listing-edit";
+import { SkuBadgeSection } from "./listing-sku-badge";
 
 const KEY = "listing-shop-service-v2";
 const EVENT = "listing-shop-changed";
@@ -176,6 +177,9 @@ function ShopForm({ state, unit, exempt, onSay }: { state: ShopState; unit: numb
     return () => clearInterval(t);
   }, [making.length, onSay, state.set]);
   const credits = (n: number) => exempt ? "" : `约 ${n * unit} 积分`;
+  const setBadge = (skuBadge: SkuBadge) => void post<ShopState>("shop/sku-badge", { ...skuBadge, set: state.set })
+    .then(s => { keep(s); onSay(skuBadge.place === "off" ? "SKU 图不放角标了" : `SKU 图角标：${SKU_BADGE_PLACES.find(([id]) => id === skuBadge.place)?.[1]}${skuBadge.text ? `「${skuBadge.text}」` : "，自动写男女同款"}`); })
+    .catch(error => onSay((error as Error).message));
   const setCorner = (on: boolean) => void post<ShopState>("shop/corner", { on, set: state.set }).then(s => { keep(s); onSay(on ? "打开了：之后出的主图左上角放店铺 LOGO" : "关掉了：主图左上角不再放 LOGO"); }).catch(error => onSay((error as Error).message));
 
   const setItem = (i: number, patch: Partial<ServiceItem>) => change({ ...shop, items: shop.items.map((x, m) => m === i ? { ...x, ...patch } : x) });
@@ -243,7 +247,7 @@ function ShopForm({ state, unit, exempt, onSay }: { state: ShopState; unit: numb
       {ask && <AskDialog ask={ask} onClose={() => setAsk(null)} />}
       <div className="lp-shop-grid">
         <nav className="lp-snav" aria-label="店铺设置目录">
-          <a href="#lp-s-svc">服务卖点</a><a href="#lp-s-brand">LOGO</a>
+          <a href="#lp-s-svc">服务卖点</a><a href="#lp-s-brand">LOGO</a><a href="#lp-s-badge">SKU 角标</a>
           <a href="#lp-s-img">服务图{pending.images > 0 && Object.keys(shop.made).length > 0 && <span className="chip y">{pending.images} 张旧字</span>}</a>
         </nav>
         <div>
@@ -287,6 +291,7 @@ function ShopForm({ state, unit, exempt, onSay }: { state: ShopState; unit: numb
             </div>
             </div>
           </section>
+          <SkuBadgeSection badge={shop.skuBadge} logo={shop.corner} onSave={setBadge} />
           <section className="lp-ann" id="lp-s-img">
             <div><h2>服务图</h2><p>每套母版配好了一种服务图，颜色和风格跟那套图一致，5 套母版共用 4 张。</p><p className="lp-small">三张写的是上面勾的服务；印绣工艺那张的工艺在它下面直接选，布面图案用上面的样例 LOGO。</p><p className="lp-small">出商品时，用哪套母版就自动放对应的那张，放在第 2 张，不用选，也不再花钱。</p></div>
             <div className="lp-svc-imgs">

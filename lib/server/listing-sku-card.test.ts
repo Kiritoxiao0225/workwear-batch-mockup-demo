@@ -21,6 +21,28 @@ describe('renderSkuCard', () => {
   });
 });
 
+describe('SKU 图角标 (10-26)', () => {
+  const dark = async (image: Buffer, left: number, top: number) => {
+    const { data } = await sharp(image).extract({ left, top, width: 2, height: 2 }).raw().toBuffer({ resolveWithObject: true });
+    return data[0] < 60 && data[1] < 60 && data[2] < 60;
+  };
+  const card = async (badge: { text: string; place: 'corner' | 'right' } | null, logo: Buffer | null) => renderSkuCard({ title: ['高端定制'], rows: [colorRow('黑色')], fabric: await solid(300, 300, '#eeeeee'),
+    photo: { bytes: await solid(900, 1200, '#d8d8d8'), cutout: false }, feature: null, logo, badge });
+  it('puts the badge in the top-left corner in place of the LOGO, or at the top right of the picture', async () => {
+    const logo = await solid(260, 110, '#c02020');
+    const withLogo = await card(null, logo), corner = await card({ text: '男女同款', place: 'corner' }, logo), right = await card({ text: '男女同款', place: 'right' }, logo);
+    // The LOGO's red at the top left; the corner badge's dark pill there instead, and no red anywhere it was.
+    const { data } = await sharp(withLogo).extract({ left: 100, top: 100, width: 2, height: 2 }).raw().toBuffer({ resolveWithObject: true });
+    expect(data[0] > 150 && data[1] < 80).toBe(true);
+    expect(await dark(corner, 66, 70 + 33)).toBe(true);
+    const { data: under } = await sharp(corner).extract({ left: 200, top: 150, width: 2, height: 2 }).raw().toBuffer({ resolveWithObject: true });
+    expect(under[0] - under[1]).toBeLessThan(30);
+    // On the right: the pill's right end over the picture, the LOGO left where it was.
+    expect(await dark(right, SKU_CARD_SIZE - 36 - 24 - 14, 36 + 24 + 33)).toBe(true);
+    expect(await dark(withLogo, SKU_CARD_SIZE - 36 - 24 - 14, 36 + 24 + 33)).toBe(false);
+  });
+});
+
 describe('the unit marks the fonts lack (10-19)', () => {
   // The cards' fonts have no ₂ ⁺ ² ㎡: the server (no fallback fonts) printed nothing for them, so they are drawn as small figures.
   it('splits the marks off as small figures below or above the line', () => {

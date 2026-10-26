@@ -63,11 +63,33 @@ export type MadeService = { image: string; asset?: string; words: string[]; made
  * `logo`: the sample LOGO printed on the crafts image. `brand`: the shop's own LOGO, put in the top-left
  * corner of its main images and on its SKU images while `corner` is on (corner.ts); never on a garment.
  */
-export type ShopService = { items: ServiceItem[]; crafts: Craft[]; logo: string | null; brand: string | null; corner: boolean; made: Partial<Record<ServiceImageId, MadeService>> };
+export type ShopService = { items: ServiceItem[]; crafts: Craft[]; logo: string | null; brand: string | null; corner: boolean; skuBadge: SkuBadge; made: Partial<Record<ServiceImageId, MadeService>> };
+
+/**
+ * The short tag on a shop's SKU images (10-26). `text` empty: 「男女同款」 on a product with model photos
+ * of both (the material's own 「男女同码」 kept), nothing on the others; else these words on every one.
+ * `place`: under the title, the top-left corner (where the shop LOGO goes: the SKU images then show
+ * no LOGO, its main images still do), the top-right corner of the picture, or nowhere.
+ */
+export type SkuBadge = { text: string; place: SkuBadgePlace };
+export const SKU_BADGE_PLACES = [
+  ['title', '标题下面'], ['corner', '左上角'], ['right', '右上角'], ['off', '不放'],
+] as const satisfies readonly (readonly [string, string])[];
+export type SkuBadgePlace = (typeof SKU_BADGE_PLACES)[number][0];
+/** As SKU images were before the setting: 「男女同款」 under the title when the product has both. */
+export const DEFAULT_SKU_BADGE: SkuBadge = { text: '', place: 'title' };
+export const SKU_BADGE_MAX = 8;
+export const SKU_BADGE_PRESETS = ['男女同款', '新品上市', '加绒加厚', '现货速发', '可定制LOGO'];
+/** The words of a product's badge, or null for none. `own`: the material's own words for it (「男女同码」), `both`: it has model photos of a man and a woman. */
+export function skuBadgeText(badge: SkuBadge, own: string | null | undefined, both: boolean): string | null {
+  if (badge.place === 'off') return null;
+  if (badge.text.trim()) return badge.text.trim();
+  return own?.includes('男女') ? own : both ? '男女同款' : null;
+}
 
 /** A new shop: what the AI read in the products already uploaded comes ticked; nothing made yet. */
 export function defaultShop(fromMaterials: string[] = []): ShopService {
-  return { items: SERVICE_LIBRARY.map(x => ({ ...x, on: fromMaterials.includes(x.title), ai: fromMaterials.includes(x.title) })), crafts: ['刺绣', '高清烫画', '数码转印'], logo: null, brand: null, corner: false, made: {} };
+  return { items: SERVICE_LIBRARY.map(x => ({ ...x, on: fromMaterials.includes(x.title), ai: fromMaterials.includes(x.title) })), crafts: ['刺绣', '高清烫画', '数码转印'], logo: null, brand: null, corner: false, skuBadge: DEFAULT_SKU_BADGE, made: {} };
 }
 
 /** What an image writes, in its slots' order: the first ticked services, or the chosen crafts. */

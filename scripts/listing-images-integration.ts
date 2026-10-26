@@ -649,7 +649,7 @@ try {
   assert.equal((await (await call(0, 'shop')).json()).shop.made['D-warm'].asset, svcVersion.id);
   pass('点图修改：别人改不了、没写要求或参考图不对拦住；按一张收费；底图 + 参考图 + 要求出新图，先当候选不替换、商品状态不变；采用后才换上；店铺服务图同样能改、采用后新商品用新的；改图进度：排队/待采用计数，采用或「不用」后收起');
 
-  // ---- 店铺 LOGO：主图左上角留空、程序贴上（看图和下载都是）；第 2 张服务图不贴；关掉或换 LOGO 马上跟着变 ----
+  // ---- 店铺 LOGO：主图左上角留空、程序贴上（看图和下载都是）；第 2 张服务图不贴；关掉或换 LOGO 马上跟着变；SKU 图角标 ----
   await call(0, 'shop/corner', { on: true }, 400);
   const beforeCorner = await balance(tenants[0]);
   // Three squares with gaps (not a solid block), so it is drawn white on a dark corner.
@@ -680,6 +680,29 @@ try {
   assert.equal(await receiptOf(fifth, 'square:2'), undefined);
   // The fake image is dark grey: the LOGO's first square (58–122, 50–114 on 1440) comes out white, the rest of the corner stays.
   const pixel = async (bytes: Buffer, x: number, y: number) => { const { data } = await sharp(bytes).extract({ left: x, top: y, width: 1, height: 1 }).raw().toBuffer({ resolveWithObject: true }); return data[0]; };
+  // SKU 图角标 (10-26): kept per shop; in the top-left corner it takes the LOGO's place on the SKU image, and
+  // 「按店铺设置重拼 SKU 图」 puts it on the cards already made, free, without drawing anyone again.
+  const card5 = (await detailOf(fifth)).slots.find((s: { slot: string; image: string | null }) => s.slot.startsWith('sku:') && s.image).slot;
+  // The LOGO's navy at the top left before (blue well above red); the badge's neutral black after.
+  const rgb = async (bytes: Buffer, x: number, y: number) => [...(await sharp(bytes).extract({ left: x, top: y, width: 1, height: 1 }).raw().toBuffer())];
+  const [r0, , b0] = await rgb(await bytesOf((await slotOf(fifth, card5)).image), 66, 103);
+  assert.ok(b0 - r0 > 20);
+  assert.deepEqual((await (await call(0, 'shop')).json()).shop.skuBadge, { text: '', place: 'title' });
+  await call(0, 'shop/sku-badge', { text: '一二三四五六七八九', place: 'corner' }, 400);
+  await call(0, 'shop/sku-badge', { text: '', place: 'top' }, 400);
+  assert.deepEqual((await (await call(0, 'shop/sku-badge', { text: '新品上市', place: 'corner' })).json()).shop.skuBadge, { text: '新品上市', place: 'corner' });
+  assert.deepEqual((await (await call(1, 'shop')).json()).shop.skuBadge, { text: '', place: 'title' });
+  const beforeRecard = await balance(tenants[0]), drawnBefore = (await imageJobs(fifth)).length;
+  assert.ok((await (await call(0, `projects/${fifth}/recard`, {})).json()).images >= 1);
+  await call(0, `projects/${fifth}/recard`, {}, 409);
+  const recards = await imageJobs(fifth, true);
+  assert.ok(recards.length >= 1 && recards.every(j => j.slot.startsWith('sku:')));
+  for (const j of recards) await make(j);
+  assert.equal(await balance(tenants[0]), beforeRecard);
+  assert.equal((await imageJobs(fifth)).length, drawnBefore + recards.length);
+  const [r1, g1, b1] = await rgb(await bytesOf((await slotOf(fifth, card5)).image), 66, 103);
+  assert.ok(r1 < 60 && Math.abs(b1 - r1) < 12 && Math.abs(g1 - r1) < 12);
+  await call(0, 'shop/sku-badge', { text: '', place: 'title' });
   const sq5 = (await slotOf(fifth, 'square:1')).image;
   const shown = await call(0, 'assets/' + sq5), shownBytes = Buffer.from(await shown.arrayBuffer()), tag = shown.headers.get('etag')!;
   assert.equal(shown.headers.get('cache-control'), 'private, no-cache');
@@ -725,6 +748,7 @@ try {
   await db().query('UPDATE credit_accounts SET balance_cents=$2 WHERE tenant_id=$1', [tenants[0], beforeCorner]);
   pass('删除 LOGO：只删自己店的；删店铺 LOGO 连开关一起关；删样例 LOGO 后胸口改印「LOGO」字样、印绣工艺图整张重画成抽象图案');
   pass('胸口印样例 LOGO：出图带上店铺设置里的样例 LOGO；店铺 LOGO：没传 LOGO 打不开；开了以后新出的方图左上角留空、看图和下载都贴上（深底变白）；第 2 张服务图不贴；竖版照着留空也贴；别人看不到；换 LOGO 马上换、关掉马上恢复原图，之后出的图不再留空');
+  pass('SKU 图角标：每套店铺各存各的（太长、位置不对拦住，别的账号不受影响）；放左上角就顶替 SKU 图上的店铺 LOGO；「按店铺设置重拼 SKU 图」只重拼 SKU 图、不扣积分，出来就带新角标');
 
   // ---- 多套店铺（10-22）：一个账号几套店铺，各有自己的 LOGO、服务和服务图；一款用一套，换色首图可以另选 ----
   const beforeSets = await balance(tenants[0]);

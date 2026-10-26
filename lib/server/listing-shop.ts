@@ -12,8 +12,8 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import sharp from 'sharp';
 import {
-  blockedOf, CRAFTS, defaultShop, pendingOf, SERVICE_IMAGES, SERVICE_LIMITS, serviceSlot, SHOP_MAIN, wordsFor,
-  type MadeService, type ServiceImageId, type ShopService, type ShopSet,
+  blockedOf, CRAFTS, DEFAULT_SKU_BADGE, defaultShop, pendingOf, SERVICE_IMAGES, SERVICE_LIMITS, serviceSlot, SHOP_MAIN, SKU_BADGE_MAX, SKU_BADGE_PLACES, wordsFor,
+  type MadeService, type ServiceImageId, type ShopService, type ShopSet, type SkuBadge, type SkuBadgePlace,
 } from '../listing/service';
 import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './catalog-database';
 import { CatalogHttpError } from './catalog-auth';
@@ -27,7 +27,7 @@ import type { Tenant } from './tenant-scope';
 const db = () => catalogDatabase();
 /** What is stored on the shop's row; the LOGOs are asset ids of uploaded reference images (rows before 10-18 have no brand). */
 /** `logoGone`: when the sample LOGO was deleted, so a crafts image drawn before still with it is drawn again. */
-type Settings = Omit<ShopService, 'made' | 'logo' | 'brand' | 'corner'> & { logo: string | null; brand?: string | null; corner?: boolean; logoGone?: string };
+type Settings = Omit<ShopService, 'made' | 'logo' | 'brand' | 'corner' | 'skuBadge'> & { logo: string | null; brand?: string | null; corner?: boolean; logoGone?: string; skuBadge?: SkuBadge };
 /** The row's jsonb: the first shop's settings at the top (as before 10-22), the others in `sets`, and which is the default. */
 type Row = Settings & { name?: string; sets?: { id: string; name: string; settings: Settings }[]; defaultSet?: string };
 export { serviceSlot };
@@ -83,7 +83,7 @@ export async function shopState(tenant: string, user: string, wanted?: string | 
     } satisfies MadeService;
   }
   const shop: ShopService = { items: own.items, crafts: own.crafts, logo: own.logo ? assetUrl(own.logo) : null,
-    brand: own.brand ? assetUrl(own.brand) : null, corner: !!own.corner && !!own.brand, made };
+    brand: own.brand ? assetUrl(own.brand) : null, corner: !!own.corner && !!own.brand, skuBadge: own.skuBadge ?? DEFAULT_SKU_BADGE, made };
   return { project: row.id, set, sets: setsOf(row.shop), shop, making, failed };
 }
 
@@ -184,6 +184,27 @@ export async function saveShopCorner(tenant: string, user: string, input: unknow
     return s;
   });
   return shopState(tenant, user, s);
+}
+
+const skuBadgeSchema = z.object({
+  text: z.string().trim().max(SKU_BADGE_MAX, `角标最多 ${SKU_BADGE_MAX} 个字`),
+  place: z.enum(SKU_BADGE_PLACES.map(([id]) => id) as [SkuBadgePlace, ...SkuBadgePlace[]]),
+});
+/** SKU 图的角标 (10-26): for SKU images made from now on; 「按店铺设置重拼 SKU 图」 puts it on those made before, free. */
+export async function saveSkuBadge(tenant: string, user: string, input: unknown, set?: string | null) {
+  const parsed = skuBadgeSchema.safeParse(input);
+  if (!parsed.success) throw new CatalogHttpError(400, parsed.error.issues[0]?.message ?? '角标设置不对');
+  const s = await catalogTransaction(async c => {
+    const row = await shopRow(c, tenant, user), s = shopOf(row.shop, set);
+    await patchSet(c, row, s, { skuBadge: parsed.data });
+    return s;
+  });
+  return shopState(tenant, user, s);
+}
+/** A shop's SKU badge setting, for its SKU images. */
+export async function shopSkuBadge(tenant: string, set?: string | null): Promise<SkuBadge> {
+  const row = (await db().query(`SELECT shop FROM listing_projects WHERE tenant_id=$1 AND kind='shop'`, [tenant])).rows[0]?.shop as Row | undefined;
+  return (row && settingsOf(row, shopOf(row, set))?.skuBadge) ?? DEFAULT_SKU_BADGE;
 }
 
 /**

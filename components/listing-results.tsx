@@ -136,6 +136,8 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
   const editedNew = edited?.redraw?.open && edited.redraw.status === "succeeded" ? edited.redraw.asset : undefined;
   const heavy: [string, () => void][] = generating ? [] : [
     ...(castSlot?.image ? [[halves ? "重画模特（有人的图全部重画）" : "换一组模特（有人的图全部重画）", recast] as [string, () => void]] : []),
+    // Free (10-26): the cards put together again, the shop's badge and LOGO as they are now; nobody redrawn.
+    ...(layout.sku.specCard && detail.slots.some(s => s.slot.startsWith("sku:") && s.image) ? [["按店铺设置重拼 SKU 图（免费，不重画模特）", () => void act("recard", {}, "SKU 图开始重拼，用的是店铺设置里现在的角标和 LOGO")] as [string, () => void]] : []),
     ...(layout.sku.specCard && detail.slots.some(s => s.slot.startsWith("sku:")) ? SKU_PEOPLE.map(p => [
       `SKU 图全部重新生成 · ${p === "实拍" ? "用素材实拍" : p === "男女" ? "男女模特一起" : `${p}模特`}${p === skuNow ? "（现在）" : ""}`, () => redoSkus(p)] as [string, () => void]) : []),
   ];

@@ -24,6 +24,11 @@ export type SkuCard = SkuText & {
   /** A short tag such as 「男女同款」: a dark pill under the title. */
   tag?: string | null;
   /**
+   * The same pill in a corner (店铺设置「SKU 图角标」, 10-26): `corner` the top left, in place of the
+   * shop's LOGO (the two never share it), `right` the top right of the picture.
+   */
+  badge?: { text: string; place: 'corner' | 'right' } | null;
+  /**
    * A version over a liner or the liner alone (10-22): the material's photo of the liner, a small picture
    * under the title with its name on it (大俊's SKU sheet); the feature card stays at the bottom.
    */
@@ -101,6 +106,17 @@ function layoutText(ctx: SKRSContext2D, text: string, family: string, size: numb
   if (!best) return null;
   for (let s = size; s >= min; s--) if (best.every(l => measureRuns(ctx, l, family, s) <= max)) return { size: s, lines: best };
   return null;
+}
+
+const PILL_INK = '#1d1d1d';
+/** A dark pill with white words `size` px high, its top edge at `y` and its `align` side at `x` (at most `max` wide); returns its height. */
+function pill(ctx: SKRSContext2D, text: string, x: number, y: number, align: 'left' | 'right', max = 350, size = 30) {
+  const h = Math.round(size * 1.75), pad = Math.round(size * 0.73);
+  ctx.font = `${size}px "${FONT.heavy}"`; ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
+  const w = Math.min(max, ctx.measureText(text).width + 2 * pad), left = align === 'left' ? x : x - w;
+  ctx.fillStyle = PILL_INK; roundRect(ctx, left, y, w, h, h / 2); ctx.fill();
+  ctx.fillStyle = '#ffffff'; fitText(ctx, text, FONT.heavy, size, w - 2 * pad); ctx.fillText(text, left + pad, y + h / 2 + size * 0.38);
+  return h;
 }
 
 function roundRect(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -251,10 +267,14 @@ export async function renderSkuCard(c: SkuCard): Promise<Buffer> {
     ctx.drawImage(img, dx, dy, dw, dh);
   }
 
-  // Left: logo, title, the three rows.
+  // Top right, over the picture.
+  if (c.badge?.place === 'right') pill(ctx, c.badge.text, S - 36 - 24, 36 + 24, 'right', 420, 38);
+
+  // Left: logo (or the corner badge in its place), title, the three rows.
   const L = 60, W = 350;
   let y = 70;
-  if (c.logo) {
+  if (c.badge?.place === 'corner') y += pill(ctx, c.badge.text, L, y, 'left', W, 38) + 40;
+  else if (c.logo) {
     const logo = await asImage(c.logo), scale = Math.min(260 / logo.width, 110 / logo.height);
     ctx.drawImage(logo, L, y, logo.width * scale, logo.height * scale);
     y += logo.height * scale + 50;
@@ -286,11 +306,7 @@ export async function renderSkuCard(c: SkuCard): Promise<Buffer> {
     ctx.restore(); ctx.fillStyle = INK; y += box.h + 30;
   } else if (c.tag) {
     // Under the title, in place of its short bar.
-    ctx.font = `30px "${FONT.heavy}"`;
-    const w = Math.min(W, ctx.measureText(c.tag).width + 44);
-    ctx.fillStyle = INK; roundRect(ctx, L, y + 2, w, 52, 26); ctx.fill();
-    ctx.fillStyle = '#ffffff'; fitText(ctx, c.tag, FONT.heavy, 30, w - 44); ctx.fillText(c.tag, L + 22, y + 39);
-    ctx.fillStyle = INK; y += 92;
+    pill(ctx, c.tag, L, y + 2, 'left', W); ctx.fillStyle = INK; y += 92;
   } else { ctx.fillRect(L, y + 10, 62, 6); y += 60; }
   // The rows share the room down to the card, at most 150 px apart.
   const card = { x: 38, y: 868, w: 390, h: 300 }, rows = c.rows.slice(0, 3);
