@@ -1,6 +1,7 @@
 import sharp from 'sharp';
 import { describe, expect, it, vi } from 'vitest';
 import { callPlanModel, generateListingImage, providerReason } from './listing-provider';
+import { waitUpTo } from './long-request';
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
@@ -110,6 +111,13 @@ describe('the analysis call', () => {
     const fetchImplementation = (async (target: string) => { url = target; return new Response(JSON.stringify({ id: 'c', choices: [{ finish_reason: 'stop', message: { content: '{}' } }] }), { headers: { 'Content-Type': 'application/json' } }); }) as typeof fetch;
     await callPlanModel({ model: 'm' }, { env: { EVOLINK_API_KEY: 'k' }, fetchImplementation, beforeSubmit: async () => {}, receipt: async () => {} });
     expect(url).toBe('https://direct.evolink.ai/v1/chat/completions');
+  });
+
+  it('waits as long as its signal allows, not Node fetch\'s own 300 s (10-26: a 204-photo sort cut five times)', async () => {
+    let init: (RequestInit & { dispatcher?: unknown }) | undefined;
+    const fetchImplementation = (async (_target: string, given?: RequestInit) => { init = given; return new Response(JSON.stringify({ id: 'c', choices: [{ finish_reason: 'stop', message: { content: '{}' } }] }), { headers: { 'Content-Type': 'application/json' } }); }) as typeof fetch;
+    await callPlanModel({ model: 'm' }, { env: { EVOLINK_API_KEY: 'k' }, fetchImplementation, beforeSubmit: async () => {}, receipt: async () => {} });
+    expect(init?.dispatcher).toBe(waitUpTo(600_000));
   });
 });
 

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { cliproxyListingImage } from './cliproxy-image-2';
+import { waitUpTo } from './long-request';
 /**
  * Model calls for 电商主图: the analysis and the images on EvoLink (gpt-image-2.5), as live, unless
  * LISTING_PLAN_PROVIDER=cliproxy or LISTING_IMAGE_PROVIDER=cliproxy moves that half to the Codex
@@ -30,6 +31,9 @@ export const listingWorkerConcurrency = (env: Env = process.env) => Number(env.L
 
 export type PlanCall = { content: string; model: string; requestId: string; usage: unknown; durationMs: number };
 
+/** How long one 整理 / 写画面 call may take; the slowest parts took 287 s in the two weeks to 10-26. */
+const PLAN_TIMEOUT_MS = 600_000;
+
 export async function callPlanModel(request: object, options: Options): Promise<PlanCall> {
   const env = options.env ?? process.env, transport = options.fetchImplementation ?? fetch;
   const relay = listingPlanProvider(env) === 'cliproxy';
@@ -40,10 +44,12 @@ export async function callPlanModel(request: object, options: Options): Promise<
   await options.beforeSubmit();
   // Streamed: the words come back as they are written, so a long analysis never sits silent long
   // enough for the connection to be cut (10-13: 199 photos, cut at about two minutes).
+  // Node's fetch still gives up at 300 s without headers or between chunks, whatever the signal allows: the
+  // last part of a 204-photo sort (10-26, 6608) failed there five times as 「fetch failed」, at 5 min 45 s.
   const response = await transport(endpoint, {
-    method: 'POST', redirect: 'error', signal: AbortSignal.timeout(600_000),
+    method: 'POST', redirect: 'error', signal: AbortSignal.timeout(PLAN_TIMEOUT_MS), dispatcher: waitUpTo(PLAN_TIMEOUT_MS),
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ ...request, stream: true, stream_options: { include_usage: true } }),
-  });
+  } as RequestInit);
   if (!response.ok || !response.headers.get('content-type')?.includes('event-stream')) return wholeAnswer(response, key, options, started);
   let content = '', id = '', model = '', usage: unknown = null, finish = '', buffer = '';
   const reader = response.body!.getReader(), decoder = new TextDecoder();
