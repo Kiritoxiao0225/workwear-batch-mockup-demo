@@ -601,25 +601,25 @@ button:hover > .edit-tag, button:focus-visible > .edit-tag { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .lp-edits li.b .dot { animation: none; } }
 
 /* 店铺设置「SKU 图角标」(10-26): where it goes, what it says, and a sketch of the SKU image. */
-.lp-badge { display: grid; gap: 10px; align-content: start; }
-.lp-badge h3 { margin: 4px 0 0; font-size: 13.5px; }
-.lp-badge-places { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-.lp-badge-words { display: flex; gap: 6px; flex-wrap: wrap; }
-.lp-chip { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 4px 12px; font-size: 12.5px; }
-.lp-chip.on { border-color: var(--brand); background: var(--brand-soft); font-weight: 600; }
-.lp-badge-own { display: flex; gap: 8px; align-items: center; }
-.lp-badge-own input { flex: 1; min-width: 0; max-width: 240px; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; background: var(--panel); color: var(--ink); font: inherit; font-size: 13px; }
-.lp-badge-sketch { display: grid; grid-template-columns: 38% 1fr; gap: 6px; width: 240px; aspect-ratio: 1; padding: 8px; border-radius: 10px; background: linear-gradient(135deg, #f2f2f2, #e2e2e2); }
-.lp-badge-sketch .left { display: flex; flex-direction: column; gap: 5px; align-items: flex-start; }
-.lp-badge-sketch .photo { position: relative; border-radius: 8px; background: #cfd3d8; display: grid; place-items: center; }
-.lp-badge-sketch .who { font-size: 11px; color: #6b7178; }
-.lp-badge-sketch .tag { font-size: 10px; font-weight: 700; color: #fff; background: #1d1d1d; border-radius: 999px; padding: 2px 7px; white-space: nowrap; }
-.lp-badge-sketch .photo .tag { position: absolute; top: 6px; right: 6px; }
-.lp-badge-sketch .logo { font-size: 9px; color: #fff; background: #b24a3a; border-radius: 3px; padding: 3px 5px; }
-.lp-badge-sketch .logo.blank { visibility: hidden; }
-.lp-badge-sketch i { display: block; background: #2a2a2a; border-radius: 2px; }
-.lp-badge-sketch .title { width: 90%; height: 9px; } .lp-badge-sketch .title.short { width: 70%; }
-.lp-badge-sketch .bar { width: 18px; height: 3px; margin: 2px 0; }
-.lp-badge-sketch .row { width: 70%; height: 5px; background: #9a9a9a; margin-top: 8px; }
-.lp-badge-sketch .card { width: 100%; height: 34%; margin-top: auto; background: #1f2633; border-radius: 6px; }
-@media (max-width: 860px) { .lp-badge-places { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.lp-skubadge { display: grid; gap: 10px; align-content: start; }
+.lp-skubadge h3 { margin: 4px 0 0; font-size: 13.5px; }
+.lp-skubadge-places { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.lp-skubadge-words { display: flex; gap: 6px; flex-wrap: wrap; }
+.listing-page .lp-skubadge .lp-chip { padding: 4px 12px; font-size: 12.5px; color: var(--ink); }
+.listing-page .lp-skubadge .lp-chip.on { border-color: var(--brand); background: var(--brand-soft); color: var(--brand); font-weight: 600; }
+.lp-skubadge-own { display: flex; gap: 8px; align-items: center; }
+.lp-skubadge-own input { flex: 1; min-width: 0; max-width: 240px; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; background: var(--panel); color: var(--ink); font: inherit; font-size: 13px; }
+.lp-skubadge-sketch { display: grid; grid-template-columns: 38% 1fr; gap: 6px; width: 240px; aspect-ratio: 1; padding: 8px; border-radius: 10px; background: linear-gradient(135deg, #f2f2f2, #e2e2e2); }
+.lp-skubadge-sketch .left { display: flex; flex-direction: column; gap: 5px; align-items: flex-start; }
+.lp-skubadge-sketch .photo { position: relative; border-radius: 8px; background: #cfd3d8; display: grid; place-items: center; }
+.lp-skubadge-sketch .who { font-size: 11px; color: #6b7178; }
+.lp-skubadge-sketch .tag { font-size: 10px; font-weight: 700; color: #fff; background: #1d1d1d; border-radius: 999px; padding: 2px 7px; white-space: nowrap; }
+.lp-skubadge-sketch .photo .tag { position: absolute; top: 6px; right: 6px; }
+.lp-skubadge-sketch .logo { font-size: 9px; color: #fff; background: #b24a3a; border-radius: 3px; padding: 3px 5px; }
+.lp-skubadge-sketch .logo.blank { visibility: hidden; }
+.lp-skubadge-sketch i { display: block; background: #2a2a2a; border-radius: 2px; }
+.lp-skubadge-sketch .title { width: 90%; height: 9px; } .lp-skubadge-sketch .title.short { width: 70%; }
+.lp-skubadge-sketch .bar { width: 18px; height: 3px; margin: 2px 0; }
+.lp-skubadge-sketch .row { width: 70%; height: 5px; background: #9a9a9a; margin-top: 8px; }
+.lp-skubadge-sketch .card { width: 100%; height: 34%; margin-top: auto; background: #1f2633; border-radius: 6px; }
+@media (max-width: 860px) { .lp-skubadge-places { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
