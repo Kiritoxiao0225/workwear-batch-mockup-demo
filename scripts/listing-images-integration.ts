@@ -938,6 +938,46 @@ try {
   assert.equal(bigPlan.sources.find((i: { label: string }) => i.label === twinId).path, '模特图/IMG_1_连拍.png');
   pass('大款：61 张中颜色相近的照片都保留，按需拼成宫格不超过 50 张图，每张都有分类；完全相同的副本只看一次，记为重复');
 
+  // ---- 大款分段读（10-26）：带字的图分组读卖点，再看照片读整款；最后一步断了，「继续整理」不重读卖点 ----
+  const splitId = randomUUID();
+  await call(0, 'projects', { id: splitId, name: '分段款', layout: 'M3', counts: counts(1) });
+  for (let i = 0; i < 30; i++) await upload(0, splitId, await solid(200 - i * 5, 60 + i * 4, 90), `${i % 3 ? '详情' : '模特图'}/P_${i + 1}.png`);
+  await call(0, `projects/${splitId}/plan`, {});
+  const textOf = (request: unknown) => ((request as { messages: { content: unknown }[] }).messages[1].content as { type: string; text?: string }[]).filter(c => c.type === 'text').map(c => c.text).join('\n');
+  let pointCalls = 0, wholeCalls = 0, wholeText = '';
+  const splitProvider: Parameters<typeof executePlan>[1] = async (request, hooks) => {
+    const system = String((request as { messages: { content: unknown }[] }).messages[0].content), text = textOf(request);
+    const sent = [...new Set(text.match(/M\d+/g))];
+    await hooks.beforeSubmit();
+    if (system.includes('只读出这些图上的卖点')) { pointCalls++; return reply({ points: [{ type: '功能', text: '三层 防水', from: [sent[0]] }, { type: '面料', text: `第${pointCalls}组独有`, from: [sent[1] ?? sent[0]] }], notes: [] }); }
+    if (system.includes('卖点已经读好')) {
+      wholeCalls++; wholeText = text;
+      if (wholeCalls === 1) throw new Error('fetch failed');
+      return reply({ colors: [{ name: '黑色', hex: '#111', from: [sent[0]] }], category: 'workwear', titles: { 功能: ['三防面料 雨天不怕'] } });
+    }
+    if (system.includes('读出颜色和卖点')) throw new Error('大款不该再一次读完');
+    // The sort (and the colour list): two of every three a page with words.
+    return reply({ images: sent.map(m => ({ id: m, kind: Number(m.slice(1)) % 3 ? '卖点图' : '模特实拍', color: '黑色', front: m === sent[0], text: Number(m.slice(1)) % 3 > 0 })), colors: [{ name: '黑色', hex: '#111', from: [sent[0]] }] });
+  };
+  await executePlan(await latest(splitId, 'plan'), splitProvider);
+  const halfway = await detailOf(splitId);
+  assert.equal(halfway.status, 'failed'); assert.match(halfway.error, /整理到一半中断了.*进度已保存/);
+  assert.ok(pointCalls >= 2, `卖点分了 ${pointCalls} 组`);
+  const pointsBefore = pointCalls;
+  await call(0, `projects/${splitId}/plan`, {});
+  await executePlan(await latest(splitId, 'plan'), splitProvider);
+  const split = await detailOf(splitId);
+  assert.equal(split.status, 'materials');
+  assert.equal(pointCalls, pointsBefore, '继续整理不重读卖点');
+  assert.equal(wholeCalls, 2);
+  assert.match(wholeText, /已经读出的卖点：\n1\. 三层 防水/);
+  const texts3 = split.materials.sorted.points.map((p: { text: string }) => p.text);
+  assert.equal(texts3.filter((t: string) => t === '三层 防水').length, 1);
+  assert.equal(texts3.filter((t: string) => /组独有/.test(t)).length, pointsBefore);
+  assert.ok(split.materials.sorted.points.find((p: { text: string }) => p.text === '三层 防水').from.length >= 2);
+  assert.deepEqual(split.materials.titles, { 功能: ['三防面料 雨天不怕'] });
+  pass('大款分段读：带字的图分组读卖点、同一句卖点只留一条（图号合并），再看照片读颜色和整款；最后一步断了，「继续整理」不重读卖点');
+
   // ---- 学新版式：参考图 3–10 张，冻结 100 积分，学好出样图，保存时可改每类图有没有人，团队共用 ----
   const lay = randomUUID();
   await call(0, 'layouts', { id: lay, name: '细节特写格' });

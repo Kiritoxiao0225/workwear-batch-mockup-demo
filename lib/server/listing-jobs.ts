@@ -15,7 +15,7 @@ import { draftSchema, type SubmittedDraft } from '../listing/draft-schema';
 import { skuPhotos } from '../listing/sku-card';
 import { skuPair } from '../listing/templates';
 import { claimLayout, executeLayout, renewLayoutLease, resolveLayout } from './listing-layouts';
-import { chooseMaterials, coloursRequest, applyLiners, LINER_CHECK_BATCH, LINER_CHECK_SIDE, linerCandidates, linerRequest, parseColours, parseLinerBatch, type LinerCheck, parseRead, parseSorted, readRequest, recolored, settleCopies, sortRequest, worthReading, type Organized, type SortedImage } from './listing-organize';
+import { chooseMaterials, coloursRequest, applyLiners, LINER_CHECK_BATCH, LINER_CHECK_SIDE, linerCandidates, linerRequest, mergePoints, parseColours, parseLinerBatch, parsePoints, type LinerCheck, parseRead, parseSorted, parseWhole, pointsRequest, READ_GROUP_VIEWS, READ_SPLIT_VIEWS, readRequest, type ReadPoints, recolored, settleCopies, sortRequest, wholeRequest, worthReading, type Organized, type SortedImage } from './listing-organize';
 import { buildPlan, writeRequest } from './listing-write';
 import { colourSources, planViews, single, type PlanSource, type PlanView } from './listing-plan-views';
 import { assertListingProviderConfigured, callPlanModel, LISTING_PLAN_MODEL, listingPlanProvider, listingWorkerConcurrency, type PlanCall } from './listing-provider';
@@ -184,10 +184,34 @@ export async function executePlan(job: JobRow, provider: Provider = (request, ho
     } catch (error) { throw Object.assign(error as Error, { done: batches.length + 1, total: batches.length + 3 }); }
     const readable = new Set(worthReading(images).map(i => i.id));
     const toRead = sources.filter(s => !duplicates.has(s.id) && readable.has(s.id));
-    const readViews = (await planViews(toRead.length ? toRead : sources.filter(s => !duplicates.has(s.id)))).views;
+    const reading = toRead.length ? toRead : sources.filter(s => !duplicates.has(s.id));
+    const readViews = (await planViews(reading)).views;
     let organized: Organized;
-    try { organized = await ask(readRequest({ views: readViews, model, product: project.name, images, colors: palette }), content => parseRead(content, images)); } catch (error) {
-      throw Object.assign(error as Error, { done: batches.length + 2, total: batches.length + 3 });
+    if (readViews.length <= READ_SPLIT_VIEWS) {
+      try { organized = await ask(readRequest({ views: readViews, model, product: project.name, images, colors: palette }), content => parseRead(content, images)); } catch (error) {
+        throw Object.assign(error as Error, { done: batches.length + 2, total: batches.length + 3 });
+      }
+    } else {
+      // A big product in parts (listing-organize READ_SPLIT_VIEWS): the points off the pictures with words, a few groups
+      // at once, then the rest of the product from the photos and those points.
+      const worded = new Set(images.filter(i => i.text).map(i => i.id)), byId = new Map(images.map(i => [i.id, i]));
+      const wordViews = (await planViews(reading.filter(s => worded.has(s.id)))).views;
+      const groups = Array.from({ length: Math.ceil(wordViews.length / READ_GROUP_VIEWS) }, (_, k) => wordViews.slice(k * READ_GROUP_VIEWS, (k + 1) * READ_GROUP_VIEWS));
+      const photos = reading.filter(s => !worded.has(s.id)), wholeViews = (await planViews(photos.length ? photos : reading)).views;
+      const total = batches.length + 3 + groups.length;
+      const parts: ReadPoints[] = new Array(groups.length);
+      let at = 0, groupError: unknown = null;
+      await Promise.all(Array.from({ length: Math.min(3, groups.length) }, async () => {
+        while (at < groups.length) {
+          const k = at++, g = groups[k];
+          try { parts[k] = await ask(pointsRequest({ views: g, model, product: project.name, images: idsOf(g).flatMap(id => byId.get(id) ?? []) }), parsePoints); } catch (error) { groupError ??= error; }
+        }
+      }));
+      if (groupError) throw Object.assign(groupError as Error, { done: batches.length + 2 + parts.filter(Boolean).length, total });
+      const read = mergePoints(parts);
+      try { organized = await ask(wholeRequest({ views: wholeViews, model, product: project.name, images, colors: palette, points: read.points }), content => parseWhole(content, images, read)); } catch (error) {
+        throw Object.assign(error as Error, { done: total - 1, total });
+      }
     }
     const certain = attempts.find(a => a.status === 'succeeded');
     if (certain) await settleHold(holdId(job.id), job.tenant_id, [{ action: 'listing_plan', billable: true, certain: true, attemptId: certain.id }]);

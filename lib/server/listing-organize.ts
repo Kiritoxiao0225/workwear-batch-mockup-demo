@@ -155,6 +155,9 @@ const catalog = (categories: Category[]) => [
   `首图卖点：${Object.keys(SELLS).join('、')}`,
 ].join('\n\n');
 
+/** The part of the catalog points are written against: the kinds of point and the ways of drawing one. */
+const pointCatalog = (categories: Category[]) => catalog(categories).split('\n\n').filter(part => part.startsWith('品类：') || part.includes('的卖点类别') || part.startsWith('画法')).join('\n\n');
+
 export function organizeRequest(input: { views: PlanView[]; model: string; product: string }) {
   const content: Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }> = [
     { type: 'text', text: `商品：${input.product}。下面是全部素材（拼在一起的，每一格、每一段都是一张独立素材，按说明里的顺序对应编号）。` }];
@@ -174,14 +177,87 @@ export function sortRequest(input: { views: PlanView[]; model: string; product: 
     messages: [{ role: 'system', content: SORT_SYSTEM }, { role: 'user', content: userContent(`${paletteLine(input.colors, false)}商品：${input.product}。下面是这款的一部分素材（拼在一起的，每一格、每一段都是一张独立素材，按说明里的顺序对应编号）。`, input.views) }] };
 }
 /** The whole product, read from the images worth reading and how each was sorted. */
+/** One sorted image as a line of text, for the readings that follow the sort. */
+const imageLine = (i: SortedImage) => {
+  const inner = i.role === '内胆' ? `，单拍内胆（${i.innerColor ?? ''}${i.inner ?? ''}）` : i.inner ? `，外套里穿着${i.innerColor ?? ''}${i.inner}内胆` : '';
+  return `${i.id}：${i.kind}${i.color ? `，${i.color}` : ''}${i.detail || i.parts?.length ? `，部位 ${[...new Set([i.detail, ...(i.parts ?? [])].filter(Boolean))].join('、')}` : ''}${i.front ? '，正面全身' : ''}${i.text ? '，有卖点字' : ''}${i.person ? `，${i.person}` : ''}${inner}`;
+};
 export function readRequest(input: { views: PlanView[]; model: string; product: string; images: SortedImage[]; colors?: string[] }) {
-  const inner = (i: SortedImage) => i.role === '内胆' ? `，单拍内胆（${i.innerColor ?? ''}${i.inner ?? ''}）` : i.inner ? `，外套里穿着${i.innerColor ?? ''}${i.inner}内胆` : '';
-  const line = (i: SortedImage) => `${i.id}：${i.kind}${i.color ? `，${i.color}` : ''}${i.detail || i.parts?.length ? `，部位 ${[...new Set([i.detail, ...(i.parts ?? [])].filter(Boolean))].join('、')}` : ''}${i.front ? '，正面全身' : ''}${i.text ? '，有卖点字' : ''}${i.person ? `，${i.person}` : ''}${inner(i)}`;
   return { model: input.model, reasoning_effort: 'low', max_completion_tokens: 12000, response_format: { type: 'json_object' },
     messages: [{ role: 'system', content: READ_SYSTEM.replace('{CATALOG}', catalog(CATEGORIES)) }, { role: 'user', content: [
-      { type: 'text' as const, text: `${paletteLine(input.colors, true)}每张图已经整理好的分类：\n${input.images.map(line).join('\n')}` },
+      { type: 'text' as const, text: `${paletteLine(input.colors, true)}每张图已经整理好的分类：\n${input.images.map(imageLine).join('\n')}` },
       ...userContent(`商品：${input.product}。下面是要读的素材（拼在一起的，每一格、每一段都是一张独立素材，按说明里的顺序对应编号）。`, input.views)] }] };
 }
+
+/**
+ * A big product read in parts (10-26). In one call, the whole product from up to 50 pictures took
+ * longer than ten minutes on the relay (6608, 204 photos: cut six times at the last step). Read in
+ * parts instead: the points off the pictures with words, READ_GROUP_VIEWS pictures a call, then the
+ * rest of the product (colours, category, how it is worn, the look, titles) from the photos and the
+ * points already read. Every part is kept, so 「继续整理」 asks only for what is missing. A product
+ * with READ_SPLIT_VIEWS pictures or fewer is still read in one call.
+ */
+export const READ_SPLIT_VIEWS = 12, READ_GROUP_VIEWS = 8;
+const RULE_LINES = WHOLE_RULES.split('\n'), isPointRule = (line: string) => line.startsWith('- points：') || line.startsWith('- 每条卖点还要写');
+const POINTS_SYSTEM = `${ROLE}你会收到同一款衣服的一部分素材（带卖点文字的那些），每张都标了编号，还有每张图已经整理好的分类。
+任务：只读出这些图上的卖点。卖点只做提炼，素材里写了什么就用什么，不做任何调整。只输出 JSON。
+
+${RULE_LINES.filter(isPointRule).join('\n')}
+- notes：你发现的问题，比如“这页卖点字被裁掉一半看不清”，没有就空数组。
+
+{CATALOG}
+
+输出：
+{ ${WHOLE_SHAPE.split('\n').find(l => l.includes('"points"'))!.trim()}
+  "notes": [""] }`;
+const WHOLE_SYSTEM = `${ROLE}你会收到同一款衣服的原始素材（已经去掉无关和重复的图，带卖点文字的那些已经单独读过），每张都标了编号，还有每张图已经整理好的分类、已经读出的卖点。
+任务：读出颜色和整款的判断。颜色只做提炼，素材里写了什么就用什么，不做任何调整。卖点已经读好，不用再输出；titles 和 look 的 sell 只能根据已经读出的卖点写。只输出 JSON。
+
+${RULE_LINES.filter(line => !isPointRule(line)).join('\n')}
+- recolor：分类里写的颜色和 colors 的名字对不上的图（例如分类写“橙色”，colors 里是“落霞橙”和“爱马仕橙”），看图判断它是哪个颜色，写 { "编号": "colors 里的名字" }；一张图里有几种颜色或看不出的不写。对得上的图不用写。
+
+{CATALOG}
+
+输出：
+{ ${WHOLE_SHAPE.split('\n').filter(l => !l.includes('"points"')).join('\n').trim()}, "recolor": {} }`;
+export type ReadPoints = Pick<z.infer<typeof organizeSchema>, 'points' | 'notes'>;
+
+/** One group of the pictures with words: its points. */
+export function pointsRequest(input: { views: PlanView[]; model: string; product: string; images: SortedImage[] }) {
+  return { model: input.model, reasoning_effort: 'low', max_completion_tokens: 8000, response_format: { type: 'json_object' },
+    messages: [{ role: 'system', content: POINTS_SYSTEM.replace('{CATALOG}', pointCatalog(CATEGORIES)) }, { role: 'user', content: [
+      { type: 'text' as const, text: `这些图已经整理好的分类：\n${input.images.map(imageLine).join('\n')}` },
+      ...userContent(`商品：${input.product}。下面是这款带卖点字的一部分素材（拼在一起的，每一格、每一段都是一张独立素材，按说明里的顺序对应编号）。`, input.views)] }] };
+}
+export function parsePoints(content: string): ReadPoints {
+  const parsed = organizeSchema.pick({ points: true, notes: true }).safeParse(modelJson(content, '卖点不是完整的 JSON'));
+  if (!parsed.success) throw new Error('卖点结果缺少内容');
+  return parsed.data;
+}
+/** The groups' points as one list: a point read twice in the same words (a page shown in two groups) once, with both pictures. */
+export function mergePoints(parts: ReadPoints[]): ReadPoints {
+  const points: ReadPoints['points'] = [];
+  for (const p of parts.flatMap(x => x.points)) {
+    const same = points.find(q => q.text.replace(/\s/gu, '') === p.text.replace(/\s/gu, ''));
+    if (same) same.from = [...new Set([...same.from, ...p.from])]; else points.push({ ...p, from: [...p.from] });
+  }
+  return { points, notes: [...new Set(parts.flatMap(x => x.notes))] };
+}
+/** The rest of the product, with the points already read. */
+export function wholeRequest(input: { views: PlanView[]; model: string; product: string; images: SortedImage[]; colors?: string[]; points: ReadPoints['points'] }) {
+  const point = (p: ReadPoints['points'][number], n: number) => `${n + 1}. ${p.text}${p.note ? `（${p.note}）` : ''}，${p.type}，来自 ${p.from.join('、') || '—'}`;
+  return { model: input.model, reasoning_effort: 'low', max_completion_tokens: 8000, response_format: { type: 'json_object' },
+    messages: [{ role: 'system', content: WHOLE_SYSTEM.replace('{CATALOG}', catalog(CATEGORIES)) }, { role: 'user', content: [
+      { type: 'text' as const, text: `${paletteLine(input.colors, true)}每张图已经整理好的分类：\n${input.images.map(imageLine).join('\n')}\n\n已经读出的卖点：\n${input.points.map(point).join('\n') || '（没有）'}` },
+      ...userContent(`商品：${input.product}。下面是要看的素材（拼在一起的，每一格、每一段都是一张独立素材，按说明里的顺序对应编号）。`, input.views)] }] };
+}
+/** The whole product put together as the one-call reading gives it. */
+export function parseWhole(content: string, images: SortedImage[], read: ReadPoints): Organized {
+  const raw = modelJson(content, '整理结果不是完整的 JSON') as Record<string, unknown>;
+  const notes = Array.isArray(raw.notes) ? raw.notes.filter((n): n is string => typeof n === 'string') : [];
+  return parseRead(JSON.stringify({ ...raw, points: read.points, notes: [...read.notes, ...notes] }), images);
+}
+
 /**
  * The liner check (10-21): sorted at about 200 px a picture, a black fleece and a black T-shirt
  * look alike, and a zipped-up shell hides what is inside. The images that may show a liner (sorted

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chooseMaterials, mergeSameColors, parseOrganized, parseRead, parseSorted, recolored, settleCopies, unlistedColors, worthReading, type SortedImage } from './listing-organize';
+import { chooseMaterials, mergePoints, mergeSameColors, parseOrganized, parsePoints, parseRead, parseSorted, parseWhole, pointsRequest, readRequest, recolored, settleCopies, unlistedColors, wholeRequest, worthReading, type SortedImage } from './listing-organize';
 import { usableAsIs } from '../listing/draft';
 
 const img = (id: string, over: Partial<SortedImage>): SortedImage => ({ id, kind: '模特实拍', color: '', front: false, detail: '', text: false, logo: false, same: '', person: '', face: false, ...over });
@@ -218,3 +218,31 @@ describe('the reading writes a short name for each point (10-19)', () => {
   });
 });
 
+
+describe('a big product read in parts (10-26)', () => {
+  const point = (text: string, from: string[], extra = {}) => ({ type: '功能', text, note: '', from, why: '', concept: null, proof: '', part: '', short: '', ...extra });
+  it('asks each part only for its share, in the one-call wording', () => {
+    const system = (r: { messages: { content: unknown }[] }) => String(r.messages[0].content);
+    const one = system(readRequest({ views: [], model: 'm', product: 'p', images: [] }));
+    const points = system(pointsRequest({ views: [], model: 'm', product: 'p', images: [] })), whole = system(wholeRequest({ views: [], model: 'm', product: 'p', images: [], points: [] }));
+    const pointRule = one.split('\n').find(l => l.startsWith('- points：'))!;
+    expect(points).toContain(pointRule); expect(whole).not.toContain(pointRule);
+    expect(points).not.toContain('- colors：'); expect(points).not.toContain('母版（编号');
+    expect(whole).toContain(one.split('\n').find(l => l.startsWith('- colors：'))!);
+    expect(whole).toContain('卖点已经读好，不用再输出');
+  });
+  it('keeps a point read in two groups once, with the pictures of both', () => {
+    const merged = mergePoints([{ points: [point('三层防水', ['M2']), point('立体剪裁', ['M3'])], notes: ['M4 字看不清'] }, { points: [point('三层 防水', ['M9'])], notes: ['M4 字看不清'] }]);
+    expect(merged.points.map(p => [p.text, p.from])).toEqual([['三层防水', ['M2', 'M9']], ['立体剪裁', ['M3']]]);
+    expect(merged.notes).toEqual(['M4 字看不清']);
+    expect(parsePoints(JSON.stringify({ points: [point('防风', ['M1'])] })).points).toHaveLength(1);
+  });
+  it('puts the whole product together with the points already read, as one call would', () => {
+    const images: SortedImage[] = [{ id: 'M1', kind: '模特实拍', color: '黑色', front: true, detail: '', parts: [], text: false, logo: false, same: '', person: '', face: false }];
+    const read = { points: [point('三层防水', ['M1', 'M99'])], notes: ['卖点页有一张裁掉了'] };
+    const whole = parseWhole(JSON.stringify({ colors: [{ name: '黑色', hex: '#111', from: ['M1'] }], category: 'workwear', notes: ['没有背面图'], points: [point('不该用这条', ['M1'])] }), images, read);
+    expect(whole.points.map(p => [p.text, p.from])).toEqual([['三层防水', ['M1']]]);
+    expect(whole.notes).toEqual(['卖点页有一张裁掉了', '没有背面图']);
+    expect(whole.category).toBe('workwear');
+  });
+});
