@@ -272,13 +272,21 @@ export async function renderSkuCard(c: SkuCard): Promise<Buffer> {
 
   // Left: logo (or the corner badge in its place), title, the three rows.
   const L = 60, W = 350;
+  const card = { x: 38, y: 868, w: 390, h: 300 }, rows = c.rows.slice(0, 3);
+  const logo = c.badge?.place !== 'corner' && c.logo ? await asImage(c.logo) : null, logoScale = logo ? Math.min(260 / logo.width, 110 / logo.height) : 0;
+  // The rows want an icon (84 px) and its words, more with a line under them. When the corner badge, a
+  // two-line title and the liner's picture leave them less (10-27: 6608 with 男女同款 in the corner, the rows
+  // ran into each other and the card, and the lines crossed the icons), everything above is drawn tighter.
+  const rowsBottom = c.feature ? card.y - 20 : S - 60, rowNeed = Math.max(96, ...rows.map(r => r.sub ? 112 : 96)) + 16;
+  const above = (tight: boolean) => 70 + (c.badge?.place === 'corner' ? 66 + (tight ? 22 : 40) : logo ? logo.height * logoScale + (tight ? 30 : 50) : tight ? 24 : 40)
+    + (c.kicker ? 22 : 0) + Math.min(2, c.title.length) * (tight ? 74 : 82) + (c.liner ? (tight ? 128 + 16 : 150 + 30) : c.tag ? (tight ? 80 : 92) : tight ? 44 : 60);
+  const tight = rowsBottom - above(false) < rowNeed * rows.length;
   let y = 70;
-  if (c.badge?.place === 'corner') y += pill(ctx, c.badge.text, L, y, 'left', W, 38) + 40;
-  else if (c.logo) {
-    const logo = await asImage(c.logo), scale = Math.min(260 / logo.width, 110 / logo.height);
-    ctx.drawImage(logo, L, y, logo.width * scale, logo.height * scale);
-    y += logo.height * scale + 50;
-  } else y += 40;
+  if (c.badge?.place === 'corner') y += pill(ctx, c.badge.text, L, y, 'left', W, 38) + (tight ? 22 : 40);
+  else if (logo) {
+    ctx.drawImage(logo, L, y, logo.width * logoScale, logo.height * logoScale);
+    y += logo.height * logoScale + (tight ? 30 : 50);
+  } else y += tight ? 24 : 40;
   ctx.textBaseline = 'alphabetic';
   // A heavy serif title under a small spaced English line (10-16: the black sans read as a sale sign).
   if (c.kicker) {
@@ -287,11 +295,11 @@ export async function renderSkuCard(c: SkuCard): Promise<Buffer> {
   }
   ctx.fillStyle = INK;
   for (const t of c.title.slice(0, 2)) {
-    ctx.letterSpacing = '4px'; fitText(ctx, t, FONT.serif, 64, W); ctx.fillText(t, L, y + 56); ctx.letterSpacing = '0px'; y += 82;
+    ctx.letterSpacing = '4px'; fitText(ctx, t, FONT.serif, 64, W); ctx.fillText(t, L, y + 56); ctx.letterSpacing = '0px'; y += tight ? 74 : 82;
   }
   if (c.liner) {
     // Under the title: the liner itself (its photo's middle, where the garment is) with its name across the bottom.
-    const box = { w: 190, h: 150 }, meta = await sharp(c.liner.photo).metadata(), w = meta.width ?? 1, h = meta.height ?? 1;
+    const box = { w: 190, h: tight ? 128 : 150 }, meta = await sharp(c.liner.photo).metadata(), w = meta.width ?? 1, h = meta.height ?? 1;
     // A white image is the liner whole; a photo of someone in it, its middle from the neck down (10-22:
     // starting at 18% showed the chin and nostrils; at 27% the collar is whole and the face is out).
     const crop = c.liner.whole ? await sharp(c.liner.photo).rotate().flatten({ background: '#ffffff' }).trim({ threshold: 8 }).resize(box.w * 2 - 40, box.h * 2 - 100, { fit: 'contain', background: '#ffffff' })
@@ -303,14 +311,13 @@ export async function renderSkuCard(c: SkuCard): Promise<Buffer> {
     ctx.drawImage(await loadImage(crop), L, y + 4, box.w, box.h);
     ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(L, y + 4 + box.h - 40, box.w, 40);
     ctx.fillStyle = '#ffffff'; fitText(ctx, c.liner.name, FONT.heavy, 24, box.w - 24); ctx.textAlign = 'center'; ctx.fillText(c.liner.name, L + box.w / 2, y + 4 + box.h - 12); ctx.textAlign = 'left';
-    ctx.restore(); ctx.fillStyle = INK; y += box.h + 30;
+    ctx.restore(); ctx.fillStyle = INK; y += box.h + (tight ? 16 : 30);
   } else if (c.tag) {
     // Under the title, in place of its short bar.
-    pill(ctx, c.tag, L, y + 2, 'left', W); ctx.fillStyle = INK; y += 92;
-  } else { ctx.fillRect(L, y + 10, 62, 6); y += 60; }
+    pill(ctx, c.tag, L, y + 2, 'left', W); ctx.fillStyle = INK; y += tight ? 80 : 92;
+  } else { ctx.fillRect(L, y + 10, 62, 6); y += tight ? 44 : 60; }
   // The rows share the room down to the card, at most 150 px apart.
-  const card = { x: 38, y: 868, w: 390, h: 300 }, rows = c.rows.slice(0, 3);
-  const room = (c.feature ? card.y - 20 : S - 60) - y, pitch = Math.min(150, room / Math.max(1, rows.length));
+  const room = rowsBottom - y, pitch = Math.min(150, room / Math.max(1, rows.length));
   y += (room - pitch * rows.length) / 2; // fewer rows sit in the middle of the room
   rows.forEach((row, i) => {
     const top = y + i * pitch;
@@ -322,7 +329,9 @@ export async function renderSkuCard(c: SkuCard): Promise<Buffer> {
     ctx.fillStyle = INK; drawRuns(ctx, value.lines[0], FONT.heavy, value.size, L + 110, top + 68);
     const sub = row.sub ? layoutText(ctx, row.sub, FONT.regular, 19, 15, W - 110) : null;
     if (sub) { ctx.fillStyle = SOFT; drawRuns(ctx, sub.lines[0], FONT.regular, sub.size, L + 110, top + 100); }
-    if (i < rows.length - 1) { ctx.fillStyle = '#c9c9c9'; ctx.fillRect(L - 8, top + pitch - 18, W + 10, 1.5); }
+    // The line halfway between this row's words and the next row's icon, never across either.
+    const end = top + (sub ? 106 : 92);
+    if (i < rows.length - 1) { ctx.fillStyle = '#c9c9c9'; ctx.fillRect(L - 8, Math.round((end + top + pitch + 8) / 2), W + 10, 1.5); }
   });
 
   // Bottom left: the lead feature on this colour's fabric.
