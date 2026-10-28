@@ -169,14 +169,19 @@ export async function planViews(sources: PlanSource[], fullSize = PLAN_FULL_SIZE
 }
 
 /**
- * What the colour list is read from before anything is sorted (10-14): every colour image, swatch,
- * detail page and main image (by folder or file name), and a few photos spread over every other
- * folder, so a colour shown only in photos is seen too.
+ * The colour step reads every image, COLOUR_BATCH a call, one call after another (10-28: 8828 had 250 images under a
+ * folder named 「详情3个」, all sent in one call; it was 104k tokens, 3 minutes once and past 10 minutes twice).
  */
-export function colourSources(sources: PlanSource[], perFolder = 4): PlanSource[] {
-  const told = (s: PlanSource) => SKU_HINT.test(s.folder + '/' + s.name) || /详情|主图|首图/.test(s.folder + '/' + s.name);
-  const rest = new Map<string, PlanSource[]>();
-  for (const s of [...sources].sort(byPath)) if (!told(s)) rest.set(s.folder, [...(rest.get(s.folder) ?? []), s]);
-  const spread = (list: PlanSource[]) => list.length <= perFolder ? list : Array.from({ length: perFolder }, (_, k) => list[Math.floor((k + 0.5) * list.length / perFolder)]);
-  return [...sources.filter(told), ...[...rest.values()].flatMap(spread)];
+export const COLOUR_BATCH = 32, COLOUR_SIDE = 768;
+
+/**
+ * What the colour list is read from before anything is sorted (10-14): every image, colour images and
+ * swatches first, then main images, then detail pages (by folder or file name), then the photos, in
+ * batches of COLOUR_BATCH, so the first batches name the colours the way the material writes them.
+ */
+export function colourBatches(sources: PlanSource[], max = COLOUR_BATCH): PlanSource[][] {
+  const path = (s: PlanSource) => s.folder + '/' + s.name;
+  const tier = (s: PlanSource) => SKU_HINT.test(path(s)) ? 0 : /主图|首图/.test(path(s)) ? 1 : /详情/.test(path(s)) ? 2 : 3;
+  const ordered = [...sources].sort(byPath).sort((a, b) => tier(a) - tier(b));
+  return Array.from({ length: Math.ceil(ordered.length / max) }, (_, k) => ordered.slice(k * max, (k + 1) * max));
 }

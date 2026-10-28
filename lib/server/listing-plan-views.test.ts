@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import sharp from 'sharp';
-import { planViews, type PlanSource } from './listing-plan-views';
+import { COLOUR_BATCH, colourBatches, planViews, type PlanSource } from './listing-plan-views';
 
 const solid = (r: number, g: number, b: number, width = 400, height = 400) => sharp({ create: { width, height, channels: 3, background: { r, g, b } } }).png().toBuffer();
 const source = async (id: string, folder: string, name: string, shape: PlanSource['shape'], rgb: [number, number, number], width = 400, height = 400): Promise<PlanSource> =>
@@ -84,5 +84,28 @@ describe('look-alikes', () => {
     const { duplicates } = await planViews(cases);
     // A re-saved JPEG shifts the colour as much as charcoal does, so it is kept too; only the exact copy goes.
     expect([...duplicates]).toEqual([['黑色缩放副本', '黑色']]);
+  });
+});
+
+describe('colour batches', () => {
+  const bare = (folder: string, name: string): PlanSource => ({ id: `${folder}/${name}`, folder, name, shape: '1:1', width: 400, height: 400, bytes: Buffer.alloc(0) });
+  const many = (folder: string, n: number) => Array.from({ length: n }, (_, i) => bare(folder, `${i + 1}.jpg`));
+
+  it('reads a small product in one call', () => {
+    const sources = [...many('模特图', 20), ...many('SKU', 6)];
+    const parts = colourBatches(sources);
+    expect(parts.length).toBe(1);
+    expect(parts[0].slice(0, 6).map(s => s.folder)).toEqual(Array(6).fill('SKU'));
+  });
+
+  it('reads every image of a big product shaped like 8828 (10-28), colour images and main images first', () => {
+    const pack = '8828# 资料包 三合一 详情3个';
+    const sources = [...many('8828# 外景川西风', 178), ...many(`${pack}/外景街拍 详情页/images`, 160), ...many(`${pack}/外景街拍 详情页/主图`, 40),
+      ...many(`${pack}/外景街拍 详情页/颜色图`, 6), ...many('8828 #实拍图+视频  6色', 42)];
+    const parts = colourBatches(sources);
+    expect(parts.every(p => p.length <= COLOUR_BATCH)).toBe(true);
+    expect(parts.flat().map(s => s.id).sort()).toEqual(sources.map(s => s.id).sort());
+    expect(parts[0].slice(0, 6).map(s => s.folder)).toEqual(Array(6).fill(`${pack}/外景街拍 详情页/颜色图`));
+    expect(parts[0].slice(6).every(s => s.folder.endsWith('/主图'))).toBe(true);
   });
 });

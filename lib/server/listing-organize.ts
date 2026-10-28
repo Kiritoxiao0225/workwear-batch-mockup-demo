@@ -103,31 +103,35 @@ ${IMAGE_RULES}
  * detail pages and a few photos of each folder, and from every file's path. The batches then name an
  * image's colour from this list only, so one colour is never two names (「橙色」 for 「爱马仕橙」).
  */
-const COLORS_SYSTEM = `${ROLE}你会收到同一款衣服的一部分原始素材（颜色图、色卡、详情页、主图，和每个文件夹里抽的几张照片），每张都标了编号，还有全部素材的文件名。
-任务：列出这款衣服的全部颜色。只输出 JSON。
+const COLORS_SYSTEM = `${ROLE}同一款衣服的全部原始素材分几批给你看，这是其中一批，每张都标了编号；第一批还附全部素材的文件名。
+任务：列出这一批里能看到或写到的这款衣服的全部颜色。只输出 JSON。
 
 - 名字严格照抄颜色图、色卡、详情页或文件名、文件夹名上写的颜色名，一个字都不改（带品牌词的如“爱马仕橙”也照抄，不要换说法、不要自己起更好听的名字）；素材上完全没写颜色名的，才按你看到的颜色起一个常见名。
 - 同一个颜色在不同地方写法不一样（字的顺序不同，如“黑拼白”和“黑白拼”；或多一个“色”字），算一个颜色，只列一次，名字用颜色图或色卡上的写法。
 - 色卡或文字里写了、照片里没看到的颜色也要列；照片里看到、哪里都没写名字的颜色也要列。
 - hex 是你看到的这个颜色。
+- 前面几批已经列出的颜色会告诉你：这一批里是同一个颜色就照抄已列的名字，是新颜色才起新名字。
 
 输出：
 { "colors": [{ "name": "", "hex": "" }] }`;
 const coloursSchema = z.object({ colors: z.array(z.object({ name: z.string().trim().min(1).max(12), hex: z.string().default('') })) });
-/** The first part of the analysis: the colour list. */
-export function coloursRequest(input: { views: PlanView[]; paths: string[]; model: string; product: string }) {
+/** The first part of the analysis: the colour list, one batch of images (the first with every file name). */
+export function coloursRequest(input: { views: PlanView[]; paths: string[]; model: string; product: string; named?: string[] }) {
+  const named = input.named?.length ? `前面几批已经列出的颜色：${input.named.join('、')}。\n` : '';
   return { model: input.model, reasoning_effort: 'low', max_completion_tokens: 4000, response_format: { type: 'json_object' },
     messages: [{ role: 'system', content: COLORS_SYSTEM }, { role: 'user', content: [
-      { type: 'text' as const, text: `全部素材的文件名：\n${input.paths.join('\n')}` },
-      ...userContent(`商品：${input.product}。下面是用来认颜色的素材（拼在一起的，每一格、每一段都是一张独立素材，按说明里的顺序对应编号）。`, input.views)] }] };
+      ...input.paths.length ? [{ type: 'text' as const, text: `全部素材的文件名：\n${input.paths.join('\n')}` }] : [],
+      ...userContent(`${named}商品：${input.product}。下面是这一批素材，每张都是一张独立素材。`, input.views)] }] };
 }
 /** The colour list, one entry per colour however it was written. */
 export function parseColours(content: string): { name: string; hex: string }[] {
   const raw = modelJson(content, '颜色清单不是完整的 JSON');
   const parsed = coloursSchema.safeParse(raw);
   if (!parsed.success) throw new Error('颜色清单缺少颜色');
-  return parsed.data.colors.filter((c, i, all) => all.findIndex(o => colorKey(o.name) === colorKey(c.name)) === i);
+  return uniqueColours(parsed.data.colors);
 }
+/** One entry per colour however it was written, the first writing kept. */
+export const uniqueColours = <T extends { name: string },>(colors: T[]) => colors.filter((c, i, all) => all.findIndex(o => colorKey(o.name) === colorKey(c.name)) === i);
 /** The line that holds a step to the colour list. */
 const paletteLine = (colors: string[] | undefined, read: boolean) => !colors?.length ? '' : read
   ? `这款的颜色清单（已经定好）：${colors.join('、')}。colors 按这份清单输出，名字一字不改；素材里明显还有清单外的颜色才补上。\n`

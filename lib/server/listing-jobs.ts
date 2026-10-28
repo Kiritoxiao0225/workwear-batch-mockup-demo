@@ -15,9 +15,9 @@ import { draftSchema, type SubmittedDraft } from '../listing/draft-schema';
 import { skuPhotos } from '../listing/sku-card';
 import { skuPair } from '../listing/templates';
 import { claimLayout, executeLayout, renewLayoutLease, resolveLayout } from './listing-layouts';
-import { chooseMaterials, coloursRequest, applyLiners, LINER_CHECK_BATCH, LINER_CHECK_SIDE, linerCandidates, linerFolderRest, linerRequest, mergePoints, parseColours, parseLinerBatch, parsePoints, type LinerCheck, parseRead, parseSorted, parseWhole, pointsRequest, READ_GROUP_VIEWS, READ_SPLIT_VIEWS, readRequest, type ReadPoints, recolored, settleCopies, sortRequest, wholeRequest, worthReading, type Organized, type SortedImage } from './listing-organize';
+import { chooseMaterials, coloursRequest, applyLiners, LINER_CHECK_BATCH, LINER_CHECK_SIDE, linerCandidates, linerFolderRest, linerRequest, mergePoints, parseColours, parseLinerBatch, parsePoints, type LinerCheck, parseRead, parseSorted, parseWhole, pointsRequest, READ_GROUP_VIEWS, READ_SPLIT_VIEWS, readRequest, type ReadPoints, recolored, settleCopies, sortRequest, uniqueColours, wholeRequest, worthReading, type Organized, type SortedImage } from './listing-organize';
 import { buildPlan, writeRequest } from './listing-write';
-import { colourSources, planViews, single, type PlanSource, type PlanView } from './listing-plan-views';
+import { COLOUR_SIDE, colourBatches, planViews, single, type PlanSource, type PlanView } from './listing-plan-views';
 import { assertListingProviderConfigured, callPlanModel, LISTING_PLAN_MODEL, listingPlanProvider, listingWorkerConcurrency, type PlanCall } from './listing-provider';
 import { addSourceImage, clearOldSources, sourceImages } from './listing-store';
 import { liveShop } from './listing-shop';
@@ -154,12 +154,21 @@ export async function executePlan(job: JobRow, provider: Provider = (request, ho
     const { sources, map } = await planSources(job.project_id);
     const { views, duplicates } = await planViews(sources);
     const batches = sortBatches(views);
-    // The colour list first, so every batch names a colour the way the material does (10-14).
+    // The colour list first, so every batch names a colour the way the material does (10-14). Every image is seen, a
+    // batch after another, each told the colours named before, so one colour keeps one name (10-28).
+    const colourParts = colourBatches(sources.filter(s => !duplicates.has(s.id))), colourCalls = colourParts.length;
     let palette: string[];
+    const found: { name: string; hex: string }[] = [];
+    let coloured = 0;
     try {
-      const told = await planViews(colourSources(sources));
-      palette = (await ask(coloursRequest({ views: told.views, paths: sources.map(s => `${s.id}：${s.folder ? s.folder + '/' : ''}${s.name}`), model, product: project.name }), parseColours)).map(c => c.name);
-    } catch (error) { throw Object.assign(error as Error, { done: 0, total: batches.length + 3 }); }
+      for (const [k, part] of colourParts.entries()) {
+        const paths = k ? [] : sources.map(s => `${s.id}：${s.folder ? s.folder + '/' : ''}${s.name}`);
+        found.push(...await ask(coloursRequest({ views: await Promise.all(part.map(s => single(s, COLOUR_SIDE))), paths, model, product: project.name,
+          named: uniqueColours(found).map(f => f.name) }), parseColours));
+        coloured++;
+      }
+      palette = uniqueColours(found).map(f => f.name);
+    } catch (error) { throw Object.assign(error as Error, { done: coloured, total: batches.length + colourCalls + 2 }); }
     // Three batches at a time; every batch is tried, so one cut connection loses only its own.
     const sorted: SortedImage[][] = new Array(batches.length);
     let next = 0, firstError: unknown = null;
@@ -169,7 +178,7 @@ export async function executePlan(job: JobRow, provider: Provider = (request, ho
         try { sorted[k] = await ask(sortRequest({ views: b, model, product: project.name, colors: palette }), content => parseSorted(content, idsOf(b))); } catch (error) { firstError ??= error; }
       }
     }));
-    if (firstError) throw Object.assign(firstError as Error, { done: sorted.filter(Boolean).length + 1, total: batches.length + 3 });
+    if (firstError) throw Object.assign(firstError as Error, { done: sorted.filter(Boolean).length + colourCalls, total: batches.length + colourCalls + 2 });
     // The images that may show a liner, looked at again one by one at full size (10-21: at ~200 px a black fleece is a black T-shirt).
     const bySource = new Map(sources.map(s => [s.id, s])), pathOf = (id: string) => { const s = bySource.get(id); return s ? `${s.folder ? s.folder + '/' : ''}${s.name}` : ''; };
     const sortedImages = recolored(settleCopies(sorted.flat()), palette), checked = linerCandidates(sortedImages, pathOf, project.name);
@@ -189,7 +198,7 @@ export async function executePlan(job: JobRow, provider: Provider = (request, ho
       await look(more);
       checked.push(...more);
       images = applyLiners(checks, sortedImages, checked);
-    } catch (error) { throw Object.assign(error as Error, { done: batches.length + 1, total: batches.length + 3 }); }
+    } catch (error) { throw Object.assign(error as Error, { done: batches.length + colourCalls, total: batches.length + colourCalls + 2 }); }
     const readable = new Set(worthReading(images).map(i => i.id));
     const toRead = sources.filter(s => !duplicates.has(s.id) && readable.has(s.id));
     const reading = toRead.length ? toRead : sources.filter(s => !duplicates.has(s.id));
@@ -197,7 +206,7 @@ export async function executePlan(job: JobRow, provider: Provider = (request, ho
     let organized: Organized;
     if (readViews.length <= READ_SPLIT_VIEWS) {
       try { organized = await ask(readRequest({ views: readViews, model, product: project.name, images, colors: palette }), content => parseRead(content, images)); } catch (error) {
-        throw Object.assign(error as Error, { done: batches.length + 2, total: batches.length + 3 });
+        throw Object.assign(error as Error, { done: batches.length + colourCalls + 1, total: batches.length + colourCalls + 2 });
       }
     } else {
       // A big product in parts (listing-organize READ_SPLIT_VIEWS): the points off the pictures with words, a few groups
@@ -206,7 +215,7 @@ export async function executePlan(job: JobRow, provider: Provider = (request, ho
       const wordViews = (await planViews(reading.filter(s => worded.has(s.id)))).views;
       const groups = Array.from({ length: Math.ceil(wordViews.length / READ_GROUP_VIEWS) }, (_, k) => wordViews.slice(k * READ_GROUP_VIEWS, (k + 1) * READ_GROUP_VIEWS));
       const photos = reading.filter(s => !worded.has(s.id)), wholeViews = (await planViews(photos.length ? photos : reading)).views;
-      const total = batches.length + 3 + groups.length;
+      const total = batches.length + colourCalls + 2 + groups.length;
       const parts: ReadPoints[] = new Array(groups.length);
       let at = 0, groupError: unknown = null;
       await Promise.all(Array.from({ length: Math.min(3, groups.length) }, async () => {
@@ -215,7 +224,7 @@ export async function executePlan(job: JobRow, provider: Provider = (request, ho
           try { parts[k] = await ask(pointsRequest({ views: g, model, product: project.name, images: idsOf(g).flatMap(id => byId.get(id) ?? []) }), parsePoints); } catch (error) { groupError ??= error; }
         }
       }));
-      if (groupError) throw Object.assign(groupError as Error, { done: batches.length + 2 + parts.filter(Boolean).length, total });
+      if (groupError) throw Object.assign(groupError as Error, { done: batches.length + colourCalls + 1 + parts.filter(Boolean).length, total });
       const read = mergePoints(parts);
       try { organized = await ask(wholeRequest({ views: wholeViews, model, product: project.name, images, colors: palette, points: read.points }), content => parseWhole(content, images, read)); } catch (error) {
         throw Object.assign(error as Error, { done: total - 1, total });
