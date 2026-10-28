@@ -10,7 +10,7 @@
  * - which colour each image shows, who models, and what the two rounds of images cost.
  */
 import { skuItems, type DraftVersion } from './sku-versions';
-import type { WearType } from './wear';
+import { versionName, type WearType } from './wear';
 import { BUILDS, categoryById, groupOf, evidenceOf, type Category, type PointGroup, type PointType, type Task } from './category';
 import { isComponent, isGroup } from './garment-role';
 import { cleanWords, conciseTag, FACT, shortName } from './point-words';
@@ -680,7 +680,8 @@ export function checkDraft(d: Draft, layout: Layout, images?: PickSource[]) {
     // A SKU version the user added is drawn from the image they pick (10-22).
     // A liner alone cannot be zipped up out of sight: it needs an image to draw from.
     ...(d.versions ?? []).filter(v => v.on && v.added && v.kind === '单内胆' && !v.ref).map(() => '你加的「单穿内胆」还没选参考图：选一张这件内胆的照片'),
-    ...(d.versions ?? []).filter(v => v.on && !v.colors.length).map(v => `SKU 版本「${v.kind === '单外壳' ? '单外壳' : v.kind === '外壳加内胆' ? `外壳 + ${v.inner}内胆` : `单穿${v.inner}内胆`}」一个颜色都没勾：勾上颜色，或者不勾这个版本`),
+    ...(d.versions ?? []).filter(v => v.on && v.kind !== '单外壳' && !v.inner).map(() => '有个带内胆的 SKU 版本还没写内胆叫什么：写上名字（如 软壳、摇粒绒）'),
+    ...(d.versions ?? []).filter(v => v.on && !v.colors.length).map(v => `SKU 版本「${versionName(v)}」一个颜色都没勾：勾上颜色，或者不勾这个版本`),
     ...(live.length ? [] : ['没有颜色了：至少留一个']),
   ];
   const used = usedSlots(d, d.counts.square);

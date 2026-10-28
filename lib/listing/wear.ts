@@ -9,13 +9,28 @@
 export const WEARS = ['薄款', '内胆', '一体'] as const;
 export type WearType = (typeof WEARS)[number];
 export const WEAR_LABEL: Record<WearType, string> = { 薄款: '春秋薄款', 内胆: '有内胆', 一体: '一体棉·绒' };
-/** What a liner is made of, as an image shows it; 抓绒 counts as 摇粒绒. */
-export const INNERS = ['摇粒绒', '羽绒', '棉', '其他'] as const;
-export type Inner = (typeof INNERS)[number];
+/**
+ * A liner's name, as the material calls it (10-28: 8828 comes with a 软壳 liner and a 羽绒 one, and
+ * a fixed list of 摇粒绒 / 羽绒 / 棉 / 其他 had no word for the first). Any short word; one liner is
+ * one name across every image, and its look is always taken from its photo, never from the name.
+ */
+export type Inner = string;
+/** Names offered as examples only, never as the only choices. */
+export const INNER_EXAMPLES = ['摇粒绒', '羽绒', '软壳', '棉'] as const;
+/** A liner name as stored: no 「内胆」, no 「色」 or spaces, at most 6 characters; 抓绒 is 摇粒绒 as before. */
+export const innerName = (raw: string | null | undefined): Inner => {
+  const s = (raw ?? '').replace(/\s/gu, '').replace(/^可拆卸?/u, '').replace(/内胆$/u, '').replace(/^(其他|其它|未知|不确定)$/u, '').slice(0, 6);
+  return s === '抓绒' ? '摇粒绒' : s;
+};
+/**
+ * Whether the material's own words name this liner (a folder, a file name, a point read off a picture):
+ * a name only the model gave from the look is marked on the plan page for the user to confirm.
+ */
+export const innerSaid = (inner: string, words: string[]) => !!inner && words.some(w => w.includes(inner));
 export const VERSION_KINDS = ['单外壳', '外壳加内胆', '单内胆'] as const;
 export type VersionKind = (typeof VERSION_KINDS)[number];
 /** One SKU version the material shows: its colours (the shell's, or the liner's own for 单内胆) and the images showing it. */
-export type SkuVersion = { kind: VersionKind; inner: Inner | ''; colors: string[]; from: string[] };
+export type SkuVersion = { kind: VersionKind; inner: Inner; colors: string[]; from: string[]; said?: boolean };
 export type Wear = { type: WearType; why: string; versions: SkuVersion[] };
 
 /** What the program needs of a sorted image to check a version. */
@@ -23,7 +38,9 @@ type Seen = { id: string; kind?: string; role?: string; inner?: string; innerCol
 /** Real photos of the garment: a version needs one (10-21: one detail page read a down liner as 棉). */
 const PHOTO_KINDS = new Set(['模特实拍', '静物', '3D渲染', '颜色款图']);
 
-export const versionName = (v: Pick<SkuVersion, 'kind' | 'inner'>) => v.kind === '单外壳' ? '单外壳' : v.kind === '外壳加内胆' ? `外壳 + ${v.inner}内胆` : `单穿${v.inner}内胆`;
+/** The liner's name on images and in prompts: the plan's own name for it (renamed by the user) or the material's. */
+export const linerName = (v: { inner: string; name?: string }) => v.name || v.inner;
+export const versionName = (v: Pick<SkuVersion, 'kind' | 'inner'> & { name?: string }) => v.kind === '单外壳' ? '单外壳' : v.kind === '外壳加内胆' ? `外壳 + ${linerName(v)}内胆` : `单穿${linerName(v)}内胆`;
 
 /**
  * One shell colour over one liner colour is one liner: read as two materials, the one most images
@@ -59,8 +76,8 @@ export function settleWear(raw: { type?: string; why?: string; versions?: { kind
   const versions: SkuVersion[] = [];
   for (const r of raw.type === '内胆' ? raw.versions ?? [] : []) {
     const kind = (VERSION_KINDS as readonly string[]).includes(r.kind ?? '') ? r.kind as VersionKind : null;
-    const inner = kind === '单外壳' ? '' : (INNERS as readonly string[]).includes(r.inner ?? '') ? r.inner as Inner : null;
-    if (!kind || inner === null) continue;
+    const inner = kind === '单外壳' ? '' : innerName(r.inner);
+    if (!kind || (kind !== '单外壳' && !inner)) continue;
     const from = [...new Set(r.from ?? [])].filter(id => { const i = byId.get(id); return !!i && shows({ kind, inner }, i); });
     const all = images.filter(i => shows({ kind, inner }, i));
     if (!from.length || !all.some(i => !i.kind || PHOTO_KINDS.has(i.kind))) continue;
@@ -106,7 +123,7 @@ export function wearLine(type: WearType | undefined, liner?: number, color?: str
   if (type === '一体') return `${covered ? `门襟一直合到最顶，${COVERED_ZIP}` : '拉链一直拉到最顶'}，领子立起来护住脖子和下巴，看不到里面的 T 恤；衣服里面有填充，整体蓬松厚实，一看就是秋冬保暖款，不是一层薄外壳`;
   // The liner's colour said outright (10-22: drawn from a couple photo, 翠绿 took the light grey liner of the woman beside).
   if (type === '内胆') return liner
-    ? `外套拉链拉开、敞着穿，${OPEN_PULL}，里面穿着这款配套的${color ? `${color}` : ''}内胆（参考图${liner}里外套下面那一件：${color ? `${color}，` : '颜色、'}材质、长度、绗缝格子和领子都照它${color ? `；参考图里别人身上的别的颜色内胆不算` : ''}），内胆拉链拉到领口；${LINER_LENGTH}；一眼看得出是外壳加内胆两层，整体厚实保暖`
+    ? `外套拉链拉开、敞着穿，${OPEN_PULL}，里面穿着这款配套的${color ? `${color}` : ''}内胆（参考图${liner}里外套下面那一件：${color ? `${color}，` : '颜色、'}材质、表面纹理、厚薄、长度和领子都照它${color ? `；参考图里别人身上的别的颜色内胆不算` : ''}），内胆拉链拉到领口；${LINER_LENGTH}；一眼看得出是外壳加内胆两层，整体厚实保暖`
     : `外套拉链拉开、敞着穿，${OPEN_PULL}，里面穿着内胆（内胆的样子和定妆照里一样），内胆拉链拉到领口；${LINER_LENGTH}；一眼看得出是外壳加内胆两层，整体厚实保暖`;
   if (covered) return `门襟合到胸口，领口敞开一点露出里面的白色圆领 T 恤；${COVERED_ZIP}`;
   return null;

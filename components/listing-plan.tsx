@@ -20,8 +20,8 @@ import { isComponent, isGroup } from "@/lib/listing/garment-role";
 import { proofById } from "@/lib/listing/proofs";
 import { auditDraft, type AuditFix } from "@/lib/listing/audit";
 import { skuPhotos, skuWho } from "@/lib/listing/sku-card";
-import { linerPhoto, versionName, WEAR_LABEL, WEARS } from "@/lib/listing/wear";
-import { draftVersions, INNERS, linerAlone, linerByColor, linerColors, linerFor, linersSeen, mainLiner, VERSION_KINDS, type DraftVersion } from "@/lib/listing/sku-versions";
+import { linerName, linerPhoto, versionName, WEAR_LABEL, WEARS } from "@/lib/listing/wear";
+import { draftVersions, linerAlone, linerByColor, linerColors, linerFor, linersSeen, mainLiner, VERSION_KINDS, type DraftVersion } from "@/lib/listing/sku-versions";
 import { LinerDialog } from "./listing-liner";
 import type { LinerTag } from "@/lib/listing/client-api";
 import { capacity, cellZones, mostCells, PEOPLE_LABEL, skuPair, type Layout } from "@/lib/listing/templates";
@@ -176,7 +176,7 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
   const [hover, setHover] = useState<{ slot: number; zones: string[] } | null>(null);
   const [moved, setMoved] = useState("");
   /** The liner panel (10-22): a new liner colour for a version's shell colour, or a liner tidied onto white (`color`). */
-  const [linerOpen, setLinerOpen] = useState<{ inner: string; color?: string; version?: number; shell?: string } | null>(null);
+  const [linerOpen, setLinerOpen] = useState<{ inner: string; name?: string; color?: string; version?: number; shell?: string } | null>(null);
   const upload = useRef<HTMLInputElement>(null);
   const logoUpload = useRef<HTMLInputElement>(null);
   // The shop the product is for (10-22): the plan's choice, a copy's first product's, else the default one.
@@ -193,6 +193,8 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
   const set = (patch: Partial<Draft>) => onChange({ ...draft, ...patch });
   /** The material's images as sorted, liners added on the plan among them (their tags come with the upload, 10-22). */
   const linerImages = materials.sorted.images;
+  /** The liner names the material has (10-28), the most seen first: what 「＋ 新增」 offers before the user writes one. */
+  const innerNames = (() => { const n = new Map<string, number>(); for (const i of linerImages) if (i.inner) n.set(i.inner, (n.get(i.inner) ?? 0) + 1); return [...n].sort((a, b) => b[1] - a[1]).map(([k]) => k); })();
   const setVersion = (i: number, patch: Partial<DraftVersion>) => set({ versions: (draft.versions ?? []).map((v, k) => k === i ? { ...v, ...patch } : v) });
   const kindOf = (label: string | null) => (label && (isComponent(sorted.get(label)) ? sorted.get(label)?.role || "内胆" : isGroup(sorted.get(label)) ? "合照" : sorted.get(label)?.kind)) || "补传";
   const candidates = (t: NonNullable<Target>) => {
@@ -283,11 +285,11 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
           const lined = (draft.versions ?? []).filter(v => v.on && v.kind === "外壳加内胆" && v.inner && v.colors.length);
           return (<div className="lp-main-liners">
             <span className="lp-small">定妆照和主图里每个颜色穿的内胆{lined.length > 1 && <> · 优先穿 <select value={lined.some(v => v.key === draft.wear?.main) ? draft.wear!.main : ""} onChange={e => set({ wear: { ...draft.wear!, main: e.target.value || undefined } })}>
-              <option value="">素材里这个颜色最常搭的那件</option>{lined.map(v => <option key={v.key} value={v.key}>{v.inner}内胆</option>)}</select></>}：</span>
+              <option value="">素材里这个颜色最常搭的那件</option>{lined.map(v => <option key={v.key} value={v.key}>{linerName(v)}内胆</option>)}</select></>}：</span>
             {live(draft).map(c => {
               const m = mainLiner(linerImages, draft, c.name), img = m?.ref ? byLabel.get(m.ref) : undefined;
               return (<span key={c.name} className="lp-liner-tile" title={m?.ref && img ? img.path : ""}>{img ? <a href={img.url} target="_blank" rel="noreferrer"><img src={img.url} alt="" /></a> : <span className="none">拉链拉上</span>}
-                <small><b>{c.name}</b> {m?.color && img ? `配${m.color}${m.version.inner}` : "看不到内胆"}</small></span>);
+                <small><b>{c.name}</b> {m?.color && img ? `配${m.color}${linerName(m.version)}` : "看不到内胆"}</small></span>);
             })}
             <small className="lp-muted">要改某个颜色配哪件，在下面「SKU 版本」里改它的内胆颜色，主图跟着变。</small></div>);
         })()}</div>
@@ -307,9 +309,12 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
         return (<div key={v.key} className={"row" + (v.on ? "" : " off")}>
           <div className="head">
             <label className="name"><input type="checkbox" checked={v.on} onChange={e => setVersion(i, { on: e.target.checked })} />
-              {v.added ? <><select value={v.kind} onChange={e => setVersion(i, { kind: e.target.value as DraftVersion["kind"], inner: e.target.value === "单外壳" ? "" : v.inner || "摇粒绒", colors: [] })}>{VERSION_KINDS.map(k => <option key={k} value={k}>{k === "外壳加内胆" ? "外壳 + 内胆" : k === "单内胆" ? "单穿内胆" : k}</option>)}</select>
-                {v.kind !== "单外壳" && <select value={v.inner} onChange={e => setVersion(i, { inner: e.target.value as DraftVersion["inner"] })}>{INNERS.map(x => <option key={x} value={x}>{x}内胆</option>)}</select>}
-                <span className="lp-chip-s">你加的</span></> : <b>{versionName(v)}</b>}</label>
+              {v.added ? <><select value={v.kind} onChange={e => setVersion(i, { kind: e.target.value as DraftVersion["kind"], inner: e.target.value === "单外壳" ? "" : v.inner || innerNames[0] || "", colors: [] })}>{VERSION_KINDS.map(k => <option key={k} value={k}>{k === "外壳加内胆" ? "外壳 + 内胆" : k === "单内胆" ? "单穿内胆" : k}</option>)}</select>
+                {v.kind !== "单外壳" && <InnerPick value={v.inner} names={innerNames} onChange={inner => setVersion(i, { inner, name: undefined })} />}
+                <span className="lp-chip-s">你加的</span></> : v.kind === "单外壳" ? <b>单外壳</b> : <>
+                <b>{v.kind === "外壳加内胆" ? "外壳 +" : "单穿"}</b><input className="lp-in xs" value={linerName(v)} maxLength={6} title="内胆叫什么：SKU 图和规格名都用这个名字"
+                  onChange={e => { const name = e.target.value.trim(); setVersion(i, { name: name === v.inner ? undefined : name }); }} /><b>内胆</b>
+                {read?.said === false && !v.name && <span className="lp-chip-s warn" title="素材的文件夹、文件名和文字里都没写这件内胆叫什么，名字是 AI 看图起的">AI 看图起的名，请确认</span>}</>}</label>
             <span className="lp-muted lp-small">{v.on && n.all ? `${n.all} 张${n.real ? `，${n.real} 张用素材实拍` : ""}${n.all - n.real ? `，${n.all - n.real} 张要画` : ""}` : "不出"}</span>
             {v.added && <button type="button" className="lp-btn link" onClick={() => set({ versions: draft.versions!.filter((_, k) => k !== i) })}>删掉</button>}
           </div>
@@ -324,8 +329,8 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
             const seenHere = linersSeen(materials.sorted.images, v.inner, c), value = linerFor(materials.sorted.images, v, c);
             const options = [...new Set([...linerColors(materials.sorted.images, v.inner), ...(value ? [value] : [])])];
             return (<label key={c} className={seenHere.length ? "" : "guess"}><b>{c}</b><span className="lp-muted">配</span>
-              <select value={value} onChange={e => e.target.value === "＋" ? setLinerOpen({ inner: v.inner, version: i, shell: c }) : setVersion(i, { liners: { ...v.liners, [c]: e.target.value } })}>
-                {options.map(o => <option key={o} value={o}>{o}{v.inner}内胆{seenHere.includes(o) ? "（素材拍到）" : ""}</option>)}
+              <select value={value} onChange={e => e.target.value === "＋" ? setLinerOpen({ inner: v.inner, name: linerName(v), version: i, shell: c }) : setVersion(i, { liners: { ...v.liners, [c]: e.target.value } })}>
+                {options.map(o => <option key={o} value={o}>{o}{linerName(v)}内胆{seenHere.includes(o) ? "（素材拍到）" : ""}</option>)}
                 <option value="">拉链拉上，不露内胆</option>
                 <option value="＋">＋ 新增内胆颜色…（上传或 AI 生成）</option></select>
               {!seenHere.length && <small>素材里没拍到{c}配这件内胆，{value ? "照你选的颜色画" : "先拉链拉上画，知道配什么就选上"}</small>}</label>);
@@ -336,7 +341,7 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
             return shown.length > 0 && <div className="liner-pics"><span className="lp-muted lp-small">内胆图</span>{shown.map(col => {
               const pic = linerAlone(linerImages, v.inner, col), img = pic ? byLabel.get(pic) : undefined, white = pic && linerImages.find(x => x.id === pic)?.kind === "静物";
               return (<span key={col} className="lp-liner-tile">{img ? <a href={img.url} target="_blank" rel="noreferrer"><img src={img.url} alt="" /></a> : <span className="none">没有</span>}
-                <small>{col}{v.inner}</small><button type="button" className="lp-btn link" onClick={() => setLinerOpen({ inner: v.inner, color: col })}>{white ? "重做" : "整理成白底图"}</button></span>);
+                <small>{col}{linerName(v)}</small><button type="button" className="lp-btn link" onClick={() => setLinerOpen({ inner: v.inner, name: linerName(v), color: col })}>{white ? "重做" : "整理成白底图"}</button></span>);
             })}</div>;
           })()}
           {v.added && v.kind !== "单外壳" && <div className="ref">
@@ -345,7 +350,7 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
           </div>}
         </div>);
       })}
-        <div className="more"><button type="button" className="lp-btn" onClick={() => set({ versions: [...(draft.versions ?? []), { key: `v${Math.max(0, ...(draft.versions ?? []).map(v => Number(v.key.slice(1)) || 0)) + 1}`, kind: "外壳加内胆", inner: "摇粒绒", colors: [], on: true, added: true }] })}>＋ 新增一个版本</button>
+        <div className="more"><button type="button" className="lp-btn" onClick={() => set({ versions: [...(draft.versions ?? []), { key: `v${Math.max(0, ...(draft.versions ?? []).map(v => Number(v.key.slice(1)) || 0)) + 1}`, kind: "外壳加内胆", inner: innerNames[0] ?? "", colors: [], on: true, added: true }] })}>＋ 新增一个版本</button>
           <span className="lp-small">共 <b>{total}</b> 张 SKU 图：{real} 张用素材实拍（不花钱）{total - real ? <>，{total - real} 张照定妆照画{prices.exempt ? "" : `（每张 ${prices.image} 积分）`}</> : ""}</span></div></div>
     </>); })()}
     <h4 className="lp-h">衣服结构图 <small>给 AI 看清这件衣服各部位长什么样，保证每张图里衣服画得一样。细节图只能拍这里有图的部位；部位名字可以改、加、删。</small></h4>
@@ -694,7 +699,7 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
         </div>
       </div>
 
-      {linerOpen && <LinerDialog projectId={projectId} inner={linerOpen.inner} color={linerOpen.color} price={prices.exempt ? "" : `${prices.image} 积分`}
+      {linerOpen && <LinerDialog projectId={projectId} inner={linerOpen.inner} name={linerOpen.name} color={linerOpen.color} price={prices.exempt ? "" : `${prices.image} 积分`}
         candidates={linerImages.filter(i => i.inner === linerOpen.inner && !i.same && byLabel.has(i.id))
           .sort((a, b) => Number(b.role === "内胆") - Number(a.role === "内胆") || Number((b.innerColor || b.color) === linerOpen.color) - Number((a.innerColor || a.color) === linerOpen.color))
           .map(i => ({ label: i.id, url: byLabel.get(i.id)!.url, caption: i.role === "内胆" ? `${i.innerColor || i.color}单穿` : `${i.color}外套里的${i.innerColor ?? ""}` }))}
@@ -728,4 +733,12 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
         </div>)}
     </div>
   );
+}
+
+/** A liner's name on a version the user adds (10-28): one the material has, or any the user writes. */
+function InnerPick({ value, names, onChange }: { value: string; names: string[]; onChange: (inner: string) => void }) {
+  const [typing, setTyping] = useState(value ? !names.includes(value) : !names.length);
+  if (typing) return <><input className="lp-in xs" value={value} maxLength={6} placeholder="如 软壳、摇粒绒" onChange={e => onChange(e.target.value.trim())} /><b>内胆</b></>;
+  return (<select value={value} onChange={e => { if (e.target.value === "＋") { setTyping(true); onChange(""); } else onChange(e.target.value); }}>
+    {names.map(n => <option key={n} value={n}>{n}内胆（素材里有）</option>)}<option value="＋">＋ 自己写一个…</option></select>);
 }

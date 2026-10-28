@@ -2,7 +2,7 @@
  * 电商主图 background work. Same lifecycle as the garment AI queue: credits are held before a job
  * exists, a provider call is recorded before it is sent, and a sent call is never repeated.
  */
-import type { Inner } from '../listing/wear';
+import { innerName, innerSaid } from '../listing/wear';
 import { PLAN_IMAGE_COST_MICRO, planCredits, planUserMicro } from '../listing/plan-price';
 import { createHash, randomUUID } from 'node:crypto';
 import { posix } from 'node:path';
@@ -15,7 +15,7 @@ import { draftSchema, type SubmittedDraft } from '../listing/draft-schema';
 import { skuPhotos } from '../listing/sku-card';
 import { skuPair } from '../listing/templates';
 import { claimLayout, executeLayout, renewLayoutLease, resolveLayout } from './listing-layouts';
-import { chooseMaterials, coloursRequest, applyLiners, LINER_CHECK_BATCH, LINER_CHECK_SIDE, linerCandidates, linerRequest, mergePoints, parseColours, parseLinerBatch, parsePoints, type LinerCheck, parseRead, parseSorted, parseWhole, pointsRequest, READ_GROUP_VIEWS, READ_SPLIT_VIEWS, readRequest, type ReadPoints, recolored, settleCopies, sortRequest, wholeRequest, worthReading, type Organized, type SortedImage } from './listing-organize';
+import { chooseMaterials, coloursRequest, applyLiners, LINER_CHECK_BATCH, LINER_CHECK_SIDE, linerCandidates, linerFolderRest, linerRequest, mergePoints, parseColours, parseLinerBatch, parsePoints, type LinerCheck, parseRead, parseSorted, parseWhole, pointsRequest, READ_GROUP_VIEWS, READ_SPLIT_VIEWS, readRequest, type ReadPoints, recolored, settleCopies, sortRequest, wholeRequest, worthReading, type Organized, type SortedImage } from './listing-organize';
 import { buildPlan, writeRequest } from './listing-write';
 import { colourSources, planViews, single, type PlanSource, type PlanView } from './listing-plan-views';
 import { assertListingProviderConfigured, callPlanModel, LISTING_PLAN_MODEL, listingPlanProvider, listingWorkerConcurrency, type PlanCall } from './listing-provider';
@@ -172,14 +172,22 @@ export async function executePlan(job: JobRow, provider: Provider = (request, ho
     if (firstError) throw Object.assign(firstError as Error, { done: sorted.filter(Boolean).length + 1, total: batches.length + 3 });
     // The images that may show a liner, looked at again one by one at full size (10-21: at ~200 px a black fleece is a black T-shirt).
     const bySource = new Map(sources.map(s => [s.id, s])), pathOf = (id: string) => { const s = bySource.get(id); return s ? `${s.folder ? s.folder + '/' : ''}${s.name}` : ''; };
-    const sortedImages = recolored(settleCopies(sorted.flat()), palette), checked = linerCandidates(sortedImages, pathOf);
+    const sortedImages = recolored(settleCopies(sorted.flat()), palette), checked = linerCandidates(sortedImages, pathOf, project.name);
     let images: SortedImage[];
     try {
       const checks: LinerCheck[] = [];
-      for (let k = 0; k < checked.length; k += LINER_CHECK_BATCH) {
-        const part = checked.slice(k, k + LINER_CHECK_BATCH);
-        checks.push(...await ask(linerRequest({ views: await Promise.all(part.map(id => single(bySource.get(id)!, LINER_CHECK_SIDE))), model, product: project.name, colors: palette }), parseLinerBatch));
-      }
+      // One batch after another, each told the liner names given before, so one liner keeps one name (10-28).
+      const look = async (ids: string[]) => {
+        for (let k = 0; k < ids.length; k += LINER_CHECK_BATCH) {
+          const part = ids.slice(k, k + LINER_CHECK_BATCH), named = [...new Set(checks.map(c => c.inner).filter(Boolean))];
+          checks.push(...await ask(linerRequest({ views: await Promise.all(part.map(id => single(bySource.get(id)!, LINER_CHECK_SIDE))), model, product: project.name, colors: palette, named }), parseLinerBatch));
+        }
+      };
+      await look(checked);
+      // Where a folder's few photos showed a liner, the rest of that folder too (a liner shot alone, one colour a picture).
+      const more = linerFolderRest(sortedImages, checks, checked, pathOf);
+      await look(more);
+      checked.push(...more);
       images = applyLiners(checks, sortedImages, checked);
     } catch (error) { throw Object.assign(error as Error, { done: batches.length + 1, total: batches.length + 3 }); }
     const readable = new Set(worthReading(images).map(i => i.id));
@@ -218,7 +226,10 @@ export async function executePlan(job: JobRow, provider: Provider = (request, ho
     else await releaseHold(holdId(job.id), job.tenant_id, '整理全部用了之前存下的结果').catch(() => {});
     const keptSources = sources.filter(s => !duplicates.has(s.id));
     organized = { ...organized, images: await markPlain(organized.images, keptSources) };
-    const { look, wear, ...rest } = organized;
+    const { look, wear: read, ...rest } = organized;
+    // A liner name the material's own words carry (a folder, a file, a point) stands; one given from the look alone is to confirm (10-28).
+    const words = [...sources.map(s => `${s.folder}/${s.name}`), ...organized.points.flatMap(p => [p.text, p.note])];
+    const wear = read && { ...read, versions: read.versions.map(v => v.inner ? { ...v, said: innerSaid(v.inner, words) } : v) };
     const materials: Materials = { category: organized.category, categoryWhy: organized.categoryWhy, checks: organized.checks, titles: organized.titles, themes: organized.themes, look, wear,
       sorted: rest, chosen: chooseMaterials(organized, keptSources), duplicates: [...duplicates], model: lastModel || model, images: map };
     await db().query(`UPDATE listing_projects SET status='materials',materials=$2,plan=NULL,error=NULL,updated_at=now() WHERE id=$1`, [job.project_id, materials]);
@@ -334,7 +345,7 @@ export async function addExtraImage(tenant: string, projectId: string, bytes: Bu
     const label = `X${m.images.filter(i => i.label.startsWith('X')).length + 1}`;
     m.images.push({ label, assetId: added.id });
     // A liner added on the plan (10-22, uploaded or drawn and adopted) counts as that liner worn alone; a drawing is on white.
-    m.sorted.images.push(liner ? { id: label, kind: liner.drawn ? '静物' : '模特实拍', color: liner.color, front: false, detail: '', text: false, logo: false, same: '', person: '', face: false, role: '内胆', inner: liner.inner as Inner, innerColor: liner.color }
+    m.sorted.images.push(liner ? { id: label, kind: liner.drawn ? '静物' : '模特实拍', color: liner.color, front: false, detail: '', text: false, logo: false, same: '', person: '', face: false, role: '内胆', inner: innerName(liner.inner), innerColor: liner.color }
       : { id: label, kind: '颜色款图', color: '', front: true, detail: '', text: false, logo: false, same: '', person: '', face: false });
     await c.query(`UPDATE listing_projects SET materials=$2,updated_at=now() WHERE id=$1`, [projectId, m]);
     return { label, url: added.url };

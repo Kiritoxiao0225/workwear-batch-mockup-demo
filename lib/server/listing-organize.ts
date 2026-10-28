@@ -6,7 +6,7 @@
  * image per colour and the structure references (full front view, collar, zip and cuffs, pocket,
  * fabric, back); lib/listing/plan.ts shares the points out over the images.
  */
-import { INNERS, settleWear, type Inner, type Wear } from '../listing/wear';
+import { innerName, settleWear, type Inner, type Wear } from '../listing/wear';
 import { z } from 'zod';
 import { CATEGORIES, TASKS, type Category } from '../listing/category';
 import { GARMENT_ROLES, isComponent, isGroup, type GarmentRole } from '../listing/garment-role';
@@ -34,7 +34,7 @@ export const facingScore = (i: { facing?: string }) => ({ 正对: 2, 微侧: 1, 
 /** Every image's rules: kind, colour, front, part, words, LOGO, people, face, copies. */
 const IMAGE_RULES = `每张图（images，一张不漏，按编号）：
 - kind：颜色款图（用来区分颜色款的图，通常一个颜色一张、带颜色名）/ 静物（平铺、挂拍、人台、白底产品图）/ 3D渲染 / 模特实拍（没有加文字的模特照片）/ 细节特写（局部近拍）/ 卖点图（做好的主图或营销图，上面有卖点文字）/ 详情页（详情页切片，长图或图文排版）/ 海报 / 尺码表 / 无关（二维码、聊天截图、价格说明、空白图、别的商品等）。
-- role：画面里衣服的角色：主体（这款卖的衣服本身，穿着或挂拍时露出内胆也算主体）/ 内胆（单独拍的抓绒、摇粒绒、棉内胆等可拆内胆）/ 配件（单独拍的帽子、袖套等可拆配件）/ 组合（外套和内胆拆开并排摆）/ 不确定。单独拍的内胆再干净、再正面完整也写内胆，不能当外套。
+- role：画面里衣服的角色：主体（这款卖的衣服本身，穿着或挂拍时露出内胆也算主体）/ 内胆（单独拍的可拆内胆，抓绒、摇粒绒、羽绒、软壳等都算；三合一的内胆有时本身就像一件外套，文件夹名、文件名写着内胆或某种内胆的，按内胆算）/ 配件（单独拍的帽子、袖套等可拆配件）/ 组合（外套和内胆拆开并排摆）/ 不确定。单独拍的内胆再干净、再正面完整也写内胆，不能当外套。
 - colorsSeen：画面里清楚看到的每一件主体衣服的颜色名（多人合照逐件列，同色只列一次）；名字照抄颜色清单的写法，清单里没有的按看到的起常见名；内胆、内搭、裤子的颜色不算；没有主体衣服留空数组。
 - color：画面里这件衣服的颜色名，和 colors 里的名字一致；图上写了颜色名就一字不改地照抄，没写就按你看到的起一个常见颜色名；一张图里有多种颜色或看不出时留空。
 - front：衣服是否完整、正面朝前地出现（领口到下摆都在画面里，没被手、包、文字挡住主体）。没人穿的图（静物、3D渲染、颜色款图）还要衣服合拢、门襟拉链拉上：敞开的、露出内胆或里布的、翻过来的、斜挂着的都写 false。
@@ -46,7 +46,7 @@ const IMAGE_RULES = `每张图（images，一张不漏，按编号）：
 - person：画面里有没有真人模特：只有一位男生写 男，只有一位女生写 女，一男一女写 男女，三人以上写 多人，没有人留空。
 - face：画面里模特的脸是否正对或微侧镜头、五官清楚、没被墨镜、口罩、手或帽檐挡住，脸足够大能看清长相。没有人写 false。
 - open：画面里有没有外套是敞开穿的（拉链拉开、门襟敞着、能看到里面穿的东西），多人合照里有一件敞开就写 true；外套都拉上、或画面里没有外套写 false。
-- inner：画面里看得到的内胆是什么料：摇粒绒（毛茸茸的颗粒绒、抓绒都写摇粒绒）/ 羽绒（一格一格鼓起来的绗缝）/ 棉（薄一些的绗缝夹棉）/ 其他。外套敞开、里面穿着内胆的照片写里面那件；role 是内胆的写它自己；看不到内胆（只穿外套、里面是 T 恤或衬衫，或外套拉链拉上看不到里面）留空。衣服里缝死的里布、里绒不算内胆，留空。
+- inner：画面里看得到的内胆叫什么，2–4 个字，不带“内胆”两个字：素材自己写了就照抄素材的叫法（文件夹名、文件名、图上的字，如“软壳静物”写软壳，“可拆卸摇粒绒内胆”写摇粒绒）；没写才按看到的料起常见名（如 摇粒绒、羽绒、软壳、棉、针织）：表面看得到一粒粒绒毛的（抓绒也算）叫摇粒绒；表面光滑、哑光、像薄外套一样挺括有弹性的叫软壳，袖口、领里露一点绒也是软壳；一格一格鼓起来的绗缝叫羽绒，薄一些的绗缝夹棉叫棉。同一件内胆在每张图里都用同一个名字。外套敞开、里面穿着内胆的照片写里面那件；role 是内胆的写它自己；看不到内胆（只穿外套、里面是 T 恤或衬衫，或外套拉链拉上看不到里面）留空。衣服里缝死的里布、里绒不算内胆，留空。
 - innerColor：inner 不为空时，那件内胆的颜色（如 黑色、米色、藏青）；否则留空。
 - same：如果这张和另一张是同一张照片（裁剪、缩放、调色、加字前后的版本），写那一张的编号，否则留空。`;
 /** The whole product's rules: colours, points, category, checks, titles, master. */
@@ -65,7 +65,7 @@ const WHOLE_RULES = `整款：
   · 一体：棉、绒、羽绒缝在衣服里拆不下来（一体棉、加棉、夹棉、一体绒、加绒、一体羽绒），看文字、文件夹名，也看图里是不是蓬松鼓起、有绗缝。
   · 薄款：春秋单层外套；三合一但素材里一张内胆都没拍到的，也算薄款。
   why：一句话依据（不超过 40 个字），写看到了哪些字、哪些图，如“文件夹写一体羽绒，模特图衣身鼓起有绗缝”。
-  versions：只有 type 是内胆才写，列素材里真的拍到的每一种穿法，一种一条：kind 是 单外壳（外套里面没穿内胆）/ 外壳加内胆（外套里面穿着内胆）/ 单内胆（只穿或只拍内胆）；inner 写内胆的料（摇粒绒 / 羽绒 / 棉 / 其他，单外壳留空）；colors 写这个穿法拍到了哪些颜色（外套的颜色名，单内胆写内胆自己的颜色）；from 写拍到这个穿法的图编号。不要拼、不要猜：有外套的图、也有内胆的图，但没有一张是外套里穿着这件内胆，就不能写外壳加内胆；内胆只露在外套里面、没有单独拍的，就不能写单内胆；文字里提到、图里没拍到的穿法不写。
+  versions：只有 type 是内胆才写，列素材里真的拍到的每一种穿法，一种一条：kind 是 单外壳（外套里面没穿内胆）/ 外壳加内胆（外套里面穿着内胆）/ 单内胆（只穿或只拍内胆）；inner 写内胆的名字（和每张图分类里的写法一致，单外壳留空）；colors 写这个穿法拍到了哪些颜色（外套的颜色名，单内胆写内胆自己的颜色）；from 写拍到这个穿法的图编号。不要拼、不要猜：有外套的图、也有内胆的图，但没有一张是外套里穿着这件内胆，就不能写外壳加内胆；内胆只露在外套里面、没有单独拍的，就不能写单内胆；文字里提到、图里没拍到的穿法不写。
 - look：这款用哪套母版、首图在哪儿拍、首图主打哪个卖点。先看素材里有没有写给谁穿、什么行业（如 4S 店、物业、工地、餐饮、团建），写了就照着选；没写就看衣服本身：颜色深浅、功能卖点多不多、偏商务还是偏户外。master：从下面"母版"里选一个编号；M4 只在素材讲男女同款、情侣或年轻团队时选；M5 是给不想用模特、想省积分的店铺自己换的，不要选；素材里没有模特图不要紧，出图时模特是另画的。place：首图地点编号，只有首图是实景的母版才写，不能选这套母版不能拍的地点，否则留空。sell：首图主打的卖点，从下面"首图卖点"里选一个，要是 points 里讲到的、并且在这个地点演得出来的（看地点后面列的）；都不沾留空。why：一句话理由（不超过 40 个字），如“三防卖点多、深色款，选暗黑科技；素材写了物业保安，在小区门口拍”。`;
 const IMAGE_SHAPE = '{ "id": "M1", "kind": "", "role": "", "colorsSeen": [], "color": "", "front": false, "facing": "", "detail": "", "parts": [], "text": false, "logo": false, "person": "", "face": false, "open": false, "inner": "", "innerColor": "", "same": "" }';
 const WHOLE_SHAPE = `"colors": [{ "name": "", "hex": "", "from": ["M1"] }],
@@ -266,36 +266,59 @@ export function parseWhole(content: string, images: SortedImage[], read: ReadPoi
  * a black fleece under 1888's 黑白 shell was missed, in a call of 2 it was seen every time).
  */
 export const LINER_CHECK_SIDE = 768, LINER_CHECK_BATCH = 10, LINER_CHECK_MAX = 160;
-const LINER_WORDS = /内胆|羽绒|抓绒|摇粒|加绒|加棉|夹棉|一体/;
-export function linerCandidates(images: SortedImage[], pathOf: (id: string) => string): string[] {
+const LINER_WORDS = /内胆|羽绒|抓绒|摇粒|加绒|加棉|夹棉|一体/, LINER_PRODUCT = /三合一|内胆|可拆|一衣[两三]穿/;
+/** Whole-garment photos, and how many of each folder's are looked at even when nothing names a liner. */
+const LINER_PHOTOS = new Set(['静物', '3D渲染', '模特实拍', '颜色款图']);
+export const LINER_FOLDER_SAMPLE = 3;
+const folderOf = (pathOf: (id: string) => string, id: string) => pathOf(id).split('/').slice(0, -1).join('/');
+export function linerCandidates(images: SortedImage[], pathOf: (id: string) => string, product = ''): string[] {
   // An open jacket may show a liner the sort could not make out at its size (10-22: 1888's 黑白 over a black fleece, in a couple photo).
   const maybe = images.filter(i => i.kind !== '无关' && !i.same && (i.role === '内胆' || !!i.inner || !!i.open || LINER_WORDS.test(pathOf(i.id))));
+  // A few photos of every folder too (10-28): a liner may look like a jacket of its own, in a folder named
+  // for a liner no word list knows (8828's 「软壳静物」); linerFolderRest looks at the rest where one is found.
+  // Only where a liner may be: a T-shirt or a single shell is not looked at again.
+  const lined = maybe.length > 0 || images.some(i => i.role === '组合') || LINER_PRODUCT.test([product, ...images.map(i => pathOf(i.id))].join('\n'));
+  const sample = new Map<string, SortedImage[]>();
+  for (const i of lined ? images : []) {
+    if (maybe.includes(i) || i.same || !LINER_PHOTOS.has(i.kind)) continue;
+    const f = folderOf(pathOf, i.id), list = sample.get(f) ?? [];
+    if (list.length < LINER_FOLDER_SAMPLE) sample.set(f, [...list, i]);
+  }
   // The ones sorted as showing a liner first, then the rest by folder, a few from each, up to the limit.
-  const seen = maybe.filter(i => i.role === '内胆' || i.inner || i.open), rest = maybe.filter(i => !seen.includes(i));
+  const seen = maybe.filter(i => i.role === '内胆' || i.inner || i.open), rest = [...maybe.filter(i => !seen.includes(i)), ...[...sample.values()].flat()];
   const byFolder = new Map<string, SortedImage[]>();
-  for (const i of rest) { const f = pathOf(i.id).split('/').slice(0, -1).join('/'); byFolder.set(f, [...(byFolder.get(f) ?? []), i]); }
+  for (const i of rest) { const f = folderOf(pathOf, i.id); byFolder.set(f, [...(byFolder.get(f) ?? []), i]); }
   const spread: SortedImage[] = [];
   for (let k = 0; spread.length < rest.length; k++) for (const list of byFolder.values()) if (list[k]) spread.push(list[k]);
   return [...seen, ...spread].slice(0, LINER_CHECK_MAX).map(i => i.id);
+}
+/** The photos not yet looked at in every folder where the check found a liner, up to what the limit leaves. */
+export function linerFolderRest(images: SortedImage[], checks: LinerCheck[], checked: string[], pathOf: (id: string) => string): string[] {
+  const looked = new Set(checked);
+  const found = new Set(checks.filter(c => looked.has(c.id) && (c.role === '内胆' || c.inner)).map(c => folderOf(pathOf, c.id)));
+  return images.filter(i => !looked.has(i.id) && !i.same && LINER_PHOTOS.has(i.kind) && found.has(folderOf(pathOf, i.id)))
+    .slice(0, Math.max(0, LINER_CHECK_MAX - checked.length)).map(i => i.id);
 }
 const LINER_SYSTEM = `${ROLE}你会收到同一款衣服的一些照片，每张都标了编号，都是原图放大看的。
 任务：逐张看清楚外套里面有没有内胆。只输出 JSON。
 
 每张图：
-- role：主体（穿着或摆着这款外套）/ 内胆（单独穿、单独拍的内胆，外面没有套外套）/ 其他（细节特写、详情页文字图等看不出的）。
+- role：主体（穿着或摆着这款外套）/ 内胆（单独穿、单独拍的内胆，外面没有套外套）/ 其他（细节特写、详情页文字图等看不出的）。三合一的内胆有时本身就像一件外套（软壳、摇粒绒外套、轻薄羽绒）：文件夹名、文件名写着内胆或某种内胆的，或者和这款的外套明显不是同一件（没有帽子、料子不同、更薄更短），写内胆。
 - open：外套是不是敞开的、能看清里面穿的是什么；拉链拉上、领口只露一点点看不清的写 false。role 是内胆时写 true。
-- inner：外套里面（或单独拍的）那件内胆的料：摇粒绒（毛茸茸的颗粒绒，抓绒也写摇粒绒）/ 羽绒（一格一格鼓起来的绗缝，像轻薄羽绒服）/ 棉（薄一些的绗缝夹棉）/ 其他。里面只是 T 恤、衬衫、卫衣、运动背心、打底衫，或 open 是 false 的，留空。衣服里缝死的里布、里绒不算内胆，留空。
+- inner：外套里面（或单独拍的）那件内胆叫什么，2–4 个字，不带“内胆”两个字：素材自己写了就照抄素材的叫法（文件夹名、文件名、图上的字，如“软壳静物”写软壳，“可拆卸摇粒绒内胆”写摇粒绒）；没写才按看到的料起常见名（如 摇粒绒、羽绒、软壳、棉、针织）：表面看得到一粒粒绒毛的（抓绒也算）叫摇粒绒；表面光滑、哑光、像薄外套一样挺括有弹性的叫软壳，袖口、领里露一点绒也是软壳；一格一格鼓起来的绗缝叫羽绒，薄一些的绗缝夹棉叫棉。同一件内胆在每张图里都用同一个名字。里面只是 T 恤、衬衫、卫衣、运动背心、打底衫，或 open 是 false 的，留空。衣服里缝死的里布、里绒不算内胆，留空。
 - innerColor：inner 不为空时，内胆的颜色（如 黑色、米色、藏青）；否则留空。
 - shellColor：role 是主体时，外套的颜色名（多人合照里有好几件，写穿着内胆的那一件），名字从下面的颜色清单里选，选不出留空。
 
 输出：
 { "images": [{ "id": "M1", "role": "", "open": false, "inner": "", "innerColor": "", "shellColor": "" }] }`;
-export function linerRequest(input: { views: PlanView[]; model: string; product: string; colors?: string[] }) {
+/** `named`: the liner names earlier batches gave (10-28), so one liner keeps one name across batches. */
+export function linerRequest(input: { views: PlanView[]; model: string; product: string; colors?: string[]; named?: string[] }) {
+  const named = input.named?.length ? `前面的图里已经出现的内胆：${input.named.join('、')}；是同一件就用同一个名字，是另一件才起新名字。\n` : '';
   return { model: input.model, reasoning_effort: 'low', max_completion_tokens: 6000, response_format: { type: 'json_object' },
-    messages: [{ role: 'system', content: LINER_SYSTEM }, { role: 'user', content: userContent(`${input.colors?.length ? `这款的颜色清单：${input.colors.join('、')}。\n` : ''}商品：${input.product}。下面每张都是一张独立素材。`, input.views) }] };
+    messages: [{ role: 'system', content: LINER_SYSTEM }, { role: 'user', content: userContent(`${input.colors?.length ? `这款的颜色清单：${input.colors.join('、')}。\n` : ''}${named}商品：${input.product}。下面每张都是一张独立素材。`, input.views) }] };
 }
 const linerSchema = z.object({ images: z.array(z.object({ id: z.string(), role: z.enum(['主体', '内胆', '其他']).catch('其他'), open: z.boolean().catch(false),
-  inner: z.enum(['', ...INNERS]).catch(''), innerColor: z.string().trim().max(12).catch(''), shellColor: z.string().trim().max(12).catch('') })) });
+  inner: z.string().catch('').transform(innerName), innerColor: z.string().trim().max(12).catch(''), shellColor: z.string().trim().max(12).catch('') })) });
 export type LinerCheck = z.infer<typeof linerSchema>['images'][number];
 /** One batch of the liner check. */
 export function parseLinerBatch(content: string): LinerCheck[] {
@@ -329,7 +352,7 @@ const imageSchema = z.object({
   plain: z.boolean().optional().catch(undefined),
   role: z.enum(GARMENT_ROLES).optional().catch(undefined), colorsSeen: z.array(z.string().trim().min(1).max(12)).max(12).optional().catch(undefined),
   /** The liner the image shows, inside the shell or on its own (10-21); missing on material sorted before. */
-  inner: z.enum(['', ...INNERS]).optional().catch(undefined), innerColor: z.string().trim().max(12).optional().catch(undefined),
+  inner: z.string().transform(innerName).optional().catch(undefined), innerColor: z.string().trim().max(12).optional().catch(undefined),
   /** A jacket on it is worn open (10-22): easy to see at ~200 px, so the liner check looks at every one. */
   open: z.boolean().optional().catch(undefined),
 });

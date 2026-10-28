@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chooseMaterials, mergePoints, mergeSameColors, parseOrganized, parsePoints, parseRead, parseSorted, parseWhole, pointsRequest, readRequest, recolored, settleCopies, unlistedColors, wholeRequest, worthReading, type SortedImage } from './listing-organize';
+import { applyLiners, chooseMaterials, linerCandidates, linerFolderRest, linerRequest, mergePoints, parseLinerBatch, mergeSameColors, parseOrganized, parsePoints, parseRead, parseSorted, parseWhole, pointsRequest, readRequest, recolored, settleCopies, unlistedColors, wholeRequest, worthReading, type SortedImage } from './listing-organize';
 import { usableAsIs } from '../listing/draft';
 
 const img = (id: string, over: Partial<SortedImage>): SortedImage => ({ id, kind: '模特实拍', color: '', front: false, detail: '', text: false, logo: false, same: '', person: '', face: false, ...over });
@@ -244,5 +244,31 @@ describe('a big product read in parts (10-26)', () => {
     expect(whole.points.map(p => [p.text, p.from])).toEqual([['三层防水', ['M1']]]);
     expect(whole.notes).toEqual(['卖点页有一张裁掉了', '没有背面图']);
     expect(whole.category).toBe('workwear');
+  });
+});
+
+// 8828 (10-28): its 软壳 liner shot alone looks like a jacket of its own, in a folder no liner word names.
+describe('the liner check looks in every folder and keeps the material\'s name', () => {
+  const img = (id: string, kind: SortedImage['kind'], extra: Partial<SortedImage> = {}): SortedImage => ({ id, kind, color: '', front: true, detail: '', parts: [], text: false, logo: false, same: '', person: '', face: false, ...extra });
+  const paths: Record<string, string> = { A1: '8828/A1.jpg', A2: '8828/A2.jpg', B1: '8828/软壳静物/B1.jpg', B2: '8828/软壳静物/B2.jpg', B3: '8828/软壳静物/B3.jpg', B4: '8828/软壳静物/B4.jpg', B5: '8828/软壳静物/B5.jpg', C1: '8828/羽绒静物/C1.jpg', D1: '8828/详情/D1.jpg' };
+  const pathOf = (id: string) => paths[id] ?? '';
+  const images = [img('A1', '静物'), img('A2', '静物', { open: true }), ...['B1', 'B2', 'B3', 'B4', 'B5'].map(id => img(id, '静物')), img('C1', '静物'), img('D1', '详情页')];
+  it('a few photos of each folder are looked at, then the rest of a folder where one shows a liner', () => {
+    const checked = linerCandidates(images, pathOf);
+    expect(checked[0]).toBe('A2');
+    expect(new Set(checked)).toEqual(new Set(['A2', 'A1', 'B1', 'B2', 'B3', 'C1']));
+    const checks = parseLinerBatch(JSON.stringify({ images: [{ id: 'B1', role: '内胆', open: true, inner: '软壳内胆', innerColor: '黑色' }, { id: 'A2', role: '主体', open: true, inner: '羽绒', innerColor: '藏青' }] }));
+    expect(checks[0].inner).toBe('软壳');
+    expect(linerFolderRest(images, checks, checked, pathOf)).toEqual(['B4', 'B5']);
+    expect(applyLiners(checks, images, checked).find(i => i.id === 'B1')).toMatchObject({ role: '内胆', inner: '软壳' });
+  });
+  it('a product with no sign of a liner is not looked at again', () => {
+    const plain = [img('P1', '静物'), img('P2', '模特实拍')], at = (id: string) => `T恤/${id}.jpg`;
+    expect(linerCandidates(plain, at, '纯棉圆领T恤')).toEqual([]);
+    expect(linerCandidates(plain, at, '8828款三合一冲锋衣')).toEqual(['P1', 'P2']);
+  });
+  it('each batch is told the names given before', () => {
+    const text = JSON.stringify(linerRequest({ views: [], model: 'm', product: '8828', named: ['软壳', '羽绒'] }));
+    expect(text).toContain('已经出现的内胆：软壳、羽绒');
   });
 });

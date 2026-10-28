@@ -7,15 +7,16 @@
  * `<colour key>~<version>`, a liner worn alone `~<version>~<n>` by its own colour.
  */
 import type { Draft } from './draft';
-import { INNERS, VERSION_KINDS, versionName, type Inner, type SkuVersion, type VersionKind } from './wear';
+import { INNER_EXAMPLES, VERSION_KINDS, versionName, type Inner, type SkuVersion, type VersionKind } from './wear';
 
 /**
  * A version on the plan: as read from the material, or added by the user (`added`, drawn from `ref`, an image's label).
  * `liners`: over a liner, the liner's colour under each shell colour the user set (10-22); '' is zipped up, the liner
  * unseen. A colour not set wears the liner the material shows it in, and one the material never shows it in is zipped up.
+ * `inner` finds the liner's images in the material; `name` (10-28) is what the user renamed it to, on images and in prompts.
  */
-export type DraftVersion = { key: string; kind: VersionKind; inner: Inner | ''; colors: string[]; on: boolean; added?: boolean; ref?: string; liners?: Record<string, string> };
-export { INNERS, VERSION_KINDS };
+export type DraftVersion = { key: string; kind: VersionKind; inner: Inner; name?: string; colors: string[]; on: boolean; added?: boolean; ref?: string; liners?: Record<string, string> };
+export { INNER_EXAMPLES, VERSION_KINDS };
 
 export const draftVersions = (versions: SkuVersion[]): DraftVersion[] => versions.map((v, i) => ({ key: `v${i + 1}`, kind: v.kind, inner: v.inner, colors: v.colors, on: true }));
 

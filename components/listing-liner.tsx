@@ -16,8 +16,9 @@ const promptOf = (inner: string, color: string, tidy: boolean) => tidy
   ? `照参考图这件${inner}内胆，颜色（${color || "原色"}）、款式、领子、拉链、口袋和面料质感都不变；做成电商白底图：纯白背景，隐形模特效果，正面朝前，拉链拉上，画面里只有这件内胆，不要人、不要文字和水印。`
   : `照参考图这件${inner}内胆，款式、领子、拉链、口袋和面料质感都不变，颜色换成${color || "（写上颜色）"}；做成电商白底图：纯白背景，隐形模特效果，正面朝前，拉链拉上，画面里只有这件内胆，不要人、不要文字和水印。`;
 
-export function LinerDialog({ projectId, inner, color: preset, candidates, price, onUpload, onDone, onClose }: {
-  projectId: string; inner: string;
+export function LinerDialog({ projectId, inner, name, color: preset, candidates, price, onUpload, onDone, onClose }: {
+  /** `inner` tags what is added to the material; `name` (10-28) is what the plan calls the liner, when renamed. */
+  projectId: string; inner: string; name?: string;
   /** A colour the material has (tidying its image onto white); none: a new colour. */
   color?: string;
   /** The material's images of this liner, any colour: references to tick. */
@@ -36,7 +37,7 @@ export function LinerDialog({ projectId, inner, color: preset, candidates, price
   const [made, setMade] = useState<{ asset: string; url: string }[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const prompt = own ?? promptOf(inner, color, tidy);
+  const called = name || inner, prompt = own ?? promptOf(called, color, tidy);
   const ready = !!color.trim();
 
   const run = async (work: () => Promise<void>) => { setBusy(true); setError(""); try { await work(); } catch (e) { setError((e as Error).message || "没成功，可以再试一次"); } finally { setBusy(false); } };
@@ -55,11 +56,11 @@ export function LinerDialog({ projectId, inner, color: preset, candidates, price
   return (
     <div className="lp-modal top" onClick={e => { if (e.target === e.currentTarget && !busy) onClose(); }}>
       <div className="lp-box lp-liner" role="dialog" aria-modal="true" aria-label="内胆图">
-        <div className="lp-box-head"><div><h3>{tidy ? `把「${preset}${inner}内胆」整理成白底图` : `新增一个${inner}内胆的颜色`}</h3>
+        <div className="lp-box-head"><div><h3>{tidy ? `把「${preset}${called}内胆」整理成白底图` : `新增一个${called}内胆的颜色`}</h3>
           <p className="lp-sub">{tidy ? "照素材里这件内胆，出一张干净的白底图，SKU 卡上的内胆小图用它。" : "素材里没有这个颜色的内胆：上传一张照片，或者让 AI 照别的颜色画一张。用了以后，SKU 图照它画内胆、卡片上放它。"}</p></div>
           <div className="grow" /><button type="button" className="lp-btn sm ghost" disabled={busy} onClick={onClose}>关闭</button></div>
         <div className="lp-liner-body">
-          <div className="row"><label>内胆</label><b>{inner}内胆</b>
+          <div className="row"><label>内胆</label><b>{called}内胆</b>
             <label>颜色</label>{tidy ? <b>{preset}</b> : <input className="lp-in" value={color} placeholder="比如：黑色" maxLength={12} onChange={e => setColor(e.target.value)} />}</div>
           {!tidy && <div className="lp-chips modes">{([["ai", "AI 生成"], ["upload", "上传照片"]] as const).map(([m, name]) => (
             <label key={m} className={"lp-chip" + (mode === m ? " on" : "")}><input type="radio" hidden checked={mode === m} onChange={() => setMode(m)} />{name}</label>))}</div>}

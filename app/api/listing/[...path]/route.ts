@@ -5,7 +5,7 @@ import { CatalogHttpError } from '@/lib/server/catalog-auth';
 import { assertPageAccess } from '@/lib/server/page-access';
 import { addReference, addSourceImage, chooseVersion, createProject, deleteProject, listProjects, MAX_SOURCE_BYTES, projectDetail, readListingAsset } from '@/lib/server/listing-store';
 import { addExtraImage, imagePrices, planPrice, requestPlan, submitDraft } from '@/lib/server/listing-jobs';
-import { INNERS } from '@/lib/listing/wear';
+import { innerName } from '@/lib/listing/wear';
 import { copyProject } from '@/lib/server/listing-copy';
 import { addSet, adoptDrawn, downloadZip, drawMaterial, drawState, editSlot, recast, recardSkus, redoSkus, redoSlot, redrawSlot, slotStates, startVerticals, stopImages } from '@/lib/server/listing-generation';
 import { createShopSet, deleteShopSet, makeServices, removeShopLogo, saveShop, saveShopBrand, saveShopCorner, saveSkuBadge, saveShopLogo, shopBrand, shopOfAsset, shopState, updateShopSet } from '@/lib/server/listing-shop';
@@ -83,7 +83,7 @@ export async function POST(request: NextRequest, context: Context) {
     if (path[0] === 'projects' && path[1] && path[2] === 'extra') {
       const bytes = await catalogBody(request, MAX_SOURCE_BYTES);
       // A liner photo says what it is (10-22): that liner worn alone, in that colour.
-      const inner = INNERS.find(x => x === header(request, 'x-liner-inner')), color = header(request, 'x-liner-color').trim().slice(0, 12);
+      const inner = innerName(header(request, 'x-liner-inner')), color = header(request, 'x-liner-color').trim().slice(0, 12);
       return json(await addExtraImage(tenant.id, path[1], bytes, header(request, 'x-file-name') || '补传.jpg', inner && color ? { inner, color } : undefined));
     }
     if (path[0] === 'projects' && path[1] && path[2] === 'images') {

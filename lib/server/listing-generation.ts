@@ -17,9 +17,9 @@
  * current version as the user asked; the result is a candidate version until adopted.
  */
 import { addExtraImage } from './listing-jobs';
-import { INNERS } from '../listing/wear';
+import { innerName } from '../listing/wear';
 import { itemReference, linerAlone, linerByColor, linerColorOf, linerFor, mainLiner, skuItems } from '../listing/sku-versions';
-import { LINER_ALONE_WEAR, linerSubject, versionName } from '../listing/wear';
+import { LINER_ALONE_WEAR, linerName, linerSubject, versionName } from '../listing/wear';
 import { coveredZip, groupWear, wearLine, zippedWear } from '../listing/wear';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -485,7 +485,7 @@ export async function drawState(tenant: string, projectId: string, jobId: string
   if (!j) throw new CatalogHttpError(404, '找不到这次生成');
   return { status: j.status as string, error: j.error as string | null, asset: (j.result_asset as string | null) ?? null };
 }
-const adoptSchema = z.object({ asset: z.string().uuid(), inner: z.enum(INNERS), color: z.string().trim().min(1, '先写上颜色').max(12) });
+const adoptSchema = z.object({ asset: z.string().uuid(), inner: z.string().trim().max(12).transform(innerName).refine(Boolean, '先写上内胆叫什么'), color: z.string().trim().min(1, '先写上颜色').max(12) });
 /** A drawing taken into the material as that liner worn alone (on white), so the plan can use it like any photo of it. */
 export async function adoptDrawn(tenant: string, projectId: string, body: unknown) {
   const parsed = adoptSchema.safeParse(body);
@@ -769,7 +769,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
           // The shop's own LOGO while it shows one (店铺设置); the sample LOGO is only for the crafts image.
           ...text, rows: [...text.rows, lined ? { ...row, sub: versionName(v) } : row], logo: badge?.place === 'corner' ? null : await (await shopBrand(job.tenant_id, shopSet))?.bytes().catch(() => null) ?? null,
           fabric: product ? await fabricCrop(product) : await sharp(photo!).resize(800, 800, { fit: 'cover', position: 'centre' }).png().toBuffer(),
-          ...(thumbFile ? { liner: { photo: await fileOf(thumbFile), name: `${v!.inner}内胆`, whole: sorted.find((i: { id: string; kind: string }) => i.id === thumbLabel)?.kind === '静物' } } : {}),
+          ...(thumbFile ? { liner: { photo: await fileOf(thumbFile), name: `${linerName(v!)}内胆`, whole: sorted.find((i: { id: string; kind: string }) => i.id === thumbLabel)?.kind === '静物' } } : {}),
           photo: photo ? { bytes: photo, cutout: false, frame } : { bytes: await removeFlatArtworkBackground(product!, { r: 255, g: 255, b: 255 }), cutout: true },
           // A version over a liner or the liner alone says so in the dark pill (10-22), else the badge when it goes under the title.
           // With its liner's picture under the title the liner speaks for itself; zipped up (none), the pill names the version.
@@ -796,7 +796,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
       const dressed = async (shells: string[], refs: Buffer[], cast = false): Promise<{ wear: string | null; linerRef?: number }> => {
         if (!byColor) { const linerRef = cast && wearType === '内胆' && liner ? refs.push(liner) : undefined; return { wear: wearLine(wearType, linerRef, undefined, covered), linerRef }; }
         const picks = shells.map(shell => ({ shell, pick: mainLiner(linerImages, d, shell) }));
-        if (picks.length > 1) return { wear: groupWear(picks.map(p => ({ shell: p.shell, liner: p.pick?.color ? `${p.pick.color}${p.pick.version.inner}` : '' })), covered) };
+        if (picks.length > 1) return { wear: groupWear(picks.map(p => ({ shell: p.shell, liner: p.pick?.color ? `${p.pick.color}${linerName(p.pick.version)}` : '' })), covered) };
         const p = picks[0]?.pick, asset = p?.ref ? stored.images.find(i => i.label === p.ref)?.assetId : undefined;
         const file = asset ? (await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [asset])).rows[0]?.file_id : undefined;
         if (!p || !file) return { wear: zippedWear(covered) };
@@ -822,8 +822,8 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         // SKU images show the garment as it is, no chest LOGO (10-21: one on every colour looked odd).
         if (v?.kind === '单内胆') {
           references = [ref!, ...faces];
-          prompt = skuModelPrompt({ color: it.name, garment: [`${v.inner}内胆`], lead: who, who: input.pair ? 'pair' : 'lead', halves, logo: null, place: stored.place, pose,
-            wear: LINER_ALONE_WEAR, subject: linerSubject(v.inner, it.name) });
+          prompt = skuModelPrompt({ color: it.name, garment: [`${linerName(v)}内胆`], lead: who, who: input.pair ? 'pair' : 'lead', halves, logo: null, place: stored.place, pose,
+            wear: LINER_ALONE_WEAR, subject: linerSubject(linerName(v), it.name) });
         } else {
           references = [await output(`product:${it.color}`), ...faces];
           // Over its liner: the material's photo of this shell over it (10-22); the shell alone: as before; no version: as the main images wear it (10-25).
