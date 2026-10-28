@@ -68,6 +68,18 @@ describe('a liner is named as the material calls it', () => {
     ] }, shells, ['黑色', '冰川蓝'])!;
     expect(w.versions.map(versionName)).toEqual(['外壳 + 软壳内胆', '单穿软壳内胆', '外壳 + 羽绒内胆']);
   });
+  it('a liner named with its colour in front is the liner the images call by the rest (8828, 10-28: all worn as 薄款)', () => {
+    const w = settleWear({ type: '内胆', versions: [
+      { kind: '外壳加内胆', inner: '黑色软壳', from: ['S1'] }, { kind: '单内胆', inner: '黑色软壳', from: ['S2'] }, { kind: '外壳加内胆', inner: '藏青羽绒', from: ['S3'] },
+    ] }, shells, ['黑色', '冰川蓝'])!;
+    expect([w.type, w.versions.map(versionName)]).toEqual(['内胆', ['外壳 + 软壳内胆', '单穿软壳内胆', '外壳 + 羽绒内胆']]);
+  });
+  it('two liners of one colour under one shell, each also shot alone, are both kept (8828: black 软壳 and black 羽绒)', () => {
+    const both = [...shells, { id: 'S4', kind: '模特实拍', role: '主体', color: '黑色', inner: '软壳', innerColor: '黑色' },
+      { id: 'S5', kind: '模特实拍', role: '主体', color: '黑色', inner: '羽绒', innerColor: '黑色' }, { id: 'S6', kind: '静物', role: '内胆', color: '黑色', inner: '羽绒', innerColor: '黑色' }];
+    const w = settleWear({ type: '内胆', versions: [{ kind: '外壳加内胆', inner: '羽绒', from: ['S3', 'S5'] }, { kind: '外壳加内胆', inner: '软壳', from: ['S1', 'S4'] }] }, both, ['黑色', '冰川蓝'])!;
+    expect(w.versions.map(v => [versionName(v), v.colors])).toEqual([['外壳 + 羽绒内胆', ['黑色', '冰川蓝']], ['外壳 + 软壳内胆', ['黑色']]]);
+  });
   it('a name the material\'s words carry stands; one from the look alone is to confirm', () => {
     const words = ['8828款三合一/软壳静物/3T4A5132.jpg', '可拆卸羽绒内胆'];
     expect([innerSaid('软壳', words), innerSaid('羽绒', words), innerSaid('摇粒绒', words), innerSaid('', words)]).toEqual([true, true, false, false]);

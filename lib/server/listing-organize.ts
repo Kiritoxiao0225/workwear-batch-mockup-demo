@@ -65,7 +65,7 @@ const WHOLE_RULES = `整款：
   · 一体：棉、绒、羽绒缝在衣服里拆不下来（一体棉、加棉、夹棉、一体绒、加绒、一体羽绒），看文字、文件夹名，也看图里是不是蓬松鼓起、有绗缝。
   · 薄款：春秋单层外套；三合一但素材里一张内胆都没拍到的，也算薄款。
   why：一句话依据（不超过 40 个字），写看到了哪些字、哪些图，如“文件夹写一体羽绒，模特图衣身鼓起有绗缝”。
-  versions：只有 type 是内胆才写，列素材里真的拍到的每一种穿法，一种一条：kind 是 单外壳（外套里面没穿内胆）/ 外壳加内胆（外套里面穿着内胆）/ 单内胆（只穿或只拍内胆）；inner 写内胆的名字（和每张图分类里的写法一致，单外壳留空）；colors 写这个穿法拍到了哪些颜色（外套的颜色名，单内胆写内胆自己的颜色）；from 写拍到这个穿法的图编号。不要拼、不要猜：有外套的图、也有内胆的图，但没有一张是外套里穿着这件内胆，就不能写外壳加内胆；内胆只露在外套里面、没有单独拍的，就不能写单内胆；文字里提到、图里没拍到的穿法不写。
+  versions：只有 type 是内胆才写，列素材里真的拍到的每一种穿法，一种一条：kind 是 单外壳（外套里面没穿内胆）/ 外壳加内胆（外套里面穿着内胆）/ 单内胆（只穿或只拍内胆）；inner 写内胆的名字（照抄每张图分类里「」中的名字，不加颜色，单外壳留空）；colors 写这个穿法拍到了哪些颜色（外套的颜色名，单内胆写内胆自己的颜色）；from 写拍到这个穿法的图编号。不要拼、不要猜：有外套的图、也有内胆的图，但没有一张是外套里穿着这件内胆，就不能写外壳加内胆；内胆只露在外套里面、没有单独拍的，就不能写单内胆；文字里提到、图里没拍到的穿法不写。
 - look：这款用哪套母版、首图在哪儿拍、首图主打哪个卖点。先看素材里有没有写给谁穿、什么行业（如 4S 店、物业、工地、餐饮、团建），写了就照着选；没写就看衣服本身：颜色深浅、功能卖点多不多、偏商务还是偏户外。master：从下面"母版"里选一个编号；M4 只在素材讲男女同款、情侣或年轻团队时选；M5 是给不想用模特、想省积分的店铺自己换的，不要选；素材里没有模特图不要紧，出图时模特是另画的。place：首图地点编号，只有首图是实景的母版才写，不能选这套母版不能拍的地点，否则留空。sell：首图主打的卖点，从下面"首图卖点"里选一个，要是 points 里讲到的、并且在这个地点演得出来的（看地点后面列的）；都不沾留空。why：一句话理由（不超过 40 个字），如“三防卖点多、深色款，选暗黑科技；素材写了物业保安，在小区门口拍”。`;
 const IMAGE_SHAPE = '{ "id": "M1", "kind": "", "role": "", "colorsSeen": [], "color": "", "front": false, "facing": "", "detail": "", "parts": [], "text": false, "logo": false, "person": "", "face": false, "open": false, "inner": "", "innerColor": "", "same": "" }';
 const WHOLE_SHAPE = `"colors": [{ "name": "", "hex": "", "from": ["M1"] }],
@@ -183,7 +183,9 @@ export function sortRequest(input: { views: PlanView[]; model: string; product: 
 /** The whole product, read from the images worth reading and how each was sorted. */
 /** One sorted image as a line of text, for the readings that follow the sort. */
 const imageLine = (i: SortedImage) => {
-  const inner = i.role === '内胆' ? `，单拍内胆（${i.innerColor ?? ''}${i.inner ?? ''}）` : i.inner ? `，外套里穿着${i.innerColor ?? ''}${i.inner}内胆` : '';
+  // The liner's name apart from its colour (10-28: 「黑色软壳内胆」 here came back as a liner named 黑色软壳, which no image has).
+  const tint = i.innerColor ? `，${i.innerColor}` : '';
+  const inner = i.role === '内胆' ? `，单拍内胆（名字「${i.inner ?? ''}」${tint}）` : i.inner ? `，外套里穿着内胆（名字「${i.inner}」${tint}）` : '';
   return `${i.id}：${i.kind}${i.color ? `，${i.color}` : ''}${i.detail || i.parts?.length ? `，部位 ${[...new Set([i.detail, ...(i.parts ?? [])].filter(Boolean))].join('、')}` : ''}${i.front ? '，正面全身' : ''}${i.text ? '，有卖点字' : ''}${i.person ? `，${i.person}` : ''}${inner}`;
 };
 export function readRequest(input: { views: PlanView[]; model: string; product: string; images: SortedImage[]; colors?: string[] }) {

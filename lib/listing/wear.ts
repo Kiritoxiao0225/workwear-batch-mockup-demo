@@ -45,13 +45,16 @@ export const versionName = (v: Pick<SkuVersion, 'kind' | 'inner'> & { name?: str
 /**
  * One shell colour over one liner colour is one liner: read as two materials, the one most images
  * show is taken (10-21: 6609's 安哥拉红 over a black liner, 羽绒 on ten images and 棉 on one).
+ * A liner also photographed on its own is one this product really has, and stands (10-28: 8828 has a
+ * black 软壳 and a black 羽绒, both worn under its black shell).
  */
 function oneLinerEach(images: Seen[]): Seen[] {
+  const alone = new Set(images.filter(i => i.role === '内胆' && i.inner).map(i => i.inner));
   const key = (i: Seen) => i.role === '主体' && i.inner && i.color && i.innerColor ? `${i.color}|${i.innerColor}` : '';
   const counts = new Map<string, Map<string, number>>();
   for (const i of images) { const k = key(i); if (k) { const m = counts.get(k) ?? new Map(); m.set(i.inner!, (m.get(i.inner!) ?? 0) + 1); counts.set(k, m); } }
   const most = new Map([...counts].map(([k, m]) => [k, [...m].sort((a, b) => b[1] - a[1])[0][0]]));
-  return images.map(i => { const k = key(i); return k && most.get(k) !== i.inner ? { ...i, inner: most.get(k) } : i; });
+  return images.map(i => { const k = key(i); return k && most.get(k) !== i.inner && !alone.has(i.inner) ? { ...i, inner: most.get(k) } : i; });
 }
 
 /** Does this image show this version: the shell alone, the shell with this liner inside, or this liner alone. */
@@ -76,22 +79,27 @@ export function settleWear(raw: { type?: string; why?: string; versions?: { kind
   const versions: SkuVersion[] = [];
   for (const r of raw.type === '内胆' ? raw.versions ?? [] : []) {
     const kind = (VERSION_KINDS as readonly string[]).includes(r.kind ?? '') ? r.kind as VersionKind : null;
-    const inner = kind === '单外壳' ? '' : innerName(r.inner);
-    if (!kind || (kind !== '单外壳' && !inner)) continue;
-    const from = [...new Set(r.from ?? [])].filter(id => { const i = byId.get(id); return !!i && shows({ kind, inner }, i); });
-    const all = images.filter(i => shows({ kind, inner }, i));
-    if (!from.length || !all.some(i => !i.kind || PHOTO_KINDS.has(i.kind))) continue;
-    // Its colours from every image sorted as showing it, not only the few the reading names (10-21: 1888's 单外壳 named 2 of its 4 colours).
-    // With a liner, only the shell that wears it counts: a poster of several shells paired every one of them with the liner.
-    const seen = all.flatMap(i => kind === '单内胆' ? [i.innerColor || i.color] : kind === '外壳加内胆' ? [i.color] : [i.color, ...(i.colorsSeen ?? [])]).filter(Boolean);
-    // A liner's own colour is not a shell colour, unless a shell is seen in it on its own (10-21: 1888's beige fleece, worn alone in the group photos).
-    const shown = kind === '单内胆' ? [...new Set(seen)] : colors.filter(c => seen.includes(c) && (!linerOnly.has(c)));
-    const same = versions.find(v => v.kind === kind && v.inner === inner);
-    if (same) { same.from = [...new Set([...same.from, ...from])]; same.colors = [...new Set([...same.colors, ...shown])]; }
-    else versions.push({ kind, inner, colors: shown, from });
+    if (!kind) continue;
+    // The liner is the one the images it cites show, by their name, not the reading's own spelling of it
+    // (10-28: 8828's every version came back as 黑色软壳, 浅灰色羽绒 …, no image had those names, and it was worn as 薄款).
+    const cited = [...new Set(r.from ?? [])].flatMap(id => byId.get(id) ?? []);
+    const inners = kind === '单外壳' ? [''] : [...new Set(cited.map(i => i.inner).filter((n): n is string => !!n))];
+    for (const inner of inners) {
+      const from = cited.filter(i => shows({ kind, inner }, i)).map(i => i.id);
+      const all = images.filter(i => shows({ kind, inner }, i));
+      if (!from.length || !all.some(i => !i.kind || PHOTO_KINDS.has(i.kind))) continue;
+      // Its colours from every image sorted as showing it, not only the few the reading names (10-21: 1888's 单外壳 named 2 of its 4 colours).
+      // With a liner, only the shell that wears it counts: a poster of several shells paired every one of them with the liner.
+      const seen = all.flatMap(i => kind === '单内胆' ? [i.innerColor || i.color] : kind === '外壳加内胆' ? [i.color] : [i.color, ...(i.colorsSeen ?? [])]).filter(Boolean);
+      // A liner's own colour is not a shell colour, unless a shell is seen in it on its own (10-21: 1888's beige fleece, worn alone in the group photos).
+      const shown = kind === '单内胆' ? [...new Set(seen)] : colors.filter(c => seen.includes(c) && (!linerOnly.has(c)));
+      const same = versions.find(v => v.kind === kind && v.inner === inner);
+      if (same) { same.from = [...new Set([...same.from, ...from])]; same.colors = [...new Set([...same.colors, ...shown])]; }
+      else versions.push({ kind, inner, colors: shown, from });
+    }
   }
   const lined = versions.some(v => v.kind !== '单外壳');
-  if (raw.type === '内胆' && !lined) return { type: '薄款', why: `素材里没拍到内胆，按春秋薄款穿（${raw.why ?? ''}）`.slice(0, 120), versions: [] };
+  if (raw.type === '内胆' && !lined) return { type: '薄款', why: `读出来有内胆，但指的图里都没对上内胆，先按春秋薄款穿，请核对（${raw.why ?? ''}）`.slice(0, 120), versions: [] };
   return { type: raw.type as WearType, why: (raw.why ?? '').slice(0, 120), versions: raw.type === '内胆' ? versions : [] };
 }
 
