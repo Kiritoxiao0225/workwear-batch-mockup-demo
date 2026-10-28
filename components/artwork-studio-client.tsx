@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppHeader } from "./app-header";
 import { PageHeader } from "./page-header";
+import { STORAGE_PAGE, useStorage } from "@/lib/storage-status";
 import { OUTPUT_RATIOS, OUTPUT_RESOLUTIONS, outputSize, type OutputRatio, type OutputResolution, type Size } from "@/lib/artwork-output-size";
 import { SaasEditors } from "./saas-editors";
 import { authoredPrompt, splitPrompt } from "./saas-requirement-editor";
@@ -613,6 +614,8 @@ export function ArtworkStudioClient() {
   const shown = cases,
     visible = allHistory ? shown : shown.slice(0, 30);
   const working = busy || organizing;
+  // Space used up: the pictures it makes could not be stored, so don't start (10-28).
+  const storageFull = useStorage().level === "full";
   const splitting = split && route === "generate" && mode === "text";
   // A 2K/4K picture shows its 1K drawing, blurred, while the Volcengine upscaler works on it; the
   // download and edit tools wait for the finished picture.
@@ -945,13 +948,14 @@ export function ArtworkStudioClient() {
               <div className="start-row">
                 <button
                   className="button primary"
-                  disabled={working || !text.trim() || !prices}
+                  disabled={working || !text.trim() || !prices || storageFull}
                   onClick={() => void begin(splitting)}
                 >
                   {planning ? "AI 正在拆…" : busy ? "正在提交…" : splitting ? "让 AI 拆分" : "开始制作"}
                 </button>
               </div>
-              {!working && !text.trim() && <p className="tiny muted start-hint">写好制作要求，就能开始制作。</p>}
+              {storageFull && <p className="tiny start-hint">存储空间已满，做出来的图存不下。<Link href={STORAGE_PAGE}>去清理 ›</Link></p>}
+              {!working && !storageFull && !text.trim() && <p className="tiny muted start-hint">写好制作要求，就能开始制作。</p>}
               {prices && !prices.exempt && (
                 <p className="tiny muted">按上限冻结，跑完按实际结算，多余退回。</p>
               )}

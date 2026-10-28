@@ -29,6 +29,16 @@
 .product-header__credit b { font: 600 12px/1 var(--font-mono); color: var(--ink); }
 .product-header__muted { color: var(--muted); }
 .product-header__held { font-size: 11px; color: var(--warning); }
+/* Storage beside the credits (10-28): amber from 80%, red from 95% and when full. */
+.product-header__storage { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; height: 30px; padding: 0 12px; border-radius: 8px; background: var(--panel-soft); color: inherit; font-size: 12px; white-space: nowrap; text-decoration: none; }
+.product-header__storage:hover { background: var(--panel-muted); }
+.product-header__storage b { font: 600 12px/1 var(--font-mono); color: var(--ink); }
+.product-header__storage > i { position: relative; display: block; width: 36px; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.product-header__storage > i > i { position: absolute; inset: 0 auto 0 0; display: block; border-radius: 2px; background: var(--brand); }
+.product-header__storage.warn > i > i { background: var(--warning); }
+.product-header__storage.high > i > i, .product-header__storage.full > i > i { background: var(--danger); }
+.product-header__storage.high b, .product-header__storage.full b, .product-header__storage.full .product-header__muted { color: var(--danger); }
+.product-header__error a { color: inherit; font-weight: 600; }
 .product-header__account { position: relative; flex: 0 0 auto; }
 .product-header__account-button { display: flex; align-items: center; gap: 8px; max-width: 220px; padding: 3px 8px 3px 3px; border: 1px solid transparent; border-radius: 22px; background: none; color: var(--ink-secondary); font: inherit; font-size: 13px; cursor: pointer; }
 .product-header__account-button:hover:not(:disabled), .product-header__account-button[aria-expanded="true"] { border-color: var(--line); background: var(--panel-soft); }
@@ -62,7 +72,7 @@
   .product-header__controls { gap: 8px; }
   .product-header__nav a { padding: 0 8px; }
   .product-header__nav a.active::after { left: 8px; right: 8px; }
-  .product-header__credit { display: none; }
+  .product-header__credit, .product-header__storage { display: none; }
   .product-header__menu-credit { display: flex; }
 }
 

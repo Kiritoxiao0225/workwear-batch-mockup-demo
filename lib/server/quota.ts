@@ -7,6 +7,9 @@ export type QuotaRequest = { id: string; tenantId: string; bytes?: number; style
 
 const DEFAULT_TTL_SECONDS = 30 * 60;
 
+/** What every refusal for space says: where to make room (10-28). */
+export const STORAGE_FULL = '存储空间已满，请到「我的账户 → 存储空间」删掉不用的再试';
+
 /**
  * A look before bytes go to object storage. The transaction that records the file still makes the
  * binding check; this stops an account already at its quota from pushing objects that are then
@@ -18,7 +21,7 @@ export async function assertStorageRoom(tenantId: string, bytes: number, sha256:
       EXISTS(SELECT 1 FROM files f JOIN tenant_file_refs r ON r.file_id=f.id WHERE r.tenant_id=$1 AND f.sha256=$3 AND f.status='ready') AS held,
       EXISTS(SELECT 1 FROM tenant_usage u JOIN tenants t ON t.id=u.tenant_id
               WHERE u.tenant_id=$1 AND u.bytes_used+u.bytes_reserved+$2<=t.storage_quota_bytes) AS room`, [tenantId, bytes, sha256]);
-  if (!row?.held && !row?.room) throw new CatalogHttpError(413, '存储空间不足');
+  if (!row?.held && !row?.room) throw new CatalogHttpError(413, STORAGE_FULL);
 }
 
 /**
@@ -60,7 +63,7 @@ export async function reserveQuota(client: Client, request: QuotaRequest) {
     const overStyles = Number(row.style_count) + Number(row.style_reserved) + styles > Number(row.style_quota);
     throw new CatalogHttpError(413, overStyles
       ? `款式数量已达上限（${row.style_quota} 款），请先删除不用的款式或升级套餐`
-      : `存储空间不足（上限 ${(Number(row.storage_quota_bytes) / 1024 ** 3).toFixed(2)} GiB），请先清理或升级套餐`);
+      : `存储空间已满（共 ${(Number(row.storage_quota_bytes) / 1024 ** 3).toFixed(2)} GB），请到「我的账户 → 存储空间」删掉不用的再试`);
   }
 }
 

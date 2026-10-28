@@ -21,6 +21,8 @@ const input = z.object({
   dailyCapCents: z.number().int().min(0).max(100_000_000).nullable().optional(),
   // null shows both routes on 图稿生成 and lets the account pick.
   artworkRoute: z.enum(ARTWORK_ROUTES).nullable().optional(),
+  // Whole bytes, 100 MB to 10 TB.
+  storageQuotaBytes: z.number().int().min(100 * 1024 ** 2).max(10 * 1024 ** 4).optional(),
 }).strict();
 
 export async function GET(request: NextRequest, context: Context) {

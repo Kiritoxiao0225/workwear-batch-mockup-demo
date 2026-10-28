@@ -7,7 +7,9 @@
  */
 import { PLAN_IMAGE_COST_MICRO, planCredits } from "@/lib/listing/plan-price";
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { AppHeader } from "./app-header";
+import { STORAGE_PAGE, useStorage } from "@/lib/storage-status";
 import { PageHeader, PageTabs } from "./page-header";
 import type { Config, Detail, LayoutCard, Sorted, Summary } from "@/lib/listing/api-types";
 import { api, assetUrl, downloadUrl, isDemo, post } from "@/lib/listing/client-api";
@@ -194,7 +196,9 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
       await startPlan(id);
     }
   };
-  const choose = (groups: Group[]) => { if (!groups.length) say("没有找到图片（只支持 JPG、PNG、WebP）"); else setPending(groups); };
+  // Space used up: new folders would be refused picture by picture, so stop at the door (10-28).
+  const storageFull = useStorage().level === "full" && !isDemo();
+  const choose = (groups: Group[]) => { if (storageFull) say("存储空间已满，先到「存储空间」删掉不用的商品", 6000); else if (!groups.length) say("没有找到图片（只支持 JPG、PNG、WebP）"); else setPending(groups); };
   const onDrop = async (event: React.DragEvent) => { event.preventDefault(); setOver(false); choose(await groupsFromDrop(event.dataTransfer.items)); };
   const pick = useRef<HTMLInputElement>(null);
 
@@ -306,14 +310,15 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
         {view === "shop" ? <ShopPage unit={prices.image} exempt={prices.exempt} onSay={say} /> : <>
         <div className="lp-dropwrap">
           <button type="button" className={"lp-drop" + (over ? " over" : "")}
-            onDragOver={e => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={onDrop} onClick={() => pick.current?.click()}>
+            onDragOver={e => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={onDrop} onClick={() => storageFull ? choose([]) : pick.current?.click()}>
             <span className="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><path d="M12 10v6M9 13l3-3 3 3" /></svg></span>
             <span className="tx"><b>把商品文件夹拖到这里</b><span>一个文件夹一款，主图、SKU 图、详情图随便放。可以一次拖多个{config && !config.exempt && <> · 整理素材按张数算：每款 {config.planCredits} 积分起，每张图再加 {PLAN_IMAGE_COST_MICRO * config.planMultiplierMilli / 1e6} 积分</>}</span></span>
             <span className="lp-btn">选择文件夹</span>
           </button>
+          {storageFull && <div className="lp-confirm">存储空间已满，新的素材传不上去。<Link href={STORAGE_PAGE}>去「存储空间」删掉不用的商品 ›</Link></div>}
           {pending && <div className="lp-confirm">识别到 <b>{pending.length} 款</b>：{pending.map(g => g.name).join("、")}{config && !config.exempt && <> · 整理素材共 <b>{pending.reduce((n, g) => n + planCredits(config.planCostMicro, config.planMultiplierMilli, g.files.length), 0)}</b> 积分{pending.length > 1 ? `（${pending.map(g => `${g.name} ${g.files.length} 张 ${planCredits(config.planCostMicro, config.planMultiplierMilli, g.files.length)}`).join("、")}）` : `（${pending[0].files.length} 张）`}</>}
             {pending.some(g => g.files.length > BIG_FOLDER) && <> · {pending.filter(g => g.files.length > BIG_FOLDER).map(g => `${g.name} 有 ${g.files.length} 张`).join("、")}，素材较多，会分几段整理，慢一些；中途断了可以接着做</>}
-            <button type="button" className="lp-btn sm primary" onClick={() => { const g = pending; setPending(null); void startGroups(g); }}>开始整理</button>
+            <button type="button" className="lp-btn sm primary" disabled={storageFull} onClick={() => { const g = pending; setPending(null); void startGroups(g); }}>开始整理</button>
             <button type="button" className="lp-btn sm" onClick={() => setPending(null)}>取消</button></div>}
         </div>
         <input ref={pick} type="file" multiple hidden {...{ webkitdirectory: "" }} accept="image/*"

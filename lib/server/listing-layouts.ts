@@ -11,7 +11,7 @@ import { z } from 'zod';
 import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './catalog-database';
 import { CatalogHttpError } from './catalog-auth';
 import { readCatalogFile, saveCatalogFile, fileSha256 } from './catalog-files';
-import { assertStorageRoom } from './quota';
+import { assertStorageRoom, STORAGE_FULL } from './quota';
 import { registerFileRef } from './file-authorization';
 import { currentPrices, holdCredits, microToCents, priceOf, releaseHold, settleHold } from './credits';
 import { LEGACY_LAYOUTS } from '../listing/legacy-layouts';
@@ -73,7 +73,7 @@ async function keepFile(c: CatalogQueryClient, tenant: string, fileId: string, b
   if (!owned.rowCount) {
     const updated = await c.query(`UPDATE tenant_usage u SET bytes_used=bytes_used+$2 FROM tenants t
       WHERE u.tenant_id=$1 AND t.id=u.tenant_id AND u.bytes_used+u.bytes_reserved+$2<=t.storage_quota_bytes RETURNING u.tenant_id`, [tenant, bytes]);
-    if (!updated.rowCount) throw new CatalogHttpError(413, '存储空间不足');
+    if (!updated.rowCount) throw new CatalogHttpError(413, STORAGE_FULL);
   }
   await registerFileRef(fileId, tenant, 'listing-layouts', name.slice(0, 200), c);
 }

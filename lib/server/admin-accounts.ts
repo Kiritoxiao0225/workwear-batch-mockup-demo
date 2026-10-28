@@ -46,6 +46,7 @@ export async function listAccounts(range: { from: Date; to: Date }) {
     catalogDatabase().query(
       `SELECT u.id, u.email, u.display_name, u.role, u.disabled, u.created_at, u.admin_note, u.allowed_pages, u.artwork_route,
               u.tenant_id, t.name AS tenant_name, t.workspace, t.billing_mode, t.disabled AS tenant_disabled, t.daily_spend_cap_cents,
+              t.storage_quota_bytes, tu.bytes_used,
               c.balance_cents, c.held_cents,
               (SELECT count(*)::int FROM users x WHERE x.tenant_id = u.tenant_id) AS members,
               (SELECT max(s.created_at) FROM sessions s WHERE s.user_id = u.id) AS last_login,
@@ -53,6 +54,7 @@ export async function listAccounts(range: { from: Date; to: Date }) {
                  FROM user_identities i WHERE i.user_id = u.id) AS identities
          FROM users u JOIN tenants t ON t.id = u.tenant_id
          LEFT JOIN credit_accounts c ON c.tenant_id = u.tenant_id
+         LEFT JOIN tenant_usage tu ON tu.tenant_id = u.tenant_id
         ORDER BY u.created_at DESC`),
     catalogDatabase().query(
       `SELECT h.tenant_id, t.workspace, h.kind, h.job_ref, h.settled_cents
@@ -91,6 +93,7 @@ export async function listAccounts(range: { from: Date; to: Date }) {
         exempt: row.billing_mode === 'exempt', members: Number(row.members),
       },
       dailyCapCents: row.daily_spend_cap_cents === null ? null : Number(row.daily_spend_cap_cents),
+      storage: { bytesUsed: Number(row.bytes_used ?? 0), storageQuotaBytes: Number(row.storage_quota_bytes) },
       balanceCents: Number(row.balance_cents ?? 0),
       heldCents: Number(row.held_cents ?? 0),
       spentCents: Object.values(spendByPage).reduce((sum, cents) => sum + (cents ?? 0), 0),
@@ -142,6 +145,8 @@ export type AccountPatch = {
   dailyCapCents?: number | null;
   /** 图稿生成's 出图通道 for this account only; null lets it pick on the page. */
   artworkRoute?: ArtworkRoute | null;
+  /** Storage for the account's whole workspace, shared by everyone in it. Below what is already used is allowed: nothing new fits until they clear. */
+  storageQuotaBytes?: number;
 };
 
 export async function updateAccount(userId: string, patch: AccountPatch, operatorId: string) {
@@ -157,6 +162,9 @@ export async function updateAccount(userId: string, patch: AccountPatch, operato
     if (patch.artworkRoute !== undefined) await client.query('UPDATE users SET artwork_route = $2 WHERE id = $1', [userId, patch.artworkRoute]);
     if (patch.dailyCapCents !== undefined) {
       await client.query('UPDATE tenants SET daily_spend_cap_cents = $2 WHERE id = (SELECT tenant_id FROM users WHERE id = $1)', [userId, patch.dailyCapCents]);
+    }
+    if (patch.storageQuotaBytes !== undefined) {
+      await client.query('UPDATE tenants SET storage_quota_bytes = $2 WHERE id = (SELECT tenant_id FROM users WHERE id = $1)', [userId, patch.storageQuotaBytes]);
     }
     if (patch.disabled !== undefined) {
       await client.query('UPDATE users SET disabled = $2 WHERE id = $1', [userId, patch.disabled]);

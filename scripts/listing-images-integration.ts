@@ -1076,14 +1076,23 @@ try {
   assert.equal(await refs(skuFile), 1);
   assert.equal(await clearOldSources(), 0);
   pass('清理：最后一次出图满 30 天才清原始素材（停在方图的款也算），生成的图都在；同一张图别的款还在用就照样计入空间');
+  // 存储空间页（10-28）：每款占多少、删掉能腾出多少——别的款还在用的文件不算能腾出的，和删除真正退回的一致
+  const { storageUsage } = await import('../lib/server/storage-usage');
+  const space = await storageUsage(tenants[0]), shownRow = space.products.find(p => p.id === id)!;
+  assert.equal(space.usage.bytesUsed, await usage());
+  assert.ok(space.parts.listing.bytes > 0 && space.parts.listing.files > 0);
+  assert.ok(shownRow.freeableBytes > 0 && shownRow.bytes > shownRow.freeableBytes, '和别的款共用的原图算占用，不算能腾出');
+  assert.ok(!(await storageUsage(tenants[1])).products.some(p => p.id === id), '别的账号的存储页看不到这款');
   const usedBefore = await usage();
   await call(1, 'projects/' + id, undefined, 404, 'DELETE');
   const deleted = await (await call(0, 'projects/' + id, undefined, 200, 'DELETE')).json();
   assert.ok(deleted.freedBytes > 0); assert.equal(usedBefore - await usage(), deleted.freedBytes);
+  assert.equal(deleted.freedBytes, shownRow.freeableBytes, '存储页说能腾出多少，删掉就退回多少');
+  assert.ok(!(await storageUsage(tenants[0])).products.some(p => p.id === id));
   assert.equal(await refs(skuFile), 0); assert.equal(await refs(sourceMain), 1);
   await call(0, 'projects/' + id, undefined, 404);
   assert.ok(!(await (await call(0, 'projects')).json()).some((p: { id: string }) => p.id === id));
-  pass('删除：别人删不了，删除后列表和详情都看不到；退还空间，别的款还在用的文件照样计入');
+  pass('删除：别人删不了，删除后列表和详情都看不到；退还空间，别的款还在用的文件照样计入；存储页算的「删掉能腾出」和实际退回一致');
 
   // ---- 存储额度：用满后，新图在写进对象存储之前就被拒绝，不留下孤儿对象；已有的图重传不占空间 ----
   const objects = async () => (await readdir(join(root, 'objects'), { recursive: true, withFileTypes: true })).filter(entry => entry.isFile()).length;

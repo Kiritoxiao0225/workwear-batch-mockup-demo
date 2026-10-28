@@ -3,7 +3,7 @@ import { resolve, relative, sep } from 'node:path';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { catalogDatabase, catalogTransaction } from '../../lib/server/catalog-database.ts';
 import { saveCatalogFile, readCatalogFile } from '../../lib/server/catalog-files.ts';
-import { assertStorageRoom } from '../../lib/server/quota.ts';
+import { assertStorageRoom, STORAGE_FULL } from '../../lib/server/quota.ts';
 import { currentPrices, ceilingMicroCents, microToCents, holdCredits } from '../../lib/server/credits.ts';
 import { emptyWpsProductionState } from '../../lib/wps-production.ts';
 import { withFileStorage, hash, fail } from './a-files.mjs';
@@ -72,7 +72,7 @@ export async function cloudStorage(action, { workspace = workspaceId(), lease } 
           const owned=await client.query('SELECT 1 FROM tenant_file_refs WHERE tenant_id=$1 AND file_id=$2 LIMIT 1',[tenant.id,id]);
           if(!owned.rowCount){
             const counted=await client.query('UPDATE tenant_usage SET bytes_used=bytes_used+$2 WHERE tenant_id=$1 AND bytes_used+bytes_reserved+$2<=$3 RETURNING tenant_id',[tenant.id,bytes.length,tenant.storage_quota_bytes]);
-            if(!counted.rowCount)throw fail('存储额度不足，请联系管理员调整额度',413);
+            if(!counted.rowCount)throw fail(STORAGE_FULL,413);
           }
           await client.query("INSERT INTO tenant_file_refs(tenant_id,file_id,purpose,display_name) VALUES($1,$2,'batch',$3) ON CONFLICT DO NOTHING",[tenant.id,id,key.split('/').at(-1)]);
         });

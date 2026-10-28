@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppHeader } from '@/components/app-header';
 import { PageHeader, PageTabs } from '@/components/page-header';
 import { APP_PAGES } from '@/lib/app-pages';
+import { sizeText, storageLevel, UNLIMITED_BYTES } from '@/lib/storage-status';
 
 type Role = 'admin' | 'editor' | 'viewer';
 type Account = {
@@ -13,6 +14,7 @@ type Account = {
   tenant: { id: string; name: string; internal: boolean; exempt: boolean; members: number };
   balanceCents: number; heldCents: number; spentCents: number; spendByPage: Record<string, number>;
   dailyCapCents: number | null;
+  storage: { bytesUsed: number; storageQuotaBytes: number };
   artworkRoute: 'cliproxy' | 'evolink' | null;
 };
 type Price = { action: string; costMicroCents: number; multiplierMilli: number; effectiveFrom: string; uses30d: number };
@@ -89,6 +91,7 @@ export function AdminClient() {
   const [status, setStatus] = useState<'all' | 'active' | 'disabled'>('all');
   const [spending, setSpending] = useState<'all' | 'spent' | 'none'>('all');
   const [setting, setSetting] = useState<Account | null>(null);
+  const [sizing, setSizing] = useState<Account | null>(null);
   const [viewing, setViewing] = useState<{ account: Account; detail: Detail | null } | null>(null);
   const [prices, setPrices] = useState<Price[]>([]);
   const [costs, setCosts] = useState<Record<string, string>>({});
@@ -224,7 +227,7 @@ export function AdminClient() {
             <table>
               <thead>
                 <tr>
-                  <th>账号</th><th className="right">余额</th><th className="right">冻结</th><th className="right">花费</th>
+                  <th>账号</th><th className="right">余额</th><th className="right">冻结</th><th className="right">存储</th><th className="right">花费</th>
                   {spendColumns.map(([key, label]) => <th key={key} className="right">{label}</th>)}
                   <th>操作</th>
                 </tr>
@@ -240,10 +243,15 @@ export function AdminClient() {
                       {account.tenant.exempt ? '内部免计费' : <>{credits(account.balanceCents)}<small>{yuan(account.balanceCents)}</small><small>每日上限 {account.dailyCapCents === null ? '不限' : credits(account.dailyCapCents)}</small></>}
                     </td>
                     <td className="right held">{account.heldCents ? credits(account.heldCents) : '—'}</td>
+                    <td className="right">
+                      {account.storage.storageQuotaBytes >= UNLIMITED_BYTES ? <>{sizeText(account.storage.bytesUsed)}<small>不限</small></>
+                        : <><span className={`admin-storage ${storageLevel(account.storage)}`}>{sizeText(account.storage.bytesUsed)}</span><small>共 {sizeText(account.storage.storageQuotaBytes)}</small></>}
+                    </td>
                     <td className="right"><b>{credits(account.spentCents)}</b><small>{yuan(account.spentCents)}</small></td>
                     {spendColumns.map(([key]) => <td key={key} className="right">{account.spendByPage[key] ? credits(account.spendByPage[key]) : '—'}</td>)}
                     <td className="nowrap">
                       {!account.tenant.exempt && <button className="button" disabled={busy} onClick={() => setSetting(account)}>设置积分</button>}
+                      {account.storage.storageQuotaBytes < UNLIMITED_BYTES && <button className="button" disabled={busy} onClick={() => setSizing(account)}>设置空间</button>}
                       <button className="button" onClick={() => void openDetail(account)}>明细</button>
                       {enterButton(account)}
                     </td>
@@ -425,6 +433,14 @@ export function AdminClient() {
             })} />
         )}
 
+        {sizing && (
+          <SetStorage account={sizing} busy={busy} onClose={() => setSizing(null)}
+            onSubmit={storageQuotaBytes => run(async () => {
+              await postJson(`/api/admin/accounts/${sizing.id}`, { storageQuotaBytes });
+              setSizing(null);
+            })} />
+        )}
+
         {viewing && (
           <div className="admin-modal" role="dialog" aria-modal="true" onClick={event => { if (event.target === event.currentTarget) setViewing(null); }}>
             <div className="admin-modal-wide">
@@ -468,6 +484,39 @@ export function AdminClient() {
         )}
       </div>
     </main>
+  );
+}
+
+// Storage is set in GB (1 GB = 1024³ bytes, as the 存储空间 page counts).
+function SetStorage({ account, busy, onClose, onSubmit }: {
+  account: Account; busy: boolean; onClose: () => void; onSubmit: (storageQuotaBytes: number) => Promise<void>;
+}) {
+  const [value, setValue] = useState(String(Math.round(account.storage.storageQuotaBytes / 1024 ** 3 * 10) / 10));
+  const number = Number(value);
+  const bytes = value.trim() && Number.isFinite(number) && number >= 0.1 && number <= 10240 ? Math.round(number * 1024 ** 3) : null;
+  return (
+    <div className="admin-modal" role="dialog" aria-modal="true">
+      <div>
+        <h2>设置存储空间</h2>
+        <p className="muted-note">
+          <b>{account.displayName}</b> 已用 {sizeText(account.storage.bytesUsed)}，现在共 {sizeText(account.storage.storageQuotaBytes)}
+          {account.tenant.members > 1 && `。注意：这份空间由 ${account.tenant.members} 人共用`}
+        </p>
+        <label className="login-field">
+          <span>空间改为（GB）</span>
+          <input inputMode="decimal" value={value} onChange={event => setValue(event.target.value.replace(/[^\d.]/gu, ''))} />
+        </label>
+        <p className="muted-note">
+          {bytes === null ? '填 0.1 到 10240 之间的数。'
+            : bytes < account.storage.bytesUsed ? `比已用的 ${sizeText(account.storage.bytesUsed)} 还小：改完后这个账号传不了新图、出不了新图，直到删掉一些。`
+              : `改完马上生效，还剩 ${sizeText(bytes - account.storage.bytesUsed)} 可用。`}
+        </p>
+        <div className="admin-modal-actions">
+          <button className="button" onClick={onClose}>取消</button>
+          <button className="button primary" disabled={busy || bytes === null || bytes === account.storage.storageQuotaBytes} onClick={() => void onSubmit(bytes!)}>确认</button>
+        </div>
+      </div>
+    </div>
   );
 }
 

@@ -5,7 +5,7 @@ import sharp from 'sharp';
 import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './catalog-database';
 import { CatalogHttpError } from './catalog-auth';
 import { saveCatalogFile, readCatalogFile, fileSha256 } from './catalog-files';
-import { assertStorageRoom } from './quota';
+import { assertStorageRoom, STORAGE_FULL } from './quota';
 import { registerFileRef } from './file-authorization';
 import { shapeOf } from '../listing/templates';
 import { countsSchema, type SubmittedDraft } from '../listing/draft-schema';
@@ -56,7 +56,7 @@ export async function addSourceImage(tenant: string, projectId: string, bytes: B
     if (!owned.rowCount) {
       const updated = await c.query(`UPDATE tenant_usage u SET bytes_used=bytes_used+$2 FROM tenants t
         WHERE u.tenant_id=$1 AND t.id=u.tenant_id AND u.bytes_used+u.bytes_reserved+$2<=t.storage_quota_bytes RETURNING u.tenant_id`, [tenant, bytes.length]);
-      if (!updated.rowCount) throw new CatalogHttpError(413, '存储空间不足');
+      if (!updated.rowCount) throw new CatalogHttpError(413, STORAGE_FULL);
     }
     asset = randomUUID();
     await c.query(`INSERT INTO listing_assets(id,tenant_id,project_id,file_id,kind,name,rel_path,width,height)
@@ -269,7 +269,7 @@ export async function addReference(tenant: string, projectId: string, bytes: Buf
     if (!owned.rowCount) {
       const updated = await c.query(`UPDATE tenant_usage u SET bytes_used=bytes_used+$2 FROM tenants t
         WHERE u.tenant_id=$1 AND t.id=u.tenant_id AND u.bytes_used+u.bytes_reserved+$2<=t.storage_quota_bytes RETURNING u.tenant_id`, [tenant, png.length]);
-      if (!updated.rowCount) throw new CatalogHttpError(413, '存储空间不足');
+      if (!updated.rowCount) throw new CatalogHttpError(413, STORAGE_FULL);
     }
     asset = randomUUID();
     await c.query(`INSERT INTO listing_assets(id,tenant_id,project_id,file_id,kind,name,rel_path,width,height) VALUES($1,$2,$3,$4,'ref',$5,$6,$7,$8)`,

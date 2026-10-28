@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useProjectSession } from "./project-session";
 import { APP_PAGES, HOME_PAGE } from "@/lib/app-pages";
+import { publishStorage, sizeText, STORAGE_PAGE, UNLIMITED_BYTES, useStorage, type StorageUsage } from "@/lib/storage-status";
 /** One 48px row on every page; logout lives in the account menu. */
 export function AppHeader({ beforeLogout }: { beforeLogout?: () => Promise<boolean> } = {}) {
   const pathname = usePathname();
@@ -41,7 +42,11 @@ export function AppHeader({ beforeLogout }: { beforeLogout?: () => Promise<boole
     tenant: { internal: boolean };
     pages: string[];
     enteredBy: { displayName: string } | null;
+    quota: StorageUsage;
   } | null>(null);
+  const storage = useStorage();
+  // Shown once per page view; it comes back on the next page while the space is still full.
+  const [fullDismissed, setFullDismissed] = useState(false);
   const [returning, setReturning] = useState(false);
   const returnToAdmin = async () => {
     if (returning) return;
@@ -62,7 +67,7 @@ export function AppHeader({ beforeLogout }: { beforeLogout?: () => Promise<boole
     const read = () =>
       fetch("/api/account", { cache: "no-store" })
         .then(async (r) => {
-          if (r.ok) { const next = await r.json(); if (alive) setAccount(next); }
+          if (r.ok) { const next = await r.json(); if (alive) { setAccount(next); publishStorage(next.quota); } }
         })
         .catch(() => {});
     void read();
@@ -111,6 +116,13 @@ export function AppHeader({ beforeLogout }: { beforeLogout?: () => Promise<boole
             <span className="product-header__held">冻结 {account.balance.heldCents}</span>
           )}
         </div>
+        {storage.usage && storage.usage.storageQuotaBytes < UNLIMITED_BYTES && (
+          <Link className={`product-header__storage ${storage.level}`} href={STORAGE_PAGE} title="存储空间：点开看用在哪里、删掉不用的">
+            <span className="product-header__muted">{storage.level === "full" ? "空间已满" : "空间"}</span>
+            <b>{sizeText(storage.usage.bytesUsed)} / {sizeText(storage.usage.storageQuotaBytes)}</b>
+            <i aria-hidden="true"><i style={{ width: `${Math.min(100, (storage.usage.bytesUsed / Math.max(1, storage.usage.storageQuotaBytes)) * 100)}%` }} /></i>
+          </Link>
+        )}
         <div className="product-header__account" ref={accountRef}>
           <button type="button" className="product-header__account-button" aria-haspopup="menu" aria-expanded={menuOpen} disabled={!session.user} onClick={() => setMenuOpen(open => !open)}>
             <span className="product-header__avatar">
@@ -124,6 +136,7 @@ export function AppHeader({ beforeLogout }: { beforeLogout?: () => Promise<boole
               {account?.user.email && <span className="product-header__menu-email">{account.user.email}</span>}
               {account && <span className="product-header__menu-credit"><span>积分</span><b>{account.tenant.internal ? "内部免计费" : account.balance.balanceCents.toLocaleString()}</b></span>}
               <Link role="menuitem" href="/account" aria-current={pathname === "/account" ? "page" : undefined} onClick={() => setMenuOpen(false)}>我的账户</Link>
+              <Link role="menuitem" href={STORAGE_PAGE} aria-current={pathname === STORAGE_PAGE ? "page" : undefined} onClick={() => setMenuOpen(false)}>存储空间{storage.usage && storage.usage.storageQuotaBytes < UNLIMITED_BYTES ? `（${sizeText(storage.usage.bytesUsed)} / ${sizeText(storage.usage.storageQuotaBytes)}）` : ""}</Link>
               {account?.user.role === "admin" && <Link role="menuitem" href="/admin" aria-current={pathname === "/admin" ? "page" : undefined} onClick={() => setMenuOpen(false)}>管理后台</Link>}
               {account?.enteredBy && <button type="button" role="menuitem" disabled={returning} onClick={() => void returnToAdmin()}>返回管理员账号（{account.enteredBy.displayName}）</button>}
               <span className="product-header__menu-divider" aria-hidden="true" />
@@ -133,6 +146,12 @@ export function AppHeader({ beforeLogout }: { beforeLogout?: () => Promise<boole
         </div>
       </div>
       {logoutError && <div className="product-header__error" role="alert">{logoutError}</div>}
+      {!logoutError && storage.level === "full" && !fullDismissed && pathname !== STORAGE_PAGE && (
+        <div className="product-header__error" role="alert">
+          存储空间已满，新的上传和出图会失败。<Link href={STORAGE_PAGE}>去清理 ›</Link>
+          <button type="button" aria-label="关闭提示" onClick={() => setFullDismissed(true)}>×</button>
+        </div>
+      )}
       {session.error && <div className="product-header__error" role="alert">{session.error}<button type="button" disabled={session.busy} onClick={() => void session.refresh()}>重试连接</button></div>}
     </header>
   );

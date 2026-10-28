@@ -3,7 +3,9 @@
 import { useEffect, useState } from 'react';
 import { AppHeader } from '@/components/app-header';
 import { PageHeader } from '@/components/page-header';
+import Link from 'next/link';
 import { APP_PAGES } from '@/lib/app-pages';
+import { sizeText, STORAGE_PAGE, storageLevel, UNLIMITED_BYTES } from '@/lib/storage-status';
 
 type Account = {
   user: { displayName: string; role: string; email: string; hasPassword: boolean };
@@ -32,9 +34,6 @@ function plainReason(reason: string) {
   return reason;
 }
 
-const gib = (bytes: number) => (bytes / 1024 ** 3).toFixed(2);
-// Quotas this large are how an unlimited workspace is stored; show them as such.
-const UNLIMITED_BYTES = 2 ** 50;
 const yuan = (cents: number) => (cents / 100).toFixed(2);
 
 export function AccountClient({ deniedPage }: { deniedPage?: string }) {
@@ -94,10 +93,11 @@ export function AccountClient({ deniedPage }: { deniedPage?: string }) {
               </>}
               <div>
                 <span>已用存储</span>
-                <b className="plan">{gib(account.quota.bytesUsed)} GiB</b>
+                <b className="plan">{sizeText(account.quota.bytesUsed)}</b>
                 {account.quota.storageQuotaBytes >= UNLIMITED_BYTES
                   ? <small>空间不限</small>
-                  : <><div className="quota-bar"><i style={{ width: `${bytesRatio}%` }} /></div><small>共 {gib(account.quota.storageQuotaBytes)} GiB</small></>}
+                  : <><div className={`quota-bar ${storageLevel(account.quota)}`}><i style={{ width: `${bytesRatio}%` }} /></div><small>共 {sizeText(account.quota.storageQuotaBytes)}</small></>}
+                <Link className="storage-link" href={STORAGE_PAGE}>看看用在哪里、删掉不用的 ›</Link>
               </div>
             </section>
 

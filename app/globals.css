@@ -1683,6 +1683,38 @@ button.catalog-card-image { width: 100%; padding: 0; border: 0; cursor: zoom-in;
 .account-ledger .minus { color: var(--danger); }
 .account-ledger .plus { color: var(--brand); }
 @media (max-width: 860px) { .account-balance { grid-template-columns: repeat(2, minmax(0,1fr)); } .account-balance > div:nth-child(2n) { border-right: 0; } .account-balance > div:nth-child(-n+2) { border-bottom: 1px solid var(--line); } }
+.account-balance a.storage-link { font-size: 12px; color: var(--brand); text-decoration: none; }
+/* 存储空间 (10-28): the bar turns amber at 80%, red at 95% and when full, matching the header chip. */
+.quota-bar.warn i, .storage-total.warn .quota-bar i { background: var(--warning); }
+.quota-bar.high i, .quota-bar.full i, .storage-total.high .quota-bar i, .storage-total.full .quota-bar i { background: var(--danger); }
+.storage-back { align-self: flex-start; color: var(--muted); font-size: 13px; text-decoration: none; }
+.storage-back:hover { color: var(--ink); }
+.storage-notice { margin: 0; padding: 10px 12px; border-radius: 8px; background: color-mix(in srgb, var(--brand) 10%, transparent); font-size: 13px; }
+.storage-total { padding: 20px 24px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+.storage-total__head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; font-size: 13px; color: var(--muted); }
+.storage-total__head b { font-size: 28px; line-height: 1.2; color: var(--ink); font-variant-numeric: tabular-nums; }
+.storage-total__head em { margin-left: auto; font-style: normal; }
+.storage-total.high .storage-total__head em, .storage-total.full .storage-total__head em { color: var(--danger); font-weight: 600; }
+.storage-total .quota-bar { height: 8px; margin: 12px 0 16px; }
+.storage-parts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 0; padding: 0; list-style: none; }
+.storage-parts li { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border-radius: 10px; background: var(--panel-soft); }
+.storage-parts span, .storage-parts small { font-size: 12px; color: var(--muted); }
+.storage-parts b { font-size: 18px; font-variant-numeric: tabular-nums; }
+.storage-list { overflow-x: auto; }
+.storage-list p { margin: 0 0 10px; font-size: 13px; }
+.storage-list__head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.storage-seg { display: inline-flex; padding: 2px; border-radius: 8px; background: var(--panel-soft); }
+.storage-seg button { padding: 4px 12px; border: 0; border-radius: 6px; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.storage-seg button.on { background: var(--panel); color: var(--ink); font-weight: 600; box-shadow: var(--shadow-sm); }
+.storage-list table { min-width: 720px; }
+.storage-list td { vertical-align: middle; }
+.storage-list .button { padding: 4px 12px; font-size: 12px; }
+.storage-list .nowrap { white-space: nowrap; }
+.storage-item { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.storage-item img, .storage-item__blank { flex: 0 0 44px; width: 44px; height: 44px; border-radius: 6px; object-fit: cover; background: var(--panel-soft); }
+.storage-item b { display: block; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.storage-item small, .storage-list td > small { font-size: 11px; color: var(--muted); }
+.storage-confirm { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--danger); white-space: normal; }
 
 /* ---------- 管理后台 ---------- */
 .admin-page { display: flex; flex-direction: column; gap: 18px; }
@@ -1695,6 +1727,7 @@ button.catalog-card-image { width: 100%; padding: 0; border: 0; cursor: zoom-in;
 .admin-card td small { display: block; margin-top: 3px; font-size: 11px; color: var(--muted); }
 .admin-card .right { text-align: right; font-variant-numeric: tabular-nums; }
 .admin-card .held { color: var(--warning); }
+.admin-storage.warn { color: var(--warning); } .admin-storage.high, .admin-storage.full { color: var(--danger); font-weight: 600; }
 .admin-card .button { padding: 5px 10px; font-size: 12px; margin-right: 6px; }
 .admin-modal { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 20px; background: rgba(20, 20, 22, .5); }
 .admin-modal > div { width: min(440px,100%); padding: 24px; background: var(--panel); border-radius: 14px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 14px; }
