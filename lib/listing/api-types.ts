@@ -18,6 +18,8 @@ export type Summary = {
   counts?: Counts;
   /** When the uploaded images were cleared (SOURCE_KEEP_DAYS after the last image): no more copies then. */
   sources_cleared_at?: string | null;
+  /** 「只删图片」 (10-28): the pictures went to the 回收站, the plan and copy stayed. */
+  images_cleared_at?: string | null;
   /** Its 「点图修改」 (10-25): being made, new images waiting to be adopted, failures not yet seen to. */
   edits?: { running: number; ready: number; failed: number };
 };

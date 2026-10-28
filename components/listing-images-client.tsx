@@ -9,7 +9,8 @@ import { PLAN_IMAGE_COST_MICRO, planCredits } from "@/lib/listing/plan-price";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { AppHeader } from "./app-header";
-import { STORAGE_PAGE, useStorage } from "@/lib/storage-status";
+import { sizeText, STORAGE_PAGE, useStorage } from "@/lib/storage-status";
+import { RemoveDialog } from "./remove-dialog";
 import { PageHeader, PageTabs } from "./page-header";
 import type { Config, Detail, LayoutCard, Sorted, Summary } from "@/lib/listing/api-types";
 import { api, assetUrl, downloadUrl, isDemo, post } from "@/lib/listing/client-api";
@@ -88,6 +89,9 @@ const sumLines = (all: PriceLine[][]) => {
 const STEPS = ["整理素材", "定方案", "出方图", "改图和竖版"];
 type Stage = { step: number; c: "" | "b" | "g" | "y" | "r"; text: string };
 function stageOf(p: Summary, upload: Upload | undefined, draft: Draft | null, layouts: LayoutCard[], images?: Sorted[]): Stage {
+  if (p.images_cleared_at) return { step: 5, c: "", text: "图片已清理，解析、方案和文案还在（7 天内可在「存储空间」恢复）" };
+  // 「只删原图」 before any image was made: nothing can be drawn until they come back.
+  if (p.sources_cleared_at && !["square", "done", "generating", "writing"].includes(p.status)) return { step: 1, c: "", text: "原图已删除，要出图得先在「存储空间」的回收站里恢复" };
   if (p.status === "uploading") return upload ? { step: 1, c: "", text: `上传中 ${upload.done}/${upload.total}${upload.failed ? `，${upload.failed} 张没传上` : ""}` } : { step: 1, c: "y", text: `已上传 ${p.images} 张，还没开始整理` };
   if (p.status === "planning") return { step: 1, c: "b", text: "AI 正在整理素材：去重、分类、读卖点、和竞品比一遍，约 1–2 分钟" };
   if (p.status === "failed") return { step: 1, c: "r", text: p.error || "整理没成功" };
@@ -123,6 +127,7 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
   const [planning, setPlanning] = useState<string | null>(null);
   const [viewing, setViewing] = useState<string | null>(null);
   const [copying, setCopying] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<Summary | null>(null);
   const [tab, setTab] = useState<Tab>("全部");
   const [toast, setToast] = useState("");
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -281,19 +286,24 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
         : wait.length ? `再出了 ${made.length} 套，${started} 套已开始出图；${wait.join("、")}要先在「定方案」里处理` : `再出了 ${made.length} 套，都已开始出图，做好的会陆续出现`, 8000);
     } catch (error) { say((error as Error).message, 8000); await refresh(); }
   };
-  const remove = async (p: Summary) => {
-    if (!window.confirm(`删除「${p.name}」？上传的图片和出好的图都会删掉。`)) return;
-    try { await api("projects/" + p.id, { method: "DELETE" }); await refresh(); } catch (error) { say((error as Error).message); }
+  // 删除 (10-28): pick how much goes; all of it waits 7 days in the 回收站.
+  const remove = async (p: Summary, mode: "sources" | "images" | "all") => {
+    const done = await post<{ freedBytes: number }>(`projects/${p.id}/remove`, { mode });
+    setRemoving(null);
+    say(`${mode === "all" ? "已删除" : mode === "sources" ? "原图已删除" : "图片已删除"}，腾出 ${sizeText(done.freedBytes)}；7 天内可在「存储空间」恢复`, 6000);
+    await refresh();
   };
   const open = async (id: string) => {
     if (!details[id]) { const d = await api<Detail>("projects/" + id).catch(() => null); if (d) setDetails(old => ({ ...old, [id]: d })); }
     setViewing(id);
   };
 
-  const needsMe = (p: Summary) => ["materials", "failed", "square"].includes(p.status) || (p.status === "uploading" && !uploads[p.id] && p.images > 0) || !!p.edits?.ready || !!p.edits?.failed;
+  // A product whose pictures went to the 回收站 has nothing left to do until it comes back.
+  const parked = (p: Summary) => !!p.images_cleared_at || (!!p.sources_cleared_at && !["square", "done"].includes(p.status));
+  const needsMe = (p: Summary) => !parked(p) && (["materials", "failed", "square"].includes(p.status) || (p.status === "uploading" && !uploads[p.id] && p.images > 0) || !!p.edits?.ready || !!p.edits?.failed);
   const running = (p: Summary) => ["planning", "writing", "generating"].includes(p.status) || !!uploads[p.id] || !!p.edits?.running;
   const TABS: Record<Tab, (p: Summary) => boolean> = { 全部: () => true, 待我处理: needsMe, 进行中: running, 已完成: p => p.status === "done" };
-  const ready = projects.filter(p => p.status === "materials" && draftOf(p.id) && !checkDraft(draftOf(p.id)!, plain(draftOf(p.id)!.layout), details[p.id]?.materials?.sorted.images).red.length);
+  const ready = projects.filter(p => p.status === "materials" && !parked(p) && draftOf(p.id) && !checkDraft(draftOf(p.id)!, plain(draftOf(p.id)!.layout), details[p.id]?.materials?.sorted.images).red.length);
   const readyCost = ready.map(p => { const d = draftOf(p.id)!; return draftPrice(d, details[p.id].materials!, plain(d.layout), prices).now; });
   const readyLines = sumLines(readyCost.map(c => c.lines)), readyTotal = readyCost.reduce((n, c) => n + c.credits, 0);
   const done = projects.filter(p => p.status === "done");
@@ -336,7 +346,7 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
           {tab === "已完成" && done.length > 0 && <button type="button" className="lp-btn sm" disabled={zipping} onClick={() => void downloadAll(done)}>{zipping ? "正在打包…" : `全部下载（${done.length} 款，一个压缩包）`}</button>}
         </div>}
         <div className="lp-list">{projects.filter(TABS[tab]).map(p => {
-          const draft = p.status === "materials" ? draftOf(p.id) : null, s = stageOf(p, uploads[p.id], draft, layouts, details[p.id]?.materials?.sorted.images);
+          const draft = p.status === "materials" && !parked(p) ? draftOf(p.id) : null, s = stageOf(p, uploads[p.id], draft, layouts, details[p.id]?.materials?.sorted.images);
           const cost = draft && details[p.id]?.materials && !prices.exempt ? draftPrice(draft, details[p.id].materials!, plain(draft.layout), prices).now : null;
           const master = layouts.find(l => l.id === (draft?.layout ?? p.layout))?.name.split(" · ")[0] ?? "已删除的版式";
           const squares = (details[p.id]?.slots ?? []).filter(x => /^square:\d+$/.test(x.slot)).sort((a, b) => Number(a.slot.slice(7)) - Number(b.slot.slice(7))).slice(0, 5);
@@ -349,16 +359,16 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
                 <div className={"lp-st " + s.c}><span className="dot" />{s.text}</div>
                 {p.edits && editsSummary(p.edits) && <button type="button" className={"lp-st-edits" + (p.edits.running ? " b" : p.edits.ready ? " g" : " r")} onClick={() => void open(p.id)}>改图：{editsSummary(p.edits)}</button>}
               </div>
-              <div className="thumbs">{squares.map(x => x.image ? <img key={x.slot} src={assetUrl(x.image)} alt="" loading="lazy" /> : <span key={x.slot} className={"ph" + (x.status === "failed" ? " bad" : " ld")} title={x.status === "failed" ? "没做出来" : "出图中"} />)}</div>
+              <div className="thumbs">{!p.images_cleared_at && squares.map(x => x.image ? <img key={x.slot} src={assetUrl(x.image)} alt="" loading="lazy" /> : <span key={x.slot} className={"ph" + (x.status === "failed" ? " bad" : " ld")} title={x.status === "failed" ? "没做出来" : "出图中"} />)}</div>
               <div className="acts">
-                {p.status === "materials" && <button type="button" className="lp-btn sm primary" onClick={() => setPlanning(p.id)}>{s.c === "r" ? "去处理" : "定方案"}</button>}
+                {p.status === "materials" && !p.sources_cleared_at && <button type="button" className="lp-btn sm primary" onClick={() => setPlanning(p.id)}>{s.c === "r" ? "去处理" : "定方案"}</button>}
                 {cost && <><span className="lp-muted lp-small">先出方图约 {cost.credits} 积分</span><PriceInfo lines={cost.lines} total={cost.credits} extra="分析费已在整理时扣过；竖版以后出、以后扣" /></>}
-                {(p.status === "failed" || (p.status === "uploading" && !uploads[p.id] && p.images > 0)) && <button type="button" className="lp-btn sm primary" onClick={() => void startPlan(p.id)}>{p.status === "failed" ? (p.error?.includes("继续整理") ? "继续整理" : "重新整理") : "开始整理"}</button>}
+                {!p.sources_cleared_at && (p.status === "failed" || (p.status === "uploading" && !uploads[p.id] && p.images > 0)) && <button type="button" className="lp-btn sm primary" onClick={() => void startPlan(p.id)}>{p.status === "failed" ? (p.error?.includes("继续整理") ? "继续整理" : "重新整理") : "开始整理"}</button>}
                 {p.status === "generating" && <button type="button" className="lp-btn sm" onClick={() => void open(p.id)}>看进度</button>}
-                {p.status === "square" && <button type="button" className="lp-btn sm primary" onClick={() => void open(p.id)}>看图</button>}
-                {p.status === "done" && <><button type="button" className="lp-btn sm primary" onClick={() => void open(p.id)}>看图</button><a className="lp-btn sm" href={downloadUrl(p.id)} onClick={e => { if (isDemo()) { e.preventDefault(); say("演示页不能下载"); } }}>下载</a></>}
+                {p.status === "square" && !p.images_cleared_at && <button type="button" className="lp-btn sm primary" onClick={() => void open(p.id)}>看图</button>}
+                {p.status === "done" && !p.images_cleared_at && <><button type="button" className="lp-btn sm primary" onClick={() => void open(p.id)}>看图</button><a className="lp-btn sm" href={downloadUrl(p.id)} onClick={e => { if (isDemo()) { e.preventDefault(); say("演示页不能下载"); } }}>下载</a></>}
                 {["materials", "square", "done"].includes(p.status) && !p.sources_cleared_at && !isDemo() && <button type="button" className="lp-btn sm" onClick={() => setCopying(p.id)}>再出一套</button>}
-                {!running(p) && <button type="button" className="lp-btn sm ghost" onClick={() => void remove(p)}>删除</button>}
+                {!running(p) && <button type="button" className="lp-btn sm ghost" onClick={() => setRemoving(p)}>删除</button>}
               </div>
             </div>);
         })}</div>
@@ -382,6 +392,8 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
       {viewing && viewDetail && <ResultsPanel detail={viewDetail} layouts={layouts} prices={prices}
         onRedo={(slot, label) => void redo(viewing, slot, label)}
         onDone={async message => { say(message); await refresh(); }} onError={say} onClose={() => setViewing(null)} />}
+      {removing && <RemoveDialog name={removing.name} sourcesCleared={!!removing.sources_cleared_at} imagesCleared={!!removing.images_cleared_at}
+        onConfirm={mode => remove(removing, mode)} onClose={() => setRemoving(null)} />}
       {copying && <CopyDialog name={projects.find(p => p.id === copying)?.name ?? ""} current={draftOf(copying)?.layout ?? projects.find(p => p.id === copying)?.layout ?? ""}
         layouts={layouts} onCopy={(picked, direct) => copy(copying, picked, direct)} onClose={() => setCopying(null)} />}
       {toast && <div className="lp-toast" role="status">{toast}</div>}

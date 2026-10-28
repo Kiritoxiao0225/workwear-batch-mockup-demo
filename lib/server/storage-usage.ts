@@ -8,7 +8,7 @@ const PART_OF: Record<string, StoragePart> = { 'listing-images': 'listing', batc
 
 export type StorageProduct = {
   id: string; name: string; kind: 'product' | 'shop'; status: string;
-  updatedAt: string; sourcesCleared: boolean; cover: string | null;
+  updatedAt: string; sourcesCleared: boolean; imagesCleared: boolean; cover: string | null;
   files: number; bytes: number; freeableBytes: number;
 };
 
@@ -17,7 +17,7 @@ export type StorageProduct = {
  *
  * A file is stored once however many products show it, so a product's `bytes` and what deleting
  * it gives back differ: `freeableBytes` counts only the files no other live product and no other
- * feature of this tenant still uses — the same rule deleteProject's releaseFiles applies.
+ * feature of this tenant still uses — the same rule releaseFiles applies when a product is deleted.
  */
 export async function storageUsage(tenantId: string) {
   const db = catalogDatabase();
@@ -35,9 +35,10 @@ export async function storageUsage(tenantId: string) {
                          COALESCE(sum(f.byte_length) FILTER (WHERE u.n=1 AND o.file_id IS NULL), 0)::bigint AS freeable
                     FROM pf JOIN files f ON f.id=pf.file_id JOIN uses u ON u.file_id=pf.file_id LEFT JOIN other o ON o.file_id=pf.file_id
                    GROUP BY pf.project_id)
-      SELECT p.id, p.name, p.kind, p.status, p.updated_at, p.sources_cleared_at, s.files, s.bytes, s.freeable,
+      SELECT p.id, p.name, p.kind, p.status, p.updated_at, p.sources_cleared_at, p.images_cleared_at, s.files, s.bytes, s.freeable,
              COALESCE((SELECT a.id FROM listing_assets a WHERE a.project_id=p.id AND a.slot='square:1' AND (NOT a.candidate OR a.chosen_at IS NOT NULL) ORDER BY GREATEST(a.created_at, COALESCE(a.chosen_at, a.created_at)) DESC LIMIT 1),
-                      (SELECT a.id FROM listing_assets a WHERE a.project_id=p.id AND a.kind='source' ORDER BY a.rel_path LIMIT 1)) AS cover
+                      (SELECT a.id FROM listing_assets a WHERE a.project_id=p.id AND a.kind='source' ORDER BY a.rel_path LIMIT 1),
+                      (SELECT a.id FROM listing_assets a WHERE a.project_id=p.id AND a.kind='thumb' ORDER BY a.created_at DESC LIMIT 1)) AS cover
         FROM sized s JOIN listing_projects p ON p.id=s.project_id
        ORDER BY s.bytes DESC, p.updated_at DESC`, [tenantId]),
   ]);
@@ -53,7 +54,7 @@ export async function storageUsage(tenantId: string) {
     parts: byPart,
     products: products.rows.map((row): StorageProduct => ({
       id: row.id as string, name: row.name as string, kind: row.kind as 'product' | 'shop', status: row.status as string,
-      updatedAt: (row.updated_at as Date).toISOString(), sourcesCleared: Boolean(row.sources_cleared_at),
+      updatedAt: (row.updated_at as Date).toISOString(), sourcesCleared: Boolean(row.sources_cleared_at), imagesCleared: Boolean(row.images_cleared_at),
       cover: row.cover ? assetUrl(row.cover as string) : null,
       files: Number(row.files), bytes: Number(row.bytes), freeableBytes: Number(row.freeable),
     })),

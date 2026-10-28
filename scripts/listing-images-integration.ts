@@ -1094,6 +1094,63 @@ try {
   assert.ok(!(await (await call(0, 'projects')).json()).some((p: { id: string }) => p.id === id));
   pass('删除：别人删不了，删除后列表和详情都看不到；退还空间，别的款还在用的文件照样计入；存储页算的「删掉能腾出」和实际退回一致');
 
+  // ---- 回收站（10-28）：三种删法都先进回收站、空间马上退；恢复原样放回、重新占空间；后删的先恢复；立即彻底删除后不能恢复 ----
+  const { listTrash, restoreTrash, purgeTrashNow } = await import('../lib/server/listing-trash');
+  const binned = (await listTrash(tenants[0])).find(t => t.targetId === id)!;
+  assert.equal(binned.mode, 'all'); assert.equal(binned.bytes, deleted.freedBytes); assert.ok(binned.restorable);
+  await assert.rejects(() => restoreTrash(tenants[1], binned.id), /没有这一项/);
+  await restoreTrash(tenants[0], binned.id);
+  assert.equal(await usage(), usedBefore, '恢复整款后空间重新占回');
+  assert.ok((await (await call(0, 'projects')).json()).some((p: { id: string }) => p.id === id));
+  await assert.rejects(() => restoreTrash(tenants[0], binned.id), /已经恢复过/);
+  assert.ok(!(await listTrash(tenants[0])).some(t => t.id === binned.id));
+  await call(0, 'projects/' + id, undefined, 200, 'DELETE');
+
+  const binProject = randomUUID();
+  await call(0, 'projects', { id: binProject, name: '回收站验收', layout: 'M3', counts: counts(1) });
+  for (const [k, color] of ['#7a3b2e', '#2e5b7a', '#5b7a2e'].entries()) await upload(0, binProject, await image(500 + k * 10, 500, color), `回收站/${k + 1}.jpg`);
+  const assetsOf = async (kinds?: string) => (await db().query(`SELECT count(*)::int n FROM listing_assets WHERE project_id=$1${kinds ? ` AND kind IN (${kinds})` : ''}`, [binProject])).rows[0].n as number;
+  const flags = async () => (await db().query('SELECT sources_cleared_at, images_cleared_at FROM listing_projects WHERE id=$1', [binProject])).rows[0];
+  const binUsage = await usage();
+  // 只删原图
+  const sourcesGone = await (await call(0, `projects/${binProject}/remove`, { mode: 'sources' })).json();
+  assert.ok(sourcesGone.freedBytes > 0); assert.equal(binUsage - await usage(), sourcesGone.freedBytes);
+  assert.equal(await assetsOf("'source'"), 0); assert.ok((await flags()).sources_cleared_at);
+  await call(0, `projects/${binProject}/remove`, { mode: 'sources' }, 409);
+  await call(1, `projects/${binProject}/remove`, { mode: 'all' }, 404);
+  await call(0, `projects/${binProject}/remove`, { mode: 'everything' }, 400);
+  await restoreTrash(tenants[0], sourcesGone.trashId);
+  assert.equal(await assetsOf("'source'"), 3); assert.equal((await flags()).sources_cleared_at, null); assert.equal(await usage(), binUsage);
+  // 只删图片：留一张小封面，列表照样有图；恢复后封面收回
+  const imagesGone = await (await call(0, `projects/${binProject}/remove`, { mode: 'images' })).json();
+  assert.equal(await assetsOf("'source','product','output','ref'"), 0); assert.equal(await assetsOf("'thumb'"), 1);
+  assert.ok((await flags()).images_cleared_at && (await flags()).sources_cleared_at);
+  const binListed = (await (await call(0, 'projects')).json()).find((p: { id: string }) => p.id === binProject);
+  assert.ok(binListed.images_cleared_at && binListed.cover, '图片清理后列表还有封面');
+  assert.ok(binUsage - await usage() > 0 && imagesGone.freedBytes > binUsage - await usage(), '封面只占回几 KB');
+  // 后删的先恢复：再整款删除，先恢复「只删图片」被拒
+  const allGone = await (await call(0, 'projects/' + binProject, undefined, 200, 'DELETE')).json();
+  await assert.rejects(() => restoreTrash(tenants[0], imagesGone.trashId), /先恢复后面那次/);
+  assert.equal((await listTrash(tenants[0])).find(t => t.id === imagesGone.trashId)!.restorable, false);
+  await restoreTrash(tenants[0], allGone.trashId);
+  await restoreTrash(tenants[0], imagesGone.trashId);
+  assert.equal(await assetsOf("'source'"), 3); assert.equal(await assetsOf("'thumb'"), 0);
+  assert.equal((await flags()).images_cleared_at, null); assert.equal((await flags()).sources_cleared_at, null);
+  assert.equal(await usage(), binUsage, '删了又全部恢复，空间和删之前一样');
+  // 空间不够时不让恢复，什么都不动
+  const reBinned = await (await call(0, `projects/${binProject}/remove`, { mode: 'sources' })).json();
+  const quotaBefore = (await db().query('SELECT storage_quota_bytes FROM tenants WHERE id=$1', [tenants[0]])).rows[0].storage_quota_bytes;
+  await db().query('UPDATE tenants SET storage_quota_bytes=(SELECT bytes_used FROM tenant_usage WHERE tenant_id=$1) WHERE id=$1', [tenants[0]]);
+  await assert.rejects(() => restoreTrash(tenants[0], reBinned.trashId), /空间不够恢复/);
+  assert.equal(await assetsOf("'source'"), 0);
+  await db().query('UPDATE tenants SET storage_quota_bytes=$2 WHERE id=$1', [tenants[0], quotaBefore]);
+  // 立即彻底删除：从回收站消失，不能再恢复
+  await purgeTrashNow(tenants[0], reBinned.trashId);
+  assert.ok(!(await listTrash(tenants[0])).some(t => t.id === reBinned.trashId));
+  await assert.rejects(() => restoreTrash(tenants[0], reBinned.trashId), /已经彻底删除/);
+  assert.equal((await purgeTrashNow(tenants[1], 'all')).purged, 0, '清空回收站只清自己的');
+  pass('回收站：整款 / 只删原图 / 只删图片都先进回收站、空间马上退；恢复原样放回并重新占空间；后删的先恢复；空间不够不让恢复；彻底删除后不能恢复；别的账号碰不到');
+
   // ---- 存储额度：用满后，新图在写进对象存储之前就被拒绝，不留下孤儿对象；已有的图重传不占空间 ----
   const objects = async () => (await readdir(join(root, 'objects'), { recursive: true, withFileTypes: true })).filter(entry => entry.isFile()).length;
   const full = randomUUID();

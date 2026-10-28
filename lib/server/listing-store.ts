@@ -128,10 +128,11 @@ export const latestRedraws = (project: string) => `SELECT DISTINCT ON (j.slot) j
 
 export async function listProjects(tenant: string) {
   const rows = (await catalogDatabase().query(
-    `SELECT p.id,p.name,p.layout,p.counts,p.status,p.error,p.updated_at,p.created_at,p.sources_cleared_at,COALESCE((p.plan->>'round')::int,0) AS round,
+    `SELECT p.id,p.name,p.layout,p.counts,p.status,p.error,p.updated_at,p.created_at,p.sources_cleared_at,p.images_cleared_at,COALESCE((p.plan->>'round')::int,0) AS round,
             (SELECT count(*)::int FROM listing_assets a WHERE a.project_id=p.id AND a.kind='source') AS images,
             COALESCE((SELECT a.id FROM listing_assets a WHERE a.project_id=p.id AND a.slot='square:1' AND (NOT a.candidate OR a.chosen_at IS NOT NULL) ORDER BY GREATEST(a.created_at, COALESCE(a.chosen_at, a.created_at)) DESC LIMIT 1),
-                     (SELECT a.id FROM listing_assets a WHERE a.project_id=p.id AND a.kind='source' ORDER BY a.rel_path LIMIT 1)) AS cover,
+                     (SELECT a.id FROM listing_assets a WHERE a.project_id=p.id AND a.kind='source' ORDER BY a.rel_path LIMIT 1),
+                     (SELECT a.id FROM listing_assets a WHERE a.project_id=p.id AND a.kind='thumb' ORDER BY a.created_at DESC LIMIT 1)) AS cover,
             (SELECT count(DISTINCT j.slot)::int FROM listing_jobs j WHERE j.project_id=p.id AND j.slot IS NOT NULL) AS slots,
             (SELECT count(DISTINCT a.slot)::int FROM listing_assets a WHERE a.project_id=p.id AND a.slot IS NOT NULL) AS made,
             (SELECT count(*)::int FROM (SELECT DISTINCT ON (j.slot) j.status, j.slot FROM listing_jobs j WHERE j.project_id=p.id AND j.slot IS NOT NULL
@@ -161,7 +162,7 @@ export const MAIN_SLOT = /^((square|portrait|long):\d(\+\w+)?|service:(s[0-9a-f]
  * Give back the storage of files this tenant no longer uses: a file still shown by another of its
  * products, or held by another feature, keeps counting. The objects themselves stay in storage.
  */
-async function releaseFiles(c: CatalogQueryClient, tenant: string, fileIds: string[]) {
+export async function releaseFiles(c: CatalogQueryClient, tenant: string, fileIds: string[]) {
   let freed = 0;
   for (const fileId of new Set(fileIds)) {
     const used = await c.query(`SELECT 1 FROM listing_assets a JOIN listing_projects p ON p.id=a.project_id
@@ -174,20 +175,6 @@ async function releaseFiles(c: CatalogQueryClient, tenant: string, fileIds: stri
     freed += size;
   }
   return freed;
-}
-
-/** Deleting a product hides it and gives its storage back. */
-export async function deleteProject(tenant: string, id: string) {
-  z.uuid().parse(id);
-  return catalogTransaction(async c => {
-    await c.query('SELECT id FROM tenants WHERE id=$1 FOR UPDATE', [tenant]);
-    const running = await c.query(`SELECT 1 FROM listing_jobs WHERE project_id=$1 AND tenant_id=$2 AND status IN ('queued','running') LIMIT 1`, [id, tenant]);
-    if (running.rowCount) throw new CatalogHttpError(409, '正在分析或出图，等完成后再删除');
-    const result = await c.query(`UPDATE listing_projects SET deleted_at=now() WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL AND kind='product' RETURNING id`, [id, tenant]);
-    if (!result.rowCount) throw new CatalogHttpError(404, '商品不存在');
-    const files = (await c.query('SELECT file_id FROM listing_assets WHERE project_id=$1', [id])).rows.map(r => r.file_id as string);
-    return { ok: true, freedBytes: await releaseFiles(c, tenant, files) };
-  });
 }
 
 /**

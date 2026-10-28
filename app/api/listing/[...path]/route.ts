@@ -3,7 +3,8 @@ import { tenantScope } from '@/lib/server/tenant-scope';
 import { catalogBody, catalogError } from '@/lib/server/catalog-http';
 import { CatalogHttpError } from '@/lib/server/catalog-auth';
 import { assertPageAccess } from '@/lib/server/page-access';
-import { addReference, addSourceImage, chooseVersion, createProject, deleteProject, listProjects, MAX_SOURCE_BYTES, projectDetail, readListingAsset } from '@/lib/server/listing-store';
+import { addReference, addSourceImage, chooseVersion, createProject, listProjects, MAX_SOURCE_BYTES, projectDetail, readListingAsset } from '@/lib/server/listing-store';
+import { removeProject, REMOVE_MODES } from '@/lib/server/listing-trash';
 import { addExtraImage, imagePrices, planPrice, requestPlan, submitDraft } from '@/lib/server/listing-jobs';
 import { innerName } from '@/lib/listing/wear';
 import { copyProject } from '@/lib/server/listing-copy';
@@ -99,6 +100,12 @@ export async function POST(request: NextRequest, context: Context) {
     if (path[0] === 'projects' && path[2] === 'start') return json(await submitDraft(tenant, user.id, path[1], body));
     if (path[0] === 'projects' && path[2] === 'sets') return json(await addSet(tenant, user.id, path[1], body));
     if (path[0] === 'projects' && path[2] === 'copies') return json(await copyProject(tenant.id, user.id, path[1], body));
+    // 删除 (10-28): sources / images / all, each to the 回收站 for 7 days.
+    if (path[0] === 'projects' && path[1] && path[2] === 'remove') {
+      const mode = REMOVE_MODES.find(m => m === body.mode);
+      if (!mode) throw new CatalogHttpError(400, '删除方式不对');
+      return json(await removeProject(tenant.id, user.id, path[1], mode));
+    }
     if (path[0] === 'projects' && path[2] === 'redo') return json(await redoSlot(tenant, user.id, path[1], String(body.slot ?? ''), String(body.note ?? '')));
     if (path[0] === 'projects' && path[2] === 'stop') return json(await stopImages(tenant, path[1]));
     if (path[0] === 'projects' && path[2] === 'draw') return json(await drawMaterial(tenant, user.id, path[1], body));
@@ -133,6 +140,6 @@ export async function DELETE(request: NextRequest, context: Context) {
     if (path[0] === 'shop' && (path[1] === 'logo' || path[1] === 'brand') && !path[2]) return json(await removeShopLogo(tenant.id, user.id, path[1], request.nextUrl.searchParams.get('set')));
     if (path[0] === 'shop' && path[1] === 'sets' && path[2]) return json(await deleteShopSet(tenant.id, user.id, path[2]));
     if (path[0] !== 'projects' || !path[1]) throw new CatalogHttpError(404, '接口不存在');
-    return json(await deleteProject(tenant.id, path[1]));
+    return json(await removeProject(tenant.id, user.id, path[1], 'all'));
   } catch (error) { return catalogError(error); }
 }

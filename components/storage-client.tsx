@@ -7,6 +7,8 @@ import { AppHeader } from '@/components/app-header';
 import { PageHeader } from '@/components/page-header';
 import { publishStorage, sizeText, storageLevel, UNLIMITED_BYTES } from '@/lib/storage-status';
 import type { StoragePart, StorageProduct } from '@/lib/server/storage-usage';
+import type { RemoveMode, TrashItem } from '@/lib/server/listing-trash';
+import { RemoveDialog } from '@/components/remove-dialog';
 
 type Storage = {
   // When it was read: 「超过 30 天没动过的」 counts from here.
@@ -14,6 +16,7 @@ type Storage = {
   usage: { bytesUsed: number; storageQuotaBytes: number };
   parts: Record<StoragePart, { bytes: number; files: number }>;
   products: StorageProduct[];
+  trash: TrashItem[];
 };
 
 const PARTS: [StoragePart, string][] = [['listing', '电商主图'], ['artwork', '图稿生成'], ['layouts', '自己学的版式'], ['other', '其他']];
@@ -24,21 +27,31 @@ const STATUS: Record<string, string> = {
 // Deleting refuses while the product is being analysed or drawn; don't offer it then.
 const BUSY = new Set(['planning', 'writing', 'generating']);
 const STALE_DAYS = 30;
+const MODE: Record<RemoveMode, string> = { sources: '只删原图', images: '只删图片', all: '整款删除' };
+
+async function send<T>(url: string, init: RequestInit = {}) {
+  const response = await fetch(url, { cache: 'no-store', ...init, headers: { 'Content-Type': 'application/json', ...init.headers } });
+  const body = await response.json() as T & { error?: string };
+  if (!response.ok) throw new Error(body.error ?? `请求失败（HTTP ${response.status}）`);
+  return body;
+}
 
 export function StorageClient() {
   const [data, setData] = useState<Storage | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [stale, setStale] = useState(false);
-  const [asking, setAsking] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const [removing, setRemoving] = useState<StorageProduct | null>(null);
+  const [working, setWorking] = useState<string | null>(null);
+  const [emptying, setEmptying] = useState(false);
 
   const load = useCallback(async () => {
-    const response = await fetch('/api/account/storage', { cache: 'no-store' });
-    const body = await response.json() as Omit<Storage, 'at'> & { error?: string };
-    if (!response.ok) throw new Error(body.error ?? `读取失败（HTTP ${response.status}）`);
-    setData({ ...body, at: Date.now() });
-    publishStorage(body.usage);
+    const [storage, trash] = await Promise.all([
+      send<Omit<Storage, 'at' | 'trash'>>('/api/account/storage'),
+      send<{ items: TrashItem[] }>('/api/account/trash'),
+    ]);
+    setData({ ...storage, trash: trash.items, at: Date.now() });
+    publishStorage(storage.usage);
   }, []);
   useEffect(() => {
     void (async () => {
@@ -46,17 +59,21 @@ export function StorageClient() {
     })();
   }, [load]);
 
-  const remove = async (product: StorageProduct) => {
-    setDeleting(true); setError('');
+  // The dialog shows its own error and stays open when this throws.
+  const remove = async (product: StorageProduct, mode: RemoveMode) => {
+    const done = await send<{ freedBytes: number }>(`/api/listing/projects/${product.id}/remove`, { method: 'POST', body: JSON.stringify({ mode }) });
+    setRemoving(null); setError('');
+    setNotice(`「${product.name}」${MODE[mode]}，腾出 ${sizeText(done.freedBytes)}。7 天内可以在下面的回收站恢复`);
+    await load();
+  };
+  const act = async (key: string, body: unknown, said: string) => {
+    setWorking(key); setError(''); setNotice('');
     try {
-      const response = await fetch(`/api/listing/projects/${product.id}`, { method: 'DELETE', cache: 'no-store' });
-      const body = await response.json() as { freedBytes?: number; error?: string };
-      if (!response.ok) throw new Error(body.error ?? `删除失败（HTTP ${response.status}）`);
-      setAsking(null);
-      setNotice(`已删除「${product.name}」，腾出 ${sizeText(body.freedBytes ?? 0)}`);
+      await send('/api/account/trash', { method: 'POST', body: JSON.stringify(body) });
+      setNotice(said); setEmptying(false);
       await load();
-    } catch (removeError) { setError(removeError instanceof Error ? removeError.message : String(removeError)); }
-    finally { setDeleting(false); }
+    } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
+    finally { setWorking(null); }
   };
 
   const unlimited = (data?.usage.storageQuotaBytes ?? 0) >= UNLIMITED_BYTES;
@@ -69,7 +86,7 @@ export function StorageClient() {
     <main>
       <AppHeader />
       <div className="page-frame account-page">
-        <PageHeader title="存储空间" description="空间都用在了哪里。删掉不用的商品，空间马上退回。" />
+        <PageHeader title="存储空间" description="空间都用在了哪里。删掉不用的，空间马上退回；7 天内还能从回收站恢复。" />
         <Link className="storage-back" href="/account">← 我的账户</Link>
         {error && <p className="login-error" role="alert">{error}</p>}
         {notice && <p className="storage-notice" role="status">{notice}</p>}
@@ -110,7 +127,7 @@ export function StorageClient() {
                         <td>
                           <div className="storage-item">
                             {p.cover ? <img src={p.cover} alt="" loading="lazy" /> : <span className="storage-item__blank" />}
-                            <div><b>{p.kind === 'shop' ? '店铺资料' : p.name}</b><small>{p.kind === 'shop' ? '店铺 LOGO、服务图等，跟着店铺走' : `${p.files} 个文件${p.sourcesCleared ? ' · 原图已清理' : ''}`}</small></div>
+                            <div><b>{p.kind === 'shop' ? '店铺资料' : p.name}</b><small>{p.kind === 'shop' ? '店铺 LOGO、服务图等，跟着店铺走' : `${p.files} 个文件${p.imagesCleared ? ' · 图片已清理' : p.sourcesCleared ? ' · 原图已清理' : ''}`}</small></div>
                           </div>
                         </td>
                         <td>{p.kind === 'shop' ? '—' : STATUS[p.status] ?? p.status}</td>
@@ -118,17 +135,50 @@ export function StorageClient() {
                         <td className="right">{sizeText(p.bytes)}</td>
                         <td className="right">{p.kind === 'shop' ? '—' : sizeText(p.freeableBytes)}</td>
                         <td className="right nowrap">
-                          {p.kind === 'product' && (asking === p.id ? (
-                            <span className="storage-confirm">
-                              <span>上传的图和出好的图都会删掉，删了找不回</span>
-                              <button type="button" className="button danger" disabled={deleting} onClick={() => void remove(p)}>{deleting ? '正在删…' : '确认删除'}</button>
-                              <button type="button" className="button" disabled={deleting} onClick={() => setAsking(null)}>取消</button>
-                            </span>
-                          ) : BUSY.has(p.status) ? <small>做完才能删</small>
-                            : <button type="button" className="button" onClick={() => { setAsking(p.id); setNotice(''); }}>删除</button>)}
+                          {p.kind === 'product' && (BUSY.has(p.status) ? <small>做完才能删</small>
+                            : <button type="button" className="button" onClick={() => { setRemoving(p); setNotice(''); }}>删除</button>)}
                         </td>
                       </tr>
                     ))}
+                  </tbody>
+                </table>
+              )}
+            </section>
+
+            <section className="account-ledger storage-list">
+              <div className="storage-list__head">
+                <h2>回收站（{data.trash.length}）</h2>
+                {data.trash.length > 0 && (emptying ? (
+                  <span className="storage-confirm">
+                    <span>回收站里的全部彻底删除，不能再恢复</span>
+                    <button type="button" className="button danger" disabled={!!working} onClick={() => void act('all', { action: 'purge-all' }, '回收站已清空')}>{working === 'all' ? '正在清空…' : '确认清空'}</button>
+                    <button type="button" className="button" disabled={!!working} onClick={() => setEmptying(false)}>取消</button>
+                  </span>
+                ) : <button type="button" className="button" onClick={() => setEmptying(true)}>清空回收站</button>)}
+              </div>
+              <p className="muted-note">删掉的东西在这里放 7 天，期间可以原样恢复；空间在删的时候就已经退回了，恢复时会重新占用。7 天后自动彻底删除。</p>
+              {data.trash.length === 0 ? <p className="muted-note">回收站是空的。</p> : (
+                <table>
+                  <thead><tr><th>删了什么</th><th>删法</th><th>删除时间</th><th className="right">腾出</th><th>还能恢复</th><th /></tr></thead>
+                  <tbody>
+                    {data.trash.map(item => {
+                      const days = Math.max(0, Math.ceil((Date.parse(item.purgeAfter) - data.at) / 864e5));
+                      return (
+                        <tr key={item.id}>
+                          <td><b>{item.name}</b><small>{item.feature === 'listing' ? '电商主图' : '图稿生成'} · {item.files} 个文件</small></td>
+                          <td>{MODE[item.mode]}</td>
+                          <td>{new Date(item.createdAt).toLocaleString('zh-CN', { hour12: false })}</td>
+                          <td className="right">{sizeText(item.bytes)}</td>
+                          <td><span className="trash-days">{days <= 1 ? '不到 1 天' : `${days} 天`}</span></td>
+                          <td className="right nowrap">
+                            {item.restorable
+                              ? <button type="button" className="button" disabled={!!working} onClick={() => void act(item.id, { action: 'restore', id: item.id }, `「${item.name}」已恢复`)}>{working === item.id ? '正在恢复…' : '恢复'}</button>
+                              : <small>先恢复这款后面那次删除</small>}
+                            <button type="button" className="button danger" disabled={!!working} onClick={() => void act(item.id + ':purge', { action: 'purge', id: item.id }, `「${item.name}」已彻底删除`)}>{working === item.id + ':purge' ? '正在删…' : '彻底删除'}</button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               )}
@@ -142,6 +192,8 @@ export function StorageClient() {
           </>
         )}
       </div>
+      {removing && <RemoveDialog name={removing.name} sourcesCleared={removing.sourcesCleared} imagesCleared={removing.imagesCleared}
+        freeableBytes={removing.freeableBytes} onConfirm={mode => remove(removing, mode)} onClose={() => setRemoving(null)} />}
     </main>
   );
 }
