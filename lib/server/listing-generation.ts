@@ -20,7 +20,8 @@ import { addExtraImage } from './listing-jobs';
 import { innerName } from '../listing/wear';
 import { itemReference, linerAlone, linerByColor, linerColorOf, linerFor, mainLiner, skuItems } from '../listing/sku-versions';
 import { LINER_ALONE_WEAR, linerName, linerSubject, versionName } from '../listing/wear';
-import { coveredZip, groupWear, wearLine, zippedWear } from '../listing/wear';
+import { coveredZip, groupWear, openLine, wearLine, zippedWear } from '../listing/wear';
+import { heatPoint, insideFor } from '../listing/inside';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -587,7 +588,7 @@ type MainInput = Extract<JobInput, { kind: 'main' }>;
 export async function specShot(o: { stored: StoredPlan; projectId: string; input: MainInput; slot: string; layout: Layout; output: (slot: string) => Promise<Buffer>; cast: Buffer | null;
   logo: { bytes: Buffer | null; line: string } | null; badge: () => Promise<string>; corner?: boolean; covered?: boolean;
   /** How its people wear its colours, the liner's photo pushed onto the references (executeImage's `dressed`). */
-  dressed?: (shells: string[], refs: Buffer[]) => Promise<{ wear: string | null; linerRef?: number }> }) {
+  dressed?: (shells: string[], refs: Buffer[], cover: boolean) => Promise<{ wear: string | null; linerRef?: number; open?: boolean }> }) {
   const d = o.stored.draft, s = d.slots[o.input.index], task = s.task as Task;
   const spec = specFor(o.layout.id, task, o.input.words.cells.length);
   if (!spec || (spec.people && !o.cast)) return null;
@@ -595,7 +596,7 @@ export async function specShot(o: { stored: StoredPlan; projectId: string; input
   const references = spec.fabric ? [await fabricCrop(await o.output(`product:${o.input.skus[0]}`))] : await Promise.all(o.input.skus.map(x => o.output(`product:${x}`)));
   const cast = spec.people && o.cast ? references.push(o.cast) : undefined;
   const logo = !spec.fabric && o.logo?.bytes ? references.push(o.logo.bytes) : undefined;
-  const worn = spec.people && o.dressed ? await o.dressed(used.map(c => c.name), references) : { wear: null, linerRef: undefined };
+  const worn = spec.people && o.dressed ? await o.dressed(used.map(c => c.name), references, task === '首图') : { wear: null, linerRef: undefined };
   const sample = references.push(await sampleBytes(spec));
   // 免费印绣 on 车展工牌's lanyard badge and in 暗黑科技's black block, when the shop offers it.
   const c = contentOf(o.stored, o.input, o.slot, o.layout, task === '首图' && ['M1', 'M2'].includes(o.layout.id) ? await o.badge() : '');
@@ -607,7 +608,8 @@ export async function specShot(o: { stored: StoredPlan; projectId: string; input
     cells: c.cells.map(x => ({ text: x.text, note: x.note ?? '', recipe: x.recipe, en: enOf(x.text) })),
     color: used[0]?.name ?? colors[0].name, colors: used, all: colors, light: luma(used[0]?.hex ?? '#ffffff') > 150,
     who: o.layout.templates.首图.square.people >= 2 && task === '首图' ? `参考图${cast}里的一男一女并排站，男生在左、身体朝右微侧，女生在右` : `参考图${cast}里的${lead}`,
-    ...(task === '首图' ? { act: c.act, scene: c.scene || undefined } : {}), badge: c.badge ?? '',
+    // Worn open (10-29), holding it open is the cover's demonstration: only the master's framing stays.
+    ...(task === '首图' ? { act: worn.open ? masterInfo(o.layout.id).crop : c.act, scene: c.scene || undefined } : {}), badge: c.badge ?? '',
     castRef: cast, place: o.stored.place, wear: worn.wear, covered: o.covered,
   };
   const prompt = specPrompt({ master: o.layout.id, task, taskLabel: TASK_LABEL[task], n: o.input.n, total: o.input.total, spec, fill, garment: o.stored.garment,
@@ -754,6 +756,10 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         const thumbLabel = lined && linerColor !== '' ? linerAlone(sorted, v.inner, v.kind === '单内胆' ? it.name : linerColor) : null;
         const thumbAsset = thumbLabel ? stored.images.find(i => i.label === thumbLabel)?.assetId : undefined;
         const thumbFile = thumbAsset ? (await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [thumbAsset])).rows[0]?.file_id : undefined;
+        // 一体 with the box ticked (10-29): its colour's inside in the same box, else the box left empty to be filled in by hand.
+        const boxed = !v && d.wear?.type === '一体' && !!d.wear.box && !!it.color;
+        const insideLabel = boxed ? insideFor(sorted, d, it.color!) : null, insideAsset = insideLabel ? stored.images.find(i => i.label === insideLabel)?.assetId : undefined;
+        const insideFile = insideAsset ? (await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [insideAsset])).rows[0]?.file_id : undefined;
         // A photo in a scene (the material's, or a SKU model drawn where the set is shot since 10-16): the
         // analysis model finds the model's head and knees on it. A drawn one on plain grey is measured instead.
         const frame = photo && (source || stored.place) ? await findFrame(photo, recognize) : null;
@@ -769,11 +775,12 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
           // The shop's own LOGO while it shows one (店铺设置); the sample LOGO is only for the crafts image.
           ...text, rows: [...text.rows, lined ? { ...row, sub: versionName(v) } : row], logo: badge?.place === 'corner' ? null : await (await shopBrand(job.tenant_id, shopSet))?.bytes().catch(() => null) ?? null,
           fabric: product ? await fabricCrop(product) : await sharp(photo!).resize(800, 800, { fit: 'cover', position: 'centre' }).png().toBuffer(),
-          ...(thumbFile ? { liner: { photo: await fileOf(thumbFile), name: `${linerName(v!)}内胆`, whole: sorted.find((i: { id: string; kind: string }) => i.id === thumbLabel)?.kind === '静物' } } : {}),
+          ...(thumbFile ? { liner: { photo: await fileOf(thumbFile), name: `${linerName(v!)}内胆`, whole: sorted.find((i: { id: string; kind: string }) => i.id === thumbLabel)?.kind === '静物' } }
+            : boxed ? { liner: { photo: insideFile ? await fileOf(insideFile) : null, close: sorted.find((i: { id: string; kind: string }) => i.id === insideLabel)?.kind !== '模特实拍' } } : {}),
           photo: photo ? { bytes: photo, cutout: false, frame } : { bytes: await removeFlatArtworkBackground(product!, { r: 255, g: 255, b: 255 }), cutout: true },
           // A version over a liner or the liner alone says so in the dark pill (10-22), else the badge when it goes under the title.
           // With its liner's picture under the title the liner speaks for itself; zipped up (none), the pill names the version.
-          tag: lined && !thumbFile ? versionName(v) : lined ? null : badgeSet.place === 'title' ? words : null, badge,
+          tag: lined && !thumbFile ? versionName(v) : lined || boxed ? null : badgeSet.place === 'title' ? words : null, badge,
         }));
         return;
       }
@@ -793,7 +800,21 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
        * it (pushed onto `refs`), several each over theirs by name; zipped up where the colour has none.
        * Plans with no version over a liner as before: the cast (`cast`) from the liner photo, the rest as the cast.
        */
-      const dressed = async (shells: string[], refs: Buffer[], cast = false): Promise<{ wear: string | null; linerRef?: number }> => {
+      // 一体 (10-29): the cover worn open on its colour's inside, from the material's photo of it; zipped as before without one.
+      let sortedImages: Parameters<typeof insideFor>[0] | null = null;
+      const opened = async (shells: string[], refs: Buffer[]) => {
+        const key = shells.length === 1 ? colors.find(c => c.name === shells[0])?.sku : undefined;
+        if (d.wear?.type !== '一体' || !d.wear.open || !key) return null;
+        sortedImages ??= (await db().query('SELECT materials FROM listing_projects WHERE id=$1', [job.project_id])).rows[0]?.materials?.sorted?.images ?? [];
+        const label = insideFor(sortedImages!, d, key), asset = label ? stored.images.find(i => i.label === label)?.assetId : undefined;
+        const file = asset ? (await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [asset])).rows[0]?.file_id : undefined;
+        if (!file) return null;
+        const ref = refs.push(await sharp(await fileOf(file), { limitInputPixels: 60_000_000 }).rotate().resize(1536, 1536, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer());
+        return { wear: openLine(ref, heatPoint(d.points), covered), open: true };
+      };
+      const dressed = async (shells: string[], refs: Buffer[], cast = false, cover = false): Promise<{ wear: string | null; linerRef?: number; open?: boolean }> => {
+        const open = cover ? await opened(shells, refs) : null;
+        if (open) return open;
         if (!byColor) { const linerRef = cast && wearType === '内胆' && liner ? refs.push(liner) : undefined; return { wear: wearLine(wearType, linerRef, undefined, covered), linerRef }; }
         const picks = shells.map(shell => ({ shell, pick: mainLiner(linerImages, d, shell) }));
         if (picks.length > 1) return { wear: groupWear(picks.map(p => ({ shell: p.shell, liner: p.pick?.color ? `${p.pick.color}${linerName(p.pick.version)}` : '' })), covered) };
@@ -887,7 +908,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         // A square image its master has a spec for: drawn the way the master's sample was.
         const shot = await specShot({ corner, stored, projectId: job.project_id, input, slot: job.slot, layout, output, cast: hasCast ? await output('cast') : null,
           logo: logoBytes && logoLine ? { bytes: logoBytes, line: logoLine } : logoLine ? { bytes: null, line: logoLine } : null,
-          badge: async () => (await shopSettings(job.tenant_id, shopSet)).settings?.items.some(x => x.on && x.title === '免费印绣') ? '免费印绣' : '', dressed, covered });
+          badge: async () => (await shopSettings(job.tenant_id, shopSet)).settings?.items.some(x => x.on && x.title === '免费印绣') ? '免费印绣' : '', dressed: (shells, refs, cover) => dressed(shells, refs, false, cover), covered });
         if (shot) { references = shot.references; prompt = shot.prompt; ratio = 'square'; }
       }
       if (!prompt && input.kind === 'main' && !input.edit) {
@@ -906,7 +927,8 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         const badge = shop?.items.some(x => x.on && x.title === '免费印绣') ? '免费印绣' : '';
         const logoRef = shows && logoBytes && logoLine ? references.length : undefined, content = contentOf(stored, input, job.slot, layout, badge);
         // Its people wear its colour's own liner (10-25), the photo of it before the parts' photos.
-        const { wear, linerRef } = t.people > 0 ? await dressed(used.map(c => c.name), references) : { wear: null, linerRef: undefined };
+        const { wear, linerRef, open } = t.people > 0 ? await dressed(used.map(c => c.name), references, false, input.index >= 0 && d.slots[input.index].task === '首图') : { wear: null, linerRef: undefined, open: false };
+        if (open) content.act = input.index === 0 ? masterInfo(layout.id).crop : undefined;
         await withPartPhotos(stored, job.project_id, content.cells, references);
         prompt = mainPrompt({ ratio, task: input.index >= 0 ? TASK_LABEL[d.slots[input.index].task as Task] : '长图', template: t, layout, content,
           used, all: colors, garment, lead: d.model.lead, fromSku: multi, cast, n: input.ratio === 'long' ? undefined : input.n, total: input.total,

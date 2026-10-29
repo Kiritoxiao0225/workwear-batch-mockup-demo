@@ -137,6 +137,18 @@ export function wearLine(type: WearType | undefined, liner?: number, color?: str
   return null;
 }
 /**
+ * An 一体 cover worn open on its inside (10-29, the competitors' 一体绒 covers): one hand holds one side
+ * out so the inside faces the camera, drawn from the material's photo of it (`ref`), never made up.
+ * `heat`: the material has a heating point, so a small orange badge sits on the inside, as theirs do.
+ * The demonstration is this pose, so the cover's act gives way (listing-generation's `opened`).
+ */
+export function openLine(ref: number, heat: boolean, covered = false): string {
+  return `${covered ? '门襟整个打开' : `拉链全部拉开、敞着穿，${OPEN_PULL}`}；一只手捏住一侧门襟的边缘，把这一侧衣服向外拉开到身体旁边，让这一侧衣服的里面正对镜头露出来，另一侧门襟自然垂下；`
+    + `露出来的里面照参考图${ref}画（参考图${ref}是这件衣服里面的照片：里布或里绒的颜色、材质、绒毛或绗缝格子、厚薄都照它，不要自己编；照片里的人、背景都不要带过来）；`
+    + `里面贴身穿一件简单的纯色打底衫；衣服里面有填充，衣身蓬松厚实，一看就是秋冬保暖款`
+    + (heat ? `；露出的里面正中叠一个小小的圆形橙色发光徽标，里面一个白色的热量小图标，不写字，像在说这层里面会发热保暖` : '');
+}
+/**
  * Several colours on one image, each over its own liner (10-25): the liner each shell wears said by
  * name, as its SKU image has it; `liner` '' or none is zipped up, the liner unseen.
  */

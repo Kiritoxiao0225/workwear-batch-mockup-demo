@@ -14,7 +14,7 @@ import { CATEGORIES, categoryById, GROUP_HINT, GROUP_LABEL, TASK_HINT, TASK_LABE
 import {
   checkDraft, CLOSER_MAX, colorize, defaultDraft, directKeys, draftImages, FRONT, LIMITS, notesOf, placesFor, priceLines, proofsFor, renamePoint, replan, showsGarment, structureHint, sumCredits, syncCloser,
   templateFor, takeOff, putOn, usageOf, usedSlots, fitProof, fillParts, fillModel, modelPhotos, castFromPhotos, GENDERS, missingParts, partOf, wantsCast, hasPart, noPhotoProof, reusedSlots,
-  SKU_PEOPLE, skuItemsOf, type Counts, type Draft, type Gender, type Point, type PriceLine, type Slot,
+  SKU_PEOPLE, skuItemsOf, colorKeys, type Counts, type Draft, type Gender, type Point, type PriceLine, type Slot,
 } from "@/lib/listing/draft";
 import { isComponent, isGroup } from "@/lib/listing/garment-role";
 import { proofById } from "@/lib/listing/proofs";
@@ -23,6 +23,7 @@ import { skuPhotos, skuWho } from "@/lib/listing/sku-card";
 import { linerName, linerPhoto, versionName, WEAR_LABEL, WEARS } from "@/lib/listing/wear";
 import { draftVersions, linerAlone, linerByColor, linerColors, linerFor, linersSeen, mainLiner, VERSION_KINDS, type DraftVersion } from "@/lib/listing/sku-versions";
 import { LinerDialog } from "./listing-liner";
+import { heatPoint, insideFor, isInside } from "@/lib/listing/inside";
 import type { LinerTag } from "@/lib/listing/client-api";
 import { capacity, cellZones, mostCells, PEOPLE_LABEL, skuPair, type Layout } from "@/lib/listing/templates";
 import { SlotPreview, Wire } from "./listing-wire";
@@ -51,6 +52,8 @@ export function startDraft(m: Materials, layout: Layout, counts?: Counts, catego
 export function wearOf(m: Materials, main: string): Draft["wear"] {
   const w = m.wear;
   if (!w) return undefined;
+  // 一体 (10-29): the SKU images' small box of the inside is ticked; the user unticks it for none.
+  if (w.type === "一体") return { type: "一体", box: true };
   if (w.type !== "内胆") return { type: w.type };
   const v = w.versions.find(x => x.kind === "外壳加内胆"), liner = v ? linerPhoto(m.sorted.images, v.inner, main) : null;
   return liner ? { type: "内胆", liner } : { type: "薄款" };
@@ -157,7 +160,7 @@ export function PriceInfo({ lines, total, extra }: { lines: PriceLine[]; total: 
 
 const STEPS = ["① 确认这款", "② 选母版", "③ 卖点上图", "④ 确认出图"];
 /** What the picker fills: a colour's garment image, a structure image, or the man's (0) or woman's (1) model photo. */
-type Target = { kind: "color" | "part" | "model" | "version"; index: number } | null;
+type Target = { kind: "color" | "part" | "model" | "version" | "inside"; index: number } | null;
 const SEEN_TEXT = { 有: "看得出有", 看不出: "看图看不出", 不像: "看着不像有" } as const;
 
 export function PlanDialog({ projectId, name, materials, sources, draft, layouts, prices, onChange, onUpload, onRefresh, onService, onClose, onStart }: {
@@ -195,6 +198,8 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
   const linerImages = materials.sorted.images;
   /** The liner names the material has (10-28), the most seen first: what 「＋ 新增」 offers before the user writes one. */
   const innerNames = (() => { const n = new Map<string, number>(); for (const i of linerImages) if (i.inner) n.set(i.inner, (n.get(i.inner) ?? 0) + 1); return [...n].sort((a, b) => b[1] - a[1]).map(([k]) => k); })();
+  /** A colour's inside photo (10-29): '' leaves its SKU box empty. */
+  const setInside = (i: number, label: string) => { const key = colorKeys(draft.colors)[i]; if (key && draft.wear) set({ wear: { ...draft.wear, insides: { ...draft.wear.insides, [key]: label } } }); };
   const setVersion = (i: number, patch: Partial<DraftVersion>) => set({ versions: (draft.versions ?? []).map((v, k) => k === i ? { ...v, ...patch } : v) });
   const kindOf = (label: string | null) => (label && (isComponent(sorted.get(label)) ? sorted.get(label)?.role || "内胆" : isGroup(sorted.get(label)) ? "合照" : sorted.get(label)?.kind)) || "补传";
   const candidates = (t: NonNullable<Target>) => {
@@ -204,6 +209,8 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
     }
     // A version the user adds is drawn from an image of it: the ones showing a liner first.
     if (t.kind === "version") return library.filter(i => !!sorted.get(i.label)?.inner || sorted.get(i.label)?.role === "内胆");
+    // The inside of an 一体 jacket (10-29): the close-ups read as its inside, then the other close-ups.
+    if (t.kind === "inside") return [...library.filter(i => { const s = sorted.get(i.label); return !!s && isInside(s); }), ...library.filter(i => { const s = sorted.get(i.label); return !!s && !isInside(s) && s.kind === "细节特写"; })];
     if (t.kind === "model") {
       const known = materials.sorted.images.some(i => i.person !== undefined), fit = known ? modelPhotos(materials.sorted.images, GENDERS[t.index]) : materials.sorted.images.filter(i => i.kind === "模特实拍" && !i.same);
       return fit.map(i => byLabel.get(i.id)).filter((i): i is NonNullable<typeof i> => !!i);
@@ -214,6 +221,7 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
   const assign = (label: string) => {
     if (!target) return;
     if (target.kind === "version") set({ versions: (draft.versions ?? []).map((v, k) => k === target.index ? { ...v, ref: label } : v) });
+    else if (target.kind === "inside") setInside(target.index, label);
     else if (target.kind === "model") set({ model: { ...draft.model, photos: { ...draft.model.photos, [GENDERS[target.index]]: label } } });
     else if (target.kind === "color") onChange(recolor({ ...draft, colors: draft.colors.map((c, k) => k === target.index ? { ...c, pick: label } : c) }, layout));
     else set({ parts: draft.parts.map((p, k) => k === target.index ? { ...p, pick: label } : p) });
@@ -275,11 +283,31 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
       <div className="lp-model"><div className="lp-chips">{WEARS.map(t => {
         const liner = t === "内胆" ? wearOf({ ...materials, wear: { ...materials.wear!, type: "内胆" } }, draft.main)?.liner : undefined, off = t === "内胆" && !liner;
         return (<label key={t} className={"lp-chip" + (wearType === t ? " on" : "") + (off ? " off" : "")} title={off ? "素材里没有外套里穿着内胆的照片" : ""}>
-          <input type="radio" name="wear" hidden disabled={off} checked={wearType === t} onChange={() => set({ wear: t === "内胆" ? { type: t, liner } : { type: t } })} />{WEAR_LABEL[t]}</label>);
+          <input type="radio" name="wear" hidden disabled={off} checked={wearType === t} onChange={() => set({ wear: t === "内胆" ? { type: t, liner } : t === "一体" ? { type: t, box: true } : { type: t } })} />{WEAR_LABEL[t]}</label>);
       })}</div>
         <p className="lp-say">{wearType === "内胆" ? <>外套敞开，里面穿着内胆，一眼看得出两层、厚实。{!linerByColor(draft) && <>内胆照这张素材画：{draft.wear?.liner && byLabel.get(draft.wear.liner) ? <a className="lp-liner-pic" href={byLabel.get(draft.wear.liner)!.url} target="_blank" rel="noreferrer" title={byLabel.get(draft.wear.liner)!.path}><img src={byLabel.get(draft.wear.liner)!.url} alt="" /></a> : draft.wear?.liner}</>}</>
-          : wearType === "一体" ? "拉链拉到顶、领子立起来，看着蓬松厚实。" : "拉链拉到胸口，里面白 T，和以前一样。"}
+          : wearType === "一体" ? (draft.wear?.open ? "拉链拉到顶、领子立起来，看着蓬松厚实；首图敞开穿，露出里面。" : "拉链拉到顶、领子立起来，看着蓬松厚实。") : "拉链拉到胸口，里面白 T，和以前一样。"}
           {materials.wear.why && <span className="lp-muted">（整理时看到：{materials.wear.why}）</span>}</p>
+        {wearType === "一体" && (() => {
+          // 10-29: each colour's inside, for the SKU images' small box and the open cover.
+          const keys = colorKeys(draft.colors), w = draft.wear!;
+          const insideOf = (i: number) => keys[i] ? insideFor(linerImages, draft, keys[i]!) : null;
+          const mainAt = draft.colors.findIndex(c => c.name === draft.main), mainInside = mainAt >= 0 ? insideOf(mainAt) : null;
+          return (<div className="lp-main-liners">
+            <span className="lp-small">衣服里面的照片（翻开看到的里布、里绒、夹棉）：点图换一张</span>
+            {draft.colors.map((c, i) => {
+              const label = insideOf(i), img = label ? byLabel.get(label) : undefined;
+              return (<span key={i} className="lp-liner-tile" title={img?.path ?? ""}>
+                <button type="button" className="lp-btn link" onClick={() => { setTab("推荐"); setTarget({ kind: "inside", index: i }); }}>{img ? <img src={img.url} alt="" /> : <span className="none">没有</span>}</button>
+                <small><b>{c.name}</b> {label && <button type="button" className="lp-btn link" onClick={() => setInside(i, "")}>不用</button>}</small></span>);
+            })}
+            {layout.sku.specCard && <label className="lp-small" style={{ flexBasis: "100%" }}><input type="checkbox" checked={!!w.box} onChange={e => set({ wear: { ...w, box: e.target.checked } })} /> SKU 图标题下放一个小框：有这个颜色里面的照片就放进去，没有就留一个空的灰框，自己 P 上</label>}
+            <label className="lp-small" style={{ flexBasis: "100%" }} title={mainInside ? "" : "主推色没有里面的照片：点上面的图选一张或补传"}>
+              <input type="checkbox" disabled={!mainInside && !w.open} checked={!!w.open} onChange={e => set({ wear: { ...w, open: e.target.checked } })} /> 首图敞开穿：一只手拉开一边，露出里面（照上面的照片画），版式和字不变
+              {w.open && !mainInside && <b> · 主推色没有里面的照片，首图会照旧拉到顶</b>}
+              {w.open && mainInside && <span className="lp-muted"> · {heatPoint(draft.points) ? "素材有发热保暖的卖点，里面加一个橙色发热小圆标" : "素材没有发热卖点，不加发热圆标"}</span>}</label>
+          </div>);
+        })()}
         {wearType === "内胆" && linerByColor(draft) && (() => {
           // 10-25: the cast and every main image wear the liner of the colour they show, as its SKU image does.
           const lined = (draft.versions ?? []).filter(v => v.on && v.kind === "外壳加内胆" && v.inner && v.colors.length);
@@ -713,8 +741,8 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
       {target && (
         <div className="lp-modal top" onClick={e => { if (e.target === e.currentTarget) setTarget(null); }}>
           <div className="lp-box" role="dialog" aria-modal="true" aria-label="选一张图">
-            <div className="lp-box-head"><div><h3>{target.kind === "version" ? `选「${versionName(draft.versions![target.index])}」的参考图` : target.kind === "model" ? `选${GENDERS[target.index]}模特的照片` : target.kind === "color" ? `选「${draft.colors[target.index].name}」的衣服图` : `选结构图「${draft.parts[target.index]?.part ?? ""}」`}</h3>
-              <p className="lp-sub">{target.kind === "version" ? "挑一张能看清这个版本的图：外套里穿着这件内胆，或内胆单独穿。出图时照它画。" : target.kind === "model" ? "挑一张只有一个人、脸正面清楚、没戴墨镜口罩的。后面的图都照这个人画，照片里的衣服和背景不会带过去。" : target.kind === "color" ? "要衣服完整、正面、颜色准。推荐里是 AI 认为是这个颜色的图。" : draft.parts[target.index]?.part === FRONT ? "衣服完整的正面图" : `「${draft.parts[target.index]?.part ?? ""}」的特写，挑最清楚的一张；名字不对可以在外面改`}</p></div>
+            <div className="lp-box-head"><div><h3>{target.kind === "inside" ? `选「${draft.colors[target.index]?.name ?? ""}」衣服里面的照片` : target.kind === "version" ? `选「${versionName(draft.versions![target.index])}」的参考图` : target.kind === "model" ? `选${GENDERS[target.index]}模特的照片` : target.kind === "color" ? `选「${draft.colors[target.index].name}」的衣服图` : `选结构图「${draft.parts[target.index]?.part ?? ""}」`}</h3>
+              <p className="lp-sub">{target.kind === "inside" ? "挑一张翻开衣服、看得清里布或里绒的照片：SKU 图的小框放它，首图敞开时照它画里面。" : target.kind === "version" ? "挑一张能看清这个版本的图：外套里穿着这件内胆，或内胆单独穿。出图时照它画。" : target.kind === "model" ? "挑一张只有一个人、脸正面清楚、没戴墨镜口罩的。后面的图都照这个人画，照片里的衣服和背景不会带过去。" : target.kind === "color" ? "要衣服完整、正面、颜色准。推荐里是 AI 认为是这个颜色的图。" : draft.parts[target.index]?.part === FRONT ? "衣服完整的正面图" : `「${draft.parts[target.index]?.part ?? ""}」的特写，挑最清楚的一张；名字不对可以在外面改`}</p></div>
               <div className="grow" /><button type="button" className="lp-btn sm ghost" onClick={() => setTarget(null)}>关闭</button></div>
             <div className="lp-box-body">
               <div className="lp-tabs">{["推荐", "全部", ...KINDS].map(k => <button type="button" key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{k}</button>)}</div>

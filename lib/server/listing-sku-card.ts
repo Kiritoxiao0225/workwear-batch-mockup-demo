@@ -31,8 +31,10 @@ export type SkuCard = SkuText & {
   /**
    * A version over a liner or the liner alone (10-22): the material's photo of the liner, a small picture
    * under the title with its name on it (大俊's SKU sheet); the feature card stays at the bottom.
+   * An 一体 jacket's inside (10-29) in the same box with no name: a close-up (`close`) fills it; no photo
+   * leaves the box empty, plain grey, to be filled in by hand.
    */
-  liner?: { photo: Buffer; name: string; whole?: boolean } | null;
+  liner?: { photo: Buffer | null; name?: string; whole?: boolean; close?: boolean } | null;
 };
 
 /** `serif`: the title's (Noto Serif SC Black, GB2312 level one only; OFL, public/fonts/NotoSerifSC-OFL.txt). */
@@ -299,18 +301,24 @@ export async function renderSkuCard(c: SkuCard): Promise<Buffer> {
   }
   if (c.liner) {
     // Under the title: the liner itself (its photo's middle, where the garment is) with its name across the bottom.
-    const box = { w: 190, h: tight ? 128 : 150 }, meta = await sharp(c.liner.photo).metadata(), w = meta.width ?? 1, h = meta.height ?? 1;
-    // A white image is the liner whole; a photo of someone in it, its middle from the neck down (10-22:
-    // starting at 18% showed the chin and nostrils; at 27% the collar is whole and the face is out).
-    const crop = c.liner.whole ? await sharp(c.liner.photo).rotate().flatten({ background: '#ffffff' }).trim({ threshold: 8 }).resize(box.w * 2 - 40, box.h * 2 - 100, { fit: 'contain', background: '#ffffff' })
-      .extend({ top: 10, bottom: 90, left: 20, right: 20, background: '#ffffff' }).png().toBuffer()
-      : await sharp(c.liner.photo).rotate().extract({ left: Math.round(w * 0.15), top: Math.round(h * 0.27), width: Math.round(w * 0.7), height: Math.round(h * 0.5) })
-      .resize(box.w * 2, box.h * 2, { fit: 'cover' }).png().toBuffer();
+    const box = { w: 190, h: tight ? 128 : 150 }, photo = c.liner.photo;
     ctx.save(); roundRect(ctx, L, y + 4, box.w, box.h, 14); ctx.clip();
-    ctx.fillStyle = '#ffffff'; ctx.fillRect(L, y + 4, box.w, box.h);
-    ctx.drawImage(await loadImage(crop), L, y + 4, box.w, box.h);
-    ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(L, y + 4 + box.h - 40, box.w, 40);
-    ctx.fillStyle = '#ffffff'; fitText(ctx, c.liner.name, FONT.heavy, 24, box.w - 24); ctx.textAlign = 'center'; ctx.fillText(c.liner.name, L + box.w / 2, y + 4 + box.h - 12); ctx.textAlign = 'left';
+    ctx.fillStyle = photo ? '#ffffff' : '#dcdcdc'; ctx.fillRect(L, y + 4, box.w, box.h);
+    if (photo) {
+      const meta = await sharp(photo).metadata(), w = meta.width ?? 1, h = meta.height ?? 1;
+      // A white image is the liner whole; a photo of someone in it, its middle from the neck down (10-22:
+      // starting at 18% showed the chin and nostrils; at 27% the collar is whole and the face is out).
+      const crop = c.liner.whole ? await sharp(photo).rotate().flatten({ background: '#ffffff' }).trim({ threshold: 8 }).resize(box.w * 2 - 40, box.h * 2 - 100, { fit: 'contain', background: '#ffffff' })
+        .extend({ top: 10, bottom: 90, left: 20, right: 20, background: '#ffffff' }).png().toBuffer()
+        : c.liner.close ? await sharp(photo).rotate().resize(box.w * 2, box.h * 2, { fit: 'cover' }).png().toBuffer()
+        : await sharp(photo).rotate().extract({ left: Math.round(w * 0.15), top: Math.round(h * 0.27), width: Math.round(w * 0.7), height: Math.round(h * 0.5) })
+        .resize(box.w * 2, box.h * 2, { fit: 'cover' }).png().toBuffer();
+      ctx.drawImage(await loadImage(crop), L, y + 4, box.w, box.h);
+    }
+    if (c.liner.name) {
+      ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(L, y + 4 + box.h - 40, box.w, 40);
+      ctx.fillStyle = '#ffffff'; fitText(ctx, c.liner.name, FONT.heavy, 24, box.w - 24); ctx.textAlign = 'center'; ctx.fillText(c.liner.name, L + box.w / 2, y + 4 + box.h - 12); ctx.textAlign = 'left';
+    }
     ctx.restore(); ctx.fillStyle = INK; y += box.h + (tight ? 16 : 30);
   } else if (c.tag) {
     // Under the title, in place of its short bar.

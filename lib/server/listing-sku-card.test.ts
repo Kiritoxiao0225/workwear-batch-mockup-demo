@@ -43,6 +43,25 @@ describe('SKU 图角标 (10-26)', () => {
   });
 });
 
+describe('一体款的里面小框 (10-29)', () => {
+  // No LOGO, a one-line title: the box sits under it at the left, 190 × 150 from (60, 196).
+  const card = async (liner: { photo: Buffer | null; close?: boolean }) => renderSkuCard({ title: ['高端定制'], rows: [colorRow('黑色')], fabric: await solid(300, 300, '#eeeeee'),
+    photo: { bytes: await solid(900, 1200, '#d8d8d8'), cutout: false }, feature: null, liner });
+  const at = async (image: Buffer) => [...(await sharp(image).extract({ left: 150, top: 270, width: 2, height: 2 }).raw().toBuffer({ resolveWithObject: true })).data.slice(0, 3)];
+  it('fills the box with the inside close-up, with no name across it', async () => {
+    const [r, g, b] = await at(await card({ photo: await solid(600, 600, '#c03018'), close: true }));
+    expect(r > 150 && g < 90 && b < 70).toBe(true);
+    // Where a liner's name strip would darken it, still the photo.
+    const made = await card({ photo: await solid(600, 600, '#c03018'), close: true });
+    const { data } = await sharp(made).extract({ left: 150, top: 196 + 150 - 20, width: 2, height: 2 }).raw().toBuffer({ resolveWithObject: true });
+    expect(data[0]).toBeGreaterThan(150);
+  });
+  it('leaves the box empty and plain grey without a photo, to be filled in by hand', async () => {
+    const [r, g, b] = await at(await card({ photo: null }));
+    expect([r, g, b].every(x => Math.abs(x - 0xdc) < 6)).toBe(true);
+  });
+});
+
 describe('the unit marks the fonts lack (10-19)', () => {
   // The cards' fonts have no ₂ ⁺ ² ㎡: the server (no fallback fonts) printed nothing for them, so they are drawn as small figures.
   it('splits the marks off as small figures below or above the line', () => {

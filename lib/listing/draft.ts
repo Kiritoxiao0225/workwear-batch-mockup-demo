@@ -91,8 +91,12 @@ export type Draft = {
    * the liner is drawn from), 一体 zipped to the top. From the material's reading, changed on the plan.
    * None (plans before): as before.
    */
-  /** `main`: the version over a liner the main images wear (sku-versions.ts mainLiner), else each colour's most-shown one. */
-  wear?: { type: WearType; liner?: string; main?: string };
+  /**
+   * `main`: the version over a liner the main images wear (sku-versions.ts mainLiner), else each colour's most-shown one.
+   * 一体 (10-29, inside.ts): `box` the SKU images' small box of the inside (empty where there is no photo), `open` the
+   * cover worn open on it, `insides` each colour's inside photo by colour key ('' none) where the user chose.
+   */
+  wear?: { type: WearType; liner?: string; main?: string; box?: boolean; open?: boolean; insides?: Record<string, string> };
   /** The SKU versions of a 有内胆 jacket (sku-versions.ts); none: one SKU image per colour, as before. */
   versions?: DraftVersion[];
   /** What the chest shows: nothing, the word 「LOGO」, the shop's sample LOGO (店铺设置, 10-21), or this product's customer LOGO (an uploaded image's label). */
