@@ -160,7 +160,8 @@ export function PriceInfo({ lines, total, extra }: { lines: PriceLine[]; total: 
 
 const STEPS = ["① 确认这款", "② 选母版", "③ 卖点上图", "④ 确认出图"];
 /** What the picker fills: a colour's garment image, a structure image, or the man's (0) or woman's (1) model photo. */
-type Target = { kind: "color" | "part" | "model" | "version" | "inside"; index: number } | null;
+/** `open`: the inside picked for the main colour on ticking the open cover, which is ticked with it (10-29). */
+type Target = { kind: "color" | "part" | "model" | "version" | "inside"; index: number; open?: boolean } | null;
 const SEEN_TEXT = { 有: "看得出有", 看不出: "看图看不出", 不像: "看着不像有" } as const;
 
 export function PlanDialog({ projectId, name, materials, sources, draft, layouts, prices, onChange, onUpload, onRefresh, onService, onClose, onStart }: {
@@ -199,7 +200,9 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
   /** The liner names the material has (10-28), the most seen first: what 「＋ 新增」 offers before the user writes one. */
   const innerNames = (() => { const n = new Map<string, number>(); for (const i of linerImages) if (i.inner) n.set(i.inner, (n.get(i.inner) ?? 0) + 1); return [...n].sort((a, b) => b[1] - a[1]).map(([k]) => k); })();
   /** A colour's inside photo (10-29): '' leaves its SKU box empty. */
-  const setInside = (i: number, label: string) => { const key = colorKeys(draft.colors)[i]; if (key && draft.wear) set({ wear: { ...draft.wear, insides: { ...draft.wear.insides, [key]: label } } }); };
+  const setInside = (i: number, label: string, open?: boolean) => { const key = colorKeys(draft.colors)[i]; if (key && draft.wear) set({ wear: { ...draft.wear, insides: { ...draft.wear.insides, [key]: label }, ...(open ? { open } : {}) } }); };
+  /** One photo of the inside for every colour: the material often shoots its close-ups in one colour only (10-29: 8826). */
+  const insideAll = (label: string) => { if (draft.wear) set({ wear: { ...draft.wear, insides: Object.fromEntries(colorKeys(draft.colors).flatMap(k => k ? [[k, label]] : [])) } }); };
   const setVersion = (i: number, patch: Partial<DraftVersion>) => set({ versions: (draft.versions ?? []).map((v, k) => k === i ? { ...v, ...patch } : v) });
   const kindOf = (label: string | null) => (label && (isComponent(sorted.get(label)) ? sorted.get(label)?.role || "内胆" : isGroup(sorted.get(label)) ? "合照" : sorted.get(label)?.kind)) || "补传";
   const candidates = (t: NonNullable<Target>) => {
@@ -221,7 +224,7 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
   const assign = (label: string) => {
     if (!target) return;
     if (target.kind === "version") set({ versions: (draft.versions ?? []).map((v, k) => k === target.index ? { ...v, ref: label } : v) });
-    else if (target.kind === "inside") setInside(target.index, label);
+    else if (target.kind === "inside") setInside(target.index, label, target.open);
     else if (target.kind === "model") set({ model: { ...draft.model, photos: { ...draft.model.photos, [GENDERS[target.index]]: label } } });
     else if (target.kind === "color") onChange(recolor({ ...draft, colors: draft.colors.map((c, k) => k === target.index ? { ...c, pick: label } : c) }, layout));
     else set({ parts: draft.parts.map((p, k) => k === target.index ? { ...p, pick: label } : p) });
@@ -299,12 +302,14 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
               const label = insideOf(i), img = label ? byLabel.get(label) : undefined;
               return (<span key={i} className="lp-liner-tile" title={img?.path ?? ""}>
                 <button type="button" className="lp-btn link" onClick={() => { setTab("推荐"); setTarget({ kind: "inside", index: i }); }}>{img ? <img src={img.url} alt="" /> : <span className="none">没有</span>}</button>
-                <small><b>{c.name}</b> {label && <button type="button" className="lp-btn link" onClick={() => setInside(i, "")}>不用</button>}</small></span>);
+                <small><b>{c.name}</b> {label && <button type="button" className="lp-btn link" onClick={() => setInside(i, "")}>不用</button>}</small>
+                {label && draft.colors.length > 1 && <button type="button" className="lp-btn link lp-small" onClick={() => insideAll(label)}>全部颜色用这张</button>}</span>);
             })}
             {layout.sku.specCard && <label className="lp-small" style={{ flexBasis: "100%" }}><input type="checkbox" checked={!!w.box} onChange={e => set({ wear: { ...w, box: e.target.checked } })} /> SKU 图标题下放一个小框：有这个颜色里面的照片就放进去，没有就留一个空的灰框，自己 P 上</label>}
-            <label className="lp-small" style={{ flexBasis: "100%" }} title={mainInside ? "" : "主推色没有里面的照片：点上面的图选一张或补传"}>
-              <input type="checkbox" disabled={!mainInside && !w.open} checked={!!w.open} onChange={e => set({ wear: { ...w, open: e.target.checked } })} /> 首图敞开穿：一只手拉开一边，露出里面（照上面的照片画），版式和字不变
-              {w.open && !mainInside && <b> · 主推色没有里面的照片，首图会照旧拉到顶</b>}
+            <label className="lp-small" style={{ flexBasis: "100%" }}>
+              {/* No photo for the main colour: ticking it asks for one (10-29: a greyed box said nothing on 8826). */}
+              <input type="checkbox" checked={!!w.open && !!mainInside} onChange={e => { if (e.target.checked && !mainInside && mainAt >= 0) { setTab("推荐"); setTarget({ kind: "inside", index: mainAt, open: true }); } else set({ wear: { ...w, open: e.target.checked } }); }} /> 首图敞开穿：一只手拉开一边，露出里面（照上面的照片画），版式和字不变
+              {!mainInside && <b> · 主推色「{draft.main}」还没有里面的照片，勾选时选一张</b>}
               {w.open && mainInside && <span className="lp-muted"> · {heatPoint(draft.points) ? "素材有发热保暖的卖点，里面加一个橙色发热小圆标" : "素材没有发热卖点，不加发热圆标"}</span>}</label>
           </div>);
         })()}
