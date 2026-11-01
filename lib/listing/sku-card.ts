@@ -39,15 +39,52 @@ const TWO_TONE = /撞色|拼色/;
 export const colorRow = (name: string): SkuRow => ({ label: 'COLOR/颜色', value: name.trim(), sub: '经典配色 百搭耐看', icon: 'color' });
 
 /**
- * The words of a product's SKU images. Two rows above the colour, the first the material has of:
- * style number (the part of the product's name before 「#」), fabric, fit, workmanship, where it is
- * worn. The card: the first function point, split into a short title and up to three icons.
+ * What the left column of a SKU image can say (11-01, 店铺设置「SKU 图字段组合」): a shop saves named
+ * combos of these, in the order they print, at most SKU_FIELD_MAX rows; a product uses the shop's
+ * default one or picks another. The built-in 「自动」 (SKU_AUTO) is the rule from before: the first two
+ * the material has of 货号, 面料, 版型, 工艺, 适用, then the colour.
  */
-export function skuCardText(input: { name: string; category: string; points: (Pick<Point, 'text' | 'note' | 'type' | 'on' | 'source'> & { short?: string })[]; color?: string }): SkuText {
+export const SKU_FIELDS = [['style', '货号'], ['fabric', '面料'], ['fit', '版型'], ['detail', '工艺'], ['scene', '适用场景'], ['color', '颜色']] as const;
+export type SkuField = (typeof SKU_FIELDS)[number][0];
+/** The fields with words of their own (the colour's are the colour's name). */
+export type SkuWordField = Exclude<SkuField, 'color'>;
+export type SkuWords = Partial<Record<SkuWordField, string>>;
+export type SkuFieldSet = { id: string; name: string; fields: SkuField[] };
+/** A shop's combos and the one new products use (SKU_AUTO when it saved none). */
+export type SkuFieldSets = { sets: SkuFieldSet[]; default: string };
+export const SKU_AUTO = 'auto';
+export const SKU_AUTO_SET: SkuFieldSet = { id: SKU_AUTO, name: '自动', fields: [] };
+export const DEFAULT_SKU_FIELDS: SkuFieldSets = { sets: [], default: SKU_AUTO };
+export const SKU_FIELD_MAX = 3, SKU_SETS_MAX = 10, SKU_SET_NAME_MAX = 8, SKU_WORD_MAX = 12;
+export const skuFieldName = (f: SkuField) => SKU_FIELDS.find(([id]) => id === f)![1];
+/** The combo a product's SKU images use: its own pick while the shop still has it, else the shop's default, else 自动. */
+export function skuSetOf(shop: SkuFieldSets | undefined, pick?: string): SkuFieldSet {
+  const all = [SKU_AUTO_SET, ...(shop?.sets ?? [])];
+  return all.find(x => x.id === pick) ?? all.find(x => x.id === shop?.default) ?? SKU_AUTO_SET;
+}
+
+/**
+ * The style number (货号) at the front of a product's name, as the folder was named: 「8826款羽绒一体」,
+ * 「6608#立领薄款」, 「LD1425-黑」, 「XHM24 卡车帽」. Before 11-01 only a number followed by 「#」 counted,
+ * so 8826's SKU images lost the number the team picks goods by.
+ */
+export function styleNo(name: string): string | null {
+  const m = /^\s*([A-Za-z]{0,4}\d[A-Za-z0-9-]{0,11})/.exec(name);
+  return m ? m[1].replace(/-+$/, '') || null : null;
+}
+
+type CardInput = {
+  name: string; category: string; points: (Pick<Point, 'text' | 'note' | 'type' | 'on' | 'source'> & { short?: string })[]; color?: string;
+  /** Words typed on the plan (11-01), before the material's; 货号 before the name's. */
+  words?: SkuWords;
+  /** Worn over a liner or lined (有内胆, 一体): the fabric is the shell's, said so (11-01: 「100%聚酯纤维」 read as the liner's). */
+  outer?: boolean;
+};
+/** Each field's row for a product, or null when neither the plan nor the material has words for it. */
+export function fieldRows(input: CardInput): Record<SkuWordField, SkuRow | null> {
   const own = input.points.filter(p => p.source === '素材' && p.type !== '定位' && p.text.trim());
   type Own = (typeof own)[number];
   const all = (type: string, ok: (p: Own) => boolean = () => true) => [...own.filter(p => p.type === type && p.on && ok(p)), ...own.filter(p => p.type === type && !p.on && ok(p))];
-  const style = /^\s*([A-Za-z0-9][A-Za-z0-9-]{0,11})\s*#/.exec(input.name)?.[1];
   // A point too long for the row gives its first phrase, or its place to the next point.
   const row = (label: string, list: Own[], icon?: SkuIcon): SkuRow | null => {
     for (const p of list) {
@@ -57,11 +94,46 @@ export function skuCardText(input: { name: string; category: string; points: (Pi
     return null;
   };
   const twoTone = !input.color || /拼|撞/.test(input.color);
-  const rows = [
-    style ? { label: 'STYLE NO./款号', value: style, sub: '', icon: 'style' as const } : null,
-    row('FABRIC/面料', all('面料', p => !FILLING.test(p.text)), 'fabric'), row('FIT/版型', all('颜色款式', p => twoTone || !TWO_TONE.test(p.text)), 'style'),
-    row('DETAIL/工艺', all('做工')), row('SCENE/适用', all('人群场景'), 'scene'),
-  ].filter((r): r is SkuRow => !!r).slice(0, 2);
+  const typed = (f: SkuWordField, label: string, icon: SkuIcon) => { const v = input.words?.[f]?.trim(); return v ? { label, value: v, sub: '', icon } : null; };
+  const style = styleNo(input.name), fabric = input.outer ? 'FABRIC/外层面料' : 'FABRIC/面料';
+  return {
+    style: typed('style', 'STYLE NO./货号', 'style') ?? (style ? { label: 'STYLE NO./货号', value: style, sub: '', icon: 'style' } : null),
+    fabric: typed('fabric', fabric, 'fabric') ?? row(fabric, all('面料', p => !FILLING.test(p.text)), 'fabric'),
+    fit: typed('fit', 'FIT/版型', 'style') ?? row('FIT/版型', all('颜色款式', p => twoTone || !TWO_TONE.test(p.text)), 'style'),
+    detail: typed('detail', 'DETAIL/工艺', 'dot') ?? row('DETAIL/工艺', all('做工')),
+    scene: typed('scene', 'SCENE/适用', 'scene') ?? row('SCENE/适用', all('人群场景'), 'scene'),
+  };
+}
+
+/**
+ * The rows of a SKU image's left column, in print order, the colour's (`color`, with its version's line
+ * under it) included: the combo's fields that have words (a field with none is left out, never made up),
+ * or with 自动 the first two the product has, then the colour.
+ */
+export function skuCardRows(input: CardInput, set: SkuFieldSet, color: SkuRow): SkuRow[] {
+  const rows = fieldRows(input);
+  if (!set.fields.length) return [...skuCardText(input).rows, color];
+  return set.fields.slice(0, SKU_FIELD_MAX).map(f => f === 'color' ? color : rows[f]).filter((r): r is SkuRow => !!r);
+}
+
+/** The word fields a combo prints for a product, in order (with 自动 the two the product has), for the plan page to show and edit. */
+export function skuFieldsUsed(input: CardInput, set: SkuFieldSet): SkuWordField[] {
+  if (set.fields.length) return set.fields.filter((f): f is SkuWordField => f !== 'color');
+  const rows = fieldRows(input);
+  return (['style', 'fabric', 'fit', 'detail', 'scene'] as const).filter(f => rows[f]).slice(0, 2);
+}
+
+/**
+ * The words of a product's SKU images. 自动's two rows above the colour, the first the product has of:
+ * 货号 (styleNo), fabric, fit, workmanship, where it is worn. The card: the first function point, split
+ * into a short title and up to three icons.
+ */
+export function skuCardText(input: CardInput): SkuText {
+  const own = input.points.filter(p => p.source === '素材' && p.type !== '定位' && p.text.trim());
+  type Own = (typeof own)[number];
+  const all = (type: string, ok: (p: Own) => boolean = () => true) => [...own.filter(p => p.type === type && p.on && ok(p)), ...own.filter(p => p.type === type && !p.on && ok(p))];
+  const f = fieldRows(input);
+  const rows = [f.style, f.fabric, f.fit, f.detail, f.scene].filter((r): r is SkuRow => !!r).slice(0, 2);
 
   const functions = all('功能');
   const lead = functions[0];

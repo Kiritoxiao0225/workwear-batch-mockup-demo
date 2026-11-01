@@ -19,7 +19,7 @@ import {
 import { isComponent, isGroup } from "@/lib/listing/garment-role";
 import { proofById } from "@/lib/listing/proofs";
 import { auditDraft, type AuditFix } from "@/lib/listing/audit";
-import { skuPhotos, skuWho } from "@/lib/listing/sku-card";
+import { colorRow, fieldRows, SKU_AUTO, SKU_AUTO_SET, SKU_WORD_MAX, skuCardRows, skuFieldName, skuFieldsUsed, skuPhotos, skuSetOf, skuWho, styleNo, type SkuWordField } from "@/lib/listing/sku-card";
 import { linerName, linerPhoto, versionName, WEAR_LABEL, WEARS } from "@/lib/listing/wear";
 import { draftVersions, linerAlone, linerByColor, linerColors, linerFor, linersSeen, mainLiner, VERSION_KINDS, type DraftVersion } from "@/lib/listing/sku-versions";
 import { LinerDialog } from "./listing-liner";
@@ -117,7 +117,7 @@ export function rearrange(d: Draft, layout: Layout, keepHand: boolean): Draft {
 /** Another category: its points and images afresh; the colours, parts, chest, model and counts the user set stay. */
 function withCategory(d: Draft, m: Materials, layout: Layout, category: string): Draft {
   const fresh = startDraft(m, layout, d.counts, category);
-  return rearrange({ ...fresh, colors: d.colors, main: d.main, parts: d.parts, logo: d.logo, model: d.model, skuPeople: d.skuPeople, wear: d.wear, versions: d.versions, extra: d.extra, scene: d.scene, ...(d.shop ? { shop: d.shop } : {}) }, layout, false);
+  return rearrange({ ...fresh, colors: d.colors, main: d.main, parts: d.parts, logo: d.logo, model: d.model, skuPeople: d.skuPeople, skuFields: d.skuFields, skuWords: d.skuWords, wear: d.wear, versions: d.versions, extra: d.extra, scene: d.scene, ...(d.shop ? { shop: d.shop } : {}) }, layout, false);
 }
 /** What changed on the cover when the master could not shoot where it was, said once. */
 function movedNote(before: Draft, after: Draft, layout: Layout): string {
@@ -429,6 +429,13 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
   const skuDrawn = layout.sku.specCard ? skuItemsOf(draft).filter(i => !photos.has(i.key)).length : 0;
   /** The colours the material has its own model photo of, whatever the SKU images are set to show. */
   const skuReal = layout.sku.specCard ? photosOf({ ...draft, skuPeople: "实拍" }, materials, layout).size : 0;
+  // SKU 图左边 (11-01): the combo the product uses and what it will say, with the colour standing in for every colour's name.
+  const skuSet = skuSetOf(shop?.skuFields, draft.skuFields);
+  const skuCard = { name, category: draft.category, points: draft.points, words: draft.skuWords, outer: draft.wear?.type === "内胆" || draft.wear?.type === "一体" };
+  const skuFieldRows = fieldRows(skuCard), skuPreview = skuCardRows(skuCard, skuSet, colorRow("颜色"));
+  // 自动 always offers the 货号 box: typing one gives it its row.
+  const skuWordFields = skuSet.fields.length ? skuFieldsUsed(skuCard, skuSet) : [...new Set<SkuWordField>(["style", ...skuFieldsUsed(skuCard, skuSet)])];
+  const skuMissing = skuSet.fields.filter((f): f is SkuWordField => f !== "color" && !skuFieldRows[f]);
   const skuBy = draft.skuPeople ?? "实拍", skuDrawnWho = (w: Gender | "男女") => w === "男女" ? "定妆照里的男女两位" : `定妆照里的${w === "男" ? "男生" : "女生"}`;
   const modelShots = materials.sorted.images.filter(i => i.kind === "模特实拍" && !i.same).length;
   /** Draw the cast from the material: the clearest man and woman picked, or none yet. */
@@ -496,6 +503,22 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
         <p className="lp-say">{skuBy === "实拍"
           ? <>素材里有这个颜色模特图的直接用{skuDrawn ? <>，没有的 {skuDrawn} 个颜色照{skuDrawnWho(skuWho(draft, skuPair(layout)))}画（每色 1 张的钱）</> : "，这次每个颜色都有"}。</>
           : <>每个颜色都照{skuDrawnWho(skuBy)}画，不用素材里的照片（{skuDrawn} 个颜色，每色 1 张的钱）。</>}</p></div>
+    </>}
+    {layout.sku.specCard && <>
+      <h4 className="lp-h">SKU 图左边写什么 <small>店铺设置里存的字段组合；这款单独换、改字，不影响别的款</small></h4>
+      <div className="lp-model"><div className="lp-chips">{[SKU_AUTO_SET, ...(shop?.skuFields.sets ?? [])].map(x => (
+        <label key={x.id} className={"lp-chip" + (skuSet.id === x.id ? " on" : "")}><input type="radio" name="skuFields" hidden checked={skuSet.id === x.id} onChange={() => set({ skuFields: x.id })} />
+          {x.name}{x.id === skuSetOf(shop?.skuFields).id && <small> · 默认</small>}</label>))}</div>
+        <div className="lp-skuwords">{skuWordFields.map(f => {
+          const read = f === "style" ? styleNo(name) : skuFieldRows[f]?.value && !draft.skuWords?.[f]?.trim() ? skuFieldRows[f]!.value : null;
+          const hint = f === "style" ? `不填会自动识别文件夹名最前面的货号${read ? `，现在认出「${read}」` : "，这款没认出来"}`
+            : read ? `素材里读到「${read}」，要改就写` : "素材里没读到，可以手写；不写这一行就不放";
+          return (<label key={f}><span>{skuFieldName(f)}</span>
+            <input className="lp-in" value={draft.skuWords?.[f] ?? ""} maxLength={SKU_WORD_MAX} placeholder={hint}
+              onChange={e => { const words = { ...draft.skuWords, [f]: e.target.value }; if (!e.target.value) delete words[f]; set({ skuWords: Object.keys(words).length ? words : undefined }); }} /></label>);
+        })}</div>
+        <p className="lp-say">每个颜色的 SKU 图上会写：{skuPreview.map(r => r.icon === "color" ? "颜色名" : `${r.label.split("/").pop()}「${r.value}」`).join(" · ") || "只有颜色"}。{skuSet.id === SKU_AUTO ? "「自动」挑这款有的前两个，再加颜色。" : ""}{skuMissing.length ? <> <b>{skuMissing.map(skuFieldName).join("、")}</b>没有字，这一行不放。</> : null}</p>
+      </div>
     </>}
     <h4 className="lp-h">出几张 <small>先出 1:1，改满意了，再一键出 3:4 和 2:3（3:4 照着改好的 1:1 重排）。1:1 少于 5 张时，留讲得最多的那几张</small></h4>
     <div className="lp-counts">{([["square", "1:1 主图", 1, 5], ["portrait", "3:4 主图", 0, draft.counts.square], ["long", "2:3 长图", 0, 1]] as const).map(([key, label, min, max]) => (

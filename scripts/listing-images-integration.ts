@@ -692,6 +692,16 @@ try {
   await call(0, 'shop/sku-badge', { text: '', place: 'top' }, 400);
   assert.deepEqual((await (await call(0, 'shop/sku-badge', { text: '新品上市', place: 'corner' })).json()).shop.skuBadge, { text: '新品上市', place: 'corner' });
   assert.deepEqual((await (await call(1, 'shop')).json()).shop.skuBadge, { text: '', place: 'title' });
+  // SKU 图字段组合 (11-01): named combos per shop, checked on save; 自动 is built in and the default until another is marked.
+  assert.deepEqual((await (await call(0, 'shop')).json()).shop.skuFields, { sets: [], default: 'auto' });
+  const combo = { id: 'f0000aa01', name: '货号面料', fields: ['style', 'fabric', 'color'] };
+  await call(0, 'shop/sku-fields', { sets: [{ ...combo, fields: ['style', 'fabric', 'fit', 'color'] }], default: 'auto' }, 400);
+  await call(0, 'shop/sku-fields', { sets: [{ ...combo, fields: ['style', 'style'] }], default: 'auto' }, 400);
+  await call(0, 'shop/sku-fields', { sets: [combo, { ...combo, id: 'f0000aa02' }], default: 'auto' }, 400);
+  await call(0, 'shop/sku-fields', { sets: [{ ...combo, name: '自动' }], default: 'auto' }, 400);
+  await call(0, 'shop/sku-fields', { sets: [combo], default: 'f0000aa09' }, 400);
+  assert.deepEqual((await (await call(0, 'shop/sku-fields', { sets: [combo], default: combo.id })).json()).shop.skuFields, { sets: [combo], default: combo.id });
+  assert.deepEqual((await (await call(1, 'shop')).json()).shop.skuFields, { sets: [], default: 'auto' });
   const beforeRecard = await balance(tenants[0]), drawnBefore = (await imageJobs(fifth)).length;
   assert.ok((await (await call(0, `projects/${fifth}/recard`, {})).json()).images >= 1);
   await call(0, `projects/${fifth}/recard`, {}, 409);

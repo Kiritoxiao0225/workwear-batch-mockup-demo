@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { colorRow, modelPhotoFor, skuCardText } from './sku-card';
+import { colorRow, modelPhotoFor, SKU_AUTO_SET, skuCardRows, skuCardText, skuSetOf, styleNo } from './sku-card';
 
 const point = (type: string, text: string, note = '', on = true) => ({ type, text, note, on, source: '素材' as const }) as Parameters<typeof skuCardText>[0]['points'][number];
 
@@ -9,11 +9,11 @@ describe('skuCardText', () => {
       point('功能', '防水、透气、耐磨、轻便', '穿着舒适 吸汗透气'), point('面料', '90%锦纶 10%氨纶'), point('做工', 'YKK品牌拉链', '大品牌更有保障'), point('功能', '防风保暖'),
     ] });
     expect(t.title).toEqual(['高端定制', '支持印绣']);
-    expect(t.rows.map(r => [r.label, r.value])).toEqual([['STYLE NO./款号', 'M12'], ['FABRIC/面料', '90%锦纶 10%氨纶']]);
+    expect(t.rows.map(r => [r.label, r.value])).toEqual([['STYLE NO./货号', 'M12'], ['FABRIC/面料', '90%锦纶 10%氨纶']]);
     expect(t.feature).toEqual({ title: '防水透气', sub: '穿着舒适 吸汗透气', icons: [{ icon: 'water', label: '防水' }, { icon: 'breathe', label: '透气' }, { icon: 'wear', label: '耐磨' }] });
   });
   it('without a style number or a fabric, the next things the material has take their rows', () => {
-    const t = skuCardText({ name: '552挂拍新图', category: 'workwear', points: [point('做工', 'YKK品牌拉链', '大品牌更有保障'), point('人群场景', '登山露营'), point('颜色款式', '立体有型 简约时尚')] });
+    const t = skuCardText({ name: '挂拍新图', category: 'workwear', points: [point('做工', 'YKK品牌拉链', '大品牌更有保障'), point('人群场景', '登山露营'), point('颜色款式', '立体有型 简约时尚')] });
     expect(t.rows.map(r => r.label)).toEqual(['FIT/版型', 'DETAIL/工艺']);
     expect(t.rows[1]).toMatchObject({ value: 'YKK品牌拉链', sub: '大品牌更有保障', icon: 'zip' });
     expect(t.feature).toBeNull();
@@ -103,3 +103,37 @@ describe('icons say a point\'s short name (10-19)', () => {
   });
 });
 
+describe('SKU 图字段组合 and 货号 (11-01)', () => {
+  const points = [point('面料', '100%聚酯纤维'), point('颜色款式', '经典百搭款'), point('做工', 'YKK品牌拉链'), point('人群场景', '登山露营')];
+  const color = colorRow('藏青');
+  it('reads the 货号 at the front of the name, with or without 「#」', () => {
+    expect(styleNo('8826款羽绒一体')).toBe('8826');
+    expect(styleNo('6608#立领薄款')).toBe('6608');
+    expect(styleNo('LD1425-黑')).toBe('LD1425');
+    expect(styleNo('XHM24 卡车帽')).toBe('XHM24');
+    expect(styleNo('羽绒一体冲锋衣')).toBeNull();
+  });
+  it('自动 is the rule from before plus the 货号 without 「#」: two rows, then the colour', () => {
+    const rows = skuCardRows({ name: '8826款羽绒一体', category: 'workwear', points }, SKU_AUTO_SET, color);
+    expect(rows.map(r => [r.label, r.value])).toEqual([['STYLE NO./货号', '8826'], ['FABRIC/面料', '100%聚酯纤维'], ['COLOR/颜色', '藏青']]);
+  });
+  it("prints a combo's fields in its order, the colour where it is put, and leaves out a field with no words", () => {
+    const set = { id: 'f00000001', name: '场景', fields: ['scene', 'color', 'fit'] as const };
+    expect(skuCardRows({ name: 'x', category: 'workwear', points }, { ...set, fields: [...set.fields] }, color).map(r => r.value)).toEqual(['登山露营', '藏青', '经典百搭款']);
+    const noStyle = { id: 'f00000002', name: '货号', fields: ['style' as const, 'detail' as const] };
+    expect(skuCardRows({ name: '冲锋衣', category: 'workwear', points }, noStyle, color).map(r => r.value)).toEqual(['YKK品牌拉链']);
+  });
+  it("puts the plan's typed words first, and calls a lined jacket's fabric the shell's", () => {
+    const set = { id: 'f00000003', name: '货号面料', fields: ['style' as const, 'fabric' as const, 'color' as const] };
+    const rows = skuCardRows({ name: '8826款羽绒一体', category: 'workwear', points, words: { style: '8826A', fabric: '' }, outer: true }, set, color);
+    expect(rows.map(r => [r.label, r.value])).toEqual([['STYLE NO./货号', '8826A'], ['FABRIC/外层面料', '100%聚酯纤维'], ['COLOR/颜色', '藏青']]);
+  });
+  it("uses the product's pick while the shop has it, else the shop's default, else 自动", () => {
+    const shop = { sets: [{ id: 'f00000001', name: 'A', fields: ['style' as const] }, { id: 'f00000002', name: 'B', fields: ['fit' as const] }], default: 'f00000002' };
+    expect(skuSetOf(shop, 'f00000001').name).toBe('A');
+    expect(skuSetOf(shop, 'gone').name).toBe('B');
+    expect(skuSetOf(shop).name).toBe('B');
+    expect(skuSetOf({ sets: [], default: 'gone' }).id).toBe('auto');
+    expect(skuSetOf(undefined, 'auto').id).toBe('auto');
+  });
+});

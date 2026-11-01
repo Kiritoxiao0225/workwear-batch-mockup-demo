@@ -9,6 +9,7 @@
  *   say on it), each with as many cards as it has points, and a short heading the AI wrote;
  * - which colour each image shows, who models, and what the two rounds of images cost.
  */
+import type { SkuWords } from './sku-card';
 import { skuItems, type DraftVersion } from './sku-versions';
 import { versionName, type WearType } from './wear';
 import { BUILDS, categoryById, groupOf, evidenceOf, type Category, type PointGroup, type PointType, type Task } from './category';
@@ -86,6 +87,12 @@ export type Draft = {
    * them or both. None (plans before 10-21): 实拍.
    */
   skuPeople?: SkuPeople;
+  /**
+   * The SKU images' left column (11-01): which of the shop's field combos (sku-card.ts SKU_FIELDS; none: the
+   * shop's default) and the words typed on the plan for its fields, 货号 among them (none: from the name).
+   */
+  skuFields?: string;
+  skuWords?: SkuWords;
   /**
    * How it is worn (10-22): 春秋薄款 as before, 有内胆 open over its liner (`liner`: the material's photo
    * the liner is drawn from), 一体 zipped to the top. From the material's reading, changed on the plan.

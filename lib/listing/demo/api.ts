@@ -9,6 +9,7 @@ import { categoryById } from '../category';
 import { defaultDraft, usedSlots, type Draft } from '../draft';
 import type { Task } from '../category';
 import { BUILT_IN_LAYOUTS, FLAT_EXAMPLE, withPeople, type Layout, type People, type Display } from '../templates';
+import { DEFAULT_SKU_FIELDS } from '../sku-card';
 import { DEFAULT_SKU_BADGE, defaultShop, pendingOf, SERVICE_IMAGES, serviceSlot, SHOP_MAIN, SKU_BADGE_MAX, wordsFor, type ServiceImageId, type ShopService } from '../service';
 import { DEMO_MATERIAL } from './material';
 
@@ -137,7 +138,7 @@ setTimeout(() => { const p = projects.find(x => x.id === 'demo-planning'); if (p
 const SHOP_ID = 'demo-shop';
 const start = defaultShop(['免费设计', '免费印绣', '一件起订', '现货速发']);
 type DemoSet = { id: string; name: string; settings: Omit<ShopService, 'made'> };
-const shopSets: DemoSet[] = [{ id: SHOP_MAIN, name: '我的店铺', settings: { items: start.items, crafts: start.crafts, logo: null, brand: null, corner: false, skuBadge: DEFAULT_SKU_BADGE } }];
+const shopSets: DemoSet[] = [{ id: SHOP_MAIN, name: '我的店铺', settings: { items: start.items, crafts: start.crafts, logo: null, brand: null, corner: false, skuBadge: DEFAULT_SKU_BADGE, skuFields: DEFAULT_SKU_FIELDS } }];
 let defaultSet = SHOP_MAIN;
 const setOf = (id?: string | null) => shopSets.find(s => s.id === id) ?? shopSets.find(s => s.id === defaultSet)!;
 projects.push({ ...project(SHOP_ID, '店铺服务图', 'done', 0, 0), slots: [] });
@@ -223,7 +224,7 @@ export async function demoApi(path: string, init?: RequestInit): Promise<unknown
       if (!action && method === 'POST') {
         if (!String(body.name ?? '').trim()) throw new Error('给这套店铺起个名字');
         if (shopSets.some(x => x.name === body.name)) throw new Error('已经有同名的店铺');
-        const from = setOf(null).settings, made = { id: `s${Math.random().toString(16).slice(2, 10)}`, name: body.name, settings: { items: from.items.map(x => ({ ...x })), crafts: [...from.crafts], logo: null, brand: null, corner: false, skuBadge: DEFAULT_SKU_BADGE } };
+        const from = setOf(null).settings, made = { id: `s${Math.random().toString(16).slice(2, 10)}`, name: body.name, settings: { items: from.items.map(x => ({ ...x })), crafts: [...from.crafts], logo: null, brand: null, corner: false, skuBadge: DEFAULT_SKU_BADGE, skuFields: DEFAULT_SKU_FIELDS } };
         shopSets.push(made); return shopState(made.id);
       }
       if (method === 'DELETE') {
@@ -241,6 +242,7 @@ export async function demoApi(path: string, init?: RequestInit): Promise<unknown
     if (id === 'brand') Object.assign(own, method === 'DELETE' ? { brand: null, corner: false } : { brand: URL.createObjectURL(init!.body as Blob) });
     if (id === 'corner') own.corner = !!body.on && !!own.brand;
     if (id === 'sku-badge') own.skuBadge = { text: String(body.text ?? '').trim().slice(0, SKU_BADGE_MAX), place: body.place };
+    if (id === 'sku-fields') own.skuFields = { sets: body.sets, default: body.default };
     if (id === 'make') { await wait(400); return makeShop(set); }
     return shopState(set);
   }

@@ -31,7 +31,7 @@ import { z } from 'zod';
 import type { CanvasEdit, Element, Words } from '../listing/api-types';
 import { TASK_LABEL, type Task } from '../listing/category';
 import { castFromPhotos, GENDERS, leadCard, partOf, partPick, usedSlots, wantsCast, type Gender, type SkuPeople } from '../listing/draft';
-import { colorRow, modelPhotoFor, skuCardText, skuPhotos, skuWho } from '../listing/sku-card';
+import { colorRow, modelPhotoFor, skuCardRows, skuCardText, skuPhotos, skuSetOf, skuWho } from '../listing/sku-card';
 import { renderSkuCard } from './listing-sku-card';
 import { enOf, sampleBytes, specFor, specPrompt, type Fill } from './listing-specs';
 import { removeFlatArtworkBackground } from './artwork-image-processing';
@@ -49,7 +49,7 @@ import { resolveLayout } from './listing-layouts';
 import { castOnePrompt, castPrompt, drawPrompt, editPrompt, longPrompt, mainPrompt, productPrompt, redrawPrompt, relayoutPrompt, servicePrompt, serviceWordsPrompt, skuModelPrompt, skuPrompt, type Content, type Ratio } from './listing-prompts';
 import { callPlanModel, generateListingImage, LISTING_PLAN_MODEL, listingImageModel, listingImageProvider, type ImageCall, type PlanCall } from './listing-provider';
 import { frameRequest, insideBoxRequest, parseFrame, parseInsideBox, parseRecognized, recognizeRequest, type Expected, type Frame } from './listing-recognize';
-import { liveShop, shopBrand, shopServiceImage, shopSettings, shopSkuBadge } from './listing-shop';
+import { liveShop, shopBrand, shopServiceImage, shopSettings, shopSkuBadge, shopSkuFields } from './listing-shop';
 import { cornerAssets, pasteShopLogo } from './listing-corner';
 import { latestOutputs, latestRedraws, MAIN_SLOT, slotShop, storeOutput, type StoredPlan } from './listing-store';
 import { upscaleListingImage } from './listing-upscale';
@@ -763,8 +763,10 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         // A photo in a scene (the material's, or a SKU model drawn where the set is shot since 10-16): the
         // analysis model finds the model's head and knees on it. A drawn one on plain grey is measured instead.
         const frame = photo && (source || stored.place) ? await findFrame(photo, recognize) : null;
-        const text = skuCardText({ name: m.name, category: d.category, points: d.points, color: it.name });
-        const row = colorRow(it.name);
+        // The left column (11-01): the shop's field combo the product uses, the plan's typed words (货号) first.
+        const card = { name: m.name, category: d.category, points: d.points, color: it.name, words: d.skuWords, outer: d.wear?.type === '内胆' || d.wear?.type === '一体' };
+        const text = skuCardText(card), row = colorRow(it.name);
+        const fieldSet = skuSetOf(await shopSkuFields(job.tenant_id, shopSet), d.skuFields);
         // The shop's badge (店铺设置「SKU 图角标」, 10-26): the material's own words (「男女同码」), or 「男女同款」 when it has
         // model photos of both, unless the shop wrote its own. Under the title only when the liner or the version is not there;
         // in the top-left corner it takes the LOGO's place.
@@ -773,7 +775,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         const badge = words && (badgeSet.place === 'corner' || badgeSet.place === 'right') ? { text: words, place: badgeSet.place } : null;
         await succeed(await renderSkuCard({
           // The shop's own LOGO while it shows one (店铺设置); the sample LOGO is only for the crafts image.
-          ...text, rows: [...text.rows, lined ? { ...row, sub: versionName(v) } : row], logo: badge?.place === 'corner' ? null : await (await shopBrand(job.tenant_id, shopSet))?.bytes().catch(() => null) ?? null,
+          ...text, rows: skuCardRows(card, fieldSet, lined ? { ...row, sub: versionName(v) } : row), logo: badge?.place === 'corner' ? null : await (await shopBrand(job.tenant_id, shopSet))?.bytes().catch(() => null) ?? null,
           fabric: product ? await fabricCrop(product) : await sharp(photo!).resize(800, 800, { fit: 'cover', position: 'centre' }).png().toBuffer(),
           ...(thumbFile ? { liner: { photo: await fileOf(thumbFile), name: `${linerName(v!)}内胆`, whole: sorted.find((i: { id: string; kind: string }) => i.id === thumbLabel)?.kind === '静物' } }
             : boxed ? { liner: { photo: insideFile ? await fileOf(insideFile) : null, close: sorted.find((i: { id: string; kind: string }) => i.id === insideLabel)?.kind !== '模特实拍' } } : {}),

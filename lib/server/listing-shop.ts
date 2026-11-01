@@ -15,6 +15,7 @@ import {
   blockedOf, CRAFTS, DEFAULT_SKU_BADGE, defaultShop, pendingOf, SERVICE_IMAGES, SERVICE_LIMITS, serviceSlot, SHOP_MAIN, SKU_BADGE_MAX, SKU_BADGE_PLACES, wordsFor,
   type MadeService, type ServiceImageId, type ShopService, type ShopSet, type SkuBadge, type SkuBadgePlace,
 } from '../listing/service';
+import { DEFAULT_SKU_FIELDS, SKU_AUTO, SKU_AUTO_SET, SKU_FIELD_MAX, SKU_FIELDS, SKU_SET_NAME_MAX, SKU_SETS_MAX, type SkuField, type SkuFieldSets } from '../listing/sku-card';
 import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './catalog-database';
 import { CatalogHttpError } from './catalog-auth';
 import { brandImage } from './listing-corner';
@@ -27,7 +28,7 @@ import type { Tenant } from './tenant-scope';
 const db = () => catalogDatabase();
 /** What is stored on the shop's row; the LOGOs are asset ids of uploaded reference images (rows before 10-18 have no brand). */
 /** `logoGone`: when the sample LOGO was deleted, so a crafts image drawn before still with it is drawn again. */
-type Settings = Omit<ShopService, 'made' | 'logo' | 'brand' | 'corner' | 'skuBadge'> & { logo: string | null; brand?: string | null; corner?: boolean; logoGone?: string; skuBadge?: SkuBadge };
+type Settings = Omit<ShopService, 'made' | 'logo' | 'brand' | 'corner' | 'skuBadge' | 'skuFields'> & { logo: string | null; brand?: string | null; corner?: boolean; logoGone?: string; skuBadge?: SkuBadge; skuFields?: SkuFieldSets };
 /** The row's jsonb: the first shop's settings at the top (as before 10-22), the others in `sets`, and which is the default. */
 type Row = Settings & { name?: string; sets?: { id: string; name: string; settings: Settings }[]; defaultSet?: string };
 export { serviceSlot };
@@ -83,7 +84,7 @@ export async function shopState(tenant: string, user: string, wanted?: string | 
     } satisfies MadeService;
   }
   const shop: ShopService = { items: own.items, crafts: own.crafts, logo: own.logo ? assetUrl(own.logo) : null,
-    brand: own.brand ? assetUrl(own.brand) : null, corner: !!own.corner && !!own.brand, skuBadge: own.skuBadge ?? DEFAULT_SKU_BADGE, made };
+    brand: own.brand ? assetUrl(own.brand) : null, corner: !!own.corner && !!own.brand, skuBadge: own.skuBadge ?? DEFAULT_SKU_BADGE, skuFields: own.skuFields ?? DEFAULT_SKU_FIELDS, made };
   return { project: row.id, set, sets: setsOf(row.shop), shop, making, failed };
 }
 
@@ -200,6 +201,31 @@ export async function saveSkuBadge(tenant: string, user: string, input: unknown,
     return s;
   });
   return shopState(tenant, user, s);
+}
+const skuFieldsSchema = z.object({
+  sets: z.array(z.object({
+    id: z.string().regex(/^f[0-9a-f]{8}$/),
+    name: z.string().trim().min(1, '给组合起个名字').max(SKU_SET_NAME_MAX, `组合名最多 ${SKU_SET_NAME_MAX} 个字`).refine(n => n !== SKU_AUTO_SET.name, `「${SKU_AUTO_SET.name}」是自带的组合，换个名字`),
+    fields: z.array(z.enum(SKU_FIELDS.map(([id]) => id) as [SkuField, ...SkuField[]])).min(1, '每个组合至少选 1 个字段').max(SKU_FIELD_MAX, `每个组合最多 ${SKU_FIELD_MAX} 行`)
+      .refine(f => new Set(f).size === f.length, '同一个字段只能选一次'),
+  })).max(SKU_SETS_MAX - 1, `最多 ${SKU_SETS_MAX} 个组合`).refine(s => new Set(s.map(x => x.name)).size === s.length, '组合名不能重复'),
+  default: z.string().max(16),
+}).refine(v => v.default === SKU_AUTO || v.sets.some(x => x.id === v.default), { message: '默认组合不存在', path: ['default'] });
+/** SKU 图字段组合 (11-01): the shop's combos and its default; for SKU images made from now on, and 「按店铺设置重拼 SKU 图」. */
+export async function saveSkuFields(tenant: string, user: string, input: unknown, set?: string | null) {
+  const parsed = skuFieldsSchema.safeParse(input);
+  if (!parsed.success) throw new CatalogHttpError(400, parsed.error.issues[0]?.message ?? 'SKU 图字段组合不对');
+  const s = await catalogTransaction(async c => {
+    const row = await shopRow(c, tenant, user), s = shopOf(row.shop, set);
+    await patchSet(c, row, s, { skuFields: parsed.data });
+    return s;
+  });
+  return shopState(tenant, user, s);
+}
+/** A shop's SKU field combos, for its SKU images. */
+export async function shopSkuFields(tenant: string, set?: string | null): Promise<SkuFieldSets> {
+  const row = (await db().query(`SELECT shop FROM listing_projects WHERE tenant_id=$1 AND kind='shop'`, [tenant])).rows[0]?.shop as Row | undefined;
+  return (row && settingsOf(row, shopOf(row, set))?.skuFields) ?? DEFAULT_SKU_FIELDS;
 }
 /** A shop's SKU badge setting, for its SKU images. */
 export async function shopSkuBadge(tenant: string, set?: string | null): Promise<SkuBadge> {

@@ -9,7 +9,7 @@ import { addExtraImage, imagePrices, planPrice, requestPlan, submitDraft } from 
 import { innerName } from '@/lib/listing/wear';
 import { copyProject } from '@/lib/server/listing-copy';
 import { addSet, adoptDrawn, downloadZip, drawMaterial, drawState, editSlot, recast, recardSkus, redoSkus, redoSlot, redrawSlot, slotStates, startVerticals, stopImages } from '@/lib/server/listing-generation';
-import { createShopSet, deleteShopSet, makeServices, removeShopLogo, saveShop, saveShopBrand, saveShopCorner, saveSkuBadge, saveShopLogo, shopBrand, shopOfAsset, shopState, updateShopSet } from '@/lib/server/listing-shop';
+import { createShopSet, deleteShopSet, makeServices, removeShopLogo, saveShop, saveShopBrand, saveShopCorner, saveSkuBadge, saveSkuFields, saveShopLogo, shopBrand, shopOfAsset, shopState, updateShopSet } from '@/lib/server/listing-shop';
 import { cornerAssets, pasteShopLogo } from '@/lib/server/listing-corner';
 import { SKU_PEOPLE } from '@/lib/listing/draft';
 import { limitUploads, LISTING_UPLOAD_WINDOWS } from '@/lib/server/upload-limit';
@@ -122,6 +122,7 @@ export async function POST(request: NextRequest, context: Context) {
     if (path[0] === 'shop' && path[1] === 'make') return json(await makeServices(tenant, user.id, shopSet));
     if (path[0] === 'shop' && path[1] === 'corner') return json(await saveShopCorner(tenant.id, user.id, body, shopSet));
     if (path[0] === 'shop' && path[1] === 'sku-badge') return json(await saveSkuBadge(tenant.id, user.id, body, shopSet));
+    if (path[0] === 'shop' && path[1] === 'sku-fields') return json(await saveSkuFields(tenant.id, user.id, body, shopSet));
     if (path[0] === 'shop' && path[1] === 'sets' && !path[2]) return json(await createShopSet(tenant.id, user.id, body));
     if (path[0] === 'shop' && path[1] === 'sets' && path[2]) return json(await updateShopSet(tenant.id, user.id, path[2], body));
     if (path[0] === 'projects' && path[2] === 'current') {
