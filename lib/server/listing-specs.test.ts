@@ -86,9 +86,13 @@ describe('the 75-set review (10-19)', () => {
       expect(p, master).not.toContain('衣服上不印任何字');
     }
   });
-  it('双人棚拍\'s cover asks for easy faces, not a stare into the lens', () => {
+  it('光影棚拍\'s cover (11-01): a window\'s hard light across a pale wall, half-body, an easy face, the badge on a lanyard', () => {
     const p = prompt('M4', '首图', [{ name: '黑色' }]);
-    expect(p).toMatch(/两人脸部清楚；两人站姿放松，表情自然亲和、嘴角微微带笑，眼神柔和平静地看镜头[^。]*不要瞪着镜头/);
+    expect(p).toMatch(/一束硬朗的阳光从画面一侧的窗户斜照进来/);
+    expect(p).toMatch(/半身近景，从头顶拍到臀部/);
+    expect(p).toMatch(/表情自然亲和、嘴角微微带笑[^。]*不要瞪着镜头/);
+    expect(p).toMatch(/工牌/);
+    expect(p).not.toMatch(/柔光箱，棚拍/);
   });
 });
 

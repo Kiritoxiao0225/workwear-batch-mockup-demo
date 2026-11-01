@@ -13,7 +13,7 @@ import { currentPrices, holdCredits, microToCents, priceOf, releaseHold, settleH
 import { directKeys, draftImages, pickProblems, reusedSlots, usedSlots, type Reuse } from '../listing/draft';
 import { draftSchema, type SubmittedDraft } from '../listing/draft-schema';
 import { skuPhotos } from '../listing/sku-card';
-import { skuPair } from '../listing/templates';
+import { skuPair, withCover } from '../listing/templates';
 import { claimLayout, executeLayout, renewLayoutLease, resolveLayout } from './listing-layouts';
 import { chooseMaterials, coloursRequest, applyLiners, LINER_CHECK_BATCH, LINER_CHECK_SIDE, linerCandidates, linerFolderRest, linerRequest, mergePoints, parseColours, parseLinerBatch, parsePoints, type LinerCheck, parseRead, parseSorted, parseWhole, pointsRequest, READ_GROUP_VIEWS, READ_SPLIT_VIEWS, readRequest, type ReadPoints, recolored, settleCopies, sortRequest, uniqueColours, wholeRequest, worthReading, type Organized, type SortedImage } from './listing-organize';
 import { buildPlan, writeRequest } from './listing-write';
@@ -304,7 +304,7 @@ export async function submitDraft(tenant: Tenant, user: string, projectId: strin
     for (const id of new Set([draft.layout, ...draft.extra.map(e => e.layout).filter(Boolean)])) {
       if (!(await resolveLayout(tenant.id, id, { forNewProject: id !== p.layout }))) throw new CatalogHttpError(400, '没有这个版式');
     }
-    const layout = (await resolveLayout(tenant.id, draft.layout))!;
+    const layout = withCover((await resolveLayout(tenant.id, draft.layout))!, draft);
     if (['writing', 'generating'].includes(p.status)) return { status: p.status };
     if (p.status !== 'materials' || !p.materials) throw new CatalogHttpError(409, '素材还没整理好，或者已经开始出图了');
     const m = p.materials as Materials, labels = new Set(m.images.map(i => i.label)), names = draft.colors.map(x => x.name);
@@ -401,8 +401,9 @@ export async function executeWrite(job: JobRow, provider: Provider = (request, h
   const m = p.materials as Materials, draft = m?.draft;
   try {
     if (!draft) throw new CatalogHttpError(409, '还没有定方案');
-    const layout = await resolveLayout(job.tenant_id, draft.layout);
-    if (!layout) throw new CatalogHttpError(404, '版式不存在');
+    const found = await resolveLayout(job.tenant_id, draft.layout);
+    if (!found) throw new CatalogHttpError(404, '版式不存在');
+    const layout = withCover(found, draft);
     const views = await writeViews(job.project_id, m, draft);
     const call = await provider(writeRequest({ views, draft, layout, model, product: p.name }), {
       beforeSubmit: async () => { await db().query(`INSERT INTO listing_attempts(id,job_id,provider,model,status) VALUES($1,$2,$3,$4,'submitted')`, [attemptId, job.id, listingPlanProvider(), model]); },

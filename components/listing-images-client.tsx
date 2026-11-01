@@ -16,7 +16,7 @@ import type { Config, Detail, LayoutCard, Sorted, Summary } from "@/lib/listing/
 import { api, assetUrl, downloadUrl, isDemo, post } from "@/lib/listing/client-api";
 import { shrink } from "@/lib/listing/shrink";
 import { checkDraft, DEFAULT_COUNTS, fillParts, type Counts, type Draft, type PriceLine } from "@/lib/listing/draft";
-import { BUILT_IN_LAYOUTS } from "@/lib/listing/templates";
+import { BUILT_IN_LAYOUTS, withCover } from "@/lib/listing/templates";
 import { draftPrice, layoutOf, lookMaster, PlanDialog, PriceInfo, startDraft, type Prices } from "./listing-plan";
 import { CopyDialog } from "./listing-copy";
 import { ResultsPanel } from "./listing-results";
@@ -97,7 +97,7 @@ function stageOf(p: Summary, upload: Upload | undefined, draft: Draft | null, la
   if (p.status === "failed") return { step: 1, c: "r", text: p.error || "整理没成功" };
   if (p.status === "materials") {
     if (!draft) return { step: 2, c: "b", text: "素材整理好了，等你定方案" };
-    const k = checkDraft(draft, layoutOf(layouts, draft.layout), images);
+    const k = checkDraft(draft, withCover(layoutOf(layouts, draft.layout), draft), images);
     if (k.red.length) return { step: 2, c: "r", text: k.red[0] };
     if (p.error) return { step: 2, c: "y", text: p.error };
     return k.warn.length ? { step: 2, c: "y", text: `方案好了，第 ${k.warn.join("、")} 张有提醒，看一眼再出图` } : { step: 2, c: "g", text: "方案好了：看一眼卖点和每张图讲什么，就能出图" };

@@ -493,7 +493,7 @@ try {
   const [setJob] = await imageJobs(third, true);
   assert.equal(setJob.slot, `square:1+${NAVY}`);
   await make(setJob);
-  assert.match(prompt(setJob.slot).prompt, /颜色：藏青/); assert.ok(prompt(setJob.slot).prompt.includes('绿色圆角胶囊')); // 双人棚拍 M4's own cover
+  assert.match(prompt(setJob.slot).prompt, /颜色：藏青/); assert.ok(prompt(setJob.slot).prompt.includes('一束硬朗的阳光')); // 光影棚拍 M4's own cover (11-01)
   await call(0, `projects/${third}/verticals`, {});
   assert.deepEqual((await imageJobs(third, true)).map(j => j.slot), ['portrait:1', `portrait:1+${NAVY}`, 'long:1', `long:1+${NAVY}`]);
   for (const j of await imageJobs(third, true)) await make(j);

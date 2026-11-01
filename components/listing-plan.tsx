@@ -25,7 +25,7 @@ import { draftVersions, linerAlone, linerByColor, linerColors, linerFor, linersS
 import { LinerDialog } from "./listing-liner";
 import { heatPoint, insideFor, isInside } from "@/lib/listing/inside";
 import type { LinerTag } from "@/lib/listing/client-api";
-import { capacity, cellZones, mostCells, PEOPLE_LABEL, skuPair, type Layout } from "@/lib/listing/templates";
+import { capacity, cellZones, COVER_PEOPLE, coverPeopleOf, mostCells, PEOPLE_LABEL, skuPair, withCover, type Layout } from "@/lib/listing/templates";
 import { SlotPreview, Wire } from "./listing-wire";
 import { bestSell, coverPicks, coverScene, isSellTitle, masterInfo, PLACE_IDS, PLACES, seedOf, SELLS, sellOf, sellTitle, type PlaceId, type Sell } from "@/lib/listing/scene";
 import { useShopState } from "./listing-service";
@@ -117,7 +117,7 @@ export function rearrange(d: Draft, layout: Layout, keepHand: boolean): Draft {
 /** Another category: its points and images afresh; the colours, parts, chest, model and counts the user set stay. */
 function withCategory(d: Draft, m: Materials, layout: Layout, category: string): Draft {
   const fresh = startDraft(m, layout, d.counts, category);
-  return rearrange({ ...fresh, colors: d.colors, main: d.main, parts: d.parts, logo: d.logo, model: d.model, skuPeople: d.skuPeople, skuFields: d.skuFields, skuWords: d.skuWords, wear: d.wear, versions: d.versions, extra: d.extra, scene: d.scene, ...(d.shop ? { shop: d.shop } : {}) }, layout, false);
+  return rearrange({ ...fresh, colors: d.colors, main: d.main, parts: d.parts, logo: d.logo, model: d.model, skuPeople: d.skuPeople, skuFields: d.skuFields, skuWords: d.skuWords, coverPeople: d.coverPeople, wear: d.wear, versions: d.versions, extra: d.extra, scene: d.scene, ...(d.shop ? { shop: d.shop } : {}) }, layout, false);
 }
 /** What changed on the cover when the master could not shoot where it was, said once. */
 function movedNote(before: Draft, after: Draft, layout: Layout): string {
@@ -185,7 +185,8 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
   const logoUpload = useRef<HTMLInputElement>(null);
   // The shop the product is for (10-22): the plan's choice, a copy's first product's, else the default one.
   const shopState = useShopState(draft.shop ?? materials.shop), shop = shopState?.shop ?? null, shops = shopState?.sets ?? [];
-  const layout = layoutOf(layouts, draft.layout), category = categoryById(draft.category);
+  // The master as chosen, and with the cover's people the plan picked (11-01, step ②「首图」).
+  const rawLayout = layoutOf(layouts, draft.layout), layout = withCover(rawLayout, draft), category = categoryById(draft.category);
   const sorted = new Map(materials.sorted.images.map(i => [i.id, i]));
   const byLabel = new Map(materials.images.map(i => [i.label, { label: i.label, url: assetUrl(i.assetId), path: sources.find(s => s.id === i.assetId)?.path ?? i.label }]));
   const copies = [...materials.duplicates.map(([copy, keep]) => ({ copy, keep })), ...materials.sorted.images.filter(i => i.same).map(i => ({ copy: i.id, keep: i.same }))];
@@ -295,7 +296,6 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
           // 10-29: each colour's inside, for the SKU images' small box and the open cover.
           const keys = colorKeys(draft.colors), w = draft.wear!;
           const insideOf = (i: number) => keys[i] ? insideFor(linerImages, draft, keys[i]!) : null;
-          const mainAt = draft.colors.findIndex(c => c.name === draft.main), mainInside = mainAt >= 0 ? insideOf(mainAt) : null;
           return (<div className="lp-main-liners">
             <span className="lp-small">衣服里面的照片（翻开看到的里布、里绒、夹棉）：点图换一张</span>
             {draft.colors.map((c, i) => {
@@ -306,11 +306,7 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
                 {label && draft.colors.length > 1 && <button type="button" className="lp-btn link lp-small" onClick={() => insideAll(label)}>全部颜色用这张</button>}</span>);
             })}
             {layout.sku.specCard && <label className="lp-small" style={{ flexBasis: "100%" }}><input type="checkbox" checked={!!w.box} onChange={e => set({ wear: { ...w, box: e.target.checked } })} /> SKU 图标题下放一个小框：有这个颜色里面的照片就放进去，没有就留一个空的灰框，自己 P 上</label>}
-            <label className="lp-small" style={{ flexBasis: "100%" }}>
-              {/* No photo for the main colour: ticking it asks for one (10-29: a greyed box said nothing on 8826). */}
-              <input type="checkbox" checked={!!w.open && !!mainInside} onChange={e => { if (e.target.checked && !mainInside && mainAt >= 0) { setTab("推荐"); setTarget({ kind: "inside", index: mainAt, open: true }); } else set({ wear: { ...w, open: e.target.checked } }); }} /> 首图敞开穿：一只手拉开一边，露出里面（照上面的照片画），版式和字不变
-              {!mainInside && <b> · 主推色「{draft.main}」还没有里面的照片，勾选时选一张</b>}
-              {w.open && mainInside && <span className="lp-muted"> · {heatPoint(draft.points) ? "素材有发热保暖的卖点，里面加一个橙色发热小圆标" : "素材没有发热卖点，不加发热圆标"}</span>}</label>
+            <span className="lp-small lp-muted" style={{ flexBasis: "100%" }}>首图要不要敞开、露出里面，在第 ② 步「首图」里选。</span>
           </div>);
         })()}
         {wearType === "内胆" && linerByColor(draft) && (() => {
@@ -429,6 +425,8 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
   const skuDrawn = layout.sku.specCard ? skuItemsOf(draft).filter(i => !photos.has(i.key)).length : 0;
   /** The colours the material has its own model photo of, whatever the SKU images are set to show. */
   const skuReal = layout.sku.specCard ? photosOf({ ...draft, skuPeople: "实拍" }, materials, layout).size : 0;
+  // 首图人物 (11-01): the plan's choice, else the master's.
+  const coverWho = coverPeopleOf(layout, draft), coverDefault = coverPeopleOf(rawLayout, { model: draft.model });
   // SKU 图左边 (11-01): the combo the product uses and what it will say, with the colour standing in for every colour's name.
   const skuSet = skuSetOf(shop?.skuFields, draft.skuFields);
   const skuCard = { name, category: draft.category, points: draft.points, words: draft.skuWords, outer: draft.wear?.type === "内胆" || draft.wear?.type === "一体" };
@@ -471,6 +469,24 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
           <img src={PLACES[id].image} alt="" loading="lazy" /><b>{PLACES[id].name}</b>{deny && <small>{deny}</small>}</button>);
       })}</div>
     </> : <p className="lp-say">这套母版的首图是{masterInfo(layout.id).cover}的，不用选在哪儿拍。</p>}
+    {coverWho && <>
+      <h4 className="lp-h">首图 <small>只管首图（和换色首图）；其它有人的图照母版自己的人数</small></h4>
+      <div className="lp-model"><div className="lp-chips"><span className="lp-muted lp-small">人物</span>{COVER_PEOPLE.map(p => (
+        <label key={p} className={"lp-chip" + (coverWho === p ? " on" : "")}><input type="radio" name="coverPeople" hidden checked={coverWho === p} onChange={() => set({ coverPeople: p })} />
+          {p === "男女" ? "一男一女" : `单人 · ${p === "女" ? "女生" : "男生"}`}{p === coverDefault && <small> · 母版默认</small>}</label>))}</div>
+        {wearType === "一体" && (() => {
+          // 10-29, moved here 11-01: the cover worn open on its main colour's inside (photos chosen in step ①).
+          const w = draft.wear!, mainAt = draft.colors.findIndex(c => c.name === draft.main), key = colorKeys(draft.colors)[mainAt];
+          const mainInside = key ? insideFor(linerImages, draft, key) : null;
+          return (<label className="lp-small">
+            {/* No photo for the main colour: ticking it asks for one (10-29: a greyed box said nothing on 8826). */}
+            <input type="checkbox" checked={!!w.open && !!mainInside} onChange={e => { if (e.target.checked && !mainInside && mainAt >= 0) { setTab("推荐"); setTarget({ kind: "inside", index: mainAt, open: true }); } else set({ wear: { ...w, open: e.target.checked } }); }} /> 首图敞开穿：一只手拉开一边，露出里面（照第 ① 步选的里面照片画），版式和字不变
+            {!mainInside && <b> · 主推色「{draft.main}」还没有里面的照片，勾选时选一张</b>}
+            {w.open && mainInside && <span className="lp-muted"> · {heatPoint(draft.points) ? "素材有发热保暖的卖点，里面加一个橙色发热小圆标" : "素材没有发热卖点，不加发热圆标"}</span>}</label>);
+        })()}
+        {coverWho === "男女" && rawLayout.templates.首图.square.people < 2 && <p className="lp-say">这套母版的首图本来是单人的，两个人也能出，但版式是按一个人排的，效果不保证和样图一样。</p>}
+      </div>
+    </>}
     <h4 className="lp-h">模特</h4>
     {cast ? <div className="lp-model">
       <div className="lp-chips"><span className="lp-muted lp-small">主模特</span>{(["男", "女"] as const).map(g => <label key={g} className={"lp-chip" + (draft.model.lead === g ? " on" : "")}><input type="radio" name="lead" hidden checked={draft.model.lead === g} onChange={() => set({ model: { ...draft.model, lead: g } })} />单人的图用{g === "男" ? "男生" : "女生"}</label>)}</div>

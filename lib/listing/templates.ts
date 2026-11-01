@@ -91,6 +91,23 @@ function squeezed(t: Template, n: number): Template {
   }
   return { ...t, zones: [...t.zones.filter(z => !cells.includes(z)), ...boxes.map((box, k) => ({ id: kind + (k + 1), kind, box }))] };
 }
+/** Who the cover shows (11-01, 第 ② 步「首图人物」): one woman, one man, or a man and a woman together. */
+export const COVER_PEOPLE = ['女', '男', '男女'] as const;
+export type CoverPeople = (typeof COVER_PEOPLE)[number];
+/** The cover's people: the plan's choice, else the master's (two or more: 男女; one: the lead); null when its cover has nobody. */
+export function coverPeopleOf(l: Layout, d: { coverPeople?: CoverPeople; model: { lead: '男' | '女' } }): CoverPeople | null {
+  const n = l.templates.首图.square.people;
+  if (n === 0) return null;
+  return d.coverPeople ?? (n >= 2 ? '男女' : d.model.lead);
+}
+/** The master with its cover as many people as the plan chose (one, or two for 男女), for everything that reads the cover's template. */
+export function withCover<L extends Layout>(l: L, d: { coverPeople?: CoverPeople; model: { lead: '男' | '女' } }): L {
+  const who = d.coverPeople && coverPeopleOf(l, d);
+  if (!who) return l;
+  const n: People = who === '男女' ? 2 : 1, t = l.templates.首图;
+  if (t.square.people === n && t.portrait.people === n) return l;
+  return { ...l, templates: { ...l.templates, 首图: { square: { ...t.square, people: n }, portrait: { ...t.portrait, people: n } } } };
+}
 /** The SKU images show the cover's people: the man and the woman together when the cover has two or more, else the lead. */
 export const skuPair = (l: Layout) => l.templates.首图.square.people >= 2;
 /** Does the set need the cast (the models every image with people is drawn from)? */
@@ -176,14 +193,15 @@ export const BUILT_IN_LAYOUTS: Layout[] = [
     long: LONG2, sku: SKU_CARD,
   },
   {
-    id: 'M4', name: '双人棚拍 · 清爽', description: '男女双人，浅灰棚拍底，干净清爽',
+    // 11-01: the cover became the 光影 look (the user's examples): one person by default, a window's light across the wall.
+    id: 'M4', name: '光影棚拍 · 清爽', description: '浅灰墙面、侧窗斜光打出光影，半身近景，干净高级',
     samples: ['/listing-images/masters/M4-1.jpg', '/listing-images/masters/M4-2.jpg', '/listing-images/masters/M4-3.jpg', '/listing-images/masters/M4-4.jpg', '/listing-images/masters/M4-5.jpg'],
     style: {
       title: '粗黑体，深色', text: '细黑体，深灰', tag: '绿色圆角胶囊，白字', card: '浅灰细线框圆角卡片',
       light: '正面柔光箱，棚拍，有轻微渐变和脚下阴影', background: '浅灰白，干净偏冷；没有户外场景',
     },
     templates: {
-      首图: both(T(2, ['person', 0, 0, 100, 100], ['title', 68, 8, 29, 18], ['tag', 72, 28, 24, 5])),
+      首图: both(T(1, ['person', 0, 0, 100, 100], ['title', 5, 5, 44, 13], ['sub', 5, 19, 44, 7], ['tag', 5, 28, 30, 5])),
       服务: both(SERVICE_SLOT), 功能: both(FABRIC_ICONS), 细节: both(DETAIL4), 实用: both(DETAIL4), 场景: both(SCENE), 收口: both(CLOSER),
     },
     long: LONG2, sku: SKU_CARD,

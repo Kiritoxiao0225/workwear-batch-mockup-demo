@@ -39,7 +39,7 @@ import { coverScene, fabricColor, masterInfo, PLACES, REAL_PLACE, SELLS, type Pl
 import { SERVICE_IMAGES, skuBadgeText, type ServiceImageId } from '../listing/service';
 import type { SubmittedDraft } from '../listing/draft-schema';
 import { proofById, recipeOf } from '../listing/proofs';
-import { cellZones, fitTemplate, skuPair, type Box, type Layout, type Template } from '../listing/templates';
+import { cellZones, coverPeopleOf, fitTemplate, skuPair, withCover, type Box, type Layout, type Template } from '../listing/templates';
 import { catalogDatabase, catalogTransaction, type CatalogQueryClient } from './catalog-database';
 import { CatalogHttpError } from './catalog-auth';
 import { readCatalogFile } from './catalog-files';
@@ -226,9 +226,9 @@ async function lockProject(c: CatalogQueryClient, tenant: Tenant, projectId: str
   const p = (await c.query(`SELECT status,layout,plan FROM listing_projects WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL FOR UPDATE`, [projectId, tenant.id])).rows[0];
   if (!p) throw new CatalogHttpError(404, '商品不存在');
   if (!states.includes(p.status) || !p.plan) throw new CatalogHttpError(409, wrong);
-  const layout = await resolveLayout(tenant.id, p.plan.draft.layout);
-  if (!layout) throw new CatalogHttpError(400, '版式不存在');
-  return { status: p.status as string, stored: p.plan as StoredPlan, layout };
+  const found = await resolveLayout(tenant.id, p.plan.draft.layout);
+  if (!found) throw new CatalogHttpError(400, '版式不存在');
+  return { status: p.status as string, stored: p.plan as StoredPlan, layout: withCover(found, p.plan.draft) };
 }
 
 /* ---------- what the user starts after round one ---------- */
@@ -603,15 +603,17 @@ export async function specShot(o: { stored: StoredPlan; projectId: string; input
   const worn = spec.people && o.dressed ? await o.dressed(used.map(c => c.name), references, task === '首图') : { wear: null, linerRef: undefined };
   const sample = references.push(await sampleBytes(spec));
   // 免费印绣 on 车展工牌's lanyard badge and in 暗黑科技's black block, when the shop offers it.
-  const c = contentOf(o.stored, o.input, o.slot, o.layout, task === '首图' && ['M1', 'M2'].includes(o.layout.id) ? await o.badge() : '');
+  const c = contentOf(o.stored, o.input, o.slot, o.layout, task === '首图' && ['M1', 'M2', 'M4'].includes(o.layout.id) ? await o.badge() : '');
   await withPartPhotos(o.stored, o.projectId, c.cells, references);
+  // The cover's people as the plan chose them (11-01): one woman, one man, or the two.
+  const coverWho = task === '首图' ? coverPeopleOf(o.layout, d) : null;
   const lead = d.model.lead === '男' ? '男生' : '女生', luma = (hex: string) => { const n = parseInt(hex.slice(1), 16); return 0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255); };
   const fill: Fill = {
     title: c.title, sub: c.sub, tags: c.tags.filter(t => !t.includes('｜')),
     facts: c.tags.filter(t => t.includes('｜')).map(t => { const [label, word] = t.split('｜'); return { label, word }; }),
     cells: c.cells.map(x => ({ text: x.text, note: x.note ?? '', recipe: x.recipe, en: enOf(x.text) })),
     color: used[0]?.name ?? colors[0].name, colors: used, all: colors, light: luma(used[0]?.hex ?? '#ffffff') > 150,
-    who: o.layout.templates.首图.square.people >= 2 && task === '首图' ? `参考图${cast}里的一男一女并排站，男生在左、身体朝右微侧，女生在右` : `参考图${cast}里的${lead}`,
+    who: coverWho === '男女' ? `参考图${cast}里的一男一女并排站，男生在左、身体朝右微侧，女生在右` : `参考图${cast}里的${coverWho ? (coverWho === '男' ? '男生' : '女生') : lead}`,
     // Worn open (10-29), holding it open is the cover's demonstration: only the master's framing stays.
     ...(task === '首图' ? { act: worn.open ? masterInfo(o.layout.id).crop : c.act, scene: c.scene || undefined } : {}), badge: c.badge ?? '',
     castRef: cast, place: o.stored.place, wear: worn.wear, covered: o.covered,
@@ -689,7 +691,8 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
     const stored = p.plan as StoredPlan, d = stored?.draft;
     // The shop the image is for (10-22): a cover in another colour may name its own, else the product's.
     const shopSet = slotShop(stored, job.slot);
-    const layout = d ? await resolveLayout(job.tenant_id, (input.kind === 'main' && input.layout) || d.layout) : undefined;
+    // The cover as many people as the plan chose (11-01), on 换色首图 in another master too.
+    const found = d ? await resolveLayout(job.tenant_id, (input.kind === 'main' && input.layout) || d.layout) : undefined, layout = found && d ? withCover(found, d) : found;
     if (d && !layout) throw new CatalogHttpError(404, '版式不存在');
     const outputs = await latestOutputs(job.project_id);
     const output = async (slot: string) => { const o = outputs.get(slot); if (!o) throw new CatalogHttpError(409, `缺少前一步的图：${slot}`); return fileOf(o.file_id); };
@@ -938,7 +941,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         if (open) content.act = input.index === 0 ? masterInfo(layout.id).crop : undefined;
         await withPartPhotos(stored, job.project_id, content.cells, references);
         prompt = mainPrompt({ ratio, task: input.index >= 0 ? TASK_LABEL[d.slots[input.index].task as Task] : '长图', template: t, layout, content,
-          used, all: colors, garment, lead: d.model.lead, fromSku: multi, cast, n: input.ratio === 'long' ? undefined : input.n, total: input.total,
+          used, all: colors, garment, lead: (() => { const w = input.index >= 0 && d.slots[input.index].task === '首图' ? coverPeopleOf(layout, d) : null; return w === '男' || w === '女' ? w : d.model.lead; })(), fromSku: multi, cast, n: input.ratio === 'long' ? undefined : input.n, total: input.total,
           logo: shows ? logoLine : null, logoRef, fabric, place: stored.place, corner, wear, linerRef });
       }
     }

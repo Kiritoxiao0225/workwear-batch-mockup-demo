@@ -10,6 +10,7 @@
  * - which colour each image shows, who models, and what the two rounds of images cost.
  */
 import type { SkuWords } from './sku-card';
+import type { CoverPeople } from './templates';
 import { skuItems, type DraftVersion } from './sku-versions';
 import { versionName, type WearType } from './wear';
 import { BUILDS, categoryById, groupOf, evidenceOf, type Category, type PointGroup, type PointType, type Task } from './category';
@@ -93,6 +94,8 @@ export type Draft = {
    */
   skuFields?: string;
   skuWords?: SkuWords;
+  /** Who the cover shows (11-01, templates.ts COVER_PEOPLE); none: the master's own (two: a man and a woman, one: the lead). */
+  coverPeople?: CoverPeople;
   /**
    * How it is worn (10-22): 春秋薄款 as before, 有内胆 open over its liner (`liner`: the material's photo
    * the liner is drawn from), 一体 zipped to the top. From the material's reading, changed on the plan.

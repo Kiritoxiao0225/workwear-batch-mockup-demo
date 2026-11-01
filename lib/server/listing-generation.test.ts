@@ -6,7 +6,7 @@ import { skuPhotos } from '../listing/sku-card';
 import { wearLine } from '../listing/wear';
 import { LEGACY_LAYOUTS as BUILT_IN_LAYOUTS } from '../listing/legacy-layouts';
 import { SERVICE_IMAGES } from '../listing/service';
-import { BUILT_IN_LAYOUTS as MASTERS, FLAT_EXAMPLE, fitTemplate, type Layout } from '../listing/templates';
+import { BUILT_IN_LAYOUTS as MASTERS, FLAT_EXAMPLE, fitTemplate, withCover, type CoverPeople, type Layout } from '../listing/templates';
 import { contentOf, coverOf, fabricCrop, LOGO_LINE, planJobs, wordsOf, zipEntryName } from './listing-generation';
 import { buildPlan } from './listing-write';
 import { castOnePrompt, castPrompt, editPrompt, longPrompt, mainPrompt, productPrompt, redrawPrompt, relayoutPrompt, servicePrompt, serviceWordsPrompt, skuModelPrompt, skuPrompt } from './listing-prompts';
@@ -128,10 +128,15 @@ describe('the masters', () => {
     expect(own.has('skumodel:M31')).toBe(false);
     expect(own.get('sku:M31')).toMatchObject({ depends: ['product:M31'], free: true });
   });
-  it('a master whose cover has two people draws the man and the woman on the SKU images; one with one person, the lead', () => {
-    const at = (id: string, model?: { lead: '男' | '女'; photos?: { 男?: string; 女?: string } }) => { const s = stored(master(id)); return new Map(planJobs({ ...s, photos: {}, draft: { ...defaultDraft(DEMO_MATERIAL, master(id)), extra: [], ...(model ? { model } : {}) } }, master(id), 1).map(j => [j.slot, j])); };
-    expect(at('M4').get('skumodel:M31')).toMatchObject({ input: { kind: 'skuModel', pair: true }, depends: ['product:M31', 'cast'] });
-    expect(at('M4', { lead: '男', photos: { 男: 'M9' } }).get('skumodel:M31')?.depends).toEqual(['product:M31', 'cast:男', 'cast:女']);
+  it('a cover with two people (11-01: 一男一女 picked on the plan) draws the man and the woman on the SKU images; one with one person, the lead', () => {
+    const at = (id: string, model?: { lead: '男' | '女'; photos?: { 男?: string; 女?: string } }, coverPeople?: CoverPeople) => {
+      const s = stored(master(id)), draft = { ...defaultDraft(DEMO_MATERIAL, master(id)), extra: [], ...(model ? { model } : {}), ...(coverPeople ? { coverPeople } : {}) };
+      return new Map(planJobs({ ...s, photos: {}, draft }, withCover(master(id), draft), 1).map(j => [j.slot, j]));
+    };
+    expect(at('M4', undefined, '男女').get('skumodel:M31')).toMatchObject({ input: { kind: 'skuModel', pair: true }, depends: ['product:M31', 'cast'] });
+    expect(at('M4', { lead: '男', photos: { 男: 'M9' } }, '男女').get('skumodel:M31')?.depends).toEqual(['product:M31', 'cast:男', 'cast:女']);
+    // 光影棚拍's cover is one person by default since 11-01.
+    expect(at('M4').get('skumodel:M31')?.input).not.toHaveProperty('pair');
     expect(at('M1').get('skumodel:M31')?.input).not.toHaveProperty('pair');
     expect(at('M1', { lead: '女', photos: { 女: 'M9' } }).get('skumodel:M31')?.depends).toEqual(['product:M31', 'cast:女']);
   });

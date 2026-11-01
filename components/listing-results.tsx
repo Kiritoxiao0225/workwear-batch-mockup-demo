@@ -16,7 +16,7 @@ import { askRedraw, assetUrl, downloadUrl, post } from "@/lib/listing/client-api
 import { TASK_LABEL } from "@/lib/listing/category";
 import { colorKeys, SKU_PEOPLE, skuItemsOf, type SkuPeople } from "@/lib/listing/draft";
 import { skuPhotos, skuWho } from "@/lib/listing/sku-card";
-import { skuPair } from "@/lib/listing/templates";
+import { skuPair, withCover } from "@/lib/listing/templates";
 import { EditDialog } from "./listing-edit";
 import { editTag, EditsBar, type EditItem } from "./listing-edits";
 import { draftPrice, layoutOf, PriceInfo, type Prices } from "./listing-plan";
@@ -35,7 +35,7 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
   detail: Detail; layouts: LayoutCard[]; prices: Prices;
   onRedo: (slot: string, label: string) => void; onDone: (message: string) => Promise<void>; onError: (message: string) => void; onClose: () => void;
 }) {
-  const plan = detail.plan, layout = layoutOf(layouts, plan?.layout ?? detail.layout);
+  const plan = detail.plan, master = layoutOf(layouts, plan?.layout ?? detail.layout), layout = plan ? withCover(master, plan) : master;
   const colors = plan?.colors.filter(c => c.pick) ?? [], main = plan?.main ?? "";
   // A SKU image by version is named for its colour and version (sku-versions.ts).
   const keys = colorKeys(colors), items = plan ? skuItemsOf(plan) : [], nameOf = (key: string) => items.find(i => i.key === key)?.label ?? colors[keys.indexOf(key)]?.name ?? key;

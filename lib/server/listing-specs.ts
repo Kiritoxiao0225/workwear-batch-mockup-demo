@@ -126,7 +126,8 @@ export const SPEC_STYLE: Record<string, { all: string; cover: string }> = {
   M3: { all: '色调暖白、米色，暖调；字体只有首图大标题用毛笔笔刷字；这一张如果不是首图，所有字都用规整的粗黑体和细黑体，不用毛笔字、书法字；英文用中粗无衬线大写（不是窄体）；标签和卡片衣服主色的色块标签、白字；卡片白色圆角；光暖色室内光；棚拍的图用暖白柔光。',
     cover: '字体：只有大字用书法毛笔字（行书，粗细对比强），其余用规整黑体；英文小字细体、字距拉开。' },
   M4: { all: '色调浅灰白，干净偏冷；没有户外场景；字体标题深色粗黑体；说明字深灰细黑体，字号不要太小；标签和卡片绿色圆角胶囊标签、白字；卡片白色圆角、细浅灰边、轻投影；光正面柔光箱，棚拍，有轻微渐变和脚下阴影。',
-    cover: '色调浅灰白，干净偏冷；没有户外场景；字体标题深色粗黑体；标签绿色圆角胶囊、白字；光正面柔光箱，棚拍，有轻微渐变和脚下阴影。' },
+    // 11-01 光影 (the user's examples): only the cover; the master's other images keep the soft box.
+    cover: '色调浅灰白，干净、明亮、通透；没有户外场景；光是从画面一侧窗户斜照进来的一束硬朗阳光，浅灰墙面上有清晰的斜向光斑、窗格或树影，人的影子也落在墙上；字体标题近黑的深色超粗黑体，笔画厚重；标签深色圆角胶囊、白字。' },
   M5: { all: '色调纯白、浅灰，最干净；没有人；字体标题粗黑体深色，重点字用衣服主色；说明字细黑体深灰；标签和卡片线描圆形图标；卡片白底；光柔和顶光，衣服下方有落地投影。',
     cover: '色调纯白、浅灰，最干净；没有人；字体标题粗黑体，颜色按上面版式里写的；说明字细黑体深灰；线描圆形图标；光柔和顶光，衣服下方有落地投影。' },
 };
@@ -297,15 +298,18 @@ export const SPECS: Record<string, Partial<Record<Task, Spec>>> = {
     收口: closer(rival('2-1'), '深棕色半透明直角横条', '规整'),
   },
   M4: {
-    首图: { sample: rival('1-1'), cells: 0, people: true, photo: true,
+    // 11-01 光影 (the user's examples, light-1 from them): one person by default, half-body against a pale wall
+    // a window's hard sunlight falls across; the title block top left, the lanyard badge as on 车展工牌.
+    首图: { sample: rival('light-1'), cells: 0, people: true, photo: true,
       zones: f => [
-        // With nothing said of their faces, the two stared blank-faced into the lens, close up (10-19).
-        `左0% 上0% 宽100% 高100%：人物：${f.who}，两人都穿这件${f.color}的衣服，${f.wear ?? '拉链拉到胸口'}；从头顶拍到臀部，两人脸部清楚；${EASY_FACES}。`,
-        two(f.title)[1] ? `左68% 上8% 宽29% 高18%：两行深色粗黑体大字，右对齐：第一行「${two(f.title)[0]}」，第二行「${two(f.title)[1]}」；每个字高约占画面 ${H(longer(two(f.title)[0], two(f.title)[1]), 29, 7)}%。`
-          : `左68% 上8% 宽29% 高18%：深色粗黑体大字「${f.title}」，右对齐，每个字高约占画面 ${H(f.title, 29, 7)}%。`,
-        f.tags[0] && `左72% 上28% 宽24% 高5%：绿色圆角胶囊，里面白字「${f.tags[0]}」，字高约占画面 ${pill(f.tags[0], 24, 2.5)}%。`,
+        `左0% 上0% 宽100% 高100%：人物：${f.who}穿着这件${f.color}的衣服，${f.wear ?? '拉链拉到胸口，内搭白色 T 恤'}；半身近景，从头顶拍到臀部，人站在画面中间偏右，身体微微侧向镜头，脸部清楚，${f.who.includes('一男一女') ? EASY_FACES : '表情自然亲和、嘴角微微带笑，眼神柔和地看镜头；不要瞪着镜头、不要板着脸'}${f.act ? `；${f.act}` : ''}。`,
+        `左46% 上56% 宽11% 高24%：工牌：脖子上挂一条深色挂绳，胸前垂一张竖向白色工牌卡，${f.badge ? `卡上印「${f.badge}」${f.badge.length}个深色字` : '卡上只有简单色块和线条，不写字'}。`,
+        two(f.title)[1] ? `左5% 上5% 宽44% 高13%：两行近黑的超粗黑体大字，左对齐：第一行「${two(f.title)[0]}」，第二行「${two(f.title)[1]}」；每个字高约占画面 ${H(longer(two(f.title)[0], two(f.title)[1]), 44, 9)}%。`
+          : `左5% 上5% 宽44% 高13%：近黑的超粗黑体大字「${f.title}」，左对齐，每个字高约占画面 ${H(f.title, 44, 10)}%。`,
+        f.sub && `左5% 上19% 宽44% 高7%：近黑的粗黑体「${f.sub}」，左对齐，比大标题小一号，字高约占画面 ${H(f.sub, 44, 5.5)}%。`,
+        f.tags[0] && `左5% 上28% 宽30% 高5%：深色（近黑的深灰或深藏青）圆角胶囊，里面白字「${f.tags[0]}」，字高约占画面 ${pill(f.tags[0], 30, 2.8)}%。`,
       ],
-      background: () => '浅灰棚拍纯色底，从上到下轻微渐变，没有场景。' },
+      background: () => '浅灰白的墙面棚拍，没有场景和道具；一束硬朗的阳光从画面一侧的窗户斜照进来，墙上落下清晰的斜向光斑和窗格或树叶的影子，人物的影子也投在墙上；光的方向明确、明暗有层次，整体干净明亮，不是均匀的柔光箱光。' },
     功能: fabricSheet(rival('67-3')),
     细节: detailGrid(rival('11-4'), false),
     // The master's own look says no outdoor scene; its closer is the one picture shot where the set is.

@@ -7,6 +7,7 @@ import { POINT_TYPES, TASKS } from './category';
 import { CLOSER_MAX, LIMITS, SKU_PEOPLE, type Draft } from './draft';
 import { tagFits } from './point-words';
 import { SKU_WORD_MAX } from './sku-card';
+import { COVER_PEOPLE } from './templates';
 import { innerName, VERSION_KINDS, WEARS } from './wear';
 
 const words = (max: number) => z.string().trim().max(max).default('');
@@ -50,6 +51,7 @@ export const draftSchema = z.object({
   scene: z.object({ place: z.string().max(12), sell: z.string().max(12), act: z.number().int().min(0).max(9999).optional(), look: z.number().int().min(0).max(9999).optional() }).optional(),
   skuPeople: z.enum(SKU_PEOPLE).optional(),
   skuFields: z.string().max(16).optional(),
+  coverPeople: z.enum(COVER_PEOPLE).optional(),
   skuWords: z.partialRecord(z.enum(['style', 'fabric', 'fit', 'detail', 'scene']), z.string().trim().max(SKU_WORD_MAX, `SKU 图每行最多 ${SKU_WORD_MAX} 个字`)).optional(),
   wear: z.object({ type: z.enum(WEARS), liner: z.string().max(12).optional(), main: z.string().max(8).optional(), box: z.boolean().optional(), open: z.boolean().optional(),
     insides: z.record(z.string().max(16), z.string().max(12)).optional() }).optional(),

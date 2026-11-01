@@ -129,7 +129,7 @@ export const MASTER_INFO: Record<string, { cover: '实景' | '棚拍' | '无人'
   M1: { cover: '实景', fit: '4S 店、科技公司、销售团队', font: '首图竖排粗宋体，其余黑体', palette: ['#E9EBEC', '#C9CED3', '#2A2F36', '#5D7A99'], deny: { 登山: '户外休闲不挂工牌', 团建: '户外休闲不挂工牌' }, service: 'A-light', crop: CHEST },
   M2: { cover: '实景', fit: '三防、防水功能多的款', font: '白色粗黑体', dark: true, palette: ['#0E1013', '#2B2F35', '#FFFFFF', '#E8A13A'], deny: { 登山: '明亮户外会丢掉科技感', 工地: '明亮户外会丢掉科技感', 写字楼: '明亮场景会丢掉科技感', '4S店': '明亮场景会丢掉科技感', 团建: '明亮户外会丢掉科技感' }, service: 'A-dark', crop: CHEST },
   M3: { cover: '实景', fit: '工地、餐饮、汽修、户外，哪里都行', font: '首图毛笔字，其余黑体', palette: ['#B8242A', '#F3E6D3', '#1D1D1D', '#E07B2E'], deny: {}, service: 'D-warm', crop: CHEST },
-  M4: { cover: '棚拍', fit: '男女同款、年轻团队', font: '粗黑体', palette: ['#F4F6F8', '#A9C4DE', '#2F3B4A', '#7FA36B'], deny: {}, service: 'B-light' },
+  M4: { cover: '棚拍', fit: '团队工装、想要干净高级的棚拍', font: '粗黑体', palette: ['#F4F6F8', '#A9C4DE', '#2F3B4A', '#7FA36B'], deny: {}, service: 'B-light' },
   M5: { cover: '无人', fit: '不想用模特、想省积分', font: '粗黑体，重点字用主色', palette: ['#F2F2F0', '#DADBD6', '#20262E', '#1E9DB0'], deny: {}, service: 'A-light' },
 };
 export const masterInfo = (id: string) => MASTER_INFO[id] ?? MASTER_INFO.M1;

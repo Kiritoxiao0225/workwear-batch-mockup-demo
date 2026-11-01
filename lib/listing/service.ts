@@ -33,7 +33,7 @@ export type Craft = (typeof CRAFTS)[number];
 export const CRAFT_NOTE: Record<Craft, string> = { 刺绣: '立体感强 走线均匀', 高清烫画: '色彩丰富 图案精细', 丝印: '色牢度高 性价比高', 数码转印: '渐变细腻 还原度高', 反光印: '夜间反光 醒目安全' };
 
 /** The masters (母版) the service images are made for, by id; their full definitions come with the masters. */
-export const MASTER_NAMES = { M1: '车展工牌', M2: '暗黑科技', M3: '上岗实拍', M4: '双人棚拍', M5: '产品静物' } as const;
+export const MASTER_NAMES = { M1: '车展工牌', M2: '暗黑科技', M3: '上岗实拍', M4: '光影棚拍', M5: '产品静物' } as const;
 export type MasterId = keyof typeof MASTER_NAMES;
 
 /**
