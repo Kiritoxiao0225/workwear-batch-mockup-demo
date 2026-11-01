@@ -9,7 +9,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Reuse } from '../listing/draft';
-import type { Layout } from '../listing/templates';
+import { COVER_PEOPLE, type Layout } from '../listing/templates';
 import { catalogTransaction } from './catalog-database';
 import { CatalogHttpError } from './catalog-auth';
 import { registerFileRef } from './file-authorization';
@@ -23,7 +23,9 @@ export const MAX_COPIES = 5;
 
 export async function copyProject(tenant: string, user: string, sourceId: string, input: unknown) {
   z.uuid().parse(sourceId);
-  const { layouts } = z.object({ layouts: z.array(z.string().min(1).max(64)).min(1, '至少选一个版式').max(MAX_COPIES, `一次最多再出 ${MAX_COPIES} 套`) }).parse(input);
+  const { layouts, cover } = z.object({ layouts: z.array(z.string().min(1).max(64)).min(1, '至少选一个版式').max(MAX_COPIES, `一次最多再出 ${MAX_COPIES} 套`),
+    // 11-01: who is on the new sets' covers and whether an 一体 jacket is worn open, as on the plan's step ②.
+    cover: z.object({ people: z.enum(COVER_PEOPLE).optional(), open: z.boolean().optional() }).optional() }).parse(input);
   const picked: Layout[] = [];
   for (const id of layouts) {
     const layout = await resolveLayout(tenant, id, { forNewProject: true });
@@ -60,6 +62,7 @@ export async function copyProject(tenant: string, user: string, sourceId: string
         // 「再出一套」 keeps the product's shop unless its plan picks another (10-22).
         ...(stored?.draft.shop ?? m.shop ? { shop: stored?.draft.shop ?? m.shop } : {}),
         look: { ...(m.look ?? { why: '' }), master: layout.id },
+        ...(cover && (cover.people || cover.open !== undefined) ? { cover } : {}),
         images: m.images.filter(i => assetOf.has(i.assetId)).map(i => ({ label: i.label, assetId: assetOf.get(i.assetId)! })),
       };
       delete materials.draft;

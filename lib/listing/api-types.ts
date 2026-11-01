@@ -2,6 +2,7 @@
  * 电商主图: what the page and /api/listing exchange. The page was built against these first (on the
  * local demo data in ./demo); the server answers in the same shapes.
  */
+import type { CoverPeople } from './templates';
 import type { Task } from './category';
 import type { Check, Counts, Draft, Reuse, SortedPoint } from './draft';
 import type { PlaceId, Sell } from './scene';
@@ -46,6 +47,8 @@ export type Materials = {
   variant?: number; reuse?: Reuse;
   /** A copy's shop (10-22): the one its first product used, until its plan names another. */
   shop?: string;
+  /** 「再出一套」 (11-01): the cover asked for in its dialog, who is on it and whether an 一体 jacket is worn open; none: the master's and the first product's. */
+  cover?: { people?: CoverPeople; open?: boolean };
 };
 export type Source = { id: string; label: string; name: string; path: string; shape: string };
 

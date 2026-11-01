@@ -522,6 +522,11 @@ try {
   // A copy of a copy is named from the first product and numbered after the copies before it.
   const again = (await (await call(0, `projects/${copies[0].id}/copies`, { layouts: ['M5'] })).json()).projects as Copy[];
   assert.equal(again[0].name, `两色款 · ${short('M5')}`); assert.equal((await detailOf(again[0].id)).materials.variant, 3);
+  // 11-01: the dialog's cover (who, worn open) goes with each new set; nothing asked, nothing kept.
+  assert.equal(c1.materials.cover, undefined);
+  await call(0, `projects/${third}/copies`, { layouts: ['M4'], cover: { people: '两男' } }, 400);
+  const withCover = (await (await call(0, `projects/${third}/copies`, { layouts: ['M4'], cover: { people: '男女', open: true } })).json()).projects as Copy[];
+  assert.deepEqual((await detailOf(withCover[0].id)).materials.cover, { people: '男女', open: true });
   // Started on M1: the white images and the cast are not held, not queued and not drawn again; the cover uses the carried cast.
   const M1L = BUILT_IN_LAYOUTS.find(l => l.id === 'M1')!, dc = draftFrom(c1.materials, M1L, counts(1, 0, 0));
   const reusedNow = reusedSlots(dc, c1.materials.reuse);

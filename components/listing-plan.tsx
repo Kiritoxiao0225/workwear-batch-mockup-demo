@@ -42,8 +42,12 @@ export const layoutOf = (layouts: LayoutCard[], id: string): Layout => layouts.f
 /** The AI's plan as the starting point; `category` overrides the AI's call. */
 export function startDraft(m: Materials, layout: Layout, counts?: Counts, category = m.category): Draft {
   const d = fillModel(fillParts(defaultDraft({ category, categoryWhy: m.categoryWhy, checks: m.checks, titles: m.titles, points: m.sorted.points, colors: m.chosen.colors, parts: m.chosen.parts }, layout, counts), m.sorted.images), m.sorted.images);
-  const worn = wearOf(m, d.main), versions = m.wear?.type === "内胆" && m.wear.versions.length ? draftVersions(m.wear.versions) : undefined;
-  return lookScene({ ...(m.variant ? { ...d, seed: m.variant } : d), ...(worn ? { wear: worn } : {}), ...(versions ? { versions } : {}) }, layout, m.look);
+  // 「再出一套」 (11-01): the first product's choices on how it is worn (an 一体 jacket's inside photos, its box, open) carry
+  // over while the type is the same, and the copy dialog's cover (who, worn open) goes on top.
+  const read = wearOf(m, d.main), kept = read && m.reuse?.wear?.type === read.type ? { ...read, ...m.reuse.wear } : read;
+  const worn = kept && kept.type === "一体" && m.cover?.open !== undefined ? { ...kept, open: m.cover.open } : kept;
+  const versions = m.wear?.type === "内胆" && m.wear.versions.length ? draftVersions(m.wear.versions) : undefined;
+  return lookScene({ ...(m.variant ? { ...d, seed: m.variant } : d), ...(worn ? { wear: worn } : {}), ...(versions ? { versions } : {}), ...(m.cover?.people ? { coverPeople: m.cover.people } : {}) }, layout, m.look);
 }
 /**
  * How it is worn, from the material's reading (wear.ts): 有内胆 needs a photo of the shell over its

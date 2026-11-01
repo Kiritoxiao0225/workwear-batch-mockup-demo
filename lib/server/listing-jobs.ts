@@ -13,7 +13,7 @@ import { currentPrices, holdCredits, microToCents, priceOf, releaseHold, settleH
 import { directKeys, draftImages, pickProblems, reusedSlots, usedSlots, type Reuse } from '../listing/draft';
 import { draftSchema, type SubmittedDraft } from '../listing/draft-schema';
 import { skuPhotos } from '../listing/sku-card';
-import { skuPair, withCover } from '../listing/templates';
+import { skuPair, withCover, type CoverPeople } from '../listing/templates';
 import { claimLayout, executeLayout, renewLayoutLease, resolveLayout } from './listing-layouts';
 import { chooseMaterials, coloursRequest, applyLiners, LINER_CHECK_BATCH, LINER_CHECK_SIDE, linerCandidates, linerFolderRest, linerRequest, mergePoints, parseColours, parseLinerBatch, parsePoints, type LinerCheck, parseRead, parseSorted, parseWhole, pointsRequest, READ_GROUP_VIEWS, READ_SPLIT_VIEWS, readRequest, type ReadPoints, recolored, settleCopies, sortRequest, uniqueColours, wholeRequest, worthReading, type Organized, type SortedImage } from './listing-organize';
 import { buildPlan, writeRequest } from './listing-write';
@@ -280,6 +280,8 @@ export type Materials = {
   from?: string; baseName?: string; variant?: number; reuse?: Reuse;
   /** A copy's shop (10-22): the one its first product used, until its plan names another. */
   shop?: string;
+  /** 「再出一套」 (11-01): the cover asked for in its dialog, who is on it and whether an 一体 jacket is worn open; none: the master's and the first product's. */
+  cover?: { people?: CoverPeople; open?: boolean };
 };
 
 /**

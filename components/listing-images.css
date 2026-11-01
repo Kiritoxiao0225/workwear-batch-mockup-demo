@@ -652,3 +652,6 @@ button:hover > .edit-tag, button:focus-visible > .edit-tag { opacity: 1; }
 .lp-skubadge-sketch .row { width: 70%; height: 5px; background: #9a9a9a; margin-top: 8px; }
 .lp-skubadge-sketch .card { width: 100%; height: 34%; margin-top: auto; background: #1f2633; border-radius: 6px; }
 @media (max-width: 860px) { .lp-skubadge-places { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.lp-copy-cover { display: grid; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.lp-copy-cover .lp-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.lp-copy-cover .lp-chips > span:first-child { min-width: 5em; }

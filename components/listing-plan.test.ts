@@ -31,3 +31,18 @@ describe('「再出一套」 (10-18: one upload, several masters and points)', (
     expect(reusedSlots({ ...d, model: { lead: d.model.lead === '男' ? '女' : '男' } }, reuse).has('cast')).toBe(false);
   });
 });
+
+describe('「再出一套」 cover (11-01): who is on it and an 一体 jacket worn open, picked in the dialog', () => {
+  const oneBody = (extra: Partial<Materials>): Materials => ({ ...material(1), wear: { type: '一体', versions: [], why: '' } as unknown as Materials['wear'], ...extra });
+  it("puts the dialog's choice on the new plan; none leaves the master's own", () => {
+    expect(startDraft(oneBody({ cover: { people: '男女', open: true } }), M1)).toMatchObject({ coverPeople: '男女', wear: { type: '一体', open: true } });
+    expect(startDraft(oneBody({}), M1).coverPeople).toBeUndefined();
+  });
+  it("keeps the first product's inside photos and box, the dialog's 敞开 or 拉上 on top", () => {
+    const reuse = { colors: {}, model: null, slots: [], wear: { type: '一体' as const, box: false, open: true, insides: { M1: 'X2' } } };
+    expect(startDraft(oneBody({ reuse }), M1).wear).toEqual({ type: '一体', box: false, open: true, insides: { M1: 'X2' } });
+    expect(startDraft(oneBody({ reuse, cover: { open: false } }), M1).wear).toMatchObject({ open: false, insides: { M1: 'X2' } });
+    // Another type read now: the first product's choices are not carried.
+    expect(startDraft(oneBody({ reuse: { ...reuse, wear: { type: '薄款' as const } } }), M1).wear).toEqual({ type: '一体', box: true });
+  });
+});

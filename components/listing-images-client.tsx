@@ -18,7 +18,7 @@ import { shrink } from "@/lib/listing/shrink";
 import { checkDraft, DEFAULT_COUNTS, fillParts, type Counts, type Draft, type PriceLine } from "@/lib/listing/draft";
 import { BUILT_IN_LAYOUTS, withCover } from "@/lib/listing/templates";
 import { draftPrice, layoutOf, lookMaster, PlanDialog, PriceInfo, startDraft, type Prices } from "./listing-plan";
-import { CopyDialog } from "./listing-copy";
+import { CopyDialog, type CopyCover } from "./listing-copy";
 import { ResultsPanel } from "./listing-results";
 import { editsSummary } from "./listing-edits";
 import { ServiceTip, ShopPage } from "./listing-service";
@@ -266,10 +266,10 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
    * `direct` each starts at once on its default plan (as 「按 AI 方案全部开始出图」 would), except
    * one whose plan has a red problem, which waits at 「定方案」.
    */
-  const copy = async (id: string, picked: string[], direct: boolean) => {
+  const copy = async (id: string, picked: string[], direct: boolean, cover: CopyCover) => {
     const source = projects.find(x => x.id === id);
     try {
-      const made = (await post<{ projects: { id: string; name: string; layout: string }[] }>(`projects/${id}/copies`, { layouts: picked })).projects;
+      const made = (await post<{ projects: { id: string; name: string; layout: string }[] }>(`projects/${id}/copies`, { layouts: picked, cover })).projects;
       let started = 0;
       const wait: string[] = [];
       if (direct) for (const x of made) {
@@ -395,7 +395,7 @@ export function ListingImagesClient({ demo = false }: { demo?: boolean } = {}) {
       {removing && <RemoveDialog name={removing.name} sourcesCleared={!!removing.sources_cleared_at} imagesCleared={!!removing.images_cleared_at}
         onConfirm={mode => remove(removing, mode)} onClose={() => setRemoving(null)} />}
       {copying && <CopyDialog name={projects.find(p => p.id === copying)?.name ?? ""} current={draftOf(copying)?.layout ?? projects.find(p => p.id === copying)?.layout ?? ""}
-        layouts={layouts} onCopy={(picked, direct) => copy(copying, picked, direct)} onClose={() => setCopying(null)} />}
+        wear={draftOf(copying)?.wear} layouts={layouts} onCopy={(picked, direct, cover) => copy(copying, picked, direct, cover)} onClose={() => setCopying(null)} />}
       {toast && <div className="lp-toast" role="status">{toast}</div>}
     </>
   );
