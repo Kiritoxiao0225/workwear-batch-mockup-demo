@@ -7,6 +7,7 @@
  * acted out in its picture; ④ what is made and what it costs. A point's words are kept in one place,
  * the list; the images use them. Nothing is paid before 「开始出图」.
  */
+import { SkuLeftPreview } from "./listing-sku-fields";
 import { useEffect, useRef, useState } from "react";
 import type { LayoutCard, Materials, Source } from "@/lib/listing/api-types";
 import { assetUrl } from "@/lib/listing/client-api";
@@ -525,10 +526,13 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
           : <>每个颜色都照{skuDrawnWho(skuBy)}画，不用素材里的照片（{skuDrawn} 个颜色，每色 1 张的钱）。</>}</p></div>
     </>}
     {layout.sku.specCard && <>
-      <h4 className="lp-h">SKU 图左边写什么 <small>店铺设置里存的字段组合；这款单独换、改字，不影响别的款</small></h4>
-      <div className="lp-model"><div className="lp-chips">{[SKU_AUTO_SET, ...(shop?.skuFields.sets ?? [])].map(x => (
-        <label key={x.id} className={"lp-chip" + (skuSet.id === x.id ? " on" : "")}><input type="radio" name="skuFields" hidden checked={skuSet.id === x.id} onChange={() => set({ skuFields: x.id })} />
-          {x.name}{x.id === skuSetOf(shop?.skuFields).id && <small> · 默认</small>}</label>))}</div>
+      <h4 className="lp-h">SKU 图左边写什么 <small>用店铺设置里存的方案；这款单独换方案、改字，不影响别的款</small></h4>
+      {/* 11-01: a dropdown and a picture of the left column with this product's own words (the chips were hard to read). */}
+      <div className="lp-model lp-skuplan"><SkuLeftPreview rows={skuPreview.map(r => ({ label: r.label.split("/").pop()!, value: r.icon === "color" ? "（各颜色名）" : r.value }))} />
+        <div>
+        <label className="lp-small pick">方案 <select className="lp-in" value={skuSet.id} onChange={e => set({ skuFields: e.target.value })}>{[SKU_AUTO_SET, ...(shop?.skuFields.sets ?? [])].map(x => (
+          <option key={x.id} value={x.id}>{x.id === SKU_AUTO ? "不指定（系统自动挑）" : x.name}{x.id === skuSetOf(shop?.skuFields).id ? " · 默认" : ""}</option>))}</select>
+          <span className="lp-muted">方案在「店铺设置 → SKU 图左边写什么」里建</span></label>
         <div className="lp-skuwords">{skuWordFields.map(f => {
           const read = f === "style" ? styleNo(name) : skuFieldRows[f]?.value && !draft.skuWords?.[f]?.trim() ? skuFieldRows[f]!.value : null;
           const hint = f === "style" ? `不填会自动识别文件夹名最前面的货号${read ? `，现在认出「${read}」` : "，这款没认出来"}`
@@ -537,7 +541,8 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
             <input className="lp-in" value={draft.skuWords?.[f] ?? ""} maxLength={SKU_WORD_MAX} placeholder={hint}
               onChange={e => { const words = { ...draft.skuWords, [f]: e.target.value }; if (!e.target.value) delete words[f]; set({ skuWords: Object.keys(words).length ? words : undefined }); }} /></label>);
         })}</div>
-        <p className="lp-say">每个颜色的 SKU 图上会写：{skuPreview.map(r => r.icon === "color" ? "颜色名" : `${r.label.split("/").pop()}「${r.value}」`).join(" · ") || "只有颜色"}。{skuSet.id === SKU_AUTO ? "「自动」挑这款有的前两个，再加颜色。" : ""}{skuMissing.length ? <> <b>{skuMissing.map(skuFieldName).join("、")}</b>没有字，这一行不放。</> : null}</p>
+        <p className="lp-say">左边就是这款 SKU 图左边会写的字。{skuSet.id === SKU_AUTO ? "「不指定」时系统挑这款有的前两个，再加颜色。" : ""}{skuMissing.length ? <> <b>{skuMissing.map(skuFieldName).join("、")}</b>素材里没有字，这一行不放；在上面写上就有。</> : null}</p>
+        </div>
       </div>
     </>}
     <h4 className="lp-h">出几张 <small>先出 1:1，改满意了，再一键出 3:4 和 2:3（3:4 照着改好的 1:1 重排）。1:1 少于 5 张时，留讲得最多的那几张</small></h4>

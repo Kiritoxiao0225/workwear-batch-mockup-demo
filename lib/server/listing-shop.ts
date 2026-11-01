@@ -205,16 +205,16 @@ export async function saveSkuBadge(tenant: string, user: string, input: unknown,
 const skuFieldsSchema = z.object({
   sets: z.array(z.object({
     id: z.string().regex(/^f[0-9a-f]{8}$/),
-    name: z.string().trim().min(1, '给组合起个名字').max(SKU_SET_NAME_MAX, `组合名最多 ${SKU_SET_NAME_MAX} 个字`).refine(n => n !== SKU_AUTO_SET.name, `「${SKU_AUTO_SET.name}」是自带的组合，换个名字`),
-    fields: z.array(z.enum(SKU_FIELDS.map(([id]) => id) as [SkuField, ...SkuField[]])).min(1, '每个组合至少选 1 个字段').max(SKU_FIELD_MAX, `每个组合最多 ${SKU_FIELD_MAX} 行`)
-      .refine(f => new Set(f).size === f.length, '同一个字段只能选一次'),
-  })).max(SKU_SETS_MAX - 1, `最多 ${SKU_SETS_MAX} 个组合`).refine(s => new Set(s.map(x => x.name)).size === s.length, '组合名不能重复'),
+    name: z.string().trim().min(1, '给方案起个名字').max(SKU_SET_NAME_MAX, `方案名最多 ${SKU_SET_NAME_MAX} 个字`).refine(n => n !== SKU_AUTO_SET.name, `「${SKU_AUTO_SET.name}」是自带的方案，换个名字`),
+    fields: z.array(z.enum(SKU_FIELDS.map(([id]) => id) as [SkuField, ...SkuField[]])).min(1, '每个方案至少放 1 行').max(SKU_FIELD_MAX, `每个方案最多 ${SKU_FIELD_MAX} 行`)
+      .refine(f => new Set(f).size === f.length, '同一个字段只能放一行'),
+  })).max(SKU_SETS_MAX - 1, `最多 ${SKU_SETS_MAX} 个方案`).refine(s => new Set(s.map(x => x.name)).size === s.length, '方案名不能重复'),
   default: z.string().max(16),
-}).refine(v => v.default === SKU_AUTO || v.sets.some(x => x.id === v.default), { message: '默认组合不存在', path: ['default'] });
+}).refine(v => v.default === SKU_AUTO || v.sets.some(x => x.id === v.default), { message: '默认方案不存在', path: ['default'] });
 /** SKU 图字段组合 (11-01): the shop's combos and its default; for SKU images made from now on, and 「按店铺设置重拼 SKU 图」. */
 export async function saveSkuFields(tenant: string, user: string, input: unknown, set?: string | null) {
   const parsed = skuFieldsSchema.safeParse(input);
-  if (!parsed.success) throw new CatalogHttpError(400, parsed.error.issues[0]?.message ?? 'SKU 图字段组合不对');
+  if (!parsed.success) throw new CatalogHttpError(400, parsed.error.issues[0]?.message ?? 'SKU 图方案设置不对');
   const s = await catalogTransaction(async c => {
     const row = await shopRow(c, tenant, user), s = shopOf(row.shop, set);
     await patchSet(c, row, s, { skuFields: parsed.data });

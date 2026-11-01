@@ -183,7 +183,7 @@ function ShopForm({ state, unit, exempt, onSay }: { state: ShopState; unit: numb
     .then(s => { keep(s); onSay(skuBadge.place === "off" ? "SKU 图不放角标了" : `SKU 图角标：${SKU_BADGE_PLACES.find(([id]) => id === skuBadge.place)?.[1]}${skuBadge.text ? `「${skuBadge.text}」` : "，自动写男女同款"}`); })
     .catch(error => onSay((error as Error).message));
   const setFields = (skuFields: SkuFieldSets) => post<ShopState>("shop/sku-fields", { ...skuFields, set: state.set })
-    .then(s => { keep(s); onSay("SKU 图字段组合存好了，之后出的 SKU 图按它来"); return true; })
+    .then(s => { keep(s); onSay("SKU 图方案存好了，之后出的 SKU 图按它来"); return true; })
     .catch(error => { onSay((error as Error).message); return false; });
   const setCorner = (on: boolean) => void post<ShopState>("shop/corner", { on, set: state.set }).then(s => { keep(s); onSay(on ? "打开了：之后出的主图左上角放店铺 LOGO" : "关掉了：主图左上角不再放 LOGO"); }).catch(error => onSay((error as Error).message));
 
@@ -252,7 +252,7 @@ function ShopForm({ state, unit, exempt, onSay }: { state: ShopState; unit: numb
       {ask && <AskDialog ask={ask} onClose={() => setAsk(null)} />}
       <div className="lp-shop-grid">
         <nav className="lp-snav" aria-label="店铺设置目录">
-          <a href="#lp-s-svc">服务卖点</a><a href="#lp-s-brand">LOGO</a><a href="#lp-s-badge">SKU 角标</a><a href="#lp-s-fields">SKU 字段</a>
+          <a href="#lp-s-svc">服务卖点</a><a href="#lp-s-brand">LOGO</a><a href="#lp-s-badge">SKU 角标</a><a href="#lp-s-fields">SKU 左边文字</a>
           <a href="#lp-s-img">服务图{pending.images > 0 && Object.keys(shop.made).length > 0 && <span className="chip y">{pending.images} 张旧字</span>}</a>
         </nav>
         <div>

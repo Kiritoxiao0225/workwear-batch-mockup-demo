@@ -708,7 +708,7 @@ try {
   await call(0, 'shop/sku-fields', { sets: [{ ...combo, fields: ['style', 'fabric', 'fit', 'color'] }], default: 'auto' }, 400);
   await call(0, 'shop/sku-fields', { sets: [{ ...combo, fields: ['style', 'style'] }], default: 'auto' }, 400);
   await call(0, 'shop/sku-fields', { sets: [combo, { ...combo, id: 'f0000aa02' }], default: 'auto' }, 400);
-  await call(0, 'shop/sku-fields', { sets: [{ ...combo, name: '自动' }], default: 'auto' }, 400);
+  await call(0, 'shop/sku-fields', { sets: [{ ...combo, name: '不指定' }], default: 'auto' }, 400);
   await call(0, 'shop/sku-fields', { sets: [combo], default: 'f0000aa09' }, 400);
   assert.deepEqual((await (await call(0, 'shop/sku-fields', { sets: [combo], default: combo.id })).json()).shop.skuFields, { sets: [combo], default: combo.id });
   assert.deepEqual((await (await call(1, 'shop')).json()).shop.skuFields, { sets: [], default: 'auto' });

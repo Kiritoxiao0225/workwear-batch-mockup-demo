@@ -63,7 +63,7 @@ export type SkuFieldSet = { id: string; name: string; fields: SkuField[] };
 /** A shop's combos and the one new products use (SKU_AUTO when it saved none). */
 export type SkuFieldSets = { sets: SkuFieldSet[]; default: string };
 export const SKU_AUTO = 'auto';
-export const SKU_AUTO_SET: SkuFieldSet = { id: SKU_AUTO, name: '自动', fields: [] };
+export const SKU_AUTO_SET: SkuFieldSet = { id: SKU_AUTO, name: '不指定', fields: [] };
 export const DEFAULT_SKU_FIELDS: SkuFieldSets = { sets: [], default: SKU_AUTO };
 export const SKU_FIELD_MAX = 3, SKU_SETS_MAX = 10, SKU_SET_NAME_MAX = 8, SKU_WORD_MAX = 12;
 export const skuFieldName = (f: SkuField) => SKU_FIELDS.find(([id]) => id === f)![1];
