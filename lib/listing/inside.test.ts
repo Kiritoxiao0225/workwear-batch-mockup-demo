@@ -37,4 +37,9 @@ describe('the inside of an 一体 jacket (10-29)', () => {
     expect(openLine(3, true)).toContain('橙色');
     expect(openLine(3, false)).not.toContain('橙色');
   });
+  it('opens on the front panel, not the back lining (11-01, 8826)', () => {
+    expect(openLine(3, false)).toContain('后背中间那块里布被身体挡住');
+    expect(openLine(3, false, false, true)).toContain('裁下来的前片里面');
+    expect(openLine(3, false, false, false)).not.toContain('裁下来');
+  });
 });

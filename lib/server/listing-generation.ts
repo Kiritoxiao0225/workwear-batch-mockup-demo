@@ -48,7 +48,7 @@ import { maskOf, pad, pasteBack } from './listing-edit';
 import { resolveLayout } from './listing-layouts';
 import { castOnePrompt, castPrompt, drawPrompt, editPrompt, longPrompt, mainPrompt, productPrompt, redrawPrompt, relayoutPrompt, servicePrompt, serviceWordsPrompt, skuModelPrompt, skuPrompt, type Content, type Ratio } from './listing-prompts';
 import { callPlanModel, generateListingImage, LISTING_PLAN_MODEL, listingImageModel, listingImageProvider, type ImageCall, type PlanCall } from './listing-provider';
-import { frameRequest, parseFrame, parseRecognized, recognizeRequest, type Expected, type Frame } from './listing-recognize';
+import { frameRequest, insideBoxRequest, parseFrame, parseInsideBox, parseRecognized, recognizeRequest, type Expected, type Frame } from './listing-recognize';
 import { liveShop, shopBrand, shopServiceImage, shopSettings, shopSkuBadge } from './listing-shop';
 import { cornerAssets, pasteShopLogo } from './listing-corner';
 import { latestOutputs, latestRedraws, MAIN_SLOT, slotShop, storeOutput, type StoredPlan } from './listing-store';
@@ -809,8 +809,9 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         const label = insideFor(sortedImages!, d, key), asset = label ? stored.images.find(i => i.label === label)?.assetId : undefined;
         const file = asset ? (await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [asset])).rows[0]?.file_id : undefined;
         if (!file) return null;
-        const ref = refs.push(await sharp(await fileOf(file), { limitInputPixels: 60_000_000 }).rotate().resize(1536, 1536, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer());
-        return { wear: openLine(ref, heatPoint(d.points), covered), open: true };
+        const inside = await insideCrop(await fileOf(file), recognize);
+        const ref = refs.push(inside.bytes);
+        return { wear: openLine(ref, heatPoint(d.points), covered, inside.cropped), open: true };
       };
       const dressed = async (shells: string[], refs: Buffer[], cast = false, cover = false): Promise<{ wear: string | null; linerRef?: number; open?: boolean }> => {
         const open = cover ? await opened(shells, refs) : null;
@@ -1000,6 +1001,25 @@ async function findFrame(bytes: Buffer, recognize: Recognize): Promise<Frame | n
     const image = await sharp(bytes, { limitInputPixels: 60_000_000 }).rotate().resize(1024, 1024, { fit: 'inside' }).jpeg({ quality: 82 }).toBuffer();
     return parseFrame((await recognize(frameRequest({ image, model: LISTING_PLAN_MODEL() }))).content);
   } catch (error) { console.error('[listing] frame', error instanceof Error ? error.message : error); return null; }
+}
+
+/**
+ * An 一体 cover's inside reference (11-01): the front panel's inside cut out of the material's photo, a
+ * little room around it, so the back's other lining is not painted on the opened front (8826). The whole
+ * photo when the panel is not found or the call fails; `cropped` says which.
+ */
+export async function insideCrop(bytes: Buffer, recognize: Recognize): Promise<{ bytes: Buffer; cropped: boolean }> {
+  const whole = await sharp(bytes, { limitInputPixels: 60_000_000 }).rotate().resize(1536, 1536, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer();
+  try {
+    const image = await sharp(whole).resize(1024, 1024, { fit: 'inside' }).jpeg({ quality: 85 }).toBuffer();
+    const box = parseInsideBox((await recognize(insideBoxRequest({ image, model: LISTING_PLAN_MODEL() }))).content);
+    if (!box) return { bytes: whole, cropped: false };
+    const { width = 0, height = 0 } = await sharp(whole).metadata(), pad = 0.03;
+    const l = Math.max(0, box[0] - pad), t = Math.max(0, box[1] - pad), r = Math.min(1, box[0] + box[2] + pad), b = Math.min(1, box[1] + box[3] + pad);
+    const left = Math.round(l * width), top = Math.round(t * height);
+    const cut = await sharp(whole).extract({ left, top, width: Math.max(1, Math.min(width - left, Math.round((r - l) * width))), height: Math.max(1, Math.min(height - top, Math.round((b - t) * height))) }).jpeg({ quality: 90 }).toBuffer();
+    return { bytes: cut, cropped: true };
+  } catch (error) { console.error('[listing] inside crop', error instanceof Error ? error.message : error); return { bytes: whole, cropped: false }; }
 }
 
 /** Where things are on a made image; a failure only leaves the 画板 on the layout's boxes. */

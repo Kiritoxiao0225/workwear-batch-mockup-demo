@@ -74,3 +74,37 @@ export function parseFrame(content: string): Frame | null {
   if (!f.success || f.data.knee - f.data.top < 10 || f.data.right - f.data.left < 5) return null;
   return { top: f.data.top / 100, knee: f.data.knee / 100, left: f.data.left / 100, right: f.data.right / 100 };
 }
+
+/**
+ * 一体 cover worn open (11-01): the material's photo of the inside often shows two linings, the front
+ * panels' (what one sees when one side is pulled open) and the back's down the middle, in another
+ * colour or print. Sent whole, the model painted the back's big silver print onto the opened front
+ * (8826; a crop of the front panel alone came out right), so the analysis model finds that panel first.
+ */
+const INSIDE_SYSTEM = `你会收到一张衣服里面的照片（衣服翻开平铺、挂着敞开，或人穿着拉开一边）。只输出 JSON。
+人穿上这件衣服、一只手把一边门襟拉开时，露出来的是「前片的里面」：靠门襟拉链的那一长条衣片的反面。找出它在照片里的位置。
+- 衣服里面常常不是一块料：前片里面和后背中间的里布颜色、花纹、绗缝可能都不一样。只框前片里面，不要框进后背中间那块、外面的面料、帽子、吊牌、背景。
+- 左右两边前片都看得到时，选更完整、更清楚、没有缝标签的一边。
+- 照片本来就是人穿着拉开一边的特写时，框住露出来的那片里面。
+- box 是 [左, 上, 宽, 高]，都是占整张图宽或高的百分比（0–100），从领口下面框到下摆。
+- 找不到前片里面（比如只拍了面料、或看不出哪块是前片），found 写 false。`;
+
+export function insideBoxRequest(input: { image: Buffer; model: string }) {
+  return { model: input.model, reasoning_effort: 'low', max_completion_tokens: 1000, response_format: { type: 'json_object' }, stream: false,
+    messages: [{ role: 'system', content: INSIDE_SYSTEM }, { role: 'user', content: [
+      { type: 'text', text: '输出：{ "found": true, "box": [0, 0, 0, 0], "what": "几个字说框住的是什么" }' },
+      { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${input.image.toString('base64')}` } },
+    ] }] };
+}
+
+const insideSchema = z.object({ found: z.boolean(), box: z.tuple([z.number(), z.number(), z.number(), z.number()]).optional() });
+/** The front panel's inside as fractions [left, top, width, height], or null: not found, or too small to be a panel. */
+export function parseInsideBox(content: string): [number, number, number, number] | null {
+  let raw: unknown;
+  try { raw = JSON.parse(content); } catch { return null; }
+  const p = insideSchema.safeParse(raw);
+  if (!p.success || !p.data.found || !p.data.box) return null;
+  const [l, t, w, h] = p.data.box.map(v => Math.max(0, Math.min(100, v)));
+  const box = [l, t, Math.min(w, 100 - l), Math.min(h, 100 - t)];
+  return box[2] < 5 || box[3] < 15 ? null : box.map(v => v / 100) as [number, number, number, number];
+}

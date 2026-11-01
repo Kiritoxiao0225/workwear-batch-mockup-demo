@@ -142,9 +142,13 @@ export function wearLine(type: WearType | undefined, liner?: number, color?: str
  * `heat`: the material has a heating point, so a small orange badge sits on the inside, as theirs do.
  * The demonstration is this pose, so the cover's act gives way (listing-generation's `opened`).
  */
-export function openLine(ref: number, heat: boolean, covered = false): string {
+export function openLine(ref: number, heat: boolean, covered = false, cropped = false): string {
   return `${covered ? '门襟整个打开' : `拉链全部拉开、敞着穿，${OPEN_PULL}`}；一只手捏住一侧门襟的边缘，把这一侧衣服向外拉开到身体旁边，让这一侧衣服的里面正对镜头露出来，另一侧门襟自然垂下；`
-    + `露出来的里面照参考图${ref}画（参考图${ref}是这件衣服里面的照片：里布或里绒的颜色、材质、绒毛或绗缝格子、厚薄都照它，不要自己编；照片里的人、背景都不要带过来）；`
+    + (cropped
+      ? `露出来的里面照参考图${ref}画（参考图${ref}是从这件衣服里面的照片上裁下来的前片里面，拉开门襟看到的就是它：颜色、材质、绒毛或绗缝格子、厚薄都照它，不要自己编；边上露出的一点别的料、外面的面料和背景都不要带过来）；`
+      : `露出来的里面照参考图${ref}画（参考图${ref}是这件衣服里面的照片：里布或里绒的颜色、材质、绒毛或绗缝格子、厚薄都照它，不要自己编；照片里的人、背景都不要带过来）；`)
+    // 8826 (11-01): the back's silver print, the biggest thing on the photo, was painted on the opened front.
+    + `衣服里面常常不是一块料，拉开一侧门襟露出来的是这一侧前片的里面（靠拉链的那一长条）；后背中间那块里布被身体挡住，它的颜色和花纹不要画到拉开的门襟上；`
     + `里面贴身穿一件简单的纯色打底衫；衣服里面有填充，衣身蓬松厚实，一看就是秋冬保暖款`
     + (heat ? `；露出的里面正中叠一个小小的圆形橙色发光徽标，里面一个白色的热量小图标，不写字，像在说这层里面会发热保暖` : '');
 }
