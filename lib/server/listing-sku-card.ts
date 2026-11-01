@@ -35,6 +35,11 @@ export type SkuCard = SkuText & {
    * leaves the box empty, plain grey, to be filled in by hand.
    */
   liner?: { photo: Buffer | null; name?: string; whole?: boolean; close?: boolean } | null;
+  /**
+   * 「改 SKU 图文字」's preview (11-01): this card as made; its right side (the photo, a badge over it) is
+   * kept as it is and only the left column is drawn again, so a preview needs no model call.
+   */
+  base?: Buffer;
 };
 
 /** `serif`: the title's (Noto Serif SC Black, GB2312 level one only; OFL, public/fonts/NotoSerifSC-OFL.txt). */
@@ -232,8 +237,15 @@ export async function renderSkuCard(c: SkuCard): Promise<Buffer> {
   bg.addColorStop(0, '#f2f2f2'); bg.addColorStop(1, '#e2e2e2');
   ctx.fillStyle = bg; ctx.fillRect(0, 0, S, S);
 
+  if (c.base) {
+    // The card as made, then its left column painted over with the plain background.
+    ctx.drawImage(await asImage(await sharp(c.base).resize(S, S, { fit: 'fill' }).png().toBuffer()), 0, 0, S, S);
+    const left = ctx.createLinearGradient(0, 0, S, S);
+    left.addColorStop(0, '#f2f2f2'); left.addColorStop(1, '#e2e2e2');
+    ctx.fillStyle = left; ctx.fillRect(0, 0, 448, S);
+  }
   // Right: the model photo in a rounded panel (its own background stays), or the garment standing on the grey.
-  if (!c.photo.cutout) {
+  if (c.base) { /* kept from the card as made */ } else if (!c.photo.cutout) {
     const img = await asImage(c.photo.bytes), panel = { x: 452, y: 36, w: S - 452 - 36, h: S - 72 };
     // Head to mid-thigh (SKU_THIGH of the way to the knees) fills the panel on every colour: head to knees
     // left the person small with room around them (10-14), most photos ending above the knees. A photo on a
@@ -270,7 +282,7 @@ export async function renderSkuCard(c: SkuCard): Promise<Buffer> {
   }
 
   // Top right, over the picture.
-  if (c.badge?.place === 'right') pill(ctx, c.badge.text, S - 36 - 24, 36 + 24, 'right', 420, 38);
+  if (c.badge?.place === 'right' && !c.base) pill(ctx, c.badge.text, S - 36 - 24, 36 + 24, 'right', 420, 38);
 
   // Left: logo (or the corner badge in its place), title, the three rows.
   const L = 60, W = 350;

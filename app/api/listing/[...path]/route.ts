@@ -8,7 +8,7 @@ import { removeProject, REMOVE_MODES } from '@/lib/server/listing-trash';
 import { addExtraImage, imagePrices, planPrice, requestPlan, submitDraft } from '@/lib/server/listing-jobs';
 import { innerName } from '@/lib/listing/wear';
 import { copyProject } from '@/lib/server/listing-copy';
-import { addSet, adoptDrawn, downloadZip, drawMaterial, drawState, editSlot, recast, recardSkus, redoSkus, redoSlot, redrawSlot, slotStates, startVerticals, stopImages } from '@/lib/server/listing-generation';
+import { addSet, adoptDrawn, downloadZip, drawMaterial, drawState, editSlot, recast, recardSkus, redoSkus, previewSkuText, saveSkuText, skuTextState, redoSlot, redrawSlot, slotStates, startVerticals, stopImages } from '@/lib/server/listing-generation';
 import { createShopSet, deleteShopSet, makeServices, removeShopLogo, saveShop, saveShopBrand, saveShopCorner, saveSkuBadge, saveSkuFields, saveShopLogo, shopBrand, shopOfAsset, shopState, updateShopSet } from '@/lib/server/listing-shop';
 import { cornerAssets, pasteShopLogo } from '@/lib/server/listing-corner';
 import { SKU_PEOPLE } from '@/lib/listing/draft';
@@ -39,6 +39,7 @@ export async function GET(request: NextRequest, context: Context) {
     // Several shops (10-22): `?set=` names the one, none the default.
     if (path[0] === 'shop' && !path[1]) return json(await shopState(tenant.id, user.id, request.nextUrl.searchParams.get('set')));
     if (path[0] === 'projects' && path[1] && path[2] === 'draws' && path[3]) return json(await drawState(tenant.id, path[1], path[3]));
+    if (path[0] === 'projects' && path[1] && path[2] === 'sku-text') return json(await skuTextState(tenant.id, path[1]));
     if (path[0] === 'projects' && path[1]) return json({ ...await projectDetail(tenant.id, path[1]), slots: await slotStates(path[1]) });
     if (path[0] === 'projects') return json(await listProjects(tenant.id));
     if (path[0] === 'assets' && path[1]) {
@@ -112,6 +113,8 @@ export async function POST(request: NextRequest, context: Context) {
     if (path[0] === 'projects' && path[2] === 'adopt') return json(await adoptDrawn(tenant.id, path[1], body));
     if (path[0] === 'projects' && path[2] === 'skus') return json(await redoSkus(tenant, user.id, path[1], undefined, SKU_PEOPLE.find(p => p === body.people)));
     if (path[0] === 'projects' && path[2] === 'recard') return json(await recardSkus(tenant, user.id, path[1]));
+    if (path[0] === 'projects' && path[2] === 'sku-text' && path[3] === 'preview') return json(await previewSkuText(tenant.id, path[1], body));
+    if (path[0] === 'projects' && path[2] === 'sku-text') return json(await saveSkuText(tenant, user.id, path[1], body));
     if (path[0] === 'projects' && path[2] === 'verticals') return json(await startVerticals(tenant, user.id, path[1]));
     if (path[0] === 'projects' && path[2] === 'cast') return json(await recast(tenant, user.id, path[1]));
     if (path[0] === 'projects' && path[2] === 'edit') return json(await editSlot(tenant, user.id, path[1], body));

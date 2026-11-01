@@ -10,6 +10,7 @@
  * - which colour each image shows, who models, and what the two rounds of images cost.
  */
 import type { SkuWords } from './sku-card';
+import type { SkuEdits } from './sku-text';
 import type { CoverPeople } from './templates';
 import { skuItems, type DraftVersion } from './sku-versions';
 import { versionName, type WearType } from './wear';
@@ -94,6 +95,8 @@ export type Draft = {
    */
   skuFields?: string;
   skuWords?: SkuWords;
+  /** 「改 SKU 图文字」 (11-01, sku-text.ts): the words written by hand on the SKU images, the whole product's and single images'. */
+  skuEdits?: SkuEdits;
   /** Who the cover shows (11-01, templates.ts COVER_PEOPLE); none: the master's own (two: a man and a woman, one: the lead). */
   coverPeople?: CoverPeople;
   /**

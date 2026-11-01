@@ -10,6 +10,7 @@
  * A change is made in the background (10-25): several can be asked for one after another, and the
  * 「改图进度」 above the images lists each one until its new image is adopted or put away.
  */
+import { SkuTextDialog, type SkuTextTarget } from "./listing-sku-text";
 import { useState } from "react";
 import type { Detail, LayoutCard, SlotState } from "@/lib/listing/api-types";
 import { askRedraw, assetUrl, downloadUrl, post } from "@/lib/listing/client-api";
@@ -45,6 +46,9 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
   const shops = useShopSets(), ownShop = shops.find(s => s.id === plan?.shop) ?? shops.find(s => s.isDefault);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
+  // 「改 SKU 图文字」 (11-01): the whole product's or one image's words.
+  const [skuText, setSkuText] = useState<SkuTextTarget | null>(null);
+  const cardsDone = layout.sku.specCard && ["square", "done"].includes(detail.status), handWritten = plan?.skuEdits?.one ?? {};
   const edit = (slot: string | null) => setEditing(slot);
   /** Changes being sent (the reference image going up): tagged on the image until the server has them. */
   const [sending, setSending] = useState<string[]>([]);
@@ -76,7 +80,9 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
         <b title={label}>{label}</b>
         {bad && s.error && <small className="lp-out-why">{s.error}</small>}
         {wait && !!s.retries && <small className="lp-muted">上次没出来（{s.error ?? "出图失败"}），会自动再试，不扣费{s.status === "queued" && s.retryAt ? `，约 ${retryIn(s.retryAt)}后` : ""}</small>}
+        {kind === "sku" && handWritten[key] && <small className="lp-keep">单独改过字</small>}
         {!wait && !editable && (kind !== "cast" || bad) && <button type="button" className="lp-btn sm" onClick={() => onRedo(s.slot, label)}>重新生成</button>}
+        {kind === "sku" && cardsDone && s.image && !wait && <button type="button" className="lp-btn sm ghost" onClick={() => setSkuText({ mode: "one", key })}>只改这一张的文字</button>}
       </div>);
   };
   const lane = (title: string, pick: (s: SlotState) => boolean, note = "", action?: React.ReactNode) => {
@@ -164,10 +170,12 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
           {lane(`主推套 · ${main} · 3:4 主图`, s => s.slot.startsWith("portrait:") && !s.slot.includes("+"), "讲的和 1:1 一样，按竖图重新排")}
           {lane("2:3 长图", s => s.slot.startsWith("long:") && !s.slot.includes("+"), "手淘推荐流用")}
           {sets.map(c => lane(`加的一套 · ${c}`, s => s.slot.endsWith("+" + c), "只换了首图，其余图和主推套共用"))}
-          {lane("SKU 图", s => s.slot.startsWith("sku:"))}
+          {lane("SKU 图", s => s.slot.startsWith("sku:"), "", cardsDone && detail.slots.some(s => s.slot.startsWith("sku:") && s.image)
+            ? <button type="button" className="lp-btn sm" onClick={() => setSkuText({ mode: "all" })}>改 SKU 图文字</button> : undefined)}
           {lane("SKU 模特图", s => s.slot.startsWith("skumodel:"), "素材里没有这个颜色的模特图，照主模特画的；重新生成后 SKU 图跟着重拼")}
           {lane("白底产品图", s => s.slot.startsWith("product:"))}
         </div>
+        {skuText && <SkuTextDialog projectId={detail.id} name={detail.name} target={skuText} onSaved={m => void onDone(m)} onError={onError} onClose={() => setSkuText(null)} />}
         {edited && <EditDialog title={`修改${numOf(edited.slot)} · ${taskOf(edited)}${edited.slot.startsWith("portrait") ? "（3:4）" : edited.slot.startsWith("long") ? "（2:3）" : ""}`}
           note={edited.task === "服务" ? "只改这一款的，店铺设置里存的服务图不变" : undefined}
           current={assetUrl(edited.image!)} price={prices.exempt ? "" : `${prices.image} 积分`}

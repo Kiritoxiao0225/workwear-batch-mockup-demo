@@ -32,7 +32,8 @@ import type { CanvasEdit, Element, Words } from '../listing/api-types';
 import { TASK_LABEL, type Task } from '../listing/category';
 import { castFromPhotos, GENDERS, leadCard, partOf, partPick, usedSlots, wantsCast, type Gender, type SkuPeople } from '../listing/draft';
 import { colorRow, modelPhotoFor, skuCardRows, skuCardText, skuPhotos, skuSetOf, skuWho } from '../listing/sku-card';
-import { renderSkuCard } from './listing-sku-card';
+import { renderSkuCard, type SkuCard } from './listing-sku-card';
+import { applyEdit, editFor, editOf, SKU_TEXT_ICONS, SKU_TEXT_ROWS, skuTextProblems, type CardWords, type SkuEdits, type SkuTextEdit } from '../listing/sku-text';
 import { enOf, sampleBytes, specFor, specPrompt, type Fill } from './listing-specs';
 import { removeFlatArtworkBackground } from './artwork-image-processing';
 import { coverScene, fabricColor, masterInfo, PLACES, REAL_PLACE, SELLS, type PlaceId, type Sell } from '../listing/scene';
@@ -343,6 +344,92 @@ export async function recardSkus(tenant: Tenant, user: string, projectId: string
     if (!jobs.length) throw new CatalogHttpError(409, '这一款没有按模板拼的 SKU 图');
     await queueRun(c, tenant, user, projectId, jobs, prices);
     return { status: 'generating', images: jobs.length };
+  });
+}
+
+/** The product's plan, layout and SKU images on the template, for 「改 SKU 图文字」; one of another tenant is not found. */
+async function skuTextProject(tenant: string, projectId: string) {
+  const p = (await db().query(`SELECT status,plan FROM listing_projects WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL AND kind='product'`, [projectId, tenant])).rows[0];
+  if (!p?.plan) throw new CatalogHttpError(404, '商品不存在或还没出图');
+  const stored = p.plan as StoredPlan, found = await resolveLayout(tenant, stored.draft.layout);
+  if (!found) throw new CatalogHttpError(400, '版式不存在');
+  const layout = withCover(found, stored.draft), outputs = await latestOutputs(projectId);
+  const output = async (slot: string) => { const o = outputs.get(slot); if (!o) throw new CatalogHttpError(409, `缺少前一步的图：${slot}`); return fileOf(o.file_id); };
+  const items = layout.sku.specCard ? skuItems(stored.draft, stored.colors).filter(it => outputs.has(`sku:${it.key}`)) : [];
+  return { status: p.status as string, stored, layout, outputs, output, items };
+}
+
+/**
+ * 「改 SKU 图文字」 (11-01): each SKU image's words as the plan gives them (the form starts from them), and
+ * the words written by hand so far. Only the images put together on the template, and made.
+ */
+export async function skuTextState(tenant: string, projectId: string) {
+  const { stored, layout, outputs, output, items } = await skuTextProject(tenant, projectId);
+  const list = await Promise.all(items.map(async it => {
+    const left = await skuLeft({ tenant, projectId, stored, layout, key: it.key, shopSet: slotShop(stored, `sku:${it.key}`), output, has: s => outputs.has(s), bytes: false });
+    return { key: it.key, name: it.label, image: outputs.get(`sku:${it.key}`)!.id, own: editOf(left.own), liner: left.own.linerName !== undefined };
+  }));
+  return { items: list, edits: stored.draft.skuEdits ?? {} };
+}
+
+const skuTextSchema = z.object({
+  badge: z.string().max(40), kicker: z.string().max(60), title: z.tuple([z.string().max(30), z.string().max(30)]), liner: z.string().max(30),
+  rows: z.array(z.object({ label: z.string().max(40), value: z.string().max(40), sub: z.string().max(60), color: z.boolean().optional() })).max(SKU_TEXT_ROWS),
+  feature: z.object({ title: z.string().max(40), sub: z.string().max(80), icons: z.array(z.string().max(30)).max(SKU_TEXT_ICONS) }),
+});
+/** A hand edit as sent, checked the way the form checks it: every word fits its place. */
+function skuTextOf(input: unknown): SkuTextEdit {
+  const parsed = skuTextSchema.safeParse(input);
+  if (!parsed.success) throw new CatalogHttpError(400, 'SKU 图文字的格式不对，请刷新页面再试');
+  const e = parsed.data as SkuTextEdit, bad = skuTextProblems(e)[0];
+  if (bad) throw new CatalogHttpError(400, `${bad.where}太长了，最多 ${bad.max} 个字（英文和数字算半个）`);
+  return e;
+}
+
+/** 「改 SKU 图文字」's preview: one image with these words, its picture kept as made (no model call, nothing kept). */
+export async function previewSkuText(tenant: string, projectId: string, input: unknown) {
+  const { item, edit } = z.object({ item: z.string().min(1).max(40), edit: z.unknown() }).parse(input);
+  const e = skuTextOf(edit);
+  const { stored, layout, outputs, output, items } = await skuTextProject(tenant, projectId);
+  if (!items.some(it => it.key === item)) throw new CatalogHttpError(404, '这张 SKU 图不存在或还没出好');
+  const left = await skuLeft({ tenant, projectId, stored, layout, key: item, shopSet: slotShop(stored, `sku:${item}`), output, has: s => outputs.has(s), bytes: true });
+  const made = await renderSkuCard({ ...cardOf(left, e), photo: { bytes: left.photo!.bytes, cutout: left.photo!.cutout, frame: null }, base: await output(`sku:${item}`) });
+  return { image: `data:image/jpeg;base64,${(await sharp(made).resize(900, 900).jpeg({ quality: 85 }).toBuffer()).toString('base64')}` };
+}
+
+/**
+ * 「改 SKU 图文字」 saved: the whole product's words (`scope` 'all'; the images written one by one keep
+ * theirs unless `overwrite`) or one image's (its key); `edit` null goes back (one image to the whole
+ * product's, the whole product to the plan's). The images it changes are put together again, free;
+ * the versions before stay in their history.
+ */
+export async function saveSkuText(tenant: Tenant, user: string, projectId: string, input: unknown) {
+  const b = z.object({ scope: z.string().min(1).max(40), edit: z.unknown().nullable(), overwrite: z.boolean().optional() }).parse(input);
+  const edit = b.edit === null ? null : skuTextOf(b.edit);
+  const { items } = await skuTextProject(tenant.id, projectId);
+  if (b.scope !== 'all' && !items.some(it => it.key === b.scope)) throw new CatalogHttpError(404, '这张 SKU 图不存在或还没出好');
+  const prices = await currentPrices();
+  return catalogTransaction(async c => {
+    const { stored } = await lockProject(c, tenant, projectId, ['square', 'done'], '出好图之后才能改 SKU 图文字');
+    const latest = await latestJobs(c, projectId);
+    if (latest.some(j => j.slot.startsWith('sku') && (j.status === 'queued' || j.status === 'running'))) throw new CatalogHttpError(409, 'SKU 图还在出，等出完再改');
+    const was = stored.draft.skuEdits ?? {}, one = { ...(was.one ?? {}) };
+    let next: SkuEdits, keys: string[];
+    if (b.scope === 'all') {
+      if (b.overwrite) for (const k of Object.keys(one)) delete one[k];
+      next = { ...(edit ? { all: edit } : {}), ...(Object.keys(one).length ? { one } : {}) };
+      keys = items.map(it => it.key).filter(k => !one[k]);
+    } else {
+      if (edit) one[b.scope] = edit; else delete one[b.scope];
+      next = { ...(was.all ? { all: was.all } : {}), ...(Object.keys(one).length ? { one } : {}) };
+      keys = [b.scope];
+    }
+    await c.query(`UPDATE listing_projects SET plan=jsonb_set(plan,'{draft,skuEdits}',$2::jsonb),updated_at=now() WHERE id=$1`, [projectId, next]);
+    const made = new Set(latest.filter(j => j.status === 'succeeded').map(j => j.slot)), slots = new Set(keys.map(k => `sku:${k}`));
+    const jobs: PlannedJob[] = latest.filter(j => slots.has(j.slot) && j.input.kind === 'sku' && j.input.card && j.depends.every(d => made.has(d)))
+      .map(j => ({ slot: j.slot, step: j.step, input: j.input, depends: j.depends, multi: false, free: true }));
+    if (jobs.length) await queueRun(c, tenant, user, projectId, jobs, prices);
+    return { images: jobs.length, edits: next };
   });
 }
 
@@ -745,52 +832,13 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
       const logoLine = logoMode === '不印' || (logoMode !== 'LOGO' && !logoBytes) ? null : LOGO_LINE[logoMode];
       if (input.kind === 'sku' && input.card) {
         // The SKU image on the brand template: the colour's model photo (the material's own, else the drawn one), its fabric, the material's words. No model call.
-        const m = (await db().query('SELECT name, materials FROM listing_projects WHERE id=$1', [job.project_id])).rows[0];
-        const sorted = m.materials?.sorted?.images ?? [], key = input.item ?? input.sku, it = skuItems(d, colors).find(i => i.key === key);
-        if (!it) throw new CatalogHttpError(404, `SKU 不存在：${key}`);
-        const product = it.color ? await output(`product:${it.color}`) : null;
-        // Plans made before the SKU models were drawn: the material's photo found now, else the garment cut out.
-        const label = stored.photos ? stored.photos[key] : modelPhotoFor(sorted, input.sku, it.name, d.model.lead, skuPair(layout));
-        const assetId = label ? stored.images.find(i => i.label === label)?.assetId : undefined;
-        const source = assetId && (await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [assetId])).rows[0];
-        if (label && !source) throw new CatalogHttpError(404, '找不到这个颜色的模特图（原始素材可能已在最后一次出图 30 天后清理）');
-        const photo = source ? await fileOf(source.file_id) : outputs.has(`skumodel:${key}`) ? await output(`skumodel:${key}`) : null;
-        if (!photo && !product) throw new CatalogHttpError(409, `缺少前一步的图：skumodel:${key}`);
-        // With a liner (10-22): the version's name under the colour, and the liner alone in the bottom-left card when the material has it.
-        const v = it.version, lined = !!v && v.kind !== '单外壳';
-        // The liner it is drawn over (the user's choice, else the material's); zipped up, no thumbnail to promise a colour.
-        const linerColor = v?.kind === '外壳加内胆' ? linerFor(sorted, v, it.name) : undefined;
-        const thumbLabel = lined && linerColor !== '' ? linerAlone(sorted, v.inner, v.kind === '单内胆' ? it.name : linerColor) : null;
-        const thumbAsset = thumbLabel ? stored.images.find(i => i.label === thumbLabel)?.assetId : undefined;
-        const thumbFile = thumbAsset ? (await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [thumbAsset])).rows[0]?.file_id : undefined;
-        // 一体 with the box ticked (10-29): its colour's inside in the same box, else the box left empty to be filled in by hand.
-        const boxed = !v && d.wear?.type === '一体' && !!d.wear.box && !!it.color;
-        const insideLabel = boxed ? insideFor(sorted, d, it.color!) : null, insideAsset = insideLabel ? stored.images.find(i => i.label === insideLabel)?.assetId : undefined;
-        const insideFile = insideAsset ? (await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [insideAsset])).rows[0]?.file_id : undefined;
+        const key = input.item ?? input.sku;
+        const left = await skuLeft({ tenant: job.tenant_id, projectId: job.project_id, stored, layout, key, shopSet, output, has: s => outputs.has(s), bytes: true });
+        const photo = left.photo!;
         // A photo in a scene (the material's, or a SKU model drawn where the set is shot since 10-16): the
         // analysis model finds the model's head and knees on it. A drawn one on plain grey is measured instead.
-        const frame = photo && (source || stored.place) ? await findFrame(photo, recognize) : null;
-        // The left column (11-01): the shop's field combo the product uses, the plan's typed words (货号) first.
-        const card = { name: m.name, category: d.category, points: d.points, color: it.name, words: d.skuWords, outer: d.wear?.type === '内胆' || d.wear?.type === '一体' };
-        const text = skuCardText(card), row = colorRow(it.name);
-        const fieldSet = skuSetOf(await shopSkuFields(job.tenant_id, shopSet), d.skuFields);
-        // The shop's badge (店铺设置「SKU 图角标」, 10-26): the material's own words (「男女同码」), or 「男女同款」 when it has
-        // model photos of both, unless the shop wrote its own. Under the title only when the liner or the version is not there;
-        // in the top-left corner it takes the LOGO's place.
-        const badgeSet = await shopSkuBadge(job.tenant_id, shopSet);
-        const words = skuBadgeText(badgeSet, stored.sku?.tag, !!(d.model.photos?.男 && d.model.photos?.女));
-        const badge = words && (badgeSet.place === 'corner' || badgeSet.place === 'right') ? { text: words, place: badgeSet.place } : null;
-        await succeed(await renderSkuCard({
-          // The shop's own LOGO while it shows one (店铺设置); the sample LOGO is only for the crafts image.
-          ...text, rows: skuCardRows(card, fieldSet, lined ? { ...row, sub: versionName(v) } : row), logo: badge?.place === 'corner' ? null : await (await shopBrand(job.tenant_id, shopSet))?.bytes().catch(() => null) ?? null,
-          fabric: product ? await fabricCrop(product) : await sharp(photo!).resize(800, 800, { fit: 'cover', position: 'centre' }).png().toBuffer(),
-          ...(thumbFile ? { liner: { photo: await fileOf(thumbFile), name: `${linerName(v!)}内胆`, whole: sorted.find((i: { id: string; kind: string }) => i.id === thumbLabel)?.kind === '静物' } }
-            : boxed ? { liner: { photo: insideFile ? await fileOf(insideFile) : null, close: sorted.find((i: { id: string; kind: string }) => i.id === insideLabel)?.kind !== '模特实拍' } } : {}),
-          photo: photo ? { bytes: photo, cutout: false, frame } : { bytes: await removeFlatArtworkBackground(product!, { r: 255, g: 255, b: 255 }), cutout: true },
-          // A version over a liner or the liner alone says so in the dark pill (10-22), else the badge when it goes under the title.
-          // With its liner's picture under the title the liner speaks for itself; zipped up (none), the pill names the version.
-          tag: lined && !thumbFile ? versionName(v) : lined || boxed ? null : badgeSet.place === 'title' ? words : null, badge,
-        }));
+        const frame = !photo.cutout && (photo.source || stored.place) ? await findFrame(photo.bytes, recognize) : null;
+        await succeed(await renderSkuCard({ ...cardOf(left, editFor(d.skuEdits, key)), photo: { bytes: photo.bytes, cutout: photo.cutout, frame } }));
         return;
       }
       // How it is worn (wear.ts): 有内胆 needs the material's photo of the liner, else it is worn as before.
@@ -1010,6 +1058,88 @@ async function findFrame(bytes: Buffer, recognize: Recognize): Promise<Frame | n
     const image = await sharp(bytes, { limitInputPixels: 60_000_000 }).rotate().resize(1024, 1024, { fit: 'inside' }).jpeg({ quality: 82 }).toBuffer();
     return parseFrame((await recognize(frameRequest({ image, model: LISTING_PLAN_MODEL() }))).content);
   } catch (error) { console.error('[listing] frame', error instanceof Error ? error.message : error); return null; }
+}
+
+type SkuLeft = {
+  /** The image's own words as the plan gives them, before any hand edit. */
+  own: CardWords;
+  /** Where a pill typed on an image that had none goes. */
+  pillPlace: 'title' | 'corner' | 'right';
+  logo?: Buffer | null; fabric?: Buffer; liner?: SkuCard['liner'];
+  /** The colour's model photo (`source`: the material's own), or its garment cut out. */
+  photo?: { bytes: Buffer; cutout: boolean; source: boolean };
+  name: string;
+};
+/**
+ * The left column of a product's SKU image (its words, the liner's or the inside's picture, the fabric,
+ * the shop's LOGO) and its photo, for drawing the card, for 「改 SKU 图文字」's form (its words only,
+ * `bytes` false) and for its preview. The same everywhere, so what the form shows is what is printed.
+ */
+export async function skuLeft(o: { tenant: string; projectId: string; stored: StoredPlan; layout: Layout; key: string; shopSet: string | null | undefined;
+  output: (slot: string) => Promise<Buffer>; has: (slot: string) => boolean; bytes: boolean }): Promise<SkuLeft> {
+  const { stored, layout, key } = o, d = stored.draft, colors = stored.colors;
+  const m = (await db().query('SELECT name, materials FROM listing_projects WHERE id=$1', [o.projectId])).rows[0];
+  const sorted = m.materials?.sorted?.images ?? [], it = skuItems(d, colors).find(i => i.key === key);
+  if (!it) throw new CatalogHttpError(404, `SKU 不存在：${key}`);
+  // With a liner (10-22): the version's name under the colour, and the liner alone in the bottom-left card when the material has it.
+  const v = it.version, lined = !!v && v.kind !== '单外壳';
+  // The liner it is drawn over (the user's choice, else the material's); zipped up, no thumbnail to promise a colour.
+  const linerColor = v?.kind === '外壳加内胆' ? linerFor(sorted, v, it.name) : undefined;
+  const thumbLabel = lined && linerColor !== '' ? linerAlone(sorted, v.inner, v.kind === '单内胆' ? it.name : linerColor) : null;
+  const fileOfLabel = async (label: string | null) => {
+    const asset = label ? stored.images.find(i => i.label === label)?.assetId : undefined;
+    return asset ? (await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [asset])).rows[0]?.file_id as string | undefined : undefined;
+  };
+  const thumbFile = await fileOfLabel(thumbLabel);
+  // 一体 with the box ticked (10-29): its colour's inside in the same box, else the box left empty to be filled in by hand.
+  const boxed = !v && d.wear?.type === '一体' && !!d.wear.box && !!it.color;
+  const insideLabel = boxed ? insideFor(sorted, d, it.color!) : null;
+  // The left column (11-01): the shop's field combo the product uses, the plan's typed words (货号) first.
+  const card = { name: m.name, category: d.category, points: d.points, color: it.name, words: d.skuWords, outer: d.wear?.type === '内胆' || d.wear?.type === '一体' };
+  const text = skuCardText(card), row = colorRow(it.name);
+  const fieldSet = skuSetOf(await shopSkuFields(o.tenant, o.shopSet), d.skuFields);
+  // The shop's badge (店铺设置「SKU 图角标」, 10-26): the material's own words (「男女同码」), or 「男女同款」 when it has
+  // model photos of both, unless the shop wrote its own. Under the title only when the liner or the version is not there;
+  // in the top-left corner it takes the LOGO's place.
+  const badgeSet = await shopSkuBadge(o.tenant, o.shopSet);
+  const words = skuBadgeText(badgeSet, stored.sku?.tag, !!(d.model.photos?.男 && d.model.photos?.女));
+  // A version over a liner or the liner alone says so in the dark pill (10-22), else the badge when it goes under the title.
+  // With its liner's picture under the title the liner speaks for itself; zipped up (none), the pill names the version.
+  const tag = lined && !thumbFile ? versionName(v) : lined || boxed ? null : badgeSet.place === 'title' ? words : null;
+  const corner = words && (badgeSet.place === 'corner' || badgeSet.place === 'right') ? { text: words, place: badgeSet.place } : null;
+  const own: CardWords = {
+    kicker: text.kicker, title: text.title, feature: text.feature, rows: skuCardRows(card, fieldSet, lined ? { ...row, sub: versionName(v) } : row),
+    pill: tag ? { text: tag, place: 'title' } : corner, ...(thumbFile ? { linerName: `${linerName(v!)}内胆` } : {}), colorRow: lined ? { ...row, sub: versionName(v) } : row,
+  };
+  const pillPlace = badgeSet.place === 'corner' || badgeSet.place === 'right' ? badgeSet.place : lined || boxed ? 'right' : 'title';
+  if (!o.bytes) return { own, pillPlace, name: it.name };
+  const product = it.color && o.has(`product:${it.color}`) ? await o.output(`product:${it.color}`) : null;
+  // Plans made before the SKU models were drawn: the material's photo found now, else the garment cut out.
+  const label = stored.photos ? stored.photos[key] : modelPhotoFor(sorted, it.color ?? key, it.name, d.model.lead, skuPair(layout));
+  const sourceFile = await fileOfLabel(label ?? null);
+  if (label && !sourceFile) throw new CatalogHttpError(404, '找不到这个颜色的模特图（原始素材可能已在最后一次出图 30 天后清理）');
+  const photo = sourceFile ? await fileOf(sourceFile) : o.has(`skumodel:${key}`) ? await o.output(`skumodel:${key}`) : null;
+  if (!photo && !product) throw new CatalogHttpError(409, `缺少前一步的图：skumodel:${key}`);
+  const insideFile = await fileOfLabel(insideLabel);
+  return {
+    own, pillPlace, name: it.name,
+    // The shop's own LOGO while it shows one (店铺设置); the sample LOGO is only for the crafts image.
+    logo: await (await shopBrand(o.tenant, o.shopSet))?.bytes().catch(() => null) ?? null,
+    fabric: product ? await fabricCrop(product) : await sharp(photo!).resize(800, 800, { fit: 'cover', position: 'centre' }).png().toBuffer(),
+    ...(thumbFile ? { liner: { photo: await fileOf(thumbFile), name: own.linerName, whole: sorted.find((i: { id: string; kind: string }) => i.id === thumbLabel)?.kind === '静物' } }
+      : boxed ? { liner: { photo: insideFile ? await fileOf(insideFile) : null, close: sorted.find((i: { id: string; kind: string }) => i.id === insideLabel)?.kind !== '模特实拍' } } : {}),
+    photo: photo ? { bytes: photo, cutout: false, source: !!sourceFile } : { bytes: await removeFlatArtworkBackground(product!, { r: 255, g: 255, b: 255 }), cutout: true, source: false },
+  };
+}
+/** The card's words and left column, with a hand edit on them (11-01) when there is one. */
+export function cardOf(left: SkuLeft, edit: SkuTextEdit | undefined): Omit<SkuCard, 'photo'> {
+  const w = edit ? applyEdit(left.own, edit, left.pillPlace) : left.own;
+  return {
+    kicker: w.kicker, title: w.title, rows: w.rows, feature: w.feature, fabric: left.fabric!,
+    tag: w.pill?.place === 'title' ? w.pill.text : null, badge: w.pill && w.pill.place !== 'title' ? { text: w.pill.text, place: w.pill.place } : null,
+    logo: w.pill?.place === 'corner' ? null : left.logo ?? null,
+    ...(left.liner ? { liner: { ...left.liner, ...(left.liner.name !== undefined ? { name: w.linerName ?? left.liner.name } : {}) } } : {}),
+  };
 }
 
 /**

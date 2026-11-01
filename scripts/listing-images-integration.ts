@@ -723,6 +723,32 @@ try {
   const [r1, g1, b1] = await rgb(await bytesOf((await slotOf(fifth, card5)).image), 66, 103);
   assert.ok(r1 < 60 && Math.abs(b1 - r1) < 12 && Math.abs(g1 - r1) < 12);
   await call(0, 'shop/sku-badge', { text: '', place: 'title' });
+  // 「改 SKU 图文字」 (11-01): the form starts from each image's words; a preview keeps its picture; the whole
+  // product's words re-card every SKU image but one written by hand, free; one image's re-cards only it.
+  const text5 = await (await call(0, `projects/${fifth}/sku-text`)).json();
+  await call(1, `projects/${fifth}/sku-text`, undefined, 404);
+  assert.ok(text5.items.length >= 1 && text5.items.every((i: { own: { rows: unknown[]; title: string[] } }) => i.own.rows.length >= 1 && i.own.title.length === 2));
+  assert.deepEqual(text5.edits, {});
+  const k5 = text5.items[0].key, own5 = text5.items[0].own;
+  const handEdit = { ...own5, title: ['冬季新款', '暖心之选'], rows: [{ label: '款号', value: 'A-8826', sub: '' }, ...own5.rows.filter((r: { color?: boolean }) => r.color)] };
+  await call(0, `projects/${fifth}/sku-text/preview`, { item: k5, edit: { ...handEdit, title: ['一二三四五六七', ''] } }, 400);
+  assert.match((await (await call(0, `projects/${fifth}/sku-text/preview`, { item: k5, edit: handEdit })).json()).image, /^data:image\/jpeg;base64,/);
+  assert.equal((await imageJobs(fifth, true)).length, 0);
+  const beforeText = await balance(tenants[0]);
+  const allSaved = await (await call(0, `projects/${fifth}/sku-text`, { scope: 'all', edit: handEdit })).json();
+  assert.equal(allSaved.images, text5.items.length);
+  for (const j of await imageJobs(fifth, true)) await make(j);
+  const oneEdit = { ...handEdit, title: ['只改这张', ''] };
+  assert.equal((await (await call(0, `projects/${fifth}/sku-text`, { scope: k5, edit: oneEdit })).json()).images, 1);
+  for (const j of await imageJobs(fifth, true)) await make(j);
+  // The whole product again: the image written by hand keeps its words unless overwritten.
+  assert.equal((await (await call(0, `projects/${fifth}/sku-text`, { scope: 'all', edit: own5 })).json()).images, text5.items.length - 1);
+  for (const j of await imageJobs(fifth, true)) await make(j);
+  assert.deepEqual((await (await call(0, `projects/${fifth}/sku-text`)).json()).edits.one, { [k5]: oneEdit });
+  assert.equal((await (await call(0, `projects/${fifth}/sku-text`, { scope: 'all', edit: null, overwrite: true })).json()).images, text5.items.length);
+  for (const j of await imageJobs(fifth, true)) await make(j);
+  assert.deepEqual((await (await call(0, `projects/${fifth}/sku-text`)).json()).edits, {});
+  assert.equal(await balance(tenants[0]), beforeText);
   const sq5 = (await slotOf(fifth, 'square:1')).image;
   const shown = await call(0, 'assets/' + sq5), shownBytes = Buffer.from(await shown.arrayBuffer()), tag = shown.headers.get('etag')!;
   assert.equal(shown.headers.get('cache-control'), 'private, no-cache');

@@ -668,3 +668,27 @@ button:hover > .edit-tag, button:focus-visible > .edit-tag { opacity: 1; }
 .lp-skuplan .pick { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .lp-skuplan .pick select { min-width: 12em; }
 @media (max-width: 560px) { .lp-skuplan { grid-template-columns: 1fr; } }
+/* 「改 SKU 图文字」 (11-01) */
+.lp-box.lp-skutext { width: min(1180px, 100%); }
+.lp-skutext-scope { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 20px; border-bottom: 1px solid var(--line); }
+.listing-page .lp-skutext-scope .lp-chip, .lp-skutext-scope .lp-chip { cursor: pointer; }
+.lp-skutext-body { display: grid; grid-template-columns: minmax(260px, 420px) minmax(0, 1fr); gap: 22px; padding: 16px 20px; overflow: auto; min-height: 0; }
+.lp-skutext-body .pv { display: grid; gap: 8px; align-content: start; position: sticky; top: 0; }
+.lp-skutext-body .pv .img { position: relative; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: var(--panel); }
+.lp-skutext-body .pv .img img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
+.lp-skutext-body .pv .img.busy img { opacity: 0.55; }
+.lp-skutext-body .pv .img span { position: absolute; inset: auto 8px 8px auto; background: rgba(0, 0, 0, 0.6); color: #fff; font-size: 12px; padding: 2px 8px; border-radius: 999px; }
+.lp-skutext-body .pv label { display: flex; gap: 8px; align-items: center; }
+.lp-skutext-body .form { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.lp-skutext-body .form h4 { margin: 8px 0 0; font-size: 13.5px; }
+.lp-skutext-body .form h4 small { font-weight: 400; color: var(--muted); margin-left: 6px; }
+.lp-skutext-body .line { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.lp-skutext-body .line > span:first-child { width: 4.5em; font-size: 12.5px; color: var(--muted); }
+.lp-skutext-body input.lp-in { width: 9.5em; max-width: 100%; }
+.lp-skutext-body input.lp-in.wide { width: 18em; }
+.lp-skutext-body input.lp-in.bad { border-color: #e5484d; background: rgba(229, 72, 77, 0.06); }
+.lp-skutext-body .row3 { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 6px 0; border-top: 1px dashed var(--line); }
+.lp-skutext-body .row3 > b { width: 4.5em; font-size: 12.5px; font-weight: 600; }
+.lp-skutext-body .row3 .follow { font-size: 12.5px; color: var(--muted); padding: 0 6px; }
+@media (max-width: 760px) { .lp-skutext-body { grid-template-columns: 1fr; } .lp-skutext-body .pv { position: static; } }
+.lp-skutext-body { flex: 1; }
