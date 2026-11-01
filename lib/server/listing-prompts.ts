@@ -364,11 +364,21 @@ ${input.garment ? '- 参考图2是这件衣服的白底产品图，衣服的款�
  * 「点图修改」: the current image (reference 1) is redrawn as the user asks; what they did not ask
  * about stays. Reference 2, when given, is the user's example of what they want.
  */
-export function redrawPrompt(input: { ratio: Ratio; ask: string; reference: boolean; style?: StyleSheet; corner?: boolean }) {
+/**
+ * The user's own references after the image being changed (参考图1). Several since 11-01: the page
+ * numbers them 参考图1… from the user's side, so the words of the ask are mapped to the model's numbers.
+ */
+function userRefs(n: number) {
+  if (n <= 0) return '';
+  const learn = '只学和要求有关的部分（比如背景、姿势、光线、衣服里面的样子），不要照搬上面的文字、logo 和人物长相。';
+  if (n === 1) return `参考图2是用户给的参考，要求里说的「参考图」就是它；${learn}\n`;
+  return `参考图2 到参考图${n + 1}是用户给的 ${n} 张参考，按上传顺序：要求里说的「参考图1」是参考图2，「参考图2」是参考图3，依此类推；要求里没指明哪张时，一起看。${learn}\n`;
+}
+export function redrawPrompt(input: { ratio: Ratio; ask: string; refs: number; style?: StyleSheet; corner?: boolean }) {
   return `参考图1是一张已经做好的淘宝服装主图，${RATIO_NAME[input.ratio]}。按下面的要求改它，没提到的地方（衣服的款式和颜色、模特的长相、其余文字、排版）保持原样。
 
 要求：${input.ask}
-${input.reference ? '参考图2是用户给的参考，只学它和要求有关的部分（比如背景、姿势、光线），不要照搬它上面的文字、logo 和人物长相。\n' : ''}${input.style ? `${style(input.style)}\n` : ''}${input.corner ? `${cornerStay(input.ratio === 'portrait')}\n` : ''}所有中文逐字正确、笔画清晰；要求里写到的新字就用那几个字，除此之外不要加新的字。`;
+${userRefs(input.refs)}${input.style ? `${style(input.style)}\n` : ''}${input.corner ? `${cornerStay(input.ratio === 'portrait')}\n` : ''}所有中文逐字正确、笔画清晰；要求里写到的新字就用那几个字，除此之外不要加新的字。`;
 }
 
 /** An image drawn on the plan (10-22): the user's own words, the references as they ticked them; nothing added on the picture. */

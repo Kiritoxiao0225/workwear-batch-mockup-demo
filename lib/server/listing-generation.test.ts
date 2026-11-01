@@ -240,7 +240,12 @@ describe('the masters', () => {
     const dark = SERVICE_IMAGES.find(x => x.id === 'A-dark')!;
     expect(servicePrompt(dark, ['免费看样｜满意再下单', '可开发票｜普票专票都行'], false)).toContain('右上权益卡：「可开发票」「普票专票都行」');
     expect(serviceWordsPrompt([{ from: '免费看样｜满意再下单', to: '可开发票｜普票专票都行' }])).toContain('「免费看样」「满意再下单」 换成 「可开发票」「普票专票都行」');
-    expect(redrawPrompt({ ratio: 'square', ask: '背景换成工地', reference: true })).toContain('参考图2是用户给的参考');
+    expect(redrawPrompt({ ratio: 'square', ask: '背景换成工地', refs: 1 })).toContain('参考图2是用户给的参考');
+    // Several (11-01): the user's 「参考图1」 is the model's 参考图2, and so on.
+    const three = redrawPrompt({ ratio: 'square', ask: '内胆照参考图2画', refs: 3 });
+    expect(three).toContain('参考图2 到参考图4是用户给的 3 张参考');
+    expect(three).toContain('「参考图2」是参考图3');
+    expect(redrawPrompt({ ratio: 'square', ask: '换背景', refs: 0 })).not.toContain('用户给的');
   });
 });
 
@@ -348,7 +353,7 @@ describe('the closer and the SKU models (10-16)', () => {
     expect(mainPrompt({ ratio: 'square', task: '细节', template: m4.templates.细节.square, layout: m4, content: { title: '细节', sub: '', tags: [], cells: [], scene: '' }, used: one, all: one, garment: ['连帽'], lead: '男', fromSku: false, cast: null, corner: true }))
       .toContain('左上角空位，之后要贴店铺 LOGO');
     expect(relayoutPrompt(false, true)).toContain('参考图1左上角留着一块空位'); expect(relayoutPrompt(false)).not.toContain('空位');
-    expect(redrawPrompt({ ratio: 'portrait', ask: '背景换亮', reference: false, corner: true })).toContain('宽26% 高10% 只有背景');
+    expect(redrawPrompt({ ratio: 'portrait', ask: '背景换亮', refs: 0, corner: true })).toContain('宽26% 高10% 只有背景');
   });
   it('a SKU model stands where the set is shot, the pose turning with the colour', () => {
     const at = (pose: number, place?: string) => skuModelPrompt({ color: '北欧蓝', garment: ['立领'], lead: '男', who: 'lead', halves: false, logo: null, place, pose });

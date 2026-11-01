@@ -81,8 +81,8 @@ export type JobInput = (
    * `product`: the colour whose white image keeps the garment's details; `cast`: the cast comes too (the long image shows the face the cover crops).
    */
   | { kind: 'relayout'; from: string; ratio: Ratio; index: number; words: Words; product?: string; cast?: boolean }
-  /** 「点图修改」: `base` (the current version) redrawn as asked; `reference`: the user's example image. */
-  | { kind: 'redraw'; base: string; ask: string; reference?: string; ratio: Ratio; index?: number; words: Words | null }
+  /** 「点图修改」: `base` (the current version) redrawn as asked; `references`: the user's example images, in the order given (11-01, up to 4; `reference`: the one of jobs before). */
+  | { kind: 'redraw'; base: string; ask: string; reference?: string; references?: string[]; ratio: Ratio; index?: number; words: Words | null }
   /**
    * An image drawn on the plan before anything is made (10-22: a liner colour the material lacks): the
    * user's own words and the material images they ticked (`refs`, labels) or uploaded for it (`assets`).
@@ -419,7 +419,9 @@ export async function editSlot(tenant: Tenant, user: string, projectId: string, 
   });
 }
 
-const redrawSchema = z.object({ slot: z.string().regex(MAIN_SLOT), ask: z.string().trim().min(1, '先写一句想怎么改').max(300, '要求最多 300 个字'), reference: z.uuid().optional() });
+export const REDRAW_REFS_MAX = 4;
+const redrawSchema = z.object({ slot: z.string().regex(MAIN_SLOT), ask: z.string().trim().min(1, '先写一句想怎么改').max(300, '要求最多 300 个字'), reference: z.uuid().optional(),
+  references: z.array(z.uuid()).max(REDRAW_REFS_MAX, `参考图最多 ${REDRAW_REFS_MAX} 张`).optional() });
 /**
  * 「点图修改」: the image's current version is redrawn as the user asks (with their reference image,
  * if any) at the price of one image. The result is kept as a candidate: 「采用」 makes it current.
@@ -436,11 +438,13 @@ export async function redrawSlot(tenant: Tenant, user: string, projectId: string
     const base = (await latestOutputs(projectId)).get(b.slot);
     if (!base) throw new CatalogHttpError(409, '这张还没出好');
     if ((await c.query(`SELECT 1 FROM listing_jobs WHERE project_id=$1 AND slot=$2 AND status IN ('queued','running') LIMIT 1`, [projectId, b.slot])).rowCount) throw new CatalogHttpError(409, '这张正在出，等它出完再改');
-    if (b.reference && !(await c.query(`SELECT 1 FROM listing_assets WHERE id=$1 AND project_id=$2 AND kind='ref'`, [b.reference, projectId])).rowCount) throw new CatalogHttpError(400, '参考图不存在');
+    // The page sends `references` since 11-01; one `reference` (a page loaded before) is the same as one in the list.
+    const refs = [...new Set(b.references ?? (b.reference ? [b.reference] : []))];
+    if (refs.length && (await c.query(`SELECT count(*)::int AS n FROM listing_assets WHERE id = ANY($1::uuid[]) AND project_id=$2 AND kind='ref'`, [refs, projectId])).rows[0].n !== refs.length) throw new CatalogHttpError(400, '参考图不存在');
     const made = (await c.query(`SELECT j.input FROM listing_assets a LEFT JOIN listing_jobs j ON j.id=a.job_id WHERE a.id=$1`, [base.id])).rows[0]?.input as JobInput | undefined;
     const ratio: Ratio = b.slot.startsWith('portrait') ? 'portrait' : b.slot.startsWith('long') ? 'long' : 'square';
     const index = made && 'index' in made ? made.index : undefined, words = made && 'words' in made ? made.words : null;
-    const input: JobInput = { kind: 'redraw', base: base.id, ask: b.ask, ...(b.reference ? { reference: b.reference } : {}), ratio, ...(index !== undefined ? { index } : {}), words };
+    const input: JobInput = { kind: 'redraw', base: base.id, ask: b.ask, ...(refs.length ? { references: refs } : {}), ratio, ...(index !== undefined ? { index } : {}), words };
     const id = randomUUID();
     const runId = await holdRun(c, tenant, projectId, [{ multi: false }], prices);
     await c.query(`INSERT INTO listing_jobs(id,tenant_id,project_id,created_by,step,run_id,slot,input,depends,created_at) VALUES($1,$2,$3,$4,'image',$5,$6,$7,'{}',clock_timestamp())`,
@@ -716,15 +720,15 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
       prompt = drawPrompt(input.prompt, references.length);
     } else if (input.kind === 'redraw') {
       references = [await versionAt1K(job.project_id, input.base)];
-      if (input.reference) {
-        const ref = (await db().query(`SELECT file_id FROM listing_assets WHERE id=$1 AND project_id=$2 AND kind='ref'`, [input.reference, job.project_id])).rows[0];
+      for (const id of input.references ?? (input.reference ? [input.reference] : [])) {
+        const ref = (await db().query(`SELECT file_id FROM listing_assets WHERE id=$1 AND project_id=$2 AND kind='ref'`, [id, job.project_id])).rows[0];
         if (!ref) throw new CatalogHttpError(404, '参考图找不到了');
         // Like every other reference: a phone original sent whole is slow and fails on the relay.
         references.push(await sharp(await fileOf(ref.file_id), { limitInputPixels: 60_000_000 }).rotate().resize(1536, 1536, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer());
       }
       ratio = input.ratio;
       corner = await kept(input.base);
-      prompt = redrawPrompt({ ratio, ask: input.ask, reference: !!input.reference, style: layout?.style, corner });
+      prompt = redrawPrompt({ ratio, ask: input.ask, refs: references.length - 1, style: layout?.style, corner });
     } else {
       if (!d || !layout) throw new CatalogHttpError(409, '还没有定方案');
       const colors = stored.colors, garment = stored.garment, main = colors[0];

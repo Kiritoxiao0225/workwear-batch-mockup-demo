@@ -634,8 +634,13 @@ try {
   assert.equal((await slotOf(fourth, 'square:1')).image, candidate.id);
   assert.deepEqual([(await slotOf(fourth, 'square:1')).redraw.open, await editsOf(fourth)], [false, { running: 0, ready: 0, failed: 0 }]);
   // 「不用」: the shown image chosen again puts the new one away (it stays in the history).
-  const { job: againJob } = await (await call(0, `projects/${fourth}/redraw`, { slot: 'square:1', ask: '再亮一点' })).json();
+  // Several references (11-01): up to 4, each of the product's own, in the order given.
+  const ref2 = await (await call(0, `projects/${fourth}/refs`, await image(300, 300, '#aa3366'), 200, 'POST', octet)).json();
+  await call(0, `projects/${fourth}/redraw`, { slot: 'square:1', ask: '再亮一点', references: [ref.asset, ref2.asset, ref.asset, ref2.asset, ref.asset] }, 400);
+  await call(0, `projects/${fourth}/redraw`, { slot: 'square:1', ask: '再亮一点', references: [ref.asset, randomUUID()] }, 400);
+  const { job: againJob } = await (await call(0, `projects/${fourth}/redraw`, { slot: 'square:1', ask: '再亮一点', references: [ref.asset, ref2.asset] })).json();
   for (const j of await imageJobs(fourth, true)) await make(j);
+  assert.equal(prompt('square:1').refs, 3); assert.match(prompt('square:1').prompt, /参考图2 到参考图3是用户给的 2 张参考/);
   assert.deepEqual(await editsOf(fourth), { running: 0, ready: 1, failed: 0 });
   await call(0, `projects/${fourth}/current`, { slot: 'square:1', asset: candidate.id });
   const keptShown = await slotOf(fourth, 'square:1');

@@ -311,7 +311,7 @@ function ShopForm({ state, unit, exempt, onSay }: { state: ShopState; unit: numb
       {editDef && editMade && <EditDialog title={`修改服务图：${editDef.name}`} current={editMade.image} price={credits(1)}
         note="改好采用后，以后用这套母版的商品都用新的；已经出过图的商品不变"
         history={editMade.history.map(h => ({ image: h.image, label: fmtDay(h.madeAt) }))}
-        onGenerate={async (ask, file) => { const made = await redrawImage(state.project, serviceSlot(editDef.id, state.set), ask, file); fresh.current.set(made.url, made.id); return made.url; }}
+        onGenerate={async (ask, files) => { const made = await redrawImage(state.project, serviceSlot(editDef.id, state.set), ask, files); fresh.current.set(made.url, made.id); return made.url; }}
         onAdopt={image => {
           const asset = fresh.current.get(image) ?? editMade.history.find(h => h.image === image)?.asset;
           if (!asset) return;

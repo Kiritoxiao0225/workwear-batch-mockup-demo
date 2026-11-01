@@ -109,10 +109,10 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
   };
   const skuNow = plan?.skuPeople ?? "实拍";
   /** One change, asked for: it is made in the background, its progress shows in 「改图进度」 and on the image. */
-  const redraw = async (slot: string, ask: string, file: File | null) => {
+  const redraw = async (slot: string, ask: string, files: File[]) => {
     setSending(x => [...x, slot]);
     try {
-      await askRedraw(detail.id, slot, ask, file);
+      await askRedraw(detail.id, slot, ask, files);
       await onDone("已提交，在后台改：可以接着点别的图提要求，进度看上面的「改图进度」");
       return null;
     } catch (error) { onError(`${nameOfSlot(slot)}没提交上：${(error as Error).message}`); throw error; }
@@ -174,7 +174,7 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
           history={edited.history.filter(v => v.id !== edited.image && v.id !== editedNew).map(v => ({ image: assetUrl(v.id), label: v.change ? `改：${v.change}` : `第 ${edited.history.indexOf(v) + 1} 版` }))}
           background job={edited.redraw} made={editedNew ? [assetUrl(editedNew)] : []}
           initialAsk={edited.redraw?.open && edited.redraw.status === "failed" ? edited.redraw.ask : ""}
-          onGenerate={(ask, file) => redraw(edited.slot, ask, file)}
+          onGenerate={(ask, files) => redraw(edited.slot, ask, files)}
           onAdopt={image => { const v = edited.history.find(x => assetUrl(x.id) === image); if (v) void act("current", { slot: edited.slot, asset: v.id }, "换上了，原图在历史里").then(() => edit(null)); }}
           onKeep={() => keepShown(edited.slot, edited.redraw?.status === "succeeded" ? "保留了原来那张，新图在历史里" : "好的，这条收起了")}
           onClose={() => edit(null)} />}
