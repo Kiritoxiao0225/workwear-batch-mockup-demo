@@ -32,6 +32,16 @@ export const SKU_FIT = { value: 9, sub: 16, title: 11, label: 12 } as const;
 const fits = (s: string, max: number) => !!s.trim() && textUnits(s) <= max;
 /** Down is the filling, not the fabric (10-18: 「纯净白鸭绒90%」 in the fabric row). */
 const FILLING = /鸭绒|鹅绒|含绒|充绒|填充/;
+/** What a point is about (its 部位) when that is not the outer fabric: the lining, the liner, the filling, the sleeves' filling (11-01: 8826's 石墨烯 里布, 袖子填充物). */
+const INNER_PART = /里布|里料|内里|内胆|填充|袖/;
+/** A fabric said as its makeup, the way a wash label says it, not as its selling name. */
+const MAKEUP = /\d+(\.\d+)?\s*%|成分|含量|^(面料|胆料|里料|里布|填充物?)\s*[:：]/;
+/**
+ * The fabric row's points in the order they are tried (11-01): the ticked before the others, then the
+ * ones about the 面料 itself, a wash label's makeup last. 8826 printed its label's 「100%聚酯纤维」 though
+ * its detail page named the fabric 「双经双纬T800」.
+ */
+const fabricRank = (p: { on: boolean; part?: string; text: string }) => (p.on ? 0 : 4) + (p.part === '面料' ? 0 : 1) + (MAKEUP.test(p.text) || p.part === '洗标' ? 2 : 0);
 /** Words about two colours meeting, only true of a two-colour colour (10-18: 「撞色设计剪裁」 on plain black). */
 const TWO_TONE = /撞色|拼色/;
 
@@ -74,7 +84,7 @@ export function styleNo(name: string): string | null {
 }
 
 type CardInput = {
-  name: string; category: string; points: (Pick<Point, 'text' | 'note' | 'type' | 'on' | 'source'> & { short?: string })[]; color?: string;
+  name: string; category: string; points: (Pick<Point, 'text' | 'note' | 'type' | 'on' | 'source'> & { short?: string; part?: string })[]; color?: string;
   /** Words typed on the plan (11-01), before the material's; 货号 before the name's. */
   words?: SkuWords;
   /** Worn over a liner or lined (有内胆, 一体): the fabric is the shell's, said so (11-01: 「100%聚酯纤维」 read as the liner's). */
@@ -98,7 +108,7 @@ export function fieldRows(input: CardInput): Record<SkuWordField, SkuRow | null>
   const style = styleNo(input.name), fabric = input.outer ? 'FABRIC/外层面料' : 'FABRIC/面料';
   return {
     style: typed('style', 'STYLE NO./货号', 'style') ?? (style ? { label: 'STYLE NO./货号', value: style, sub: '', icon: 'style' } : null),
-    fabric: typed('fabric', fabric, 'fabric') ?? row(fabric, all('面料', p => !FILLING.test(p.text)), 'fabric'),
+    fabric: typed('fabric', fabric, 'fabric') ?? row(fabric, all('面料', p => !FILLING.test(p.text) && !INNER_PART.test(p.part ?? '')).sort((a, b) => fabricRank(a) - fabricRank(b)), 'fabric'),
     fit: typed('fit', 'FIT/版型', 'style') ?? row('FIT/版型', all('颜色款式', p => twoTone || !TWO_TONE.test(p.text)), 'style'),
     detail: typed('detail', 'DETAIL/工艺', 'dot') ?? row('DETAIL/工艺', all('做工')),
     scene: typed('scene', 'SCENE/适用', 'scene') ?? row('SCENE/适用', all('人群场景'), 'scene'),

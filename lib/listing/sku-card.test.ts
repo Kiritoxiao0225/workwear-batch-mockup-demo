@@ -137,3 +137,16 @@ describe('SKU 图字段组合 and 货号 (11-01)', () => {
     expect(skuSetOf(undefined, 'auto').id).toBe('auto');
   });
 });
+
+describe('the fabric row (11-01)', () => {
+  const fab = (text: string, part: string, on = true) => ({ ...point('面料', text, '', on), part });
+  it("takes the fabric's selling name before a wash label's makeup, and never the lining or the filling (8826)", () => {
+    const points = [fab('鸭绒（绒子含量50%）', '洗标'), fab('100%聚酯纤维', '洗标'), fab('轻暖羽绒', '里布'), fab('石墨烯黑科技', '里布'), fab('双经双纬T800', '面料'),
+      fab('胆料：100%聚酯纤维', '里布'), fab('袖子填充物：100%聚酯纤维', '袖子')];
+    expect(skuCardText({ name: '8826款羽绒一体', category: 'workwear', points }).rows.map(r => r.value)).toEqual(['8826', '双经双纬T800']);
+    // Only the label: its makeup is still the fabric.
+    expect(skuCardText({ name: 'x', category: 'workwear', points: [fab('100%聚酯纤维', '洗标'), fab('石墨烯黑科技', '里布')] }).rows[0].value).toBe('100%聚酯纤维');
+    // A point the user unticked gives way to a ticked label.
+    expect(skuCardText({ name: 'x', category: 'workwear', points: [fab('双经双纬T800', '面料', false), fab('100%聚酯纤维', '洗标')] }).rows[0].value).toBe('100%聚酯纤维');
+  });
+});
