@@ -9,11 +9,12 @@
  */
 import { useState } from "react";
 import { adoptDrawn, api, drawMaterial, type LinerTag } from "@/lib/listing/client-api";
+import { linerWhitePrompt } from "@/lib/listing/wear";
 
 export type LinerPick = { label: string; url: string; caption: string };
 
 const promptOf = (inner: string, color: string, tidy: boolean) => tidy
-  ? `照参考图这件${inner}内胆，颜色（${color || "原色"}）、款式、领子、拉链、口袋和面料质感都不变；做成电商白底图：纯白背景，隐形模特效果，正面朝前，拉链拉上，画面里只有这件内胆，不要人、不要文字和水印。`
+  ? linerWhitePrompt(inner, color)
   : `照参考图这件${inner}内胆，款式、领子、拉链、口袋和面料质感都不变，颜色换成${color || "（写上颜色）"}；做成电商白底图：纯白背景，隐形模特效果，正面朝前，拉链拉上，画面里只有这件内胆，不要人、不要文字和水印。`;
 
 export function LinerDialog({ projectId, inner, name, color: preset, candidates, price, onUpload, onDone, onClose }: {

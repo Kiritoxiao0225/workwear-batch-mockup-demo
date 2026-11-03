@@ -97,6 +97,36 @@ export function insideBoxRequest(input: { image: Buffer; model: string }) {
     ] }] };
 }
 
+/**
+ * A liner on a photo for its SKU thumbnail (11-04): is this liner on it, and where. 8828's 红色 soft
+ * liner photo was a shop rack, and may have shown the shell, not the liner.
+ */
+const LINER_SYSTEM = `你会收到一张素材照片，和一件三合一外套的内胆（可以单独穿的那件里层衣服）的名字和颜色。只输出 JSON。
+找出照片里这件内胆的位置，用来把它整理成电商白底图。
+- 只认这件内胆本身：名字说的那种内胆（比如羽绒、软壳、抓绒），颜色对得上。外面那件外壳、别的衣服、衣架、货架、背景都不算。
+- 照片里有人穿着它时，框住它露出来的整件，不要框人脸和下半身。
+- 照片里有好几件时，选最完整、最清楚、颜色对得上的那一件。
+- 照片里看不到这件内胆（比如拍的是外壳，或只是一角看不清），found 写 false。
+- box 是 [左, 上, 宽, 高]，都是占整张图宽或高的百分比（0–100），框住整件，四周别留太多。`;
+
+export function linerBoxRequest(input: { image: Buffer; inner: string; color: string; model: string }) {
+  return { model: input.model, reasoning_effort: 'low', max_completion_tokens: 1000, response_format: { type: 'json_object' }, stream: false,
+    messages: [{ role: 'system', content: LINER_SYSTEM }, { role: 'user', content: [
+      { type: 'text', text: `内胆：${input.inner}内胆，颜色「${input.color}」。\n输出：{ "found": true, "box": [0, 0, 0, 0], "what": "几个字说框住的是什么" }` },
+      { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${input.image.toString('base64')}` } },
+    ] }] };
+}
+/** The liner as fractions [left, top, width, height], or null: not on the photo, or too small to show it. */
+export function parseLinerBox(content: string): [number, number, number, number] | null {
+  let raw: unknown;
+  try { raw = JSON.parse(content); } catch { return null; }
+  const p = insideSchema.safeParse(raw);
+  if (!p.success || !p.data.found || !p.data.box) return null;
+  const [l, t, w, h] = p.data.box.map(v => Math.max(0, Math.min(100, v)));
+  const box = [l, t, Math.min(w, 100 - l), Math.min(h, 100 - t)];
+  return box[2] < 8 || box[3] < 8 ? null : box.map(v => v / 100) as [number, number, number, number];
+}
+
 const insideSchema = z.object({ found: z.boolean(), box: z.tuple([z.number(), z.number(), z.number(), z.number()]).optional() });
 /** The front panel's inside as fractions [left, top, width, height], or null: not found, or too small to be a panel. */
 export function parseInsideBox(content: string): [number, number, number, number] | null {

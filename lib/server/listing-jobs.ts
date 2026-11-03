@@ -13,6 +13,7 @@ import { currentPrices, holdCredits, microToCents, priceOf, releaseHold, settleH
 import { directKeys, draftImages, pickProblems, reusedSlots, usedSlots, type Reuse } from '../listing/draft';
 import { draftSchema, type SubmittedDraft } from '../listing/draft-schema';
 import { skuPhotos } from '../listing/sku-card';
+import { linerThumbs } from '../listing/sku-versions';
 import { skuPair, withCover, type CoverPeople } from '../listing/templates';
 import { claimLayout, executeLayout, renewLayoutLease, resolveLayout } from './listing-layouts';
 import { chooseMaterials, coloursRequest, applyLiners, applySkuCheck, parseSkuCheck, SKU_CHECK_PHOTO_SIDE, SKU_CHECK_TEXT_SIDE, skuCheckImages, skuCheckRequest, LINER_CHECK_BATCH, LINER_CHECK_SIDE, linerCandidates, linerFolderRest, linerRequest, mergePoints, parseColours, parseLinerBatch, parsePoints, type LinerCheck, parseRead, parseSorted, parseWhole, pointsRequest, READ_GROUP_VIEWS, READ_SPLIT_VIEWS, readRequest, type ReadPoints, recolored, settleCopies, sortRequest, uniqueColours, wholeRequest, worthReading, type Organized, type SortedImage } from './listing-organize';
@@ -423,6 +424,8 @@ export async function executeWrite(job: JobRow, provider: Provider = (request, h
     });
     await db().query(`UPDATE listing_attempts SET status='succeeded',receipt=$2,finished_at=now() WHERE id=$1`, [attemptId, { model: call.model, usage: call.usage, durationMs: call.durationMs }]);
     const stored = buildPlan(call.content, { draft, images: m.images, direct: directKeys(draft.colors, m.sorted.images), photos: skuPhotos(draft, m.sorted.images, skuPair(layout)), sorted: m.sorted.images, model: call.model });
+    // The liners the SKU cards show, each onto white before the cards (11-04).
+    stored.liners = linerThumbs(m.sorted.images, stored.draft, stored.colors);
     // A copy's carried-over white images and cast are kept, not drawn again (listing-copy).
     const reused = reusedSlots(draft, m.reuse), jobs = planJobs(stored, layout, 1).filter(j => !reused.has(j.slot));
     await catalogTransaction(async c => {

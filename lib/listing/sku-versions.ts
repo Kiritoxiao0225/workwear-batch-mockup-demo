@@ -94,10 +94,48 @@ export const linerFor = (images: Img[], v: DraftVersion, shell: string): string 
  * A photo of the liner alone, for the thumbnail on a SKU card with a liner: in the liner's colour (the
  * one this shell is shown over), a real photo before a page of the detail (10-22: 6609's 「内胆 2 款可选」 page, both liners on it).
  */
-export function linerAlone(images: Img[], inner: string, color?: string): string | null {
+export const linerAlone = (images: Img[], inner: string, color?: string): string | null => linerAloneRanked(images, inner, color)[0] ?? null;
+/** linerAlone's photos, best first. */
+export function linerAloneRanked(images: Img[], inner: string, color?: string): string[] {
   // A white image of it (tidied or drawn on the plan, 10-22) before a photo with someone wearing it.
   const rank = (i: Img) => ((i.innerColor || i.color) === color ? 4 : 0) + (i.kind === '模特实拍' || i.kind === '静物' || i.kind === '3D渲染' ? 2 : 0) + (i.kind === '静物' ? 1 : 0);
-  return images.filter(i => !i.same && i.role === '内胆' && i.inner === inner).sort((a, b) => rank(b) - rank(a))[0]?.id ?? null;
+  return images.filter(i => !i.same && i.role === '内胆' && i.inner === inner).sort((a, b) => rank(b) - rank(a)).map(i => i.id);
+}
+
+/**
+ * The liner on a SKU card's thumbnail (11-04), one per liner and colour: made onto white once before
+ * the cards (slot `liner:<id>`). 8828's 红色 soft liner had only a shop-rack photo, read as a still
+ * life, so the whole scene was shrunk into the box.
+ */
+export const linerThumbId = (inner: string, color: string) => `${inner}~${color}`;
+/** The liner a SKU item's card shows on its thumbnail (its id), or null: none, or zipped up. */
+export function itemLinerThumb(images: Img[], item: SkuItem): { id: string; inner: string; color: string } | null {
+  const v = item.version;
+  if (!v || v.kind === '单外壳' || !v.inner) return null;
+  const color = v.kind === '单内胆' ? item.name : linerFor(images, v, item.name);
+  return color ? { id: linerThumbId(v.inner, color), inner: v.inner, color } : null;
+}
+/**
+ * Every thumbnail a plan's SKU cards show: `photos` the material's photos to make each from, best first
+ * (at most 3 looked at; another colour's only when it has none in its own, `same` false, drawn in its
+ * colour), `still` no one in it; `items` the one each SKU image (by key) shows. A liner with no photo has none.
+ */
+export type LinerPhoto = { label: string; same: boolean; still: boolean };
+export type LinerThumbs = { photos: Record<string, LinerPhoto[]>; items: Record<string, string> };
+export function linerThumbs(images: Img[], d: Pick<Draft, 'versions'>, colors: { name: string; sku: string }[]): LinerThumbs {
+  const out: LinerThumbs = { photos: {}, items: {} };
+  for (const it of skuItems(d, colors)) {
+    const t = itemLinerThumb(images, it);
+    if (!t) continue;
+    const photos = out.photos[t.id] ?? (() => {
+      const all = linerAloneRanked(images, t.inner, t.color).map(id => images.find(i => i.id === id)!)
+        .map(i => ({ label: i.id, same: (i.innerColor || i.color) === t.color, still: (i.kind === '静物' || i.kind === '3D渲染') && !i.person }));
+      return all.some(p => p.same) ? all.filter(p => p.same).slice(0, 3) : all.slice(0, 1);
+    })();
+    if (!photos.length) continue;
+    out.photos[t.id] = photos; out.items[it.key] = t.id;
+  }
+  return out;
 }
 /** The liner colour a shell is shown over in this item's photo (or the one it is drawn from). */
 export const linerColorOf = (images: Img[], label: string | null | undefined) => images.find(i => i.id === label)?.innerColor || undefined;

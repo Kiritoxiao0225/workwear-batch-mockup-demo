@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { itemPhoto, itemReference, linerByColor, linerFor, mainLiner, skuItems, type DraftVersion } from './sku-versions';
+import { itemPhoto, itemReference, linerByColor, linerFor, mainLiner, skuItems, linerThumbs, type DraftVersion } from './sku-versions';
 
 const colors = [{ name: '乌梅紫', sku: 'M1' }, { name: '幻影黑', sku: 'M2' }];
 const v = (key: string, kind: DraftVersion['kind'], inner: DraftVersion['inner'], cs: string[], on = true): DraftVersion => ({ key, kind, inner, colors: cs, on });
@@ -88,5 +88,32 @@ describe('mainLiner: the main images wear each colour\'s own liner (10-25)', () 
     expect(linerByColor(d)).toBe(true);
     expect(linerByColor({ ...d, versions: d.versions.map(x => ({ ...x, on: x.kind === '单外壳' })) })).toBe(false);
     expect(linerByColor({ ...d, wear: { type: '薄款' as never } })).toBe(false);
+  });
+});
+
+describe('the liners on the SKU cards\' thumbnails, each onto white once (11-04)', () => {
+  // 8828: the red soft liner's only photo is a shop rack (read as a still life); the black down one has a white still life.
+  const images = [
+    { id: 'R1', kind: '静物', role: '内胆', color: '红色', inner: '软壳', innerColor: '红色', person: '' },
+    { id: 'D1', kind: '静物', role: '内胆', color: '黑色', inner: '羽绒', innerColor: '黑色', person: '' },
+    { id: 'D2', kind: '模特实拍', role: '内胆', color: '黑色', inner: '羽绒', innerColor: '黑色', person: '女' },
+    { id: 'S1', kind: '模特实拍', role: '内胆', color: '黑色', inner: '软壳', innerColor: '黑色', person: '女' },
+  ];
+  const reds = [{ name: '朱雀红', sku: 'R' }, { name: '藏青', sku: 'N' }];
+  const ver = [v('v1', '单外壳', '', ['朱雀红', '藏青']), { ...v('v2', '外壳加内胆', '软壳', ['朱雀红', '藏青']), liners: { 朱雀红: '红色', 藏青: '蓝色' } },
+    { ...v('v3', '外壳加内胆', '羽绒', ['朱雀红', '藏青']), liners: { 朱雀红: '黑色', 藏青: '黑色' } }];
+  it('one per liner and colour, shared by every card that shows it; same-colour photos first, a still life marked', () => {
+    const t = linerThumbs(images, { versions: ver }, reds);
+    expect(t.items).toEqual({ 'R~v2': '软壳~红色', 'R~v3': '羽绒~黑色', 'N~v2': '软壳~蓝色', 'N~v3': '羽绒~黑色' });
+    expect(t.photos['羽绒~黑色']).toEqual([{ label: 'D1', same: true, still: true }, { label: 'D2', same: true, still: false }]);
+    expect(t.photos['软壳~红色']).toEqual([{ label: 'R1', same: true, still: true }]);
+    // No photo in its colour: the best of another colour, drawn in its own.
+    expect(t.photos['软壳~蓝色']).toEqual([{ label: 'R1', same: false, still: true }]);
+    expect(t.items).not.toHaveProperty('R');
+  });
+  it('a liner zipped up, or with no photo at all, has none', () => {
+    const zipped = [{ ...ver[1], liners: { 朱雀红: '', 藏青: '' } }];
+    expect(linerThumbs(images, { versions: zipped }, reds)).toEqual({ photos: {}, items: {} });
+    expect(linerThumbs([], { versions: ver }, reds)).toEqual({ photos: {}, items: {} });
   });
 });

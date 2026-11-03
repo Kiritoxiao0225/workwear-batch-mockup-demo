@@ -187,6 +187,15 @@ export function linerPhoto(images: { id: string; kind: string; role?: string; in
 }
 
 /** A liner sold alone, worn on its own (its SKU image). */
+/**
+ * A liner onto white from the material's photo of it (the plan's 「整理成白底图」, 10-22; on its own for the
+ * SKU cards' thumbnails, 11-04). `cropped`: the reference is the liner cut out of a bigger photo; `recolor`: it is
+ * another colour's (the material has none in this one).
+ */
+export const linerWhitePrompt = (inner: string, color: string, cropped = false, recolor = false) =>
+  `照参考图${cropped ? '（从素材照片上裁下来的这件内胆）' : ''}这件${inner}内胆，`
+  + (recolor ? `颜色换成${color}，款式、领子、拉链、口袋和面料质感都不变` : `颜色（${color || '原色'}）、款式、领子、拉链、口袋和面料质感都不变`)
+  + `${cropped ? '，绗缝格子、鼓起的厚薄、表面光泽都照它' : ''}；做成电商白底图：纯白背景，隐形模特效果，正面朝前，拉链拉上，画面里只有这件内胆，不要人、不要衣架、不要文字和水印。`;
 export const LINER_ALONE_WEAR = '只穿这件内胆，外面不穿外套：内胆拉链拉到胸口，里面是白色圆领 T 恤';
 /** The first reference of a liner worn alone: its photo in the material, the liner only. */
 export const linerSubject = (inner: string, color: string) => `参考图1是这件${inner}内胆「${color}」的照片，内胆的颜色、材质、领子和拉链以它为准；照片里的人、背景和别的衣服都不要带过来。`;

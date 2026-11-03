@@ -8,6 +8,7 @@ import { saveCatalogFile, readCatalogFile, fileSha256 } from './catalog-files';
 import { assertStorageRoom, STORAGE_FULL } from './quota';
 import { registerFileRef } from './file-authorization';
 import { shapeOf } from '../listing/templates';
+import type { LinerThumbs } from '../listing/sku-versions';
 import { countsSchema, type SubmittedDraft } from '../listing/draft-schema';
 import { resolveLayout } from './listing-layouts';
 
@@ -97,6 +98,11 @@ export type StoredPlan = {
   photos?: Record<string, string>;
   /** A colour drawn from a photo of several garments (colour key → the colour to take from it); none before 10-16. */
   sourceSelections?: Record<string, string>;
+  /**
+   * The liners the SKU cards show on their thumbnails (11-04), each made onto white (slot `liner:<id>`) from
+   * the material's photos of it (sku-versions linerThumbs); none before 11-04: the photo as it is.
+   */
+  liners?: LinerThumbs;
   /** Where the SKU models and the closer's group are photographed, the same for the whole set (the writing step's); none before 10-16. */
   place?: string;
 };

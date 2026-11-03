@@ -24,7 +24,7 @@ import { draftPrice, layoutOf, PriceInfo, type Prices } from "./listing-plan";
 import { useShopSets } from "./listing-service";
 
 const MAIN = /^(square|portrait|long):/;
-const SHAPE: Record<string, string> = { square: "1 / 1", portrait: "3 / 4", long: "2 / 3", sku: "1 / 1", skumodel: "3 / 4", product: "1 / 1", cast: "3 / 4" };
+const SHAPE: Record<string, string> = { square: "1 / 1", portrait: "3 / 4", long: "2 / 3", sku: "1 / 1", skumodel: "3 / 4", product: "1 / 1", cast: "3 / 4", liner: "1 / 1" };
 /** How long until an image waiting to be tried again is tried: 「1 分钟」, or 「片刻」 when it is due. */
 const retryIn = (at: string) => { const m = Math.ceil((Date.parse(at) - Date.now()) / 60_000); return m > 0 ? `${m} 分钟` : "片刻"; };
 const numOf = (slot: string) => slot.startsWith("long") ? "长图" : `第 ${slot.split(":")[1].split("+")[0]} 张`;
@@ -58,12 +58,15 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
   const made = detail.slots.filter(s => s.image).length;
   const later = plan && detail.materials ? draftPrice(plan, detail.materials, layout, prices).later : null;
   const people = detail.slots.filter(s => s.slot === "cast" || s.slot.startsWith("skumodel:") || (s.slot.startsWith("sku:") && layout.sku.people > 0) || (MAIN.test(s.slot) && s.task && layout.templates[s.task][s.slot.startsWith("portrait") ? "portrait" : "square"].people > 0) || (s.slot.startsWith("long") && layout.long.people > 0));
-  const order = (slot: string) => `${["cast", "square", "portrait", "long", "sku", "skumodel", "product"].indexOf(slot.split(":")[0])}${slot.replace(/\d+/, n => n.padStart(2, "0"))}`;
+  const order = (slot: string) => `${["cast", "square", "portrait", "long", "sku", "skumodel", "liner", "product"].indexOf(slot.split(":")[0])}${slot.replace(/\d+/, n => n.padStart(2, "0"))}`;
 
   const taskOf = (s: SlotState) => s.task === "服务" ? "店铺服务图" : s.task ? TASK_LABEL[s.task] : "";
   const tile = (s: SlotState) => {
     const [kind, key] = s.slot.split(":"), wait = s.status === "queued" || s.status === "running", bad = !s.image && !wait;
-    const label = kind === "cast" ? `模特定妆照${key ? ` · ${key}` : ""}` : kind === "sku" || kind === "skumodel" || kind === "product" ? nameOf(key) : `${numOf(s.slot)}${s.task ? ` · ${taskOf(s)}` : ""}${s.task !== "服务" && s.words?.title ? ` · ${s.words.title}` : ""}`;
+    // A liner's thumbnail (11-04): 「黑色 · 羽绒内胆」 (key 羽绒~黑色), by the name the plan calls it.
+    const [inner, ...tint] = kind === "liner" ? key.split("~") : [];
+    const label = kind === "liner" ? `${tint.join("~")} · ${plan?.versions?.find(v => v.inner === inner)?.name || inner}内胆`
+      : kind === "cast" ? `模特定妆照${key ? ` · ${key}` : ""}` : kind === "sku" || kind === "skumodel" || kind === "product" ? nameOf(key) : `${numOf(s.slot)}${s.task ? ` · ${taskOf(s)}` : ""}${s.task !== "服务" && s.words?.title ? ` · ${s.words.title}` : ""}`;
     const version = s.history.findIndex(v => v.id === s.image) + 1, editable = MAIN.test(s.slot) && !!s.image;
     const change = sending.includes(s.slot) ? { tone: "b", tag: "提交中…" } : s.redraw?.open ? editTag(s.redraw) : null;
     return (
@@ -173,6 +176,7 @@ export function ResultsPanel({ detail, layouts, prices, onRedo, onDone, onError,
           {lane("SKU 图", s => s.slot.startsWith("sku:"), "", cardsDone && detail.slots.some(s => s.slot.startsWith("sku:") && s.image)
             ? <button type="button" className="lp-btn sm" onClick={() => setSkuText({ mode: "all" })}>改 SKU 图文字</button> : undefined)}
           {lane("SKU 模特图", s => s.slot.startsWith("skumodel:"), "素材里没有这个颜色的模特图，照主模特画的；重新生成后 SKU 图跟着重拼")}
+          {lane("SKU 小框里的内胆", s => s.slot.startsWith("liner:"), "从素材里这件内胆的照片整理成白底；不满意点重新生成（不扣费），SKU 图跟着重拼")}
           {lane("白底产品图", s => s.slot.startsWith("product:"))}
         </div>
         {skuText && <SkuTextDialog projectId={detail.id} name={detail.name} target={skuText} onSaved={m => void onDone(m)} onError={onError} onClose={() => setSkuText(null)} />}

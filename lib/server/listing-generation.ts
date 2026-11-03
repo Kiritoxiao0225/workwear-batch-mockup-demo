@@ -18,8 +18,8 @@
  */
 import { addExtraImage } from './listing-jobs';
 import { innerName } from '../listing/wear';
-import { itemReference, linerAlone, linerByColor, linerColorOf, linerFor, mainLiner, skuItems } from '../listing/sku-versions';
-import { LINER_ALONE_WEAR, linerName, linerSubject, versionName } from '../listing/wear';
+import { itemReference, linerAlone, linerByColor, linerColorOf, linerFor, linerThumbs, mainLiner, skuItems } from '../listing/sku-versions';
+import { LINER_ALONE_WEAR, linerName, linerSubject, linerWhitePrompt, versionName } from '../listing/wear';
 import { coveredZip, groupWear, openLine, wearLine, zippedWear } from '../listing/wear';
 import { heatPoint, insideFor } from '../listing/inside';
 import { randomUUID } from 'node:crypto';
@@ -49,7 +49,7 @@ import { maskOf, pad, pasteBack } from './listing-edit';
 import { resolveLayout } from './listing-layouts';
 import { castOnePrompt, castPrompt, drawPrompt, editPrompt, longPrompt, mainPrompt, productPrompt, redrawPrompt, relayoutPrompt, servicePrompt, serviceWordsPrompt, skuModelPrompt, skuPrompt, type Content, type Ratio } from './listing-prompts';
 import { callPlanModel, generateListingImage, LISTING_PLAN_MODEL, listingImageModel, listingImageProvider, type ImageCall, type PlanCall } from './listing-provider';
-import { frameRequest, insideBoxRequest, parseFrame, parseInsideBox, parseRecognized, recognizeRequest, type Expected, type Frame } from './listing-recognize';
+import { frameRequest, insideBoxRequest, linerBoxRequest, parseFrame, parseInsideBox, parseLinerBox, parseRecognized, recognizeRequest, type Expected, type Frame } from './listing-recognize';
 import { liveShop, shopBrand, shopServiceImage, shopSettings, shopSkuBadge, shopSkuFields } from './listing-shop';
 import { cornerAssets, pasteShopLogo } from './listing-corner';
 import { latestOutputs, latestRedraws, MAIN_SLOT, slotShop, storeOutput, type StoredPlan } from './listing-store';
@@ -90,14 +90,23 @@ export type JobInput = (
    * Kept apart from the product's images (slot `draw:<n>`) until adopted into the material.
    */
   | { kind: 'draw'; prompt: string; refs: string[]; assets: string[] }
+  /**
+   * A liner on white for the SKU cards' thumbnails (11-04, slot `liner:<id>`): from the plan's photos of it
+   * (StoredPlan.liners); a photo already on white is used as it is, else it is found on the photo and drawn.
+   * Nothing charged. `name`: what the plan calls the liner.
+   */
+  | { kind: 'liner'; id: string; inner: string; name: string; color: string }
 ) & { note?: string };
 type PlannedJob = { slot: string; step: 'product' | 'image'; input: JobInput; depends: string[]; multi: boolean; free?: boolean };
 const db = () => catalogDatabase();
 export const runHold = (runId: string) => 'listing:run:' + runId;
 const action = (input: JobInput) => input.kind === 'main' && input.skus.length > 1 && !input.edit ? 'listing_image_multi' as const : 'listing_image' as const;
 
-/** Jobs without a model call: a colour's own still life, the shop's service image, the cast's two halves put together, a SKU image on the template. */
-const freeJob = (x: JobInput) => (x.kind === 'product' && !!x.direct) || x.kind === 'copy' || (x.kind === 'cast' && !!x.pair) || (x.kind === 'sku' && !!x.card);
+/**
+ * Jobs not charged: those without a model call (a colour's own still life, the shop's service image, the
+ * cast's two halves put together, a SKU image on the template) and a liner's thumbnail (11-04, ours to pay).
+ */
+const freeJob = (x: JobInput) => (x.kind === 'product' && !!x.direct) || x.kind === 'copy' || (x.kind === 'cast' && !!x.pair) || (x.kind === 'sku' && !!x.card) || x.kind === 'liner';
 
 /* ---------- planning the jobs ---------- */
 
@@ -153,10 +162,16 @@ export function planJobs(stored: StoredPlan, layout: Layout, round: 1 | 2, only?
       jobs.push({ slot: 'cast', step: 'image', input: { kind: 'cast', pair: true }, depends: GENDERS.map(g => `cast:${g}`), multi: false, free: true });
     } else if (cast) jobs.push({ slot: 'cast', step: 'image', input: { kind: 'cast' }, depends: [`product:${main}`], multi: false });
     // On the template: every colour (and version, sku-versions.ts) on a model, the material's own photo, else the cast drawn in it (the plan's choice of who).
+    // Each liner a card shows on its thumbnail, onto white once (11-04), before the cards.
+    if (layout.sku.specCard) for (const id of Object.keys(stored.liners?.photos ?? {})) {
+      const [inner, ...rest] = id.split('~'), version = d.versions?.find(v => v.inner === inner);
+      jobs.push({ slot: `liner:${id}`, step: 'image', input: { kind: 'liner', id, inner, name: version ? linerName(version) : inner, color: rest.join('~') }, depends: [], multi: false, free: true });
+    }
     if (layout.sku.specCard) for (const it of skuItems(d, stored.colors)) {
       const item = it.key === it.color ? {} : { item: it.key }, product = it.color ? [`product:${it.color}`] : [];
+      const liner = stored.liners?.items[it.key] ? [`liner:${stored.liners.items[it.key]}`] : [];
       if (!photos[it.key]) jobs.push({ slot: `skumodel:${it.key}`, step: 'image', input: { kind: 'skuModel', sku: it.color ?? '', ...item, ...(pair ? { pair } : skuBy === d.model.lead ? {} : { who: skuBy }) }, depends: [...product, ...castOf], multi: false });
-      jobs.push({ slot: `sku:${it.key}`, step: 'image', input: { kind: 'sku', sku: it.color ?? '', card: true, ...item }, depends: [...product, ...(photos[it.key] ? [] : [`skumodel:${it.key}`])], multi: false, free: true });
+      jobs.push({ slot: `sku:${it.key}`, step: 'image', input: { kind: 'sku', sku: it.color ?? '', card: true, ...item }, depends: [...product, ...(photos[it.key] ? [] : [`skumodel:${it.key}`]), ...liner], multi: false, free: true });
     }
     for (const c of layout.sku.specCard ? [] : stored.colors) {
       const anchor = c.sku === main ? undefined : main;
@@ -315,11 +330,14 @@ export async function redoSkus(tenant: Tenant, user: string, projectId: string, 
     const m = (await c.query('SELECT materials FROM listing_projects WHERE id=$1', [projectId])).rows[0].materials;
     // 「SKU 图全部重新生成」 can change who the SKU images show (10-21).
     const draft = people ? { ...stored.draft, skuPeople: people } : stored.draft;
-    const next: StoredPlan = { ...stored, draft, photos: skuPhotos(draft, m?.sorted?.images ?? [], skuPair(layout)) };
+    const sorted = m?.sorted?.images ?? [];
+    const next: StoredPlan = { ...stored, draft, photos: skuPhotos(draft, sorted, skuPair(layout)), liners: linerThumbs(sorted, draft, stored.colors) };
     const planned = planJobs(next, layout, 1), mine = (slot: string) => !only || slot.endsWith(`:${only}`);
     const jobs = planned.filter(j => (j.slot.startsWith('skumodel:') || j.slot.startsWith('sku:')) && mine(j.slot));
-    // A product whose master had no people has no cast yet: it is made first.
     const made = new Set(latest.filter(j => j.status === 'succeeded').map(j => j.slot));
+    // The liners' thumbnails the cards wait on and that are not made yet (products made before 11-04 get them this way).
+    jobs.unshift(...planned.filter(j => j.slot.startsWith('liner:') && !made.has(j.slot) && jobs.some(q => q.depends.includes(j.slot))));
+    // A product whose master had no people has no cast yet: it is made first.
     if (jobs.some(j => j.depends.some(d => d.startsWith('cast') && !made.has(d)))) jobs.unshift(...planned.filter(j => j.slot.startsWith('cast')));
     await queueRun(c, tenant, user, projectId, jobs, prices);
     await c.query('UPDATE listing_projects SET plan=$2 WHERE id=$1', [projectId, next]);
@@ -812,6 +830,25 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
       references = await Promise.all(ids.flatMap(id => files.filter(f => f.id === id)).map(async f => sharp(await fileOf(f.file_id), { limitInputPixels: 60_000_000 }).rotate().resize(1536, 1536, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer()));
       ratio = 'square';
       prompt = drawPrompt(input.prompt, references.length);
+    } else if (input.kind === 'liner') {
+      // A liner's thumbnail onto white (11-04): a photo of it alone already on white as it is, else found on its photos and drawn.
+      const photos = stored?.liners?.photos[input.id] ?? [];
+      let ref: { bytes: Buffer; cropped: boolean; recolor: boolean } | null = null;
+      for (const photo of photos) {
+        const asset = stored.images.find(i => i.label === photo.label)?.assetId;
+        const file = asset ? (await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [asset])).rows[0]?.file_id as string | undefined : undefined;
+        if (!file) continue;
+        const bytes = await sharp(await fileOf(file), { limitInputPixels: 60_000_000 }).rotate().resize(1536, 1536, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer();
+        if (photo.same && photo.still && await onWhite(bytes)) { await succeed(await whiteSquare(bytes)); return; }
+        const cut = await linerCrop(bytes, input, recognize);
+        if (cut) { ref = { bytes: cut, cropped: true, recolor: !photo.same }; break; }
+        // On none of them: the best one whole, as the thumbnail showed it before.
+        ref ??= { bytes, cropped: false, recolor: !photo.same };
+      }
+      if (!ref) throw Object.assign(new CatalogHttpError(404, '找不到这件内胆的素材图（原始素材可能已在最后一次出图 30 天后清理）'), { notCharged: true });
+      references = [ref.bytes];
+      ratio = 'square';
+      prompt = linerWhitePrompt(input.name, input.color, ref.cropped, ref.recolor);
     } else if (input.kind === 'redraw') {
       references = [await versionAt1K(job.project_id, input.base)];
       for (const id of input.references ?? (input.reference ? [input.reference] : [])) {
@@ -1094,7 +1131,9 @@ export async function skuLeft(o: { tenant: string; projectId: string; stored: St
     const asset = label ? stored.images.find(i => i.label === label)?.assetId : undefined;
     return asset ? (await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [asset])).rows[0]?.file_id as string | undefined : undefined;
   };
-  const thumbFile = await fileOfLabel(thumbLabel);
+  // Made onto white for the cards (11-04) when the plan has it; plans before then: the photo as it is.
+  const thumbId = stored.liners?.items[key], thumbOut = thumbId && o.has(`liner:${thumbId}`) ? `liner:${thumbId}` : null;
+  const thumbFile = thumbOut ? undefined : await fileOfLabel(thumbLabel), thumb = !!thumbOut || !!thumbFile;
   // 一体 with the box ticked (10-29): its colour's inside in the same box, else the box left empty to be filled in by hand.
   const boxed = !v && d.wear?.type === '一体' && !!d.wear.box && !!it.color;
   const insideLabel = boxed ? insideFor(sorted, d, it.color!) : null;
@@ -1109,11 +1148,11 @@ export async function skuLeft(o: { tenant: string; projectId: string; stored: St
   const words = skuBadgeText(badgeSet, stored.sku?.tag, !!(d.model.photos?.男 && d.model.photos?.女));
   // A version over a liner or the liner alone says so in the dark pill (10-22), else the badge when it goes under the title.
   // With its liner's picture under the title the liner speaks for itself; zipped up (none), the pill names the version.
-  const tag = lined && !thumbFile ? versionName(v) : lined || boxed ? null : badgeSet.place === 'title' ? words : null;
+  const tag = lined && !thumb ? versionName(v) : lined || boxed ? null : badgeSet.place === 'title' ? words : null;
   const corner = words && (badgeSet.place === 'corner' || badgeSet.place === 'right') ? { text: words, place: badgeSet.place } : null;
   const own: CardWords = {
     kicker: text.kicker, title: text.title, feature: text.feature, rows: skuCardRows(card, fieldSet, lined ? { ...row, sub: versionName(v) } : row),
-    pill: tag ? { text: tag, place: 'title' } : corner, ...(thumbFile ? { linerName: `${linerName(v!)}内胆`, linerKey: v!.inner } : {}), colorRow: lined ? { ...row, sub: versionName(v) } : row,
+    pill: tag ? { text: tag, place: 'title' } : corner, ...(thumb ? { linerName: `${linerName(v!)}内胆`, linerKey: v!.inner } : {}), colorRow: lined ? { ...row, sub: versionName(v) } : row,
   };
   const pillPlace = badgeSet.place === 'corner' || badgeSet.place === 'right' ? badgeSet.place : lined || boxed ? 'right' : 'title';
   if (!o.bytes) return { own, pillPlace, name: it.name };
@@ -1130,7 +1169,8 @@ export async function skuLeft(o: { tenant: string; projectId: string; stored: St
     // The shop's own LOGO while it shows one (店铺设置); the sample LOGO is only for the crafts image.
     logo: await (await shopBrand(o.tenant, o.shopSet))?.bytes().catch(() => null) ?? null,
     fabric: product ? await fabricCrop(product) : await sharp(photo!).resize(800, 800, { fit: 'cover', position: 'centre' }).png().toBuffer(),
-    ...(thumbFile ? { liner: { photo: await fileOf(thumbFile), name: own.linerName, whole: sorted.find((i: { id: string; kind: string }) => i.id === thumbLabel)?.kind === '静物' } }
+    ...(thumbOut ? { liner: { photo: await o.output(thumbOut), name: own.linerName, whole: true } }
+      : thumbFile ? { liner: { photo: await fileOf(thumbFile), name: own.linerName, whole: sorted.find((i: { id: string; kind: string }) => i.id === thumbLabel)?.kind === '静物' } }
       : boxed ? { liner: { photo: insideFile ? await fileOf(insideFile) : null, close: sorted.find((i: { id: string; kind: string }) => i.id === insideLabel)?.kind !== '模特实拍' } } : {}),
     photo: photo ? { bytes: photo, cutout: false, source: !!sourceFile } : { bytes: await removeFlatArtworkBackground(product!, { r: 255, g: 255, b: 255 }), cutout: true, source: false },
   };
@@ -1144,6 +1184,36 @@ export function cardOf(left: SkuLeft, edit: SkuTextEdit | undefined): Omit<SkuCa
     logo: w.pill?.place === 'corner' ? null : left.logo ?? null,
     ...(left.liner ? { liner: { ...left.liner, ...(left.liner.name !== undefined ? { name: w.linerName ?? left.liner.name } : {}) } } : {}),
   };
+}
+
+/** Is a photo on a white ground: its edges (4% each side) nearly all near-white (11-04: a shop-rack photo read as a still life was not). */
+export async function onWhite(bytes: Buffer): Promise<boolean> {
+  const { data, info } = await sharp(bytes).flatten({ background: '#ffffff' }).resize(200, 200, { fit: 'fill' }).raw().toBuffer({ resolveWithObject: true });
+  const edge = Math.round(info.width * 0.04);
+  let white = 0, all = 0;
+  for (let y = 0; y < info.height; y++) for (let x = 0; x < info.width; x++) {
+    if (x >= edge && x < info.width - edge && y >= edge && y < info.height - edge) continue;
+    const at = (y * info.width + x) * info.channels;
+    all++; if (Math.min(data[at], data[at + 1], data[at + 2]) >= 232) white++;
+  }
+  return white / all >= 0.9;
+}
+/** A photo on white, trimmed and centred on a white square: no model call. */
+async function whiteSquare(bytes: Buffer): Promise<Buffer> {
+  const trimmed = await sharp(bytes).flatten({ background: '#ffffff' }).trim({ threshold: 12 }).png().toBuffer().catch(() => bytes);
+  return sharp(trimmed).resize(900, 900, { fit: 'contain', background: '#ffffff' }).extend({ top: 62, bottom: 62, left: 62, right: 62, background: '#ffffff' }).jpeg({ quality: 92 }).toBuffer();
+}
+/** The liner cut out of a photo (a little room around it), or null: not on it, or the call failed (11-04). */
+async function linerCrop(bytes: Buffer, liner: { inner: string; name: string; color: string }, recognize: Recognize): Promise<Buffer | null> {
+  try {
+    const image = await sharp(bytes).resize(1024, 1024, { fit: 'inside' }).jpeg({ quality: 85 }).toBuffer();
+    const box = parseLinerBox((await recognize(linerBoxRequest({ image, inner: liner.name, color: liner.color, model: LISTING_PLAN_MODEL() }))).content);
+    if (!box) return null;
+    const { width = 0, height = 0 } = await sharp(bytes).metadata(), pad = 0.04;
+    const l = Math.max(0, box[0] - pad), t = Math.max(0, box[1] - pad), r = Math.min(1, box[0] + box[2] + pad), b = Math.min(1, box[1] + box[3] + pad);
+    const left = Math.round(l * width), top = Math.round(t * height);
+    return await sharp(bytes).extract({ left, top, width: Math.max(1, Math.min(width - left, Math.round((r - l) * width))), height: Math.max(1, Math.min(height - top, Math.round((b - t) * height))) }).jpeg({ quality: 90 }).toBuffer();
+  } catch (error) { console.error('[listing] liner crop', error instanceof Error ? error.message : error); return null; }
 }
 
 /**
@@ -1194,7 +1264,8 @@ export async function finishRun(runId: string, tenantId: string, projectId: stri
   const open = (await db().query(`SELECT 1 FROM listing_jobs WHERE run_id=$1 AND status IN ('queued','running') LIMIT 1`, [runId])).rowCount;
   if (open) return;
   const attempts = (await db().query(`SELECT a.id,a.status,j.input FROM listing_attempts a JOIN listing_jobs j ON j.id=a.job_id WHERE j.run_id=$1`, [runId])).rows as { id: string; status: string; input: JobInput }[];
-  const outcomes: AttemptOutcome[] = attempts.map(a => ({ action: action(a.input), billable: a.status !== 'failed', certain: a.status === 'succeeded', attemptId: a.id }));
+  // A liner's thumbnail (11-04) is ours to pay: its attempt is kept for the records, not charged.
+  const outcomes: AttemptOutcome[] = attempts.map(a => ({ action: action(a.input), billable: a.status !== 'failed' && a.input.kind !== 'liner', certain: a.status === 'succeeded', attemptId: a.id }));
   await settleHold(runHold(runId), tenantId, outcomes).catch(error => console.error('[listing] settle', error instanceof Error ? error.message : error));
   if (!(await db().query(`SELECT 1 FROM listing_jobs WHERE project_id=$1 AND status IN ('queued','running') LIMIT 1`, [projectId])).rowCount) {
     await db().query(`UPDATE listing_projects SET status=CASE WHEN COALESCE((plan->>'round')::int,1)=2 THEN 'done' ELSE 'square' END, updated_at=now() WHERE id=$1 AND status='generating'`, [projectId]);
@@ -1264,7 +1335,8 @@ export async function downloadZip(projectId: string) {
     const ext = o.name.split('.').pop() === 'jpeg' ? 'jpg' : 'png';
     const task = s.task ? TASK_LABEL[s.task as Task] : '';
     const main = kind === 'long' ? `${KIND_FILE.long}.${ext}` : `${KIND_FILE[kind]}-${n.padStart(2, '0')}-${task}.${ext}`;
-    const name = kind === 'product' ? `白底产品图/${nameOf(key)}.${ext}` : kind === 'sku' ? `SKU-${nameOf(key)}.${ext}` : kind === 'skumodel' ? `SKU模特图/${nameOf(key)}.${ext}` : kind === 'cast' ? `模特定妆照.${ext}` : set ? `换色首图-${nameOf(set)}/${main}` : main;
+    const name = kind === 'liner' ? `SKU小框内胆/${zipEntryName(key.split('~').slice(1).join('~') + key.split('~')[0])}内胆.${ext}`
+      : kind === 'product' ? `白底产品图/${nameOf(key)}.${ext}` : kind === 'sku' ? `SKU-${nameOf(key)}.${ext}` : kind === 'skumodel' ? `SKU模特图/${nameOf(key)}.${ext}` : kind === 'cast' ? `模特定妆照.${ext}` : set ? `换色首图-${nameOf(set)}/${main}` : main;
     const bytes = await fileOf(o.file_id);
     const logo = corner.has(o.id) ? await logoFor(s.slot) : null;
     zip.file(name, logo ? await pasteShopLogo(bytes, logo) : bytes);

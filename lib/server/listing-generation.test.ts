@@ -7,7 +7,7 @@ import { wearLine } from '../listing/wear';
 import { LEGACY_LAYOUTS as BUILT_IN_LAYOUTS } from '../listing/legacy-layouts';
 import { SERVICE_IMAGES } from '../listing/service';
 import { BUILT_IN_LAYOUTS as MASTERS, FLAT_EXAMPLE, fitTemplate, withCover, type CoverPeople, type Layout } from '../listing/templates';
-import { contentOf, coverOf, fabricCrop, LOGO_LINE, planJobs, wordsOf, zipEntryName } from './listing-generation';
+import { contentOf, coverOf, fabricCrop, LOGO_LINE, onWhite, planJobs, wordsOf, zipEntryName } from './listing-generation';
 import { buildPlan } from './listing-write';
 import { castOnePrompt, castPrompt, editPrompt, longPrompt, mainPrompt, productPrompt, redrawPrompt, relayoutPrompt, servicePrompt, serviceWordsPrompt, skuModelPrompt, skuPrompt } from './listing-prompts';
 import { crowdLine, DEFAULT_PLACE } from './listing-crowd';
@@ -367,5 +367,28 @@ describe('the closer and the SKU models (10-16)', () => {
     expect(at(0)).not.toContain('纯浅灰色无缝背景');
     expect(at(0)).not.toBe(at(1));
     expect(at(0)).toContain('从头顶拍到膝盖');
+  });
+});
+
+describe('the liners on the SKU cards\' thumbnails, onto white before the cards (11-04)', () => {
+  const master = MASTERS.find(l => l.id === 'M1')!;
+  const base = { ...stored(master), draft: { ...defaultDraft(DEMO_MATERIAL, master), extra: [] } };
+  const names = base.colors.map(c => c.name), first = base.colors[0];
+  const versions = [{ key: 'v1', kind: '单外壳' as const, inner: '', colors: names, on: true }, { key: 'v2', kind: '外壳加内胆' as const, inner: '羽绒', name: '鸭绒', colors: [first.name], on: true }];
+  it('one free job per liner, each card showing it waits for it; a plan from before has none', () => {
+    const s: StoredPlan = { ...base, photos: {}, draft: { ...base.draft, versions }, liners: { photos: { '羽绒~黑色': [{ label: 'D1', same: true, still: true }] }, items: { [`${first.sku}~v2`]: '羽绒~黑色' } } };
+    const by = new Map(planJobs(s, master, 1).map(j => [j.slot, j]));
+    expect(by.get('liner:羽绒~黑色')).toMatchObject({ input: { kind: 'liner', id: '羽绒~黑色', inner: '羽绒', name: '鸭绒', color: '黑色' }, depends: [], free: true });
+    expect(by.get(`sku:${first.sku}~v2`)?.depends).toContain('liner:羽绒~黑色');
+    expect(by.get(`sku:${first.sku}`)?.depends).not.toContain('liner:羽绒~黑色');
+    expect([...planJobs({ ...s, liners: undefined }, master, 1).map(j => j.slot)].some(x => x.startsWith('liner:'))).toBe(false);
+  });
+  it('a photo on white is told from one in a scene (8828: a shop rack read as a still life)', async () => {
+    const white = await sharp({ create: { width: 400, height: 500, channels: 3, background: '#ffffff' } })
+      .composite([{ input: await sharp({ create: { width: 200, height: 300, channels: 3, background: '#b22222' } }).png().toBuffer(), left: 100, top: 100 }]).jpeg().toBuffer();
+    const rack = await sharp({ create: { width: 400, height: 500, channels: 3, background: '#8a8070' } })
+      .composite([{ input: await sharp({ create: { width: 200, height: 300, channels: 3, background: '#b22222' } }).png().toBuffer(), left: 100, top: 100 }]).jpeg().toBuffer();
+    expect(await onWhite(white)).toBe(true);
+    expect(await onWhite(rack)).toBe(false);
   });
 });
