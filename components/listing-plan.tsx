@@ -444,10 +444,28 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
   const versions = draft.versions ?? [], shellCols = versions.map((v, i) => ({ v, i })).filter(x => x.v.kind !== "单内胆");
   const alone = versions.map((v, i) => ({ v, i })).filter(x => x.v.kind === "单内胆");
   const keys = colorKeys(draft.colors);
+  // A version with no colour ticked left is simply not made (11-03: unticking the last one used to turn the page red).
+  const withColors = (colors: string[]): Partial<DraftVersion> => colors.length ? { on: true, colors } : { on: false, colors: [] };
   const toggleIn = (i: number, color: string) => {
     const v = versions[i], has = v.on && v.colors.includes(color);
-    setVersion(i, { on: true, colors: has ? v.colors.filter(x => x !== color) : [...new Set([...(v.on ? v.colors : []), color])] });
+    setVersion(i, withColors(has ? v.colors.filter(x => x !== color) : [...new Set([...(v.on ? v.colors : []), color])]));
   };
+  /** 全选 (11-03): tick or untick every one of `names` in version i, a column of shell colours or a row of liners. */
+  const setAllIn = (i: number, names: string[], tick: boolean) => {
+    const v = versions[i], rest = v.on ? v.colors.filter(x => !names.includes(x)) : [];
+    setVersion(i, withColors(tick ? [...new Set([...rest, ...names])] : rest));
+  };
+  const allBox = (i: number, names: string[], label: string) => {
+    const v = versions[i], n = v.on ? names.filter(x => v.colors.includes(x)).length : 0, all = n > 0 && n === names.length;
+    return <input type="checkbox" aria-label={`全选：${label}`} title={all ? "全部取消" : "全选"} checked={all} ref={el => { if (el) el.indeterminate = n > 0 && !all; }} onChange={() => setAllIn(i, names, !all)} />;
+  };
+  /** Every SKU image the table offers: each shell column's colours and each liner row's (the 全部勾上 / 全部取消 links). */
+  const linerOptions = (v: DraftVersion) => [...new Set([...(materials.wear?.versions.find(x => x.kind === v.kind && x.inner === v.inner)?.colors ?? []), ...linerColors(materials.sorted.images, v.inner), ...v.colors])];
+  const setEvery = (tick: boolean) => set({ versions: versions.map(v => {
+    const names = v.kind === "单内胆" ? linerOptions(v) : live(draft).map(c => c.name);
+    const rest = v.on ? v.colors.filter(x => !names.includes(x)) : [], colors = tick ? [...new Set([...rest, ...names])] : rest;
+    return { ...v, ...withColors(colors) };
+  }) });
   const skuCell = (it: SkuItem, on: boolean, ref: string | null, onClick?: () => void) => {
     const photo = photoOf(it), url = (photo && byLabel.get(photo)?.url) || (ref && byLabel.get(ref)?.url) || "";
     return (<button type="button" className={"lp-opt" + (photo ? "" : " draw") + (on ? "" : " off")} aria-pressed={on} aria-label={it.label} title={photo ? `用素材照片 ${photo}` : "素材里没拍到，AI 照定妆照里的模特画"} onClick={onClick} disabled={!onClick}>
@@ -516,9 +534,10 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
           <span className="key"><i className="sw draw" />虚线框：素材里没拍到，AI 照定妆照里的模特画{prices.exempt ? "" : `，每张 ${prices.image} 积分`}</span>
         </div>
       </div>
+      {versions.length > 0 && <div className="lp-allbar"><span>全部规格图：</span><button type="button" className="lp-btn link" onClick={() => setEvery(true)}>全部勾上</button><button type="button" className="lp-btn link" onClick={() => setEvery(false)}>全部取消</button><small className="lp-muted">每列表头、每组内胆前的框是这一列（这一组）全选</small></div>}
       {shellCols.length > 0 ? <div className="lp-sx-scroll"><table className="lp-sx">
         <thead><tr><th className="rh">外套颜色</th>{shellCols.map(({ v, i }) => (
-          <th key={v.key}><label className="colh"><input type="checkbox" checked={v.on} onChange={e => setVersion(i, { on: e.target.checked })} />
+          <th key={v.key}><label className="colh">{allBox(i, live(draft).map(c => c.name), versionName(v))}
             {v.kind === "单外壳" ? "外套单穿" : <>外套里穿<br />{linerName(v)}内胆</>}</label></th>))}</tr></thead>
         <tbody>{live(draft).map(c => {
           const k = keys[draft.colors.indexOf(c)]!;
@@ -527,13 +546,14 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
         })}</tbody></table></div>
         : <div className="lp-lopts">{live(draft).map(c => { const k = keys[draft.colors.indexOf(c)]!; return <figure key={c.name} className="lp-lopt">{skuCell({ key: k, color: k, name: c.name, label: c.name }, true, c.pick)}<figcaption>{c.name}</figcaption></figure>; })}</div>}
       {alone.map(({ v, i }) => {
-        const all = [...new Set([...(materials.wear?.versions.find(x => x.kind === v.kind && x.inner === v.inner)?.colors ?? []), ...linerColors(materials.sorted.images, v.inner), ...v.colors])];
-        return (<div key={v.key} className="lp-lrow"><div className="h"><b>只卖{linerName(v)}内胆</b><small>内胆单独卖时的规格图</small></div>
+        const all = linerOptions(v);
+        return (<div key={v.key} className="lp-lrow"><div className="h"><label className="colh">{allBox(i, all, `只卖${linerName(v)}内胆`)}<b>只卖{linerName(v)}内胆</b></label><small>内胆单独卖时的规格图</small></div>
           <div className="lp-lopts">{all.map((n, m) => (<figure key={n} className="lp-lopt">
             {skuCell({ key: `~${v.key}~${m}`, name: n, version: v, label: `${n} · ${versionName(v)}` }, v.on && v.colors.includes(n), linerAlone(linerImages, v.inner, n), () => toggleIn(i, n))}
             <figcaption>{n}{linerName(v)}</figcaption></figure>))}</div></div>);
       })}
-      <div className="lp-eq"><span className="l">规格图</span><strong>{skuAll.length}</strong><span>张</span><span className="op">=</span><strong>{nReal}</strong><span>张用素材照片<small>不花钱</small></span><span className="op">+</span><strong>{nDraw}</strong><span>张 AI 画{!prices.exempt && <small>{nDraw * prices.image} 积分</small>}</span></div>
+      <div className="lp-eq"><span className="l">规格图</span><strong>{skuAll.length}</strong><span>张</span><span className="op">=</span><strong>{nReal}</strong><span>张用素材照片<small>不花钱</small></span><span className="op">+</span><strong>{nDraw}</strong><span>张 AI 画{!prices.exempt && <small>{nDraw * prices.image} 积分</small>}</span>
+        {versions.length > 0 && !versions.some(v => v.on && v.colors.length) && <small className="lp-muted none">上面一格都没勾：每个颜色仍出一张最基本的规格图（外套单穿），买家选颜色时要有图</small>}</div>
       <div className="lp-who"><b>规格图里的人</b>
         <div className="lp-chips">{SKU_PEOPLE.map(p => (
           <label key={p} className={"lp-chip" + (skuBy === p ? " on" : "")}><input type="radio" name="skuPeople" hidden checked={skuBy === p} onChange={() => set({ skuPeople: p })} />

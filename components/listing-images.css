@@ -835,3 +835,8 @@ table.lp-tbl { border-collapse: collapse; width: 100%; min-width: 520px; font-si
   .lp-chosen figure:first-child { grid-column: 1 / -1; grid-row: auto; }
   .lp-opt { width: 60px; height: 60px; }
 }
+.lp-allbar { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; font-size: 13px; }
+.lp-allbar .lp-btn.link { font-size: 13px; }
+.lp-lrow .h .colh { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.lp-sx .colh input, .lp-lrow .colh input { width: 16px; height: 16px; accent-color: var(--ink); }
+.lp-eq .none { flex-basis: 100%; }
