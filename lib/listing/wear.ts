@@ -142,9 +142,19 @@ export const LINER_LENGTH = '内胆是扣在外套里面的，和外套几乎一
  * liner, on the cast, the SKU models and (10-25) a main image of one colour. `covered`: its zip is under
  * a flap (coveredZip). Null: as before, zipped to the chest over a white T-shirt.
  */
-export function wearLine(type: WearType | undefined, liner?: number, color?: string, covered = false): string | null {
+/**
+ * The liner itself on a SKU image over it (11-04): its photo on white (`ref`, the cards' thumbnail), its name,
+ * and what its surface is like as read off that photo (`look`). 8828's down liner, seen only as a dark strip
+ * inside the shell on the photos, came out as smooth taffeta with no quilting.
+ */
+export type LinerLook = { ref: number; name: string; look?: string };
+export function wearLine(type: WearType | undefined, liner?: number, color?: string, covered = false, alone?: LinerLook): string | null {
   if (type === '一体') return `${covered ? `门襟一直合到最顶，${COVERED_ZIP}` : '拉链一直拉到最顶'}，领子立起来护住脖子和下巴，看不到里面的 T 恤；衣服里面有填充，整体蓬松厚实，一看就是秋冬保暖款，不是一层薄外壳`;
   // The liner's colour said outright (10-22: drawn from a couple photo, 翠绿 took the light grey liner of the woman beside).
+  if (type === '内胆' && liner && alone) return `外套拉链拉开、敞着穿，${OPEN_PULL}，里面穿着这款配套的${color ?? ''}${alone.name}内胆`
+    + `（怎么穿、露出多少照参考图${liner}里外套下面那一件${color ? `；参考图里别人身上的别的颜色内胆不算` : ''}；`
+    + `这件内胆本身照参考图${alone.ref}画：它是这件内胆单独拍的白底图，${color ? `${color}，` : '颜色、'}面料、表面光泽、绗缝格子的方向和间距、每一格鼓起的厚薄、领子都和它一样${alone.look ? `（${alone.look}）` : ''}，`
+    + `外套敞开处露出的那一长条内胆也要看得清这些，不要画成光滑平整的一整片布；上面衣服描述里说的「平整、不做绗缝、不鼓包」只管外套本身，不管里面这件内胆），内胆拉链拉到领口；${LINER_LENGTH}；一眼看得出是外壳加内胆两层，整体厚实保暖`;
   if (type === '内胆') return liner
     ? `外套拉链拉开、敞着穿，${OPEN_PULL}，里面穿着这款配套的${color ? `${color}` : ''}内胆（参考图${liner}里外套下面那一件：${color ? `${color}，` : '颜色、'}材质、表面纹理、厚薄、长度和领子都照它${color ? `；参考图里别人身上的别的颜色内胆不算` : ''}），内胆拉链拉到领口；${LINER_LENGTH}；一眼看得出是外壳加内胆两层，整体厚实保暖`
     : `外套拉链拉开、敞着穿，${OPEN_PULL}，里面穿着内胆（内胆的样子和定妆照里一样），内胆拉链拉到领口；${LINER_LENGTH}；一眼看得出是外壳加内胆两层，整体厚实保暖`;
@@ -178,6 +188,7 @@ export function groupWear(list: { shell: string; liner?: string }[], covered = f
 }
 
 /** The reference line for the liner photo: only the liner is taken from it. */
+export const linerAloneLine = (n: number) => `参考图${n}是这件内胆单独拍的白底图，只看内胆本身的颜色、面料、绗缝和厚薄。`;
 export const linerRefLine = (n: number) => `参考图${n}是这款的内胆照片，只看外套里面那一件内胆的样子；照片里的人、外套、帽子、背景都不要带过来。`;
 
 /** A photo to draw the cast's liner from: the shell over the liner, one person, in the main colour if there is one, facing the camera. */

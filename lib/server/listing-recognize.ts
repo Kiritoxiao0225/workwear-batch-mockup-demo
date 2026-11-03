@@ -127,6 +127,42 @@ export function parseLinerBox(content: string): [number, number, number, number]
   return box[2] < 8 || box[3] < 8 ? null : box.map(v => v / 100) as [number, number, number, number];
 }
 
+/**
+ * What a liner's surface is like, read off its photo on white (11-04), for the SKU images over it: the
+ * words come from the photo, never from a rule (8828's down liner had come out smooth).
+ */
+export function linerLookRequest(input: { image: Buffer; name: string; model: string }) {
+  return { model: input.model, reasoning_effort: 'low', max_completion_tokens: 600, response_format: { type: 'json_object' }, stream: false,
+    messages: [{ role: 'system', content: `你会收到一件三合一外套内胆的白底图。只输出 JSON。用不超过 30 个字说这件内胆表面看起来什么样，给画图的人照着画：有没有绗缝格子、格子是横的竖的还是菱形、大概多宽、每格鼓不鼓、亮面还是哑光、面料什么质感。只说看得到的，不猜材料成分。` },
+      { role: 'user', content: [
+        { type: 'text', text: `这是一件${input.name}内胆。输出：{ "look": "……" }` },
+        { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${input.image.toString('base64')}` } },
+      ] }] };
+}
+export function parseLinerLook(content: string): string {
+  try { const look = z.object({ look: z.string() }).safeParse(JSON.parse(content)); return look.success ? look.data.look.trim().replace(/[。\s]+$/, '').slice(0, 40) : ''; } catch { return ''; }
+}
+
+/**
+ * Is the liner showing on a drawn SKU image the one on its photo on white (11-04): the image is drawn
+ * once more when not, so the user is not asked to look for it.
+ */
+export function linerMatchRequest(input: { drawn: Buffer; liner: Buffer; name: string; model: string }) {
+  const url = (b: Buffer) => `data:image/jpeg;base64,${b.toString('base64')}`;
+  return { model: input.model, reasoning_effort: 'low', max_completion_tokens: 600, response_format: { type: 'json_object' }, stream: false,
+    messages: [{ role: 'system', content: `你会收到两张图。图1：模特穿着三合一外套，外套敞开，里面露出一件内胆。图2：这件${input.name}内胆单独的白底图。只输出 JSON。
+看图1里露出来的那一长条内胆和图2是不是同一件：表面的绗缝格子（有没有、方向、间距）、每格鼓起的厚薄、亮面还是哑光对不对得上。颜色深浅、光线、角度不同不算错；图1露出的部分本来就窄，只要看得出是同样的格子和鼓起就算对。
+图2有明显绗缝而图1露出的内胆是光滑平整的一片，算不对。` },
+      { role: 'user', content: [
+        { type: 'text', text: '输出：{ "same": true, "why": "不对时用一句话说图1哪里和图2不一样" }' },
+        { type: 'image_url', image_url: { url: url(input.drawn) } }, { type: 'image_url', image_url: { url: url(input.liner) } },
+      ] }] };
+}
+/** The verdict, or null when it cannot be read (then the image is kept as drawn). */
+export function parseLinerMatch(content: string): { same: boolean; why: string } | null {
+  try { const m = z.object({ same: z.boolean(), why: z.string().optional() }).safeParse(JSON.parse(content)); return m.success ? { same: m.data.same, why: (m.data.why ?? '').trim().slice(0, 80) } : null; } catch { return null; }
+}
+
 const insideSchema = z.object({ found: z.boolean(), box: z.tuple([z.number(), z.number(), z.number(), z.number()]).optional() });
 /** The front panel's inside as fractions [left, top, width, height], or null: not found, or too small to be a panel. */
 export function parseInsideBox(content: string): [number, number, number, number] | null {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { linerBoxRequest, parseInsideBox, parseLinerBox } from './listing-recognize';
+import { linerBoxRequest, linerMatchRequest, parseInsideBox, parseLinerBox, parseLinerLook, parseLinerMatch } from './listing-recognize';
 
 describe('the front panel inside an 一体 jacket (11-01)', () => {
   it('reads the box as fractions, kept inside the photo', () => {
@@ -27,3 +27,18 @@ describe('a liner on its photo, for the SKU cards\' thumbnail (11-04)', () => {
     expect(r.messages[0].content).toContain('外面那件外壳、别的衣服、衣架、货架、背景都不算');
   });
 });
+
+describe('the liner on a SKU model over it, read off and checked against its photo on white (11-04)', () => {
+  it('its surface in a few words; nothing read, no words', () => {
+    expect(parseLinerLook('{"look":"横向绗缝，每格约4厘米，鼓起明显，微亮面。"}')).toBe('横向绗缝，每格约4厘米，鼓起明显，微亮面');
+    expect(parseLinerLook('oops')).toBe('');
+  });
+  it('the check: smooth where the photo is quilted is wrong; unreadable, no verdict', () => {
+    expect(parseLinerMatch('{"same":false,"why":"图1内胆光滑没有绗缝"}')).toEqual({ same: false, why: '图1内胆光滑没有绗缝' });
+    expect(parseLinerMatch('{"same":true}')).toEqual({ same: true, why: '' });
+    expect(parseLinerMatch('{"ok":1}')).toBeNull();
+    const r = linerMatchRequest({ drawn: Buffer.from('a'), liner: Buffer.from('b'), name: '羽绒', model: 'm' });
+    expect(r.messages[0].content).toContain('图2有明显绗缝而图1露出的内胆是光滑平整的一片，算不对');
+  });
+});
+

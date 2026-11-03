@@ -49,7 +49,7 @@ import { maskOf, pad, pasteBack } from './listing-edit';
 import { resolveLayout } from './listing-layouts';
 import { castOnePrompt, castPrompt, drawPrompt, editPrompt, longPrompt, mainPrompt, productPrompt, redrawPrompt, relayoutPrompt, servicePrompt, serviceWordsPrompt, skuModelPrompt, skuPrompt, type Content, type Ratio } from './listing-prompts';
 import { callPlanModel, generateListingImage, LISTING_PLAN_MODEL, listingImageModel, listingImageProvider, type ImageCall, type PlanCall } from './listing-provider';
-import { frameRequest, insideBoxRequest, linerBoxRequest, parseFrame, parseInsideBox, parseLinerBox, parseRecognized, recognizeRequest, type Expected, type Frame } from './listing-recognize';
+import { frameRequest, insideBoxRequest, linerBoxRequest, linerLookRequest, linerMatchRequest, parseFrame, parseInsideBox, parseLinerBox, parseLinerLook, parseLinerMatch, parseRecognized, recognizeRequest, type Expected, type Frame } from './listing-recognize';
 import { liveShop, shopBrand, shopServiceImage, shopSettings, shopSkuBadge, shopSkuFields } from './listing-shop';
 import { cornerAssets, pasteShopLogo } from './listing-corner';
 import { latestOutputs, latestRedraws, MAIN_SLOT, slotShop, storeOutput, type StoredPlan } from './listing-store';
@@ -170,7 +170,9 @@ export function planJobs(stored: StoredPlan, layout: Layout, round: 1 | 2, only?
     if (layout.sku.specCard) for (const it of skuItems(d, stored.colors)) {
       const item = it.key === it.color ? {} : { item: it.key }, product = it.color ? [`product:${it.color}`] : [];
       const liner = stored.liners?.items[it.key] ? [`liner:${stored.liners.items[it.key]}`] : [];
-      if (!photos[it.key]) jobs.push({ slot: `skumodel:${it.key}`, step: 'image', input: { kind: 'skuModel', sku: it.color ?? '', ...item, ...(pair ? { pair } : skuBy === d.model.lead ? {} : { who: skuBy }) }, depends: [...product, ...castOf], multi: false });
+      // Over a liner, its model is drawn from the liner's photo on white too (11-04).
+      const over = it.version?.kind === '外壳加内胆' ? liner : [];
+      if (!photos[it.key]) jobs.push({ slot: `skumodel:${it.key}`, step: 'image', input: { kind: 'skuModel', sku: it.color ?? '', ...item, ...(pair ? { pair } : skuBy === d.model.lead ? {} : { who: skuBy }) }, depends: [...product, ...castOf, ...over], multi: false });
       jobs.push({ slot: `sku:${it.key}`, step: 'image', input: { kind: 'sku', sku: it.color ?? '', card: true, ...item }, depends: [...product, ...(photos[it.key] ? [] : [`skumodel:${it.key}`]), ...liner], multi: false, free: true });
     }
     for (const c of layout.sku.specCard ? [] : stored.colors) {
@@ -806,6 +808,8 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
     const outputs = await latestOutputs(job.project_id);
     const output = async (slot: string) => { const o = outputs.get(slot); if (!o) throw new CatalogHttpError(409, `缺少前一步的图：${slot}`); return fileOf(o.file_id); };
     let prompt = '', references: Buffer[] = [], ratio: Ratio = 'square', mask: Buffer | undefined, paste: { original: Buffer; boxes: Box[] } | undefined;
+    // A SKU model over a liner drawn from its photo on white (11-04): checked against it once drawn.
+    let linerCheck: { liner: Buffer; name: string; ref: number } | null = null;
     if (input.kind === 'service') {
       const def = SERVICE_IMAGES.find(x => x.id === input.image)!, words = input.words.tags;
       if (input.stale) {
@@ -833,13 +837,16 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
     } else if (input.kind === 'liner') {
       // A liner's thumbnail onto white (11-04): a photo of it alone already on white as it is, else found on its photos and drawn.
       const photos = stored?.liners?.photos[input.id] ?? [];
-      let ref: { bytes: Buffer; cropped: boolean; recolor: boolean } | null = null;
+      const loaded: { photo: (typeof photos)[number]; bytes: Buffer }[] = [];
       for (const photo of photos) {
         const asset = stored.images.find(i => i.label === photo.label)?.assetId;
         const file = asset ? (await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [asset])).rows[0]?.file_id as string | undefined : undefined;
-        if (!file) continue;
-        const bytes = await sharp(await fileOf(file), { limitInputPixels: 60_000_000 }).rotate().resize(1536, 1536, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer();
-        if (photo.same && photo.still && await onWhite(bytes)) { await succeed(await whiteSquare(bytes)); return; }
+        if (file) loaded.push({ photo, bytes: await sharp(await fileOf(file), { limitInputPixels: 60_000_000 }).rotate().resize(1536, 1536, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer() });
+      }
+      // Any of them already on white first (8828's 红色 soft liner: its 3D image on white came after two shop-rack photos).
+      for (const { photo, bytes } of loaded) if (photo.same && photo.still && await onWhite(bytes)) { await succeed(await whiteSquare(bytes)); return; }
+      let ref: { bytes: Buffer; cropped: boolean; recolor: boolean } | null = null;
+      for (const { photo, bytes } of loaded) {
         const cut = await linerCrop(bytes, input, recognize);
         if (cut) { ref = { bytes: cut, cropped: true, recolor: !photo.same }; break; }
         // On none of them: the best one whole, as the thumbnail showed it before.
@@ -950,9 +957,14 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
           const own = !v && byColor ? await dressed([it.name], references) : null;
           const linerRef = own ? own.linerRef : v?.kind === '外壳加内胆' && ref ? references.push(ref) : !v && wearType === '内胆' && liner ? references.push(liner) : undefined;
           // Over a liner with nothing clear to draw it from: zipped up, the liner unseen (10-22).
+          // The liner itself from its photo on white (the cards' thumbnail, 11-04), its surface in words read off it.
+          const thumb = v?.kind === '外壳加内胆' && ref && stored.liners?.items[key] ? `liner:${stored.liners.items[key]}` : null;
+          const alone = thumb && outputs.has(thumb) ? await output(thumb) : null, aloneRef = alone ? references.push(alone) : undefined;
+          const look = alone && v ? { ref: aloneRef!, name: linerName(v), look: await linerLook(alone, linerName(v), recognize) } : undefined;
+          if (alone && v) linerCheck = { liner: alone, name: linerName(v), ref: aloneRef! };
           const wear = own ? own.wear : v?.kind === '单外壳' ? wearLine(undefined, undefined, undefined, covered) : v?.kind === '外壳加内胆' && !ref ? zippedWear(covered)
-            : wearLine(v ? '内胆' : wearType, linerRef, v ? linerColor || linerColorOf(sortedImages, refLabel) : undefined, covered);
-          prompt = skuModelPrompt({ color: it.name, garment, lead: who, who: input.pair ? 'pair' : 'lead', halves, logo: null, place: stored.place, pose, wear, linerRef });
+            : wearLine(v ? '内胆' : wearType, linerRef, v ? linerColor || linerColorOf(sortedImages, refLabel) : undefined, covered, look);
+          prompt = skuModelPrompt({ color: it.name, garment, lead: who, who: input.pair ? 'pair' : 'lead', halves, logo: null, place: stored.place, pose, wear, linerRef, linerAlone: aloneRef });
         }
         ratio = 'portrait';
       } else if (input.kind === 'product') {
@@ -1035,13 +1047,16 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
       }
     }
     if (input.note) prompt += `\n\n补充要求：${input.note}`;
-    const call = await generate({ prompt, references, ratio, mask }, {
+    const drawn = await generate({ prompt, references, ratio, mask }, {
       beforeSubmit: async () => {
         await db().query(`INSERT INTO listing_attempts(id,job_id,provider,model,status) VALUES($1,$2,$3,$4,'submitted')`, [attemptId, job.id, listingImageProvider(), listingImageModel()]);
         submitted = true;
       },
       receipt: async id => { await db().query('UPDATE listing_attempts SET provider_request_id=$2 WHERE id=$1', [attemptId, id]); },
     });
+    // 11-04: the liner showing on a SKU model checked against its photo on white; drawn once more when it is not
+    // the same (ours to pay), and the first kept if that fails. The user is not asked to look for it.
+    const call = linerCheck ? await linerRedraw(drawn, linerCheck, { job, prompt, references, ratio, generate, recognize }) : drawn;
     let bytes = call.bytes, upscaled: 'mediakit' | 'plain' | 'none' | 'pasted' | undefined;
     const shaped = input.kind === 'main' || input.kind === 'service' || input.kind === 'relayout' || input.kind === 'redraw';
     if (paste) { bytes = await pasteBack(paste.original, call.bytes, paste.boxes); upscaled = 'pasted'; }
@@ -1052,7 +1067,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         console.error('[listing] upscale', error instanceof Error ? error.message : error);
       }
     }
-    await db().query(`UPDATE listing_attempts SET status='succeeded',receipt=$2,finished_at=now() WHERE id=$1`, [attemptId, { taskId: call.taskId, credits: call.credits, durationMs: call.durationMs, upscaled, ...(corner ? { corner } : {}) }]);
+    await db().query(`UPDATE listing_attempts SET status='succeeded',receipt=$2,finished_at=now() WHERE id=$1`, [attemptId, { taskId: drawn.taskId, credits: drawn.credits, durationMs: drawn.durationMs, upscaled, ...(corner ? { corner } : {}), ...(call !== drawn ? { redrawn: 'liner-check' } : {}) }]);
     const asset = await succeed(bytes, input.kind === 'redraw');
     if (input.kind === 'main' && input.edit && d && layout) {
       // A square image changed on the 画板 is what its 3:4 image is written from.
@@ -1186,6 +1201,42 @@ export function cardOf(left: SkuLeft, edit: SkuTextEdit | undefined): Omit<SkuCa
   };
 }
 
+/** What a liner's surface is like, read off its photo on white (11-04); '' when the call fails. */
+async function linerLook(bytes: Buffer, name: string, recognize: Recognize): Promise<string> {
+  try {
+    const image = await sharp(bytes).resize(768, 768, { fit: 'inside' }).jpeg({ quality: 85 }).toBuffer();
+    return parseLinerLook((await recognize(linerLookRequest({ image, name, model: LISTING_PLAN_MODEL() }))).content);
+  } catch (error) { console.error('[listing] liner look', error instanceof Error ? error.message : error); return ''; }
+}
+/**
+ * A SKU model over a liner (11-04): the liner showing on it checked against its photo on white; when it is
+ * not the same, drawn once more with what was wrong (a new attempt marked ours, not charged). The first
+ * image is kept when the check cannot be read or the second drawing fails.
+ */
+async function linerRedraw(first: Awaited<ReturnType<Generate>>, check: { liner: Buffer; name: string; ref: number },
+  o: { job: ImageJob; prompt: string; references: Buffer[]; ratio: Ratio; generate: Generate; recognize: Recognize }): Promise<Awaited<ReturnType<Generate>>> {
+  let verdict: { same: boolean; why: string } | null = null;
+  try {
+    const small = (b: Buffer) => sharp(b).resize(1024, 1024, { fit: 'inside' }).jpeg({ quality: 85 }).toBuffer();
+    verdict = parseLinerMatch((await o.recognize(linerMatchRequest({ drawn: await small(first.bytes), liner: await small(check.liner), name: check.name, model: LISTING_PLAN_MODEL() }))).content);
+  } catch (error) { console.error('[listing] liner check', error instanceof Error ? error.message : error); }
+  if (!verdict || verdict.same) return first;
+  const id = randomUUID();
+  try {
+    const again = await o.generate({ prompt: `${o.prompt}\n\n上一张画错了：${verdict.why || '露出来的内胆和参考图里的不一样'}。这次外套敞开处露出来的内胆一定要照参考图${check.ref}画：绗缝格子、每格鼓起的厚薄、表面光泽都和它一样。`, references: o.references, ratio: o.ratio }, {
+      beforeSubmit: async () => { await db().query(`INSERT INTO listing_attempts(id,job_id,provider,model,status,receipt) VALUES($1,$2,$3,$4,'submitted',$5)`, [id, o.job.id, listingImageProvider(), listingImageModel(), { ours: 'liner-check', why: verdict!.why }]); },
+      receipt: async rid => { await db().query('UPDATE listing_attempts SET provider_request_id=$2 WHERE id=$1', [id, rid]); },
+    });
+    await db().query(`UPDATE listing_attempts SET status='succeeded',receipt=COALESCE(receipt,'{}'::jsonb)||$2::jsonb,finished_at=now() WHERE id=$1`, [id, { taskId: again.taskId, credits: again.credits, durationMs: again.durationMs }]);
+    return again;
+  } catch (error) {
+    console.error('[listing] liner redraw', error instanceof Error ? error.message : error);
+    const notCharged = !!(error as { notCharged?: boolean }).notCharged;
+    await db().query(`UPDATE listing_attempts SET status=CASE WHEN status='submitted' THEN $2 ELSE status END,finished_at=now() WHERE id=$1`, [id, notCharged ? 'failed' : 'unknown']).catch(() => {});
+    return first;
+  }
+}
+
 /** Is a photo on a white ground: its edges (4% each side) nearly all near-white (11-04: a shop-rack photo read as a still life was not). */
 export async function onWhite(bytes: Buffer): Promise<boolean> {
   const { data, info } = await sharp(bytes).flatten({ background: '#ffffff' }).resize(200, 200, { fit: 'fill' }).raw().toBuffer({ resolveWithObject: true });
@@ -1263,9 +1314,9 @@ export async function failBlocked(job: { id: string; run_id: string; tenant_id: 
 export async function finishRun(runId: string, tenantId: string, projectId: string) {
   const open = (await db().query(`SELECT 1 FROM listing_jobs WHERE run_id=$1 AND status IN ('queued','running') LIMIT 1`, [runId])).rowCount;
   if (open) return;
-  const attempts = (await db().query(`SELECT a.id,a.status,j.input FROM listing_attempts a JOIN listing_jobs j ON j.id=a.job_id WHERE j.run_id=$1`, [runId])).rows as { id: string; status: string; input: JobInput }[];
-  // A liner's thumbnail (11-04) is ours to pay: its attempt is kept for the records, not charged.
-  const outcomes: AttemptOutcome[] = attempts.map(a => ({ action: action(a.input), billable: a.status !== 'failed' && a.input.kind !== 'liner', certain: a.status === 'succeeded', attemptId: a.id }));
+  const attempts = (await db().query(`SELECT a.id,a.status,a.receipt,j.input FROM listing_attempts a JOIN listing_jobs j ON j.id=a.job_id WHERE j.run_id=$1`, [runId])).rows as { id: string; status: string; receipt: { ours?: string } | null; input: JobInput }[];
+  // A liner's thumbnail and a SKU model drawn again because its liner was wrong (11-04) are ours to pay: kept for the records, not charged.
+  const outcomes: AttemptOutcome[] = attempts.map(a => ({ action: action(a.input), billable: a.status !== 'failed' && a.input.kind !== 'liner' && !a.receipt?.ours, certain: a.status === 'succeeded', attemptId: a.id }));
   await settleHold(runHold(runId), tenantId, outcomes).catch(error => console.error('[listing] settle', error instanceof Error ? error.message : error));
   if (!(await db().query(`SELECT 1 FROM listing_jobs WHERE project_id=$1 AND status IN ('queued','running') LIMIT 1`, [projectId])).rowCount) {
     await db().query(`UPDATE listing_projects SET status=CASE WHEN COALESCE((plan->>'round')::int,1)=2 THEN 'done' ELSE 'square' END, updated_at=now() WHERE id=$1 AND status='generating'`, [projectId]);

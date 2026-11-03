@@ -391,4 +391,23 @@ describe('the liners on the SKU cards\' thumbnails, onto white before the cards 
     expect(await onWhite(white)).toBe(true);
     expect(await onWhite(rack)).toBe(false);
   });
+  it('a SKU model over a liner waits for its photo on white; the shell alone does not', () => {
+    const s: StoredPlan = { ...base, photos: {}, draft: { ...base.draft, versions }, liners: { photos: { '羽绒~黑色': [{ label: 'D1', same: true, still: true }] }, items: { [`${first.sku}~v2`]: '羽绒~黑色' } } };
+    const by = new Map(planJobs(s, master, 1).map(j => [j.slot, j]));
+    expect(by.get(`skumodel:${first.sku}~v2`)?.depends).toContain('liner:羽绒~黑色');
+    expect(by.get(`skumodel:${first.sku}`)?.depends).not.toContain('liner:羽绒~黑色');
+  });
+  it('the liner itself is drawn from its photo on white, by name and with its surface as read (8828: smooth taffeta)', () => {
+    const wear = wearLine('内胆', 4, '黑色', false, { ref: 5, name: '羽绒', look: '横向绗缝，每格鼓起，微亮面' })!;
+    expect(wear).toContain('里面穿着这款配套的黑色羽绒内胆');
+    expect(wear).toContain('怎么穿、露出多少照参考图4里外套下面那一件');
+    expect(wear).toContain('这件内胆本身照参考图5画');
+    expect(wear).toContain('（横向绗缝，每格鼓起，微亮面）');
+    expect(wear).toContain('不要画成光滑平整的一整片布');
+    expect(wear).toContain('只管外套本身，不管里面这件内胆');
+    expect(wearLine('内胆', 4, '黑色')).not.toContain('参考图5');
+    const prompt = skuModelPrompt({ color: '藏青', garment: ['立领'], lead: '女', who: 'lead', halves: true, logo: null, wear, linerRef: 4, linerAlone: 5 });
+    expect(prompt).toContain('参考图5是这件内胆单独拍的白底图');
+  });
 });
+

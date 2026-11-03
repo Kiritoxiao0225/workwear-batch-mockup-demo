@@ -117,7 +117,7 @@ export function itemLinerThumb(images: Img[], item: SkuItem): { id: string; inne
 }
 /**
  * Every thumbnail a plan's SKU cards show: `photos` the material's photos to make each from, best first
- * (at most 3 looked at; another colour's only when it has none in its own, `same` false, drawn in its
+ * (at most 4 looked at; another colour's only when it has none in its own, `same` false, drawn in its
  * colour), `still` no one in it; `items` the one each SKU image (by key) shows. A liner with no photo has none.
  */
 export type LinerPhoto = { label: string; same: boolean; still: boolean };
@@ -130,7 +130,7 @@ export function linerThumbs(images: Img[], d: Pick<Draft, 'versions'>, colors: {
     const photos = out.photos[t.id] ?? (() => {
       const all = linerAloneRanked(images, t.inner, t.color).map(id => images.find(i => i.id === id)!)
         .map(i => ({ label: i.id, same: (i.innerColor || i.color) === t.color, still: (i.kind === '静物' || i.kind === '3D渲染') && !i.person }));
-      return all.some(p => p.same) ? all.filter(p => p.same).slice(0, 3) : all.slice(0, 1);
+      return all.some(p => p.same) ? all.filter(p => p.same).slice(0, 4) : all.slice(0, 1);
     })();
     if (!photos.length) continue;
     out.photos[t.id] = photos; out.items[it.key] = t.id;

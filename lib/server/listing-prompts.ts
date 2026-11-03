@@ -6,7 +6,7 @@
  * image shows no garment), the cast (the models every image with people is drawn from) and these
  * words. Only the shop's service images learn from a (washed) competitor sample.
  */
-import { coveredZip, linerRefLine } from '../listing/wear';
+import { coveredZip, linerAloneLine, linerRefLine } from '../listing/wear';
 /** How the garment was worn on every image before 10-22, and still for 春秋薄款. */
 const NOW = '拉链拉到胸口，里面是白色圆领 T 恤';
 import { CORNER_BAND, CORNER_KEEP, CORNER_LINE, cornerStay, cornerTemplate } from '../listing/corner';
@@ -117,7 +117,7 @@ const PAIR_POSES = [
  * the camera, every one came out stiff); `pose`: the colour's place in the set, so the poses vary.
  * Head to knees as before: the SKU image finds the person on it and fills its panel.
  */
-export function skuModelPrompt(input: { color: string; garment: string[]; lead: '男' | '女'; who: 'pair' | 'lead'; halves: boolean; logo: string | null; logoRef?: number; place?: string; pose?: number; wear?: string | null; linerRef?: number; subject?: string }) {
+export function skuModelPrompt(input: { color: string; garment: string[]; lead: '男' | '女'; who: 'pair' | 'lead'; halves: boolean; logo: string | null; logoRef?: number; place?: string; pose?: number; wear?: string | null; linerRef?: number; linerAlone?: number; subject?: string }) {
   const pair = input.who === 'pair', person = input.lead === '男' ? '男生' : '女生';
   const castRefs = pair && input.halves ? '参考图2是男模特、参考图3是女模特的定妆照' : `参考图2是这套图的模特定妆照`;
   const only = !pair && !input.halves ? `：只画里面的${person}，另一个人不出现` : '';
@@ -130,7 +130,7 @@ export function skuModelPrompt(input: { color: string; garment: string[]; lead: 
   const poses = coveredZip(input.garment) ? SKU_POSES.filter(p => !p.includes('拉链头')) : SKU_POSES;
   const n = input.pose ?? 0, pose = pair ? PAIR_POSES[n % PAIR_POSES.length] : poses[n % poses.length];
   return `为服装商品的 SKU 图生成一张${pair ? '双人' : '单人'}模特实拍图，竖版 3:4。
-${input.subject ?? `参考图1是这件衣服「${input.color}」的白底产品图，衣服的颜色和款式以它为准。`}${castRefs}，只用来认人${only}${input.logoRef ? `；参考图${input.logoRef}是客户的 LOGO，只用来印在衣服胸口` : ''}。${input.linerRef ? linerRefLine(input.linerRef) : ''}
+${input.subject ?? `参考图1是这件衣服「${input.color}」的白底产品图，衣服的颜色和款式以它为准。`}${castRefs}，只用来认人${only}${input.logoRef ? `；参考图${input.logoRef}是客户的 LOGO，只用来印在衣服胸口` : ''}。${input.linerRef ? linerRefLine(input.linerRef) : ''}${input.linerAlone ? linerAloneLine(input.linerAlone) : ''}
 
 衣服（必须和参考图1一模一样）：
 ${lines(input.garment)}
