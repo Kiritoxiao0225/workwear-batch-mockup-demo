@@ -5,7 +5,7 @@
  * fix where there is one. It only tells; it never blocks (10-13: problems surfaced late, or blocked
  * a step they did not belong to).
  */
-import { hasPart, partOf, partPhoto, type Draft, type PartSource, type Point } from './draft';
+import type { Draft, PartSource } from './draft';
 
 export type AuditFix =
   | { kind: 'category'; to: string; label: string }
@@ -24,16 +24,8 @@ export function auditDraft(d: Draft, m: { category: string; sorted: { images: (P
   const other = name.match(SAYS_OTHER)?.[0];
   if (other && d.category === 'workwear') items.push({ text: `商品名写的是${other}，AI 判成了冲锋衣`, fix: { kind: 'category', to: 'generic', label: '改成其他衣服' } });
 
-  // A point about a part of the garment: the structure images should show that part.
-  const asked = new Set<string>();
-  for (const p of d.points.filter(x => x.on && x.part && x.kind === '衣服')) {
-    const part = partOf(p);
-    if (asked.has(part) || hasPart(d, part)) continue;
-    asked.add(part);
-    const photo = partPhoto(m.sorted.points, part, m.sorted.images);
-    items.push(photo ? { text: `卖点「${p.text}」讲的是${part}，素材里有${part}的照片（${photo.id}），结构图里还没有`, fix: { kind: 'part', part, pick: photo.id, label: `加进结构图` } }
-      : { text: `卖点「${p.text}」讲的是${part}，素材里没找到${part}的照片：这条只能用图标和文字讲`, fix: { kind: 'photo', part, label: `补一张${part}的照片` } });
-  }
+  // A point about a part with a photo of it goes into the structure images by itself (draft fillParts, 11-03); one with
+  // no photo is drawn another way that needs none. Neither is the user's to sort out.
 
   // A point whose every source was sorted as unrelated may not be in the material at all.
   const kind = new Map(m.sorted.images.map(i => [i.id, i.kind]));

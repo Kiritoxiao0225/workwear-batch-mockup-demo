@@ -15,14 +15,14 @@ import { CATEGORIES, categoryById, GROUP_HINT, GROUP_LABEL, TASK_HINT, TASK_LABE
 import {
   checkDraft, CLOSER_MAX, colorize, defaultDraft, directKeys, draftImages, FRONT, LIMITS, notesOf, placesFor, priceLines, proofsFor, renamePoint, replan, showsGarment, structureHint, sumCredits, syncCloser,
   templateFor, takeOff, putOn, usageOf, usedSlots, fitProof, fillParts, fillModel, modelPhotos, castFromPhotos, GENDERS, missingParts, partOf, wantsCast, hasPart, noPhotoProof, reusedSlots,
-  SKU_PEOPLE, skuItemsOf, colorKeys, type Counts, type Draft, type Gender, type Point, type PriceLine, type Slot,
+  SKU_PEOPLE, skuItemsOf, colorKeys, type Counts, type Draft, type Point, type PriceLine, type Slot,
 } from "@/lib/listing/draft";
-import { isComponent, isGroup } from "@/lib/listing/garment-role";
+import { isComponent } from "@/lib/listing/garment-role";
 import { proofById } from "@/lib/listing/proofs";
 import { auditDraft, type AuditFix } from "@/lib/listing/audit";
-import { colorRow, fieldRows, SKU_AUTO, SKU_AUTO_SET, SKU_WORD_MAX, skuCardRows, skuFieldName, skuFieldsUsed, skuPhotos, skuSetOf, skuWho, styleNo, type SkuWordField } from "@/lib/listing/sku-card";
+import { colorRow, fieldRows, SKU_AUTO, SKU_AUTO_SET, SKU_WORD_MAX, skuCardRows, skuFieldName, skuFieldsUsed, skuPhotos, skuSetOf, styleNo, type SkuWordField } from "@/lib/listing/sku-card";
 import { linerName, linerPhoto, versionName, WEAR_LABEL, WEARS } from "@/lib/listing/wear";
-import { draftVersions, linerAlone, linerByColor, linerColors, linerFor, linersSeen, mainLiner, VERSION_KINDS, type DraftVersion } from "@/lib/listing/sku-versions";
+import { draftVersions, itemPhoto, linerAlone, linerByColor, linerColors, linerFor, linersSeen, mainLiner, VERSION_KINDS, type DraftVersion, type SkuItem } from "@/lib/listing/sku-versions";
 import { LinerDialog } from "./listing-liner";
 import { heatPoint, insideFor, isInside } from "@/lib/listing/inside";
 import type { LinerTag } from "@/lib/listing/client-api";
@@ -163,7 +163,12 @@ export function PriceInfo({ lines, total, extra }: { lines: PriceLine[]; total: 
   );
 }
 
-const STEPS = ["① 确认这款", "② 选母版", "③ 卖点上图", "④ 确认出图"];
+const STEPS = ["① 确认这款", "② 选母版", "③ 卖点上图", "④ 出多少、确认出图"];
+/** What a master's five samples are, in order; the sample an image of each kind is shown with on ③. */
+const SAMPLE_CAPTION = ["首图", "店铺服务图", "功能", "细节", "收口"];
+const SAMPLE_OF: Partial<Record<string, number>> = { 首图: 0, 服务: 1, 功能: 2, 细节: 3, 实用: 3, 收口: 4 };
+/** The points not on an image yet, by kind (11-03). */
+const POOL_GROUPS: [string, string[]][] = [["功能", ["功能"]], ["做工", ["做工"]], ["实用", ["实用"]], ["面料", ["面料"]], ["场景", ["人群场景"]], ["其他", ["颜色款式", "服务定制", "定位"]]];
 /** What the picker fills: a colour's garment image, a structure image, or the man's (0) or woman's (1) model photo. */
 /** `open`: the inside picked for the main colour on ticking the open cover, which is ticked with it (10-29). */
 type Target = { kind: "color" | "part" | "model" | "version" | "inside"; index: number; open?: boolean } | null;
@@ -184,6 +189,8 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
   const [placing, setPlacing] = useState<{ id: string; all: boolean } | null>(null);
   const [hover, setHover] = useState<{ slot: number; zones: string[] } | null>(null);
   const [moved, setMoved] = useState("");
+  /** Step ③: the image being edited (11-03). */
+  const [cur, setCur] = useState(0);
   /** The liner panel (10-22): a new liner colour for a version's shell colour, or a liner tidied onto white (`color`). */
   const [linerOpen, setLinerOpen] = useState<{ inner: string; name?: string; color?: string; version?: number; shell?: string } | null>(null);
   const upload = useRef<HTMLInputElement>(null);
@@ -210,7 +217,6 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
   /** One photo of the inside for every colour: the material often shoots its close-ups in one colour only (10-29: 8826). */
   const insideAll = (label: string) => { if (draft.wear) set({ wear: { ...draft.wear, insides: Object.fromEntries(colorKeys(draft.colors).flatMap(k => k ? [[k, label]] : [])) } }); };
   const setVersion = (i: number, patch: Partial<DraftVersion>) => set({ versions: (draft.versions ?? []).map((v, k) => k === i ? { ...v, ...patch } : v) });
-  const kindOf = (label: string | null) => (label && (isComponent(sorted.get(label)) ? sorted.get(label)?.role || "内胆" : isGroup(sorted.get(label)) ? "合照" : sorted.get(label)?.kind)) || "补传";
   const candidates = (t: NonNullable<Target>) => {
     if (t.kind === "color") {
       const c = draft.colors[t.index], chosen = materials.chosen.colors.find(x => x.name === c.name)?.candidates ?? [];
@@ -260,81 +266,33 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
     else if (shop && !shop.logo && draft.logo?.mode === "样例") onChange({ ...draft, logo: { mode: "LOGO" } });
   }, [draft, shop, onChange]);
   const photos = photosOf(draft, materials, layout), cast = wantsCast(draft, layout, photos);
-  const step1 = (<>
-    <div className="lp-catcard"><b>品类</b>
-      <span className="lp-chips">{CATEGORIES.map(c => (
-        <button type="button" key={c.id} className={"lp-chip" + (c.id === draft.category ? " on" : "")} onClick={() => c.id !== draft.category && onChange(withCategory(draft, materials, layout, c.id))}>
-          {c.id === "workwear" ? "冲锋衣" : "其他衣服"}{c.id === materials.category && <small className="lp-muted">AI 判断</small>}</button>))}</span>
-      <span className="why">{draft.category === materials.category ? draft.categoryWhy || "按衣服的样子判断：连帽或立领、前中拉链、防风外套" : "你选的品类，卖点和每张图已按它重排"}</span>
-      <small className="lp-muted">{category.id === "workwear" ? "冲锋衣：卖点按销量靠前的冲锋衣来排，还会补竞品常讲、素材没写的卖点" : "其他衣服：只用素材里的卖点，不参考竞品"} · 换品类会重排卖点和每张图，颜色和衣服图不动</small></div>
-    <div className={"lp-alert " + (check.red.length ? "r" : "g")}>{check.red.length ? "✕ " + check.red.join("；") : "✓ 每个颜色都有衣服图，正面全身也有"}
-      {materials.sorted.notes.length > 0 && <small>AI 的提醒：{materials.sorted.notes.join("；")}</small>}</div>
-    {audit.length > 0 && <div className="lp-alert y lp-audit"><b>整理结果对不上的地方</b><small className="lp-muted">程序把 AI 的整理结果核了一遍，不影响往下走，看着不对就点改</small>
-      {audit.map(a => <p key={a.text}>! {a.text}{a.fix && <> <button type="button" className="lp-btn sm" onClick={() => fixAudit(a.fix!)}>{a.fix.label}</button></>}</p>)}</div>}
-    <h4 className="lp-h">每个颜色的衣服 <small>出图时只看这里的图：每色 1 张。干净的静物图直接当白底图，不收费。颜色名照抄素材。</small></h4>
-    <div className="lp-mcards">{draft.colors.map((c, i) => {
-      const isMain = draft.main === c.name;
-      return (
-        <div key={i} className={"lp-mcard" + (c.pick ? "" : " missing") + (isMain ? " main" : "")}>
-          {isMain && <span className="lp-badge">主推色</span>}
-          {c.pick ? <div className="pic">{pic(c.pick)}<span className="src">{kindOf(c.pick)}</span></div> : <div className="pic">没找到「{c.name}」的衣服图<br />（素材里提到了这个颜色）</div>}
-          <div className="row"><span className="dotc" style={{ background: c.hex || "#999" }} /><input value={c.name} maxLength={12} aria-label="颜色名"
-            onChange={e => { const nameNow = e.target.value; onChange(recolor({ ...draft, main: isMain ? nameNow : draft.main, colors: draft.colors.map((x, k) => k === i ? { ...x, name: nameNow } : x),
-              slots: draft.slots.map(s => ({ ...s, colors: s.colors.map(n => n === c.name ? nameNow : n) })), extra: draft.extra.map(e2 => e2.color === c.name ? { ...e2, color: nameNow } : e2) }, layout)); }} /></div>
-          {c.pick && <label className={"lp-star" + (isMain ? " on" : "")}><input type="radio" name="main" checked={isMain} onChange={() => onChange(recolor({ ...draft, main: c.name, slots: draft.slots.map(s => s.colors.includes(c.name) ? { ...s, manual: false } : s) }, layout))} /> {isMain ? "首图和长图用这个颜色" : "设为主推色"}</label>}
-          <div className="row"><button type="button" className={"lp-btn sm" + (c.pick ? "" : " primary")} onClick={() => { setTab("推荐"); setTarget({ kind: "color", index: i }); }}>{c.pick ? "换一张" : "补传 / 选图"}</button>
-            <button type="button" className="lp-btn link" onClick={() => { if (window.confirm(`去掉颜色「${c.name}」？这个颜色不出 SKU 图，也不出现在主图里。`)) onChange(recolor({ ...draft, colors: draft.colors.filter((_, k) => k !== i) }, layout)); }}>不要这个颜色</button></div>
-        </div>);
-    })}</div>
-    <p className="lp-say"><b>主推色</b>就是首图和长图用的颜色。想用别的颜色也出首图（比如做不同链接），在第 ② 步「出几套」里加。</p>
-    {materials.wear && <>
-      <h4 className="lp-h">这款怎么穿 <small>定妆照、有人的主图和 SKU 模特都照这个穿</small></h4>
-      <div className="lp-model"><div className="lp-chips">{WEARS.map(t => {
-        const liner = t === "内胆" ? wearOf({ ...materials, wear: { ...materials.wear!, type: "内胆" } }, draft.main)?.liner : undefined, off = t === "内胆" && !liner;
-        return (<label key={t} className={"lp-chip" + (wearType === t ? " on" : "") + (off ? " off" : "")} title={off ? "素材里没有外套里穿着内胆的照片" : ""}>
-          <input type="radio" name="wear" hidden disabled={off} checked={wearType === t} onChange={() => set({ wear: t === "内胆" ? { type: t, liner } : t === "一体" ? { type: t, box: true } : { type: t } })} />{WEAR_LABEL[t]}</label>);
-      })}</div>
-        <p className="lp-say">{wearType === "内胆" ? <>外套敞开，里面穿着内胆，一眼看得出两层、厚实。{!linerByColor(draft) && <>内胆照这张素材画：{draft.wear?.liner && byLabel.get(draft.wear.liner) ? <a className="lp-liner-pic" href={byLabel.get(draft.wear.liner)!.url} target="_blank" rel="noreferrer" title={byLabel.get(draft.wear.liner)!.path}><img src={byLabel.get(draft.wear.liner)!.url} alt="" /></a> : draft.wear?.liner}</>}</>
-          : wearType === "一体" ? (draft.wear?.open ? "拉链拉到顶、领子立起来，看着蓬松厚实；首图敞开穿，露出里面。" : "拉链拉到顶、领子立起来，看着蓬松厚实。") : "拉链拉到胸口，里面白 T，和以前一样。"}
-          {materials.wear.why && <span className="lp-muted">（整理时看到：{materials.wear.why}）</span>}</p>
-        {wearType === "一体" && (() => {
-          // 10-29: each colour's inside, for the SKU images' small box and the open cover.
-          const keys = colorKeys(draft.colors), w = draft.wear!;
-          const insideOf = (i: number) => keys[i] ? insideFor(linerImages, draft, keys[i]!) : null;
-          return (<div className="lp-main-liners">
-            <span className="lp-small">衣服里面的照片（翻开看到的里布、里绒、夹棉）：点图换一张</span>
-            {draft.colors.map((c, i) => {
-              const label = insideOf(i), img = label ? byLabel.get(label) : undefined;
-              return (<span key={i} className="lp-liner-tile" title={img?.path ?? ""}>
-                <button type="button" className="lp-btn link" onClick={() => { setTab("推荐"); setTarget({ kind: "inside", index: i }); }}>{img ? <img src={img.url} alt="" /> : <span className="none">没有</span>}</button>
-                <small><b>{c.name}</b> {label && <button type="button" className="lp-btn link" onClick={() => setInside(i, "")}>不用</button>}</small>
-                {label && draft.colors.length > 1 && <button type="button" className="lp-btn link lp-small" onClick={() => insideAll(label)}>全部颜色用这张</button>}</span>);
-            })}
-            {layout.sku.specCard && <label className="lp-small" style={{ flexBasis: "100%" }}><input type="checkbox" checked={!!w.box} onChange={e => set({ wear: { ...w, box: e.target.checked } })} /> SKU 图标题下放一个小框：有这个颜色里面的照片就放进去，没有就留一个空的灰框，自己 P 上</label>}
-            <span className="lp-small lp-muted" style={{ flexBasis: "100%" }}>首图要不要敞开、露出里面，在第 ② 步「首图」里选。</span>
-          </div>);
-        })()}
-        {wearType === "内胆" && linerByColor(draft) && (() => {
-          // 10-25: the cast and every main image wear the liner of the colour they show, as its SKU image does.
-          const lined = (draft.versions ?? []).filter(v => v.on && v.kind === "外壳加内胆" && v.inner && v.colors.length);
-          return (<div className="lp-main-liners">
-            <span className="lp-small">定妆照和主图里每个颜色穿的内胆{lined.length > 1 && <> · 优先穿 <select value={lined.some(v => v.key === draft.wear?.main) ? draft.wear!.main : ""} onChange={e => set({ wear: { ...draft.wear!, main: e.target.value || undefined } })}>
-              <option value="">素材里这个颜色最常搭的那件</option>{lined.map(v => <option key={v.key} value={v.key}>{linerName(v)}内胆</option>)}</select></>}：</span>
-            {live(draft).map(c => {
-              const m = mainLiner(linerImages, draft, c.name), img = m?.ref ? byLabel.get(m.ref) : undefined;
-              return (<span key={c.name} className="lp-liner-tile" title={m?.ref && img ? img.path : ""}>{img ? <a href={img.url} target="_blank" rel="noreferrer"><img src={img.url} alt="" /></a> : <span className="none">拉链拉上</span>}
-                <small><b>{c.name}</b> {m?.color && img ? `配${m.color}${linerName(m.version)}` : "看不到内胆"}</small></span>);
-            })}
-            <small className="lp-muted">要改某个颜色配哪件，在下面「SKU 版本」里改它的内胆颜色，主图跟着变。</small></div>);
-        })()}</div>
-    </>}
-    {layout.sku.specCard && (wearType === "内胆" || !!draft.versions?.length) && (() => {
-      // Each version's SKU images: how many show the material's own photo (free) and how many are drawn.
-      const items = skuItemsOf(draft), countOf = (v: DraftVersion) => { const own = items.filter(i => i.version?.key === v.key); return { all: own.length, real: own.filter(i => photos.has(i.key)).length }; };
-      const total = items.length, real = items.filter(i => photos.has(i.key)).length;
-      return (<>
-      <h4 className="lp-h" id="lp-sku-versions">SKU 版本 <span className="lp-chip-s warn">出图前请核对</span></h4>
-      <p className="lp-say">AI 从素材里整理出下面几种穿法。<b>不卖的去掉勾，漏掉的点「＋ 新增」</b>；每个勾上的颜色出一张 SKU 图。看右边的依据图，确认 AI 认得对不对。</p>
+  /* shared by the steps */
+  // 首图人物 (11-01): the plan's choice, else the master's.
+  const coverWho = coverPeopleOf(layout, draft), coverDefault = coverPeopleOf(rawLayout, { model: draft.model });
+  // SKU 图左边 (11-01): the combo the product uses and what it will say, with the colour standing in for every colour's name.
+  const skuSet = skuSetOf(shop?.skuFields, draft.skuFields);
+  const skuCard = { name, category: draft.category, points: draft.points, words: draft.skuWords, outer: draft.wear?.type === "内胆" || draft.wear?.type === "一体" };
+  const skuFieldRows = fieldRows(skuCard), skuPreview = skuCardRows(skuCard, skuSet, colorRow("颜色"));
+  // 自动 always offers the 货号 box: typing one gives it its row.
+  const skuWordFields = skuSet.fields.length ? skuFieldsUsed(skuCard, skuSet) : [...new Set<SkuWordField>(["style", ...skuFieldsUsed(skuCard, skuSet)])];
+  const skuMissing = skuSet.fields.filter((f): f is SkuWordField => f !== "color" && !skuFieldRows[f]);
+  const skuBy = draft.skuPeople ?? "实拍";
+  const modelShots = materials.sorted.images.filter(i => i.kind === "模特实拍" && !i.same).length;
+  /** Draw the cast from the material: the clearest man and woman picked, or none yet. */
+  const pickModelPhotos = () => {
+    const filled = fillModel({ ...draft, model: { lead: draft.model.lead } }, materials.sorted.images).model;
+    set({ model: filled.photos ? filled : { lead: draft.model.lead, photos: {} } });
+  };
+  const setCount = (key: keyof Counts, n: number) => {
+    const counts = { ...draft.counts, [key]: n };
+    if (key === "square") counts.portrait = Math.min(counts.portrait, n);
+    set({ counts });
+  };
+  const look = materials.look;
+  // The versions in full (10-22): add one, rename a liner, which liner colour each shell colour wears, a liner tidied onto white.
+  const countOf = (v: DraftVersion) => { const own = skuItemsOf(draft).filter(i => i.version?.key === v.key); return { all: own.length, real: own.filter(i => photos.has(i.key)).length }; };
+  const versionsEditor = (<>
+      <p className="lp-say">每种穿法一行：不卖的去掉勾，漏掉的点「＋ 新增一个版本」。外套里穿内胆时，每个颜色配哪件内胆在这里改。</p>
       <div className="lp-versions">{(draft.versions ?? []).map((v, i) => {
         const read = materials.wear?.versions.find(x => x.kind === v.kind && x.inner === v.inner), seen = read?.colors ?? [];
         // A liner worn alone comes in every colour the material (or the plan, 10-22) has it in.
@@ -384,35 +342,57 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
           </div>}
         </div>);
       })}
-        <div className="more"><button type="button" className="lp-btn" onClick={() => set({ versions: [...(draft.versions ?? []), { key: `v${Math.max(0, ...(draft.versions ?? []).map(v => Number(v.key.slice(1)) || 0)) + 1}`, kind: "外壳加内胆", inner: innerNames[0] ?? "", colors: [], on: true, added: true }] })}>＋ 新增一个版本</button>
-          <span className="lp-small">共 <b>{total}</b> 张 SKU 图：{real} 张用素材实拍（不花钱）{total - real ? <>，{total - real} 张照定妆照画{prices.exempt ? "" : `（每张 ${prices.image} 积分）`}</> : ""}</span></div></div>
-    </>); })()}
-    <h4 className="lp-h">衣服结构图 <small>给 AI 看清这件衣服各部位长什么样，保证每张图里衣服画得一样。细节图只能拍这里有图的部位；部位名字可以改、加、删。</small></h4>
+        <div className="more"><button type="button" className="lp-btn" onClick={() => set({ versions: [...(draft.versions ?? []), { key: `v${Math.max(0, ...(draft.versions ?? []).map(v => Number(v.key.slice(1)) || 0)) + 1}`, kind: "外壳加内胆", inner: innerNames[0] ?? "", colors: [], on: true, added: true }] })}>＋ 新增一个版本</button></div></div>
+  </>);
+  const partsGrid = (
     <div className="lp-parts">{draft.parts.map((p, i) => (
       <div key={i} className={"lp-part" + (!p.pick && p.part === FRONT ? " missing" : "")}>
         <button type="button" className="pic" title="换一张" onClick={() => { setTab("推荐"); setTarget({ kind: "part", index: i }); }}>
           {p.pick ? pic(p.pick) : <span className="none">{p.part === FRONT ? "缺正面全身图，点这里补" : "还没选图，点这里选"}</span>}</button>
         {p.part === FRONT ? <span className="nm">{FRONT}</span>
           : <><input value={p.part} maxLength={12} placeholder="部位名" aria-label="部位名" onChange={e => set({ parts: draft.parts.map((x, k) => k === i ? { ...x, part: e.target.value } : x) })} />
-            <button type="button" className="lp-btn link" onClick={() => set({ parts: draft.parts.filter((_, k) => k !== i) })}>移除</button></>}
+            <button type="button" className="lp-btn link" onClick={() => set({ parts: draft.parts.filter((_, k) => k !== i), noParts: [...new Set([...(draft.noParts ?? []), p.part])].slice(-32) })}>移除</button></>}
       </div>))}
       <div className="lp-part"><button type="button" className="pic" onClick={() => { set({ parts: [...draft.parts, { part: "新部位", pick: null }] }); setTab("全部"); setTarget({ kind: "part", index: draft.parts.length }); }}><span className="none add">＋ 加一个部位</span></button></div>
-    </div>
-    <details className="lp-all">
-      <summary>查看全部素材：整理后 {library.length} 张，合并重复 {copies.length} 张</summary>
-      <div className="lp-tabs">{["全部", ...KINDS.filter(k => library.some(i => sorted.get(i.label)?.kind === k)), "重复（已合并）"].map(k => (
-        <button type="button" key={k} className={libTab === k ? "on" : ""} onClick={() => setLibTab(k)}>{k} {k === "全部" ? library.length : k === "重复（已合并）" ? copies.length : library.filter(i => sorted.get(i.label)?.kind === k).length}</button>))}</div>
-      <div className="lp-lib">{libTab === "重复（已合并）"
-        ? copies.map(c => byLabel.get(c.copy) && <a key={c.copy} className="it" href={byLabel.get(c.copy)!.url} target="_blank" rel="noreferrer"><img src={byLabel.get(c.copy)!.url} alt="" loading="lazy" /><span className="cat">同 {c.keep}</span><small>{byLabel.get(c.copy)!.path}</small></a>)
-        : library.filter(i => libTab === "全部" || sorted.get(i.label)?.kind === libTab).map(i => (
-          <a key={i.label} className="it" href={i.url} target="_blank" rel="noreferrer"><img src={i.url} alt="" loading="lazy" /><span className="cat">{sorted.get(i.label)?.kind}{sorted.get(i.label)?.color ? "·" + sorted.get(i.label)!.color : ""}</span><small>{i.path}</small></a>))}</div>
-    </details>
+    </div>);
+  const otherSettings = (<>
+    <h4 className="lp-h">品类</h4>
+    <div className="lp-catcard"><b>品类</b>
+      <span className="lp-chips">{CATEGORIES.map(c => (
+        <button type="button" key={c.id} className={"lp-chip" + (c.id === draft.category ? " on" : "")} onClick={() => c.id !== draft.category && onChange(withCategory(draft, materials, layout, c.id))}>
+          {c.id === "workwear" ? "冲锋衣" : "其他衣服"}{c.id === materials.category && <small className="lp-muted">AI 判断</small>}</button>))}</span>
+      <span className="why">{draft.category === materials.category ? draft.categoryWhy || "按衣服的样子判断：连帽或立领、前中拉链、防风外套" : "你选的品类，卖点和每张图已按它重排"}</span>
+      <small className="lp-muted">{category.id === "workwear" ? "冲锋衣：卖点按销量靠前的冲锋衣来排，还会补竞品常讲、素材没写的卖点" : "其他衣服：只用素材里的卖点，不参考竞品"} · 换品类会重排卖点和每张图，颜色和衣服图不动</small></div>
+    {materials.wear && <>
+      <h4 className="lp-h">穿法 <small>定妆照、有人的主图和规格图模特都照这个穿</small></h4>
+      <div className="lp-model"><div className="lp-chips">{WEARS.map(t => {
+        const liner = t === "内胆" ? wearOf({ ...materials, wear: { ...materials.wear!, type: "内胆" } }, draft.main)?.liner : undefined, off = t === "内胆" && !liner;
+        return (<label key={t} className={"lp-chip" + (wearType === t ? " on" : "") + (off ? " off" : "")} title={off ? "素材里没有外套里穿着内胆的照片" : ""}>
+          <input type="radio" name="wear" hidden disabled={off} checked={wearType === t} onChange={() => set({ wear: t === "内胆" ? { type: t, liner } : t === "一体" ? { type: t, box: true } : { type: t } })} />{WEAR_LABEL[t]}</label>);
+      })}</div>
+        <p className="lp-say">{wearType === "内胆" ? <>外套敞开，里面穿着内胆，一眼看得出两层、厚实。{!linerByColor(draft) && <>内胆照这张素材画：{draft.wear?.liner && byLabel.get(draft.wear.liner) ? <a className="lp-liner-pic" href={byLabel.get(draft.wear.liner)!.url} target="_blank" rel="noreferrer" title={byLabel.get(draft.wear.liner)!.path}><img src={byLabel.get(draft.wear.liner)!.url} alt="" /></a> : draft.wear?.liner}</>}</>
+          : wearType === "一体" ? (draft.wear?.open ? "拉链拉到顶、领子立起来，看着蓬松厚实；首图敞开穿，露出里面。" : "拉链拉到顶、领子立起来，看着蓬松厚实。") : "拉链拉到胸口，里面白 T，和以前一样。"}
+          {materials.wear.why && <span className="lp-muted">（整理时看到：{materials.wear.why}）</span>}</p>
+        {wearType === "内胆" && linerByColor(draft) && (() => {
+          // 10-25: the cast and every main image wear the liner of the colour they show, as its SKU image does.
+          const lined = (draft.versions ?? []).filter(v => v.on && v.kind === "外壳加内胆" && v.inner && v.colors.length);
+          return (<div className="lp-main-liners">
+            <span className="lp-small">定妆照和主图里每个颜色穿的内胆{lined.length > 1 && <> · 优先穿 <select value={lined.some(v => v.key === draft.wear?.main) ? draft.wear!.main : ""} onChange={e => set({ wear: { ...draft.wear!, main: e.target.value || undefined } })}>
+              <option value="">素材里这个颜色最常搭的那件</option>{lined.map(v => <option key={v.key} value={v.key}>{linerName(v)}内胆</option>)}</select></>}：</span>
+            {live(draft).map(c => {
+              const m = mainLiner(linerImages, draft, c.name), img = m?.ref ? byLabel.get(m.ref) : undefined;
+              return (<span key={c.name} className="lp-liner-tile" title={m?.ref && img ? img.path : ""}>{img ? <a href={img.url} target="_blank" rel="noreferrer"><img src={img.url} alt="" /></a> : <span className="none">拉链拉上</span>}
+                <small><b>{c.name}</b> {m?.color && img ? `配${m.color}${linerName(m.version)}` : "看不到内胆"}</small></span>);
+            })}
+            <small className="lp-muted">要改某个颜色配哪件，在规格图下面「调整穿法」里改它的内胆颜色，主图跟着变。</small></div>);
+        })()}</div>
+    </>}
     {shops.length > 1 && <>
       <h4 className="lp-h">用哪套店铺 <small>左上角的店铺 LOGO、胸口的样例 LOGO、第 2 张服务图都用这套的；换色首图在第 ② 步还能另选</small></h4>
       <div className="lp-chips">{shops.map(s => (
         <button type="button" key={s.id} className={"lp-chip" + (shopState?.set === s.id ? " on" : "")} onClick={() => set({ shop: s.id })}>{s.name}{s.isDefault && <small> · 默认</small>}</button>))}</div>
     </>}
-    <h4 className="lp-h">胸口印什么 <small>竞品首图几乎都在胸口印了标；只影响有人和整件衣服的主图，SKU 图不印</small></h4>
+    <h4 className="lp-h">胸口印什么 <small>竞品首图几乎都在胸口印了标；只影响有人和整件衣服的主图，规格图不印</small></h4>
     <div className="lp-logo3">{([["样例", shop?.logo ? "店铺设置里的样例 LOGO，每款都能直接用" : "先去店铺设置传样例 LOGO"], ["客户", "这款单独传一个客户的 LOGO 做案例"], ["LOGO", "印一个「LOGO」字样，告诉买家能印标"], ["不印", "衣服原样，不印任何字"]] as const).map(([mode, what]) => (
       <button type="button" key={mode} disabled={mode === "样例" && !shop?.logo} className={"lp-pick" + (logoMode === mode ? " on" : "")} onClick={() => mode === "客户" && !draft.logo?.label ? logoUpload.current?.click() : set({ logo: { mode, label: draft.logo?.label } })}>
         <b>{mode === "不印" ? "不印" : mode === "LOGO" ? "印「LOGO」字样" : mode === "样例" ? "印样例 LOGO" : "印客户 LOGO"}</b>
@@ -423,49 +403,181 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
         setBusy(true); try { const added = await onUpload(file); set({ logo: { mode: "客户", label: added.label } }); } catch { /* the page says why */ } finally { setBusy(false); }
       }} /></div>
     {logoMode === "客户" && <p className="lp-say">用真实客户的 LOGO 做案例，要确认是真实合作或已获授权。{draft.logo?.label && <button type="button" className="lp-btn link" onClick={() => logoUpload.current?.click()}>换一张</button>}</p>}
+    {layout.sku.specCard && <>
+      <h4 className="lp-h">规格图左边写什么 <small>用店铺设置里存的方案；这款单独换方案、改字，不影响别的款</small></h4>
+      {/* 11-01: a dropdown and a picture of the left column with this product's own words (the chips were hard to read). */}
+      <div className="lp-model lp-skuplan"><SkuLeftPreview rows={skuPreview.map(r => ({ label: r.label.split("/").pop()!, value: r.icon === "color" ? "（各颜色名）" : r.value }))} />
+        <div>
+        <label className="lp-small pick">方案 <select className="lp-in" value={skuSet.id} onChange={e => set({ skuFields: e.target.value })}>{[SKU_AUTO_SET, ...(shop?.skuFields.sets ?? [])].map(x => (
+          <option key={x.id} value={x.id}>{x.id === SKU_AUTO ? "不指定（系统自动挑）" : x.name}{x.id === skuSetOf(shop?.skuFields).id ? " · 默认" : ""}</option>))}</select>
+          <span className="lp-muted">方案在「店铺设置 → SKU 图左边写什么」里建</span></label>
+        <div className="lp-skuwords">{skuWordFields.map(f => {
+          const read = f === "style" ? styleNo(name) : skuFieldRows[f]?.value && !draft.skuWords?.[f]?.trim() ? skuFieldRows[f]!.value : null;
+          const hint = f === "style" ? `不填会自动识别文件夹名最前面的货号${read ? `，现在认出「${read}」` : "，这款没认出来"}`
+            : read ? `素材里读到「${read}」，要改就写` : "素材里没读到，可以手写；不写这一行就不放";
+          return (<label key={f}><span>{skuFieldName(f)}</span>
+            <input className="lp-in" value={draft.skuWords?.[f] ?? ""} maxLength={SKU_WORD_MAX} placeholder={hint}
+              onChange={e => { const words = { ...draft.skuWords, [f]: e.target.value }; if (!e.target.value) delete words[f]; set({ skuWords: Object.keys(words).length ? words : undefined }); }} /></label>);
+        })}</div>
+        <p className="lp-say">左边就是这款规格图左边会写的字。{skuSet.id === SKU_AUTO ? "「不指定」时系统挑这款有的前两个，再加颜色。" : ""}{skuMissing.length ? <> <b>{skuMissing.map(skuFieldName).join("、")}</b>素材里没有字，这一行不放；在上面写上就有。</> : null}</p>
+        </div>
+      </div>
+    </>}
+    <details className="lp-all">
+      <summary>查看全部素材：整理后 {library.length} 张，合并重复 {copies.length} 张</summary>
+      <div className="lp-tabs">{["全部", ...KINDS.filter(k => library.some(i => sorted.get(i.label)?.kind === k)), "重复（已合并）"].map(k => (
+        <button type="button" key={k} className={libTab === k ? "on" : ""} onClick={() => setLibTab(k)}>{k} {k === "全部" ? library.length : k === "重复（已合并）" ? copies.length : library.filter(i => sorted.get(i.label)?.kind === k).length}</button>))}</div>
+      <div className="lp-lib">{libTab === "重复（已合并）"
+        ? copies.map(c => byLabel.get(c.copy) && <a key={c.copy} className="it" href={byLabel.get(c.copy)!.url} target="_blank" rel="noreferrer"><img src={byLabel.get(c.copy)!.url} alt="" loading="lazy" /><span className="cat">同 {c.keep}</span><small>{byLabel.get(c.copy)!.path}</small></a>)
+        : library.filter(i => libTab === "全部" || sorted.get(i.label)?.kind === libTab).map(i => (
+          <a key={i.label} className="it" href={i.url} target="_blank" rel="noreferrer"><img src={i.url} alt="" loading="lazy" /><span className="cat">{sorted.get(i.label)?.kind}{sorted.get(i.label)?.color ? "·" + sorted.get(i.label)!.color : ""}</span><small>{i.path}</small></a>))}</div>
+    </details>
+  </>);
+  // ① 11-03: one block per question. On top, one line: can this go on (green) or what is missing (red). Then the colours
+  // (which is the main one, which also get a cover of their own), then the SKU images as a table of what each one is drawn
+  // from, then everything rarely changed folded into one line each.
+  const extraOf = (color: string) => draft.extra.some(e => e.color === color);
+  const toggleCover = (color: string) => set({ extra: extraOf(color) ? draft.extra.filter(e => e.color !== color) : [...draft.extra, { color, layout: "" }] });
+  const pair = skuPair(layout), real = (draft.skuPeople ?? "实拍") === "实拍";
+  /** The material's photo an SKU image would use as it is, or null when it is drawn. */
+  const photoOf = (it: SkuItem) => real ? itemPhoto(materials.sorted.images, it, draft.model.lead, pair) : null;
+  const versions = draft.versions ?? [], shellCols = versions.map((v, i) => ({ v, i })).filter(x => x.v.kind !== "单内胆");
+  const alone = versions.map((v, i) => ({ v, i })).filter(x => x.v.kind === "单内胆");
+  const keys = colorKeys(draft.colors);
+  const toggleIn = (i: number, color: string) => {
+    const v = versions[i], has = v.on && v.colors.includes(color);
+    setVersion(i, { on: true, colors: has ? v.colors.filter(x => x !== color) : [...new Set([...(v.on ? v.colors : []), color])] });
+  };
+  const skuCell = (it: SkuItem, on: boolean, ref: string | null, onClick?: () => void) => {
+    const photo = photoOf(it), url = (photo && byLabel.get(photo)?.url) || (ref && byLabel.get(ref)?.url) || "";
+    return (<button type="button" className={"lp-opt" + (photo ? "" : " draw") + (on ? "" : " off")} aria-pressed={on} aria-label={it.label} title={photo ? `用素材照片 ${photo}` : "素材里没拍到，AI 照定妆照里的模特画"} onClick={onClick} disabled={!onClick}>
+      {url && <img src={url} alt="" loading="lazy" />}{!photo && <em>AI 画</em>}{onClick && <span className="ck" aria-hidden="true" />}</button>);
+  };
+  const skuAll = layout.sku.specCard ? skuItemsOf(draft) : [], mainItem = skuAll.find(i => i.name === draft.main), mainPhoto = mainItem ? photoOf(mainItem) : null;
+  const exampleUrl = (mainPhoto && byLabel.get(mainPhoto)?.url) || (live(draft).find(c => c.name === draft.main)?.pick && byLabel.get(live(draft).find(c => c.name === draft.main)!.pick!)?.url) || "";
+  const nReal = skuAll.filter(i => photos.has(i.key)).length, nDraw = skuAll.length - nReal;
+  const wearSummary = wearType === "内胆" ? `三合一（${[...new Set(versions.filter(v => v.inner).map(v => linerName(v)))].join("、")}内胆）` : WEAR_LABEL[wearType];
+  const logoText = logoMode === "不印" ? "不印" : logoMode === "LOGO" ? "印「LOGO」字样" : logoMode === "样例" ? "印样例 LOGO" : "印客户 LOGO";
+  const step1 = (<>
+    <div className={"lp-band " + (check.red.length ? "r" : "g")}>
+      <span className="mark">{check.red.length ? "!" : "✓"}</span>
+      <div className="txt">
+        <b>{check.red.length ? `还差 ${check.red.length} 处，补好才能往下走` : "AI 已整理好素材，可以往下走"}</b>
+        {check.red.length ? check.red.map(r => <small key={r}>· {r}</small>)
+          : <span className="facts"><span>品类 <b>{category.id === "workwear" ? "冲锋衣" : "其他衣服"}</b></span><span>穿法 <b>{wearSummary}</b></span><span><b>{ok.length}</b> 个颜色</span><span>素材 <b>{library.length}</b> 张</span></span>}
+        {audit.map(a => <small key={a.text} className="y">! {a.text}{a.fix && <> <button type="button" className="lp-btn sm" onClick={() => fixAudit(a.fix!)}>{a.fix.label}</button></>}</small>)}
+      </div>
+    </div>
+
+    <section className="lp-q">
+      <h4 className="lp-h2">有哪些颜色 <small>素材里认出 {draft.colors.length} 个颜色</small></h4>
+      <p className="lp-qhelp">主推色出整套主图。想给别的颜色单独做一个链接，就勾它的「也出一张首图」。</p>
+      <div className="lp-ccards">{draft.colors.map((c, i) => {
+        const isMain = draft.main === c.name;
+        return (
+          <div key={i} className={"lp-ccard" + (isMain ? " main" : "") + (c.pick ? "" : " missing")}>
+            <button type="button" className="pic" title="换一张" onClick={() => { setTab("推荐"); setTarget({ kind: "color", index: i }); }}>
+              {c.pick ? pic(c.pick) : <span className="none">没找到「{c.name}」的衣服图<br /><b>点这里补</b></span>}</button>
+            <input value={c.name} maxLength={12} aria-label="颜色名" onChange={e => { const nameNow = e.target.value; onChange(recolor({ ...draft, main: isMain ? nameNow : draft.main, colors: draft.colors.map((x, k) => k === i ? { ...x, name: nameNow } : x),
+              slots: draft.slots.map(s => ({ ...s, colors: s.colors.map(n => n === c.name ? nameNow : n) })), extra: draft.extra.map(e2 => e2.color === c.name ? { ...e2, color: nameNow } : e2),
+              versions: draft.versions?.map(v => ({ ...v, colors: v.kind === "单内胆" ? v.colors : v.colors.map(n => n === c.name ? nameNow : n) })) }, layout)); }} />
+            {isMain ? <span className="mainpill">主推 · 出整套主图</span>
+              : c.pick ? <button type="button" className="lp-btn link sm" onClick={() => onChange(recolor({ ...draft, main: c.name, extra: draft.extra.filter(e => e.color !== c.name), slots: draft.slots.map(s => s.colors.includes(c.name) ? { ...s, manual: false } : s) }, layout))}>设为主推</button> : <span />}
+            <label className={"cvl" + (isMain || !c.pick ? " dis" : "")}><input type="checkbox" checked={isMain || extraOf(c.name)} disabled={isMain || !c.pick} onChange={() => toggleCover(c.name)} />{isMain ? "已有首图" : "也出一张首图"}</label>
+            {!isMain && <button type="button" className="lp-btn link sm drop" onClick={() => { if (window.confirm(`去掉颜色「${c.name}」？这个颜色不出规格图，也不出现在主图里。`)) onChange(recolor({ ...draft, colors: draft.colors.filter((_, k) => k !== i), extra: draft.extra.filter(e => e.color !== c.name) }, layout)); }}>不要这个颜色</button>}
+          </div>);
+      })}</div>
+    </section>
+
+    {wearType === "一体" && (() => {
+      // 10-29: each colour's inside, for the SKU images' small box and the open cover.
+      const w = draft.wear!, insideOf = (i: number) => keys[i] ? insideFor(linerImages, draft, keys[i]!) : null;
+      return (<section className="lp-q">
+        <h4 className="lp-h2">衣服里面的照片 <small>翻开看到的里布、里绒、夹棉：规格图的小框放它，首图敞开时照它画</small></h4>
+        <div className="lp-main-liners">{draft.colors.map((c, i) => {
+          const label = insideOf(i), img = label ? byLabel.get(label) : undefined;
+          return (<span key={i} className="lp-liner-tile" title={img?.path ?? ""}>
+            <button type="button" className="lp-btn link" onClick={() => { setTab("推荐"); setTarget({ kind: "inside", index: i }); }}>{img ? <img src={img.url} alt="" /> : <span className="none">没有</span>}</button>
+            <small><b>{c.name}</b> {label && <button type="button" className="lp-btn link" onClick={() => setInside(i, "")}>不用</button>}</small>
+            {label && draft.colors.length > 1 && <button type="button" className="lp-btn link lp-small" onClick={() => insideAll(label)}>全部颜色用这张</button>}</span>);
+        })}
+          {layout.sku.specCard && <label className="lp-small" style={{ flexBasis: "100%" }}><input type="checkbox" checked={!!w.box} onChange={e => set({ wear: { ...w, box: e.target.checked } })} /> 规格图标题下放一个小框：有这个颜色里面的照片就放进去，没有就留一个空的灰框，自己 P 上</label>}
+        </div>
+      </section>);
+    })()}
+
+    {layout.sku.specCard && <section className="lp-q" id="lp-sku-versions">
+      <h4 className="lp-h2">规格图（SKU 图） <small>买家选颜色、选款式时看到的图</small></h4>
+      <div className="lp-skuintro">
+        <div className="lp-skuex" aria-hidden="true"><SkuLeftPreview rows={skuPreview.map(r => ({ label: r.label.split("/").pop()!, value: r.icon === "color" ? draft.main : r.value }))} />{exampleUrl && <img src={exampleUrl} alt="" />}</div>
+        <div>
+          <p>商品页里，买家每点一个选项（比如「{draft.main}{shellCols.length > 1 ? ` · ${versionName(shellCols[1].v)}` : ""}」），就看到一张这样的图。左边的字、货号、颜色{wearType === "内胆" ? "和内胆小图" : ""}按模板排，不花钱；<b>右边的模特就是下面的一格</b>{versions.length ? "，勾上一格就出一张" : ""}。</p>
+          <span className="key"><i className="sw photo" />实线框：素材里有这张照片，直接用，不花钱</span>
+          <span className="key"><i className="sw draw" />虚线框：素材里没拍到，AI 照定妆照里的模特画{prices.exempt ? "" : `，每张 ${prices.image} 积分`}</span>
+        </div>
+      </div>
+      {shellCols.length > 0 ? <div className="lp-sx-scroll"><table className="lp-sx">
+        <thead><tr><th className="rh">外套颜色</th>{shellCols.map(({ v, i }) => (
+          <th key={v.key}><label className="colh"><input type="checkbox" checked={v.on} onChange={e => setVersion(i, { on: e.target.checked })} />
+            {v.kind === "单外壳" ? "外套单穿" : <>外套里穿<br />{linerName(v)}内胆</>}</label></th>))}</tr></thead>
+        <tbody>{live(draft).map(c => {
+          const k = keys[draft.colors.indexOf(c)]!;
+          return (<tr key={c.name}><th className="rh"><span className="rname">{c.pick && byLabel.get(c.pick) && <img src={byLabel.get(c.pick)!.url} alt="" />}{c.name}</span></th>
+            {shellCols.map(({ v, i }) => <td key={v.key}>{skuCell({ key: `${k}~${v.key}`, color: k, name: c.name, version: v, label: `${c.name} · ${versionName(v)}` }, v.on && v.colors.includes(c.name), c.pick, () => toggleIn(i, c.name))}</td>)}</tr>);
+        })}</tbody></table></div>
+        : <div className="lp-lopts">{live(draft).map(c => { const k = keys[draft.colors.indexOf(c)]!; return <figure key={c.name} className="lp-lopt">{skuCell({ key: k, color: k, name: c.name, label: c.name }, true, c.pick)}<figcaption>{c.name}</figcaption></figure>; })}</div>}
+      {alone.map(({ v, i }) => {
+        const all = [...new Set([...(materials.wear?.versions.find(x => x.kind === v.kind && x.inner === v.inner)?.colors ?? []), ...linerColors(materials.sorted.images, v.inner), ...v.colors])];
+        return (<div key={v.key} className="lp-lrow"><div className="h"><b>只卖{linerName(v)}内胆</b><small>内胆单独卖时的规格图</small></div>
+          <div className="lp-lopts">{all.map((n, m) => (<figure key={n} className="lp-lopt">
+            {skuCell({ key: `~${v.key}~${m}`, name: n, version: v, label: `${n} · ${versionName(v)}` }, v.on && v.colors.includes(n), linerAlone(linerImages, v.inner, n), () => toggleIn(i, n))}
+            <figcaption>{n}{linerName(v)}</figcaption></figure>))}</div></div>);
+      })}
+      <div className="lp-eq"><span className="l">规格图</span><strong>{skuAll.length}</strong><span>张</span><span className="op">=</span><strong>{nReal}</strong><span>张用素材照片<small>不花钱</small></span><span className="op">+</span><strong>{nDraw}</strong><span>张 AI 画{!prices.exempt && <small>{nDraw * prices.image} 积分</small>}</span></div>
+      <div className="lp-who"><b>规格图里的人</b>
+        <div className="lp-chips">{SKU_PEOPLE.map(p => (
+          <label key={p} className={"lp-chip" + (skuBy === p ? " on" : "")}><input type="radio" name="skuPeople" hidden checked={skuBy === p} onChange={() => set({ skuPeople: p })} />
+            {p === "实拍" ? <>素材照片优先 <small>推荐，省积分</small></> : `全部重画 · ${p === "男女" ? "男女一起" : p === "男" ? "男模特" : "女模特"}`}</label>))}</div>
+        <small className="lp-muted">{skuBy === "实拍" ? `有照片的直接用，没照片的照定妆照画。${nReal && !prices.exempt ? `改成全部重画，人会更统一，但要多花 ${nReal * prices.image} 积分。` : ""}` : `全部照定妆照里的模特画，人统一。`}</small>
+      </div>
+      {versions.length > 0 && <details className="lp-fold">
+        <summary><b>调整穿法</b><span>加一种穿法、改内胆名字、换某个颜色配的内胆</span></summary>
+        <div className="in">{versionsEditor}</div>
+      </details>}
+    </section>}
+
+    <details className="lp-fold">
+      <summary><b>衣服结构图</b><span>{draft.parts.filter(p => p.pick).length} 张，AI 已配好；画衣服细节时照这些图</span></summary>
+      <div className="in">
+        <p className="lp-say">细节图只能拍这里有图的部位；部位名字可以改、加、删。</p>
+        {partsGrid}
+      </div>
+    </details>
+    <details className="lp-fold">
+      <summary><b>其他设置</b><span>{category.id === "workwear" ? "冲锋衣" : "其他衣服"} · {WEAR_LABEL[wearType]}{shops.length > 1 ? ` · ${shops.find(s => s.id === shopState?.set)?.name ?? ""}` : ""} · 胸口{logoText} · 规格图左边{skuSet.id === SKU_AUTO ? "系统自动挑" : `用「${skuSet.name}」`}</span></summary>
+      <div className="in">{otherSettings}</div>
+    </details>
   </>);
 
-
-  /* ② 版式、模特、张数 */
-  const skuDrawn = layout.sku.specCard ? skuItemsOf(draft).filter(i => !photos.has(i.key)).length : 0;
-  /** The colours the material has its own model photo of, whatever the SKU images are set to show. */
-  const skuReal = layout.sku.specCard ? photosOf({ ...draft, skuPeople: "实拍" }, materials, layout).size : 0;
-  // 首图人物 (11-01): the plan's choice, else the master's.
-  const coverWho = coverPeopleOf(layout, draft), coverDefault = coverPeopleOf(rawLayout, { model: draft.model });
-  // SKU 图左边 (11-01): the combo the product uses and what it will say, with the colour standing in for every colour's name.
-  const skuSet = skuSetOf(shop?.skuFields, draft.skuFields);
-  const skuCard = { name, category: draft.category, points: draft.points, words: draft.skuWords, outer: draft.wear?.type === "内胆" || draft.wear?.type === "一体" };
-  const skuFieldRows = fieldRows(skuCard), skuPreview = skuCardRows(skuCard, skuSet, colorRow("颜色"));
-  // 自动 always offers the 货号 box: typing one gives it its row.
-  const skuWordFields = skuSet.fields.length ? skuFieldsUsed(skuCard, skuSet) : [...new Set<SkuWordField>(["style", ...skuFieldsUsed(skuCard, skuSet)])];
-  const skuMissing = skuSet.fields.filter((f): f is SkuWordField => f !== "color" && !skuFieldRows[f]);
-  const skuBy = draft.skuPeople ?? "实拍", skuDrawnWho = (w: Gender | "男女") => w === "男女" ? "定妆照里的男女两位" : `定妆照里的${w === "男" ? "男生" : "女生"}`;
-  const modelShots = materials.sorted.images.filter(i => i.kind === "模特实拍" && !i.same).length;
-  /** Draw the cast from the material: the clearest man and woman picked, or none yet. */
-  const pickModelPhotos = () => {
-    const filled = fillModel({ ...draft, model: { lead: draft.model.lead } }, materials.sorted.images).model;
-    set({ model: filled.photos ? filled : { lead: draft.model.lead, photos: {} } });
-  };
-  const free = ok.filter(c => c.name !== draft.main && !draft.extra.some(e => e.color === c.name));
-  const setCount = (key: keyof Counts, n: number) => {
-    const counts = { ...draft.counts, [key]: n };
-    if (key === "square") counts.portrait = Math.min(counts.portrait, n);
-    set({ counts });
-  };
-  const look = materials.look;
+  // ② 11-03: the chosen master large, its five samples; the others one small card each; who wears the cover and the
+  // model side by side. The SKU images' people moved to ①, the counts and the extra covers to ④.
+  const chosen = layouts.find(l => l.id === draft.layout) ?? rawLayout, chosenInfo = masterInfo(chosen.id);
+  const pickLayout = (l: LayoutCard) => { if (l.id === draft.layout) return; const next = rearrange(draft, l, true); onChange(next); setMoved(movedNote(draft, next, l)); };
   const layoutStep = (<>
-    {look && <p className="lp-say">AI 看了素材，建议用<b>{layouts.find(l => l.id === look.master)?.name ?? look.master}</b>{look.place ? `，首图在${PLACES[look.place].name}拍` : ""}{look.sell ? `，主打「${look.sell}」` : ""}。{look.why}{look.why && !/[。！？]$/.test(look.why) ? "。" : ""}不合适直接点别的。</p>}
-    <div className="lp-masters">{layouts.filter(l => !l.own).map(l => {
-      const info = masterInfo(l.id);
-      return (
-        <button type="button" key={l.id} className={"lp-master" + (l.id === draft.layout ? " on" : "")} onClick={() => { if (l.id === draft.layout) return; const next = rearrange(draft, l, true); onChange(next); setMoved(movedNote(draft, next, l)); }}>
-          <span className="info"><b>{l.name}{look?.master === l.id && <span className="chip g">AI 建议</span>}</b><span>{l.description}</span><small>适合：{info.fit} · 字体：{info.font}</small>
-            <span className={"chip" + (info.cover === "实景" ? " g" : "")}>{info.cover === "实景" ? "首图实景 · 要选在哪儿拍" : info.cover === "棚拍" ? "首图棚拍 · 不用选场景" : "首图无人 · 不用选场景"}</span></span>
-          <span className="pics">{l.samples.map((src, i) => <span className="pic" key={src}><img src={src} alt="" loading="lazy" /><small>{["首图", "店铺服务图", "功能", "细节", "收口"][i]}</small></span>)}</span>
-        </button>);
-    })}</div>
+    {look && <p className="lp-say lp-ai">AI 看了素材，建议用<b>{layouts.find(l => l.id === look.master)?.name ?? look.master}</b>{look.place ? `，首图在${PLACES[look.place].name}拍` : ""}{look.sell ? `，主打「${look.sell}」` : ""}。{look.why}{look.why && !/[。！？]$/.test(look.why) ? "。" : ""}不合适直接点下面别的。</p>}
+    <section className="lp-q">
+      <div className="lp-chosen-h"><strong>{chosen.name}</strong>{look?.master === chosen.id && <span className="lp-chip-s ok">AI 建议</span>}<span>{chosen.description}</span></div>
+      <div className="lp-chosen">{chosen.samples.map((src, i) => <figure key={src}><img src={src} alt="" loading="lazy" /><figcaption>{SAMPLE_CAPTION[i] ?? ""}</figcaption></figure>)}</div>
+      <small className="lp-muted">适合：{chosenInfo.fit} · 字体：{chosenInfo.font} · {chosenInfo.cover === "实景" ? "首图实景，要选在哪儿拍" : chosenInfo.cover === "棚拍" ? "首图棚拍，不用选场景" : "首图无人，不用选场景"}</small>
+    </section>
+    <section className="lp-q">
+      <h4 className="lp-h2">换一套母版 <small>点一下，上面的大图跟着换</small></h4>
+      <div className="lp-others">{layouts.filter(l => !l.own && l.id !== draft.layout).map(l => (
+        <button type="button" key={l.id} className="lp-mcard2" onClick={() => pickLayout(l)}>
+          {l.samples[0] && <img src={l.samples[0]} alt="" loading="lazy" />}<b>{l.name}{look?.master === l.id && <span className="lp-chip-s ok">AI 建议</span>}</b><small>适合：{masterInfo(l.id).fit}</small></button>))}</div>
+    </section>
     {masterInfo(layout.id).cover === "实景" ? <>
-      <h4 className="lp-h">首图在哪儿拍 <small>只影响首图（和 2:3 长图）的背景；天气和动作跟着第 ③ 步的首图卖点（防水就下雨）</small></h4>
+      <h4 className="lp-h2">首图在哪儿拍 <small>只影响首图（和 2:3 长图）的背景；天气和动作跟着第 ③ 步的首图卖点（防水就下雨）</small></h4>
       {moved && <div className="lp-alert y">{moved}</div>}
       <div className="lp-places">{PLACE_IDS.map(id => {
         const deny = masterInfo(layout.id).deny[id], here = draft.scene?.place === id;
@@ -474,8 +586,10 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
           <img src={PLACES[id].image} alt="" loading="lazy" /><b>{PLACES[id].name}</b>{deny && <small>{deny}</small>}</button>);
       })}</div>
     </> : <p className="lp-say">这套母版的首图是{masterInfo(layout.id).cover}的，不用选在哪儿拍。</p>}
+    <div className="lp-two">
+      <section className="lp-card2">
     {coverWho && <>
-      <h4 className="lp-h">首图 <small>只管首图（和换色首图）；其它有人的图照母版自己的人数</small></h4>
+      <h4 className="lp-h2">首图谁来穿 <small>只管首图（和换色首图）；其它有人的图照母版自己的人数</small></h4>
       <div className="lp-model"><div className="lp-chips"><span className="lp-muted lp-small">人物</span>{COVER_PEOPLE.map(p => (
         <label key={p} className={"lp-chip" + (coverWho === p ? " on" : "")}><input type="radio" name="coverPeople" hidden checked={coverWho === p} onChange={() => set({ coverPeople: p })} />
           {p === "男女" ? "一男一女" : `单人 · ${p === "女" ? "女生" : "男生"}`}{p === coverDefault && <small> · 母版默认</small>}</label>))}</div>
@@ -492,7 +606,9 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
         {coverWho === "男女" && rawLayout.templates.首图.square.people < 2 && <p className="lp-say">这套母版的首图本来是单人的，两个人也能出，但版式是按一个人排的，效果不保证和样图一样。</p>}
       </div>
     </>}
-    <h4 className="lp-h">模特</h4>
+      </section>
+      <section className="lp-card2">
+    <h4 className="lp-h2">模特长相</h4>
     {cast ? <div className="lp-model">
       <div className="lp-chips"><span className="lp-muted lp-small">主模特</span>{(["男", "女"] as const).map(g => <label key={g} className={"lp-chip" + (draft.model.lead === g ? " on" : "")}><input type="radio" name="lead" hidden checked={draft.model.lead === g} onChange={() => set({ model: { ...draft.model, lead: g } })} />单人的图用{g === "男" ? "男生" : "女生"}</label>)}</div>
       <div className="lp-chips"><span className="lp-muted lp-small">长相</span>
@@ -516,53 +632,10 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
         单人的图用上面选的主模特，双人的图一男一女，多人的图两位都在、其余男女交替。<br />这个版式有人的图：{category.tasks.filter(t => layout.templates[t].square.people > 0).map(t => TASK_LABEL[t]).join("、") || "无"}{layout.long.people ? "、长图" : ""}{layout.sku.people || layout.sku.specCard ? "、SKU 图" : ""}。
       </p>
     </div> : <p className="lp-say">这个版式所有图都没有人，不出模特定妆照，也不用选模特。</p>}
-    {layout.sku.specCard && <>
-      <h4 className="lp-h">SKU 图用谁 <small>每个颜色一张，买家切颜色时看；所有颜色的人一样大</small></h4>
-      <div className="lp-model"><div className="lp-chips">{SKU_PEOPLE.map(p => (
-        <label key={p} className={"lp-chip" + (skuBy === p ? " on" : "")}><input type="radio" name="skuPeople" hidden checked={skuBy === p} onChange={() => set({ skuPeople: p })} />
-          {p === "实拍" ? `素材实拍（${skuReal} 张有）` : p === "男女" ? "男女模特一起" : `${p}模特`}</label>))}</div>
-        <p className="lp-say">{skuBy === "实拍"
-          ? <>素材里有这个颜色模特图的直接用{skuDrawn ? <>，没有的 {skuDrawn} 个颜色照{skuDrawnWho(skuWho(draft, skuPair(layout)))}画（每色 1 张的钱）</> : "，这次每个颜色都有"}。</>
-          : <>每个颜色都照{skuDrawnWho(skuBy)}画，不用素材里的照片（{skuDrawn} 个颜色，每色 1 张的钱）。</>}</p></div>
-    </>}
-    {layout.sku.specCard && <>
-      <h4 className="lp-h">SKU 图左边写什么 <small>用店铺设置里存的方案；这款单独换方案、改字，不影响别的款</small></h4>
-      {/* 11-01: a dropdown and a picture of the left column with this product's own words (the chips were hard to read). */}
-      <div className="lp-model lp-skuplan"><SkuLeftPreview rows={skuPreview.map(r => ({ label: r.label.split("/").pop()!, value: r.icon === "color" ? "（各颜色名）" : r.value }))} />
-        <div>
-        <label className="lp-small pick">方案 <select className="lp-in" value={skuSet.id} onChange={e => set({ skuFields: e.target.value })}>{[SKU_AUTO_SET, ...(shop?.skuFields.sets ?? [])].map(x => (
-          <option key={x.id} value={x.id}>{x.id === SKU_AUTO ? "不指定（系统自动挑）" : x.name}{x.id === skuSetOf(shop?.skuFields).id ? " · 默认" : ""}</option>))}</select>
-          <span className="lp-muted">方案在「店铺设置 → SKU 图左边写什么」里建</span></label>
-        <div className="lp-skuwords">{skuWordFields.map(f => {
-          const read = f === "style" ? styleNo(name) : skuFieldRows[f]?.value && !draft.skuWords?.[f]?.trim() ? skuFieldRows[f]!.value : null;
-          const hint = f === "style" ? `不填会自动识别文件夹名最前面的货号${read ? `，现在认出「${read}」` : "，这款没认出来"}`
-            : read ? `素材里读到「${read}」，要改就写` : "素材里没读到，可以手写；不写这一行就不放";
-          return (<label key={f}><span>{skuFieldName(f)}</span>
-            <input className="lp-in" value={draft.skuWords?.[f] ?? ""} maxLength={SKU_WORD_MAX} placeholder={hint}
-              onChange={e => { const words = { ...draft.skuWords, [f]: e.target.value }; if (!e.target.value) delete words[f]; set({ skuWords: Object.keys(words).length ? words : undefined }); }} /></label>);
-        })}</div>
-        <p className="lp-say">左边就是这款 SKU 图左边会写的字。{skuSet.id === SKU_AUTO ? "「不指定」时系统挑这款有的前两个，再加颜色。" : ""}{skuMissing.length ? <> <b>{skuMissing.map(skuFieldName).join("、")}</b>素材里没有字，这一行不放；在上面写上就有。</> : null}</p>
-        </div>
-      </div>
-    </>}
-    <h4 className="lp-h">出几张 <small>先出 1:1，改满意了，再一键出 3:4 和 2:3（3:4 照着改好的 1:1 重排）。1:1 少于 5 张时，留讲得最多的那几张</small></h4>
-    <div className="lp-counts">{([["square", "1:1 主图", 1, 5], ["portrait", "3:4 主图", 0, draft.counts.square], ["long", "2:3 长图", 0, 1]] as const).map(([key, label, min, max]) => (
-      <span key={key} className="lp-cnt">{label}<span className="lp-stepper"><button type="button" aria-label={`${label}减少`} disabled={draft.counts[key] <= min} onClick={() => setCount(key, draft.counts[key] - 1)}>−</button><b>{draft.counts[key]}</b>
-        <button type="button" aria-label={`${label}增加`} disabled={draft.counts[key] >= max} onClick={() => setCount(key, draft.counts[key] + 1)}>+</button></span></span>))}
-      <small className="lp-muted">3:4 照着 1:1 出，不能比 1:1 多</small></div>
-    <h4 className="lp-h">出几套 <small>想用不同颜色做不同链接，就加一套首图</small></h4>
-    <div className="lp-sets">
-      <div className="lp-set main"><b>主推套 · {draft.main}</b><span>1:1 {draft.counts.square} 张 + 3:4 {draft.counts.portrait} 张 + 长图 {draft.counts.long} 张，另有每色白底图和 SKU 图</span></div>
-      {draft.extra.map((e, k) => (
-        <div key={k} className="lp-set"><b>加一套首图</b>
-          颜色 <select value={e.color} onChange={x => set({ extra: draft.extra.map((y, m) => m === k ? { ...y, color: x.target.value } : y) })}>{ok.filter(c => c.name === e.color || free.includes(c)).map(c => <option key={c.name}>{c.name}</option>)}</select>
-          版式 <select value={e.layout} onChange={x => set({ extra: draft.extra.map((y, m) => m === k ? { ...y, layout: x.target.value } : y) })}><option value="">跟主推套一样</option>{layouts.filter(l => l.id !== draft.layout).map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select>
-          {shops.length > 1 && <>店铺 <select value={e.shop ?? ""} onChange={x => set({ extra: draft.extra.map((y, m) => m === k ? { color: y.color, layout: y.layout, ...(x.target.value ? { shop: x.target.value } : {}) } : y) })}>
-            <option value="">跟这款一样（{shops.find(s => s.id === shopState?.set)?.name}）</option>{shops.filter(s => s.id !== shopState?.set).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></>}
-          <span className="grow">1:1 首图先出，3:4 首图和长图跟竖版一起出</span><button type="button" className="lp-btn link" onClick={() => set({ extra: draft.extra.filter((_, m) => m !== k) })}>移除</button></div>))}
-      {free.length > 0 && <div><button type="button" className="lp-btn sm" onClick={() => set({ extra: [...draft.extra, { color: free[0].name, layout: "" }] })}>＋ 再加一套首图（换个颜色）</button></div>}
+      </section>
     </div>
   </>);
+
 
   /** Step 3 changes also bring in close-ups of parts the material has (a cell now showing 袖口 finds M43). */
   const change = (d: Draft) => onChange(fillParts(d, materials.sorted.images));
@@ -715,52 +788,116 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
         </div>
       </div>);
   };
-  const images = (
-    <div className="lp-images">
-      <p className="lp-say">每张图的排法来自上一步的母版「<b>{layout.name}</b>」。<b>几张图讲什么、每张几格，跟着左边上图的卖点走</b>：功能卖点做功能图，做工、实用做细节图，卖点不够时出一张场景图。格子里的字就是左边的卖点，改字去左边改；大标题可以换、可以改。<b>这里的字就是印到图上的字。</b></p>
-      {hint && <div className="lp-alert y lp-hint">按现在上图的卖点，可以{hint}。<button type="button" className="lp-btn sm" onClick={() => { if (window.confirm("按现在上图的卖点重排每张图？右边改过的标题和格子会重新排，颜色你选过的保留；拿下来的卖点不会再放回去。")) change(rearrange(draft, layout, false)); }}>按新卖点重排每张图</button></div>}
-      <div className="lp-slots">{draft.slots.map((_, i) => imageCard(i))}</div>
+  // ③ 11-03: the images in a row to see what they say together; one image edited at a time; the points not on an image
+  // as small chips by kind, a click puts one on the image being edited. The full list (to rename or take off) is folded.
+  const curSlot = Math.min(cur, draft.slots.length - 1);
+  const sampleOf = (s: Slot) => rawLayout.samples[s.shopService ? 1 : SAMPLE_OF[s.task] ?? 2];
+  const strip = (<div className="lp-strip">{draft.slots.map((s, i) => {
+    const k = used.indexOf(i), n = s.shopService ? 0 : notesOf(draft, i, layout).length, src = sampleOf(s);
+    const words = s.shopService ? "用店铺存好的那张，不花钱" : [s.sub, ...s.cells.map(c => pointOf(c.point)?.text), ...s.tags].filter(Boolean).slice(0, 3).join(" · ");
+    return (<button type="button" key={i} className={"lp-scard" + (i === curSlot ? " on" : "") + (k < 0 ? " off" : "")} aria-pressed={i === curSlot} onClick={() => setCur(i)}>
+      <span className="no"><span>{k < 0 ? "这张不出" : `第 ${k + 1} 张`}</span><span>{s.shopService ? "服务" : TASK_LABEL[s.task]}</span></span>
+      {src ? <img src={src} alt="" loading="lazy" /> : <span className="ph" />}<b>{s.title || "（没有大标题）"}</b>{words && <small>{words}</small>}{n > 0 && <small className="flag">! {n} 处要看一下</small>}</button>);
+  })}</div>);
+  const colourNames = new Set(draft.colors.map(c => c.name.trim()));
+  const placedWords = new Set(draft.points.filter(p => usage.has(p.id)).flatMap(p => [p.text.trim(), (p.short ?? "").trim()]).filter(Boolean));
+  const seenWords = new Set<string>();
+  // Not on an image yet; a colour's name and a second copy of the same words are not points to place (11-03: 8828).
+  const loose = own.filter(p => p.on && !usage.has(p.id) && !colourNames.has(p.text.trim()) && !placedWords.has(p.text.trim())).filter(p => {
+    const k = (p.short || p.text).trim();
+    if (seenWords.has(k) || seenWords.has(p.text.trim())) return false;
+    seenWords.add(k); seenWords.add(p.text.trim()); return true;
+  });
+  const groupOfType = (t: string) => POOL_GROUPS.find(([, types]) => types.includes(t))?.[0] ?? "其他";
+  const placeOn = (p: Point) => {
+    const here = placesFor(draft, p.id, layout).filter(x => x.slot === curSlot), pick = here.find(x => x.empty) ?? here[0];
+    if (pick) { change(putOn(draft, p.id, pick)); setPlacing(null); } else setPlacing({ id: p.id, all: true });
+  };
+  const chips = (
+    <section className="lp-q">
+      <h4 className="lp-h2">还没上图的卖点 <small>点一个，放到正在改的第 {Math.max(1, used.indexOf(curSlot) + 1)} 张上</small></h4>
+      {loose.length ? <div className="lp-pgroups">{POOL_GROUPS.map(([g]) => g).concat("其他").filter((g, i, a) => a.indexOf(g) === i).map(g => {
+        const list = loose.filter(p => groupOfType(p.type) === g);
+        return list.length > 0 && (<div key={g} className="lp-pgroup"><span>{g}</span><div className="lp-chips">{list.map(p => (
+          <span key={p.id} className="lp-chipwrap"><button type="button" className="lp-chip add" onClick={() => placeOn(p)}>＋ {p.text}</button>{placing?.id === p.id && placeMenu(p)}</span>))}</div></div>);
+      })}</div> : <p className="lp-muted lp-small">素材里的卖点都上图了。</p>}
+      {extras.length > 0 && <details className="lp-fold">
+        <summary><b>竞品常讲、素材没写的</b><span>{extras.length} 条，衣服真有才放上去</span></summary>
+        <div className="in"><div className="lp-pts">{extras.map(pointRow)}</div></div>
+      </details>}
+      <details className="lp-fold">
+        <summary><b>全部卖点</b><span>改卖点的字、把卖点从图上拿下来</span></summary>
+        <div className="in">{pool}</div>
+      </details>
+      <p className="lp-say">服务（免费设计、看样、开票这些）是店铺的，在<button type="button" className="lp-btn link" onClick={onService}>店铺设置</button>里写一次，每款第 2 张自动用店铺的服务图，这里不列。</p>
+    </section>);
+  const mapStep = (<div className="lp-map2">
+    <section className="lp-q">
+      <h4 className="lp-h2">{used.length} 张主图 <small>点一张，下面改它的字；版式照母版「{layout.name}」</small></h4>
+      {strip}
+    </section>
+    {hint && <div className="lp-alert y lp-hint">按现在上图的卖点，可以{hint}。<button type="button" className="lp-btn sm" onClick={() => { if (window.confirm("按现在上图的卖点重排每张图？右边改过的标题和格子会重新排，颜色你选过的保留；拿下来的卖点不会再放回去。")) change(rearrange(draft, layout, false)); }}>按新卖点重排每张图</button></div>}
+    <div className="lp-editor">{imageCard(curSlot)}</div>
+    {chips}
       {draft.counts.long > 0 && <>
         <h4 className="lp-h">2:3 长图 <small>手淘推荐流里的竖版长图：{draft.counts.square > 0 ? "照 1:1 首图重排，字和字体都跟首图一样，人拉远、头部完整" : "人物完整、只有一行字，不放标签和格子"}</small></h4>
         <div className="lp-slot"><div className="who"><b>长图</b><Wire template={layout.long} ratio={2 / 3} width={84} /><small className="ppl">{PEOPLE_LABEL(layout.long)}</small></div><div className="lp-fields">
           {/* From the square cover (its words, word for word); only a set with no square images writes its own line. */}
           {draft.counts.square > 0 ? <><label>字</label><div className="lp-scene"><p>和首图一样：{[draft.slots[0]?.title, draft.slots[0]?.sub, ...(draft.slots[0]?.tags ?? [])].filter(Boolean).join(" / ")}。要改字，改上面的首图。</p></div></>
             : <><label>一行字</label><input className="big" value={draft.long.title} maxLength={LIMITS.title} onChange={e => change({ ...draft, long: { title: e.target.value } })} /></>}</div></div></>}
-    </div>);
-  const mapStep = <div className="lp-map">{pool}{images}</div>;
-  /** The images other than the 1:1 main images, one line each: 白底产品图 2 张, SKU 图 2 张… */
-  const others = (lines: PriceLine[]) => lines.filter(l => !l.label.startsWith("1:1 主图") && l.label !== "店铺服务图（已存）").reduce<{ label: string; count: number; note: string }[]>((out, l) => {
-    const label = l.label.replace("（多色同框）", ""), same = out.find(x => x.label === label);
-    if (same) same.count += l.count; else out.push({ label, count: l.count, note: l.note });
+  </div>);
+  // ④ 11-03: one big number, the counts here, and one row per kind of image (how many, made how, what it costs).
+  type Row = { label: string; count: number; credits: number; how: string; fix?: () => void };
+  const toSku = () => { setStep(1); setTimeout(() => document.getElementById("lp-sku-versions")?.scrollIntoView({ behavior: "smooth", block: "start" }), 80); };
+  const rowsOf = (lines: PriceLine[]): Row[] => {
+    const out: Row[] = [];
+    const main = lines.filter(l => l.label.startsWith("1:1 主图") || l.label === "店铺服务图（已存）");
+    if (main.length) {
+      const svc = main.filter(l => l.label === "店铺服务图（已存）").reduce((n, l) => n + l.count, 0), all = main.reduce((n, l) => n + l.count, 0);
+      out.push({ label: "1:1 主图", count: all, credits: sumCredits(main), how: `${all - svc} 张要画${svc ? `；${svc} 张用店铺的服务图，不花钱` : ""}`, fix: () => setStep(3) });
+    }
+    const sku = lines.filter(l => l.label.startsWith("SKU"));
+    if (sku.length) {
+      const card = sku.find(l => l.label === "SKU 图"), drawn = sku.filter(l => l !== card).reduce((n, l) => n + l.count, 0), all = card?.count ?? drawn;
+      out.push({ label: "规格图（SKU 图）", count: all, credits: sumCredits(sku), how: drawn ? `${Math.max(0, all - drawn)} 张用素材照片，${drawn} 张 AI 画` : "全部用素材照片拼，不花钱", fix: toSku });
+    }
+    for (const l of lines.filter(x => !main.includes(x) && !sku.includes(x))) {
+      const label = l.label.replace("（多色同框）", ""), same = out.find(r => r.label === label);
+      if (same) { same.count += l.count; same.credits += l.credits; } else out.push({ label, count: l.count, credits: l.credits, how: l.note });
+    }
     return out;
-  }, []);
-  const credits = (n: number) => prices.exempt ? null : <span className="lp-muted">约 {n} 积分</span>;
+  };
+  const nowRows = rowsOf(cost.now.lines), laterRows = rowsOf(cost.later.lines);
+  const nowImages = nowRows.reduce((n, r) => n + r.count, 0), laterImages = laterRows.reduce((n, r) => n + r.count, 0);
   const confirmStep = (
-    <div className="lp-confirm4">
-      <p className="lp-cfg"><span>母版 <b>{layout.name}</b></span><span>胸口 <b>{logoMode === "不印" ? "不印字" : logoMode === "LOGO" ? "印「LOGO」字样，告诉买家能印标" : logoMode === "样例" ? "印店铺的样例 LOGO" : `印客户 LOGO（${draft.logo?.label ?? "还没上传"}）`}</b></span></p>
-      <h4 className="lp-h">现在出 {cost.now.images} 张 {credits(cost.now.credits)} <small>出图约 3–5 分钟，可以关掉页面，做好的会陆续出现</small></h4>
-      <ol className="lp-shots">{used.map((i, k) => {
-        const s = draft.slots[i], notes = notesOf(draft, i, layout), cover = i === 0 && draft.scene;
-        const words = [...s.cells.map(c => pointOf(c.point)?.text), ...s.tags].filter(Boolean).join("、");
-        return (<li key={i} className={notes.length ? "y" : ""}>
-          <span className="no">第 {k + 1} 张</span>
-          <div className="what">
-            <b>{s.shopService ? "店铺服务图" : `${TASK_LABEL[s.task]}${s.title.trim() ? `　「${s.title}」` : ""}`}</b>
-            {s.shopService ? <small>用店铺存好的那张，免费 · <button type="button" className="lp-btn link" onClick={onService}>去店铺设置看看</button></small>
-              : <small>{cover ? coverScene(draft.scene!.place as PlaceId, draft.scene!.sell as Sell, draft.scene!, layout.id).line : words || s.sub}{s.colors.length > 0 && <span className="lp-muted"> · {s.colors.join("、")}</span>}</small>}
-            {notes.map(n => <small key={n} className="note">! {n}</small>)}
-          </div>
-          {notes.length > 0 && <button type="button" className="lp-btn sm" onClick={() => jump(k + 1)}>去改</button>}
-        </li>);
-      })}
-        {others(cost.now.lines).map((l, n) => <li key={"o" + n}><span className="no">{l.count} 张</span><div className="what"><b>{l.label}</b>{l.note && <small>{l.note}</small>}
-          {/* The SKU images by version (10-22), and the way back to change them. */}
-          {l.label === "SKU 图" && !!draft.versions?.some(v => v.on) && <small className="sku-split">{(draft.versions ?? []).filter(v => v.on).map(v => `${versionName(v)} ×${skuItemsOf(draft).filter(i => i.version?.key === v.key).length}`).filter(x => !x.endsWith("×0")).join(" · ")}
-            <button type="button" className="lp-btn link" onClick={() => { setStep(1); setTimeout(() => document.getElementById("lp-sku-versions")?.scrollIntoView({ behavior: "smooth", block: "start" }), 80); }}>去改 SKU</button></small>}</div></li>)}
-      </ol>
-      {cost.later.images > 0 && <><h4 className="lp-h">以后再出 {cost.later.images} 张 {credits(cost.later.credits)} <small>这一轮的方图满意了，在出图结果里点「出竖版」再出</small></h4>
-        <ol className="lp-shots">{others(cost.later.lines).map((l, n) => <li key={n}><span className="no">{l.count} 张</span><div className="what"><b>{l.label}</b>{l.note && <small>{l.note}</small>}</div></li>)}</ol></>}
-      <p className="lp-muted lp-small">没出成功的图会自动退积分。</p>
+    <div className="lp-confirm5">
+      <div className="lp-total">
+        <div className="big"><span>这次出</span><strong>{nowImages}</strong><span>张图</span>{!prices.exempt && <><span>，约</span><strong>{cost.now.credits}</strong><span>积分</span><em>≈ ¥{(cost.now.credits / 100).toFixed(2)}</em></>}</div>
+        <small>{prices.exempt ? "" : "先冻结积分，没出成功的自动退回。"}出图约 3–5 分钟，可以关掉页面，做好的会陆续出现。</small>
+      </div>
+      <section className="lp-q">
+        <h4 className="lp-h2">出多少 <small>先出 1:1，满意了再出竖版，竖版照着改好的 1:1 重排</small></h4>
+        <div className="lp-counts2">{([["square", "1:1 主图", 1, 5, "这次出"], ["portrait", "3:4 主图", 0, draft.counts.square, "1:1 满意后再出"], ["long", "2:3 长图", 0, 1, "1:1 满意后再出"]] as const).map(([key, label, min, max, when]) => (
+          <div key={key} className="cnt"><b>{label}</b><span className="lp-stepper"><button type="button" aria-label={`${label}减少`} disabled={draft.counts[key] <= min} onClick={() => setCount(key, draft.counts[key] - 1)}>−</button><b>{draft.counts[key]}</b>
+            <button type="button" aria-label={`${label}增加`} disabled={draft.counts[key] >= max} onClick={() => setCount(key, draft.counts[key] + 1)}>+</button></span><small>{when}</small></div>))}</div>
+        {draft.extra.length > 0 ? <div className="lp-sets">{draft.extra.map((e, k) => (
+          <div key={k} className="lp-set"><b>{e.color} 单独一张首图</b>
+            版式 <select value={e.layout} onChange={x => set({ extra: draft.extra.map((y, m) => m === k ? { ...y, layout: x.target.value } : y) })}><option value="">跟主推一样</option>{layouts.filter(l => l.id !== draft.layout).map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select>
+            {shops.length > 1 && <>店铺 <select value={e.shop ?? ""} onChange={x => set({ extra: draft.extra.map((y, m) => m === k ? { color: y.color, layout: y.layout, ...(x.target.value ? { shop: x.target.value } : {}) } : y) })}>
+              <option value="">跟这款一样（{shops.find(s => s.id === shopState?.set)?.name}）</option>{shops.filter(s => s.id !== shopState?.set).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></>}
+            <span className="grow">1:1 先出，3:4 跟竖版一起出</span><button type="button" className="lp-btn link" onClick={() => set({ extra: draft.extra.filter((_, m) => m !== k) })}>不要了</button></div>))}</div>
+          : <small className="lp-muted">想给某个颜色单独出一张首图，在第 ① 步的颜色卡上勾「也出一张首图」。</small>}
+      </section>
+      <section className="lp-q">
+        <h4 className="lp-h2">这次出的明细</h4>
+        <div className="lp-sx-scroll"><table className="lp-tbl">
+          <thead><tr><th>图</th><th className="n">张数</th><th>怎么来</th>{!prices.exempt && <th className="n">积分</th>}<th /></tr></thead>
+          <tbody>{nowRows.map(r => <tr key={r.label}><td><b>{r.label}</b></td><td className="n">{r.count}</td><td className="how">{r.how}</td>{!prices.exempt && <td className="n">{r.credits}</td>}<td>{r.fix && <button type="button" className="lp-btn link" onClick={r.fix}>去改</button>}</td></tr>)}</tbody>
+          <tfoot><tr><td><b>合计</b></td><td className="n">{nowImages}</td><td />{!prices.exempt && <td className="n">{cost.now.credits}</td>}<td /></tr></tfoot>
+        </table></div>
+        {laterImages > 0 && <small className="lp-muted">1:1 满意后再出：{laterRows.map(r => `${r.label} ${r.count} 张`).join("、")}{!prices.exempt && `，约 ${cost.later.credits} 积分`}；在出图结果里点「出竖版」。</small>}
+        {check.warn.length > 0 && <small className="lp-warn">有提醒：{check.warn.map(k => <button type="button" key={k} className="lp-btn link" onClick={() => jump(k)}>第 {k} 张</button>)}</small>}
+      </section>
     </div>);
 
   return (
@@ -769,10 +906,10 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
         <div className="lp-box-head"><div><h3>定方案 · {name}</h3><p className="lp-sub">AI 已经整理好素材，下面每一项都是它的建议，不对的直接改。点「开始出图」之前不花钱。</p></div>
           <div className="grow" /><button type="button" className="lp-btn sm ghost" onClick={onClose}>关闭</button></div>
         <div className="lp-stepbar">{STEPS.map((s, i) => <button type="button" key={s} className={step === i + 1 ? "on" : i === 0 && check.red.length ? "bad" : i === 2 && check.warn.length ? "warn" : "ok"} onClick={() => go(i + 1)}>{s}</button>)}</div>
-        <div className={"lp-box-body" + (step === 3 ? " map" : "")} key={step}>{step === 1 ? step1 : step === 2 ? layoutStep : step === 3 ? mapStep : confirmStep}</div>
+        <div className="lp-box-body" key={step}>{step === 1 ? step1 : step === 2 ? layoutStep : step === 3 ? mapStep : confirmStep}</div>
         <div className="lp-box-foot">
-          <div className="grow">{check.red.length ? <span className="lp-bad">{check.red[0]}</span> : step === 4 ? <>共 {cost.now.images} 张{!prices.exempt && <>，约 <b>{cost.now.credits}</b> 积分 <PriceInfo lines={cost.now.lines} total={cost.now.credits} extra="分析费已在整理时扣过" /></>}</> : <>现在出 {cost.now.images} 张（白底图、{cast ? "定妆照、" : ""}SKU 图、1:1 主图）{!prices.exempt && <>，约 <b>{cost.now.credits}</b> 积分 <PriceInfo lines={cost.now.lines} total={cost.now.credits} extra="分析费已在整理时扣过" /></>}
-            {cost.later.images > 0 && <span className="lp-muted"> · 竖版 {cost.later.images} 张以后再出{!prices.exempt && `，约 ${cost.later.credits} 积分`}</span>}
+          <div className="grow">{check.red.length ? <span className="lp-bad">{check.red[0]}</span> : step === 4 ? <>母版 <b>{layout.name}</b> · 胸口{logoText}</> : <>现在出 <b>{nowImages}</b> 张图{!prices.exempt && <>，约 <b>{cost.now.credits}</b> 积分 <PriceInfo lines={cost.now.lines} total={cost.now.credits} extra="分析费已在整理时扣过" /></>}
+            {laterImages > 0 && <span className="lp-muted"> · 竖版 {laterImages} 张以后再出{!prices.exempt && `，约 ${cost.later.credits} 积分`}</span>}
             {check.warn.length > 0 && <span className="lp-warn"> · 有提醒：{check.warn.map(k => <button type="button" key={k} className="lp-btn link" onClick={() => jump(k)}>第 {k} 张</button>)}</span>}</>}</div>
           {step > 1 && <button type="button" className="lp-btn" onClick={() => go(step - 1)}>上一步</button>}
           {step < 4 ? <button type="button" className="lp-btn primary" disabled={check.red.length > 0} onClick={() => go(step + 1)}>下一步</button>
@@ -804,7 +941,7 @@ export function PlanDialog({ projectId, name, materials, sources, draft, layouts
                 : <span className="lp-muted">素材里没有推荐的图，可以看「全部」或补传一张。</span>}</div>
             </div>
             <div className="lp-box-foot"><div className="grow">{target.kind === "part" && draft.parts[target.index]?.part !== FRONT
-              ? <button type="button" className="lp-btn link" onClick={() => { set({ parts: draft.parts.filter((_, k) => k !== target.index) }); setTarget(null); }}>移除这个部位（出图时不做特写）</button> : "素材里没有合适的？"}</div>
+              ? <button type="button" className="lp-btn link" onClick={() => { const gone = draft.parts[target.index]?.part; set({ parts: draft.parts.filter((_, k) => k !== target.index), ...(gone ? { noParts: [...new Set([...(draft.noParts ?? []), gone])].slice(-32) } : {}) }); setTarget(null); }}>移除这个部位（出图时不做特写）</button> : "素材里没有合适的？"}</div>
               <button type="button" className="lp-btn" disabled={busy} onClick={() => upload.current?.click()}>{busy ? "正在上传…" : "补传一张"}</button>
               <input ref={upload} type="file" accept="image/*" hidden onChange={async e => {
                 const file = e.target.files?.[0]; e.target.value = ""; if (!file) return;

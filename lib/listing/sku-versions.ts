@@ -18,7 +18,8 @@ import { INNER_EXAMPLES, VERSION_KINDS, versionName, type Inner, type SkuVersion
 export type DraftVersion = { key: string; kind: VersionKind; inner: Inner; name?: string; colors: string[]; on: boolean; added?: boolean; ref?: string; liners?: Record<string, string> };
 export { INNER_EXAMPLES, VERSION_KINDS };
 
-export const draftVersions = (versions: SkuVersion[]): DraftVersion[] => versions.map((v, i) => ({ key: `v${i + 1}`, kind: v.kind, inner: v.inner, colors: v.colors, on: true }));
+/** The material's versions as the plan starts them; a shell's liner colour the SKU check read (11-03) comes with it. */
+export const draftVersions = (versions: SkuVersion[]): DraftVersion[] => versions.map((v, i) => ({ key: `v${i + 1}`, kind: v.kind, inner: v.inner, colors: v.colors, on: true, ...(v.liners && Object.keys(v.liners).length ? { liners: v.liners } : {}) }));
 
 /** One SKU image: `color` the colour's key (none for a liner worn alone), `name` the colour it shows, `version` none as before. */
 export type SkuItem = { key: string; color?: string; name: string; version?: DraftVersion; label: string };

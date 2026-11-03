@@ -16,7 +16,7 @@ import { skuItems, type DraftVersion } from './sku-versions';
 import { versionName, type WearType } from './wear';
 import { BUILDS, categoryById, groupOf, evidenceOf, type Category, type PointGroup, type PointType, type Task } from './category';
 import { isComponent, isGroup } from './garment-role';
-import { cleanWords, conciseTag, FACT, shortName } from './point-words';
+import { cleanWords, conciseTag, FACT, shortName, tagFits } from './point-words';
 import { proofById, type Proof } from './proofs';
 import { MASTER_INFO, SELLS, sellOf } from './scene';
 import { capacity, fitTemplate, mostCells, needsCast, type Layout, type Ratio, type Template } from './templates';
@@ -71,6 +71,8 @@ export type SkuPeople = (typeof SKU_PEOPLE)[number];
 export const GENDERS: Gender[] = ['男', '女'];
 export type Draft = {
   category: string; categoryWhy: string; titles: Partial<Record<Task, string[]>>; points: Point[]; colors: PlanColor[]; main: string; parts: Part[];
+  /** Structure images the user removed (11-03): fillParts does not bring them back for a point that names the part. */
+  noParts?: string[];
   slots: Slot[]; long: { title: string }; layout: string; counts: Counts;
   /** Covers in other colours (换色首图); `shop`: the shop that cover is for, when not the product's (10-22). */
   extra: { color: string; layout: string; shop?: string }[]; model: Model;
@@ -282,7 +284,10 @@ export function planSlots(points: Point[], category: Category, layout: Layout, c
   // A cover shot in the studio or without people says what the garment is when the material does not.
   const named = MASTER_INFO[layout.id] && MASTER_INFO[layout.id].cover !== '实景' && !on.some(p => p.type === '定位') ? builtAs(on, category) : null;
   const cover = named ? undefined : on.find(p => p.type === '定位') ?? on[0];
-  const title = named?.title ?? cover?.text ?? '';
+  // A 定位 that is only the style number (11-03: 8828's cover read 「8828#三合一」) tells a buyer nothing: the AI's first
+  // cover heading instead, when it wrote one.
+  const codeOnly = (t: string) => /\d{3,}/.test(t) && /[#＃款号]/.test(t);
+  const title = named?.title ?? ((cover && codeOnly(cover.text) && titles.首图?.[0]) || cover?.text || '');
   // Its tags say something else than the title: custom-made first for the category made to order.
   const coverTags: string[] = named && category.id === 'workwear' ? ['团体定制'] : [];
   for (const p of on) {
@@ -339,7 +344,7 @@ export function planSlots(points: Point[], category: Category, layout: Layout, c
   const first: Slot = { task: '首图', lead: named ? named.from?.id ?? null : cover?.id ?? null, title, sub: named ? '' : cover?.note ?? '', tags: coverTags, cells: [], act: null, colors: [], score: 99 };
   let slots = [first, ...middle, last];
   for (const p of on.filter(x => x.must)) if (!shownOn(slots, p)) slots = squeezeIn(slots, p, points, category, layout);
-  return { slots, long: { title: cover?.text ?? '' } };
+  return { slots, long: { title } };
 }
 
 /** Is the point on one of these images (a title, a demonstration, a card, a tag or a sub-line)? */
@@ -488,6 +493,8 @@ export const hasPart = (d: Pick<Draft, 'parts'>, part: string) => !!partPick(d, 
 /** A sorted image, as far as finding a part on it goes. */
 export type PartSource = { id: string; detail: string; same?: string; kind?: string; parts?: string[] };
 const CLOSE_KINDS = ['细节特写', '卖点图', '详情页'];
+/** As many structure images as the plan holds (draft-schema). */
+const MAX_PARTS = 16;
 /**
  * A photo of a part: one sorted as that part, else one the sorting saw it on among others, else
  * where the point about the part says the material shows it (10-13: a detail page showing the cuff
@@ -512,6 +519,15 @@ export function fillParts(d: Draft, images: PartSource[]): Draft {
     if (hasPart({ parts }, part)) continue;
     const found = partPhoto(d.points, part, images);
     if (found) parts = [...parts.filter(x => x.part !== part), { part, pick: found.id }];
+  }
+  // A ticked point about a part of the garment with a photo of it in the material: that photo goes into the
+  // structure images by itself (11-03: 8828 listed 「水洗标 / 内胆 / 袖袋 有照片，结构图里还没有 → 加进结构图」 for the user to click).
+  for (const p of d.points) {
+    if (!p.on || p.kind !== '衣服' || !p.part || parts.length >= MAX_PARTS) continue;
+    const part = partOf(p);
+    if (hasPart({ parts }, part) || d.noParts?.includes(part)) continue;
+    const found = partPhoto(d.points, part, images);
+    if (found) parts = [...parts, { part, pick: found.id }];
   }
   // A close-up of a part the material still has no photo of is drawn another way that needs none: it
   // used to be only a yellow note, and generating went ahead with a part the model had never seen (10-13).
@@ -624,7 +640,8 @@ export function closerSub(points: Pick<Point, 'text' | 'type'>[]) {
 
 export function overLimit(w: { title: string; sub: string; tags?: string[]; cells?: string[] }) {
   const long = [len(w.title) > LIMITS.title && `大标题超过 ${LIMITS.title} 个字`, len(w.sub) > LIMITS.sub && `小字超过 ${LIMITS.sub} 个字`,
-    (w.tags ?? []).some(t => len(t) > LIMITS.tag) && `标签超过 ${LIMITS.tag} 个字`, (w.cells ?? []).some(t => len(t) > LIMITS.cell) && `格子里的字超过 ${LIMITS.cell} 个字`].filter(Boolean);
+    // A fact 「面料成分｜100%聚酯纤维」 counts by its two parts, as the server does (draft-schema; 11-03: 8828 stopped on its own fabric tag).
+    (w.tags ?? []).some(t => !tagFits(t, LIMITS.tag)) && `标签超过 ${LIMITS.tag} 个字`, (w.cells ?? []).some(t => len(t) > LIMITS.cell) && `格子里的字超过 ${LIMITS.cell} 个字`].filter(Boolean);
   return long.length ? `${long.join('、')}，请删短一点` : '';
 }
 const cellWords = (d: Draft, s: Slot) => s.cells.map(c => d.points.find(p => p.id === c.point)?.text ?? '');

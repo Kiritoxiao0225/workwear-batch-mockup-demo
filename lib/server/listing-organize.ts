@@ -6,7 +6,7 @@
  * image per colour and the structure references (full front view, collar, zip and cuffs, pocket,
  * fabric, back); lib/listing/plan.ts shares the points out over the images.
  */
-import { innerName, settleWear, type Inner, type Wear } from '../listing/wear';
+import { innerName, SAYING_KINDS, settleWear, type Inner, type Wear } from '../listing/wear';
 import { z } from 'zod';
 import { CATEGORIES, TASKS, type Category } from '../listing/category';
 import { GARMENT_ROLES, isComponent, isGroup, type GarmentRole } from '../listing/garment-role';
@@ -65,7 +65,7 @@ const WHOLE_RULES = `整款：
   · 一体：棉、绒、羽绒缝在衣服里拆不下来（一体棉、加棉、夹棉、一体绒、加绒、一体羽绒），看文字、文件夹名，也看图里是不是蓬松鼓起、有绗缝。
   · 薄款：春秋单层外套；三合一但素材里一张内胆都没拍到的，也算薄款。
   why：一句话依据（不超过 40 个字），写看到了哪些字、哪些图，如“文件夹写一体羽绒，模特图衣身鼓起有绗缝”。
-  versions：只有 type 是内胆才写，列素材里真的拍到的每一种穿法，一种一条：kind 是 单外壳（外套里面没穿内胆）/ 外壳加内胆（外套里面穿着内胆）/ 单内胆（只穿或只拍内胆）；inner 写内胆的名字（照抄每张图分类里「」中的名字，不加颜色，单外壳留空）；colors 写这个穿法拍到了哪些颜色（外套的颜色名，单内胆写内胆自己的颜色）；from 写拍到这个穿法的图编号。不要拼、不要猜：有外套的图、也有内胆的图，但没有一张是外套里穿着这件内胆，就不能写外壳加内胆；内胆只露在外套里面、没有单独拍的，就不能写单内胆；文字里提到、图里没拍到的穿法不写。
+  versions：只有 type 是内胆才写，列素材里真的拍到的每一种穿法，一种一条：kind 是 单外壳（外套里面没穿内胆）/ 外壳加内胆（外套里面穿着内胆）/ 单内胆（只穿或只拍内胆）；inner 写内胆的名字（照抄每张图分类里「」中的名字，不加颜色，单外壳留空）；colors 写这个穿法拍到了哪些颜色（外套的颜色名，单内胆写内胆自己的颜色）；from 写拍到这个穿法的图编号。不要拼、不要猜：有外套的图、也有内胆的图，但没有一张是外套里穿着这件内胆，也没有字写明这个外套颜色配这件内胆，就不能写外壳加内胆；内胆只露在外套里面、没有单独拍的，就不能写单内胆。素材上印着的字写明的组合也算看到（例如每个颜色的颜色图上写着“三合一（羽绒内胆、软壳内胆）”，这几个颜色就都有外套加这两种内胆），from 写那几张有字的图；字没写、照片也没拍到的穿法不写。
 - look：这款用哪套母版、首图在哪儿拍、首图主打哪个卖点。先看素材里有没有写给谁穿、什么行业（如 4S 店、物业、工地、餐饮、团建），写了就照着选；没写就看衣服本身：颜色深浅、功能卖点多不多、偏商务还是偏户外。master：从下面"母版"里选一个编号；M4 只在素材讲男女同款、情侣或年轻团队时选；M5 是给不想用模特、想省积分的店铺自己换的，不要选；素材里没有模特图不要紧，出图时模特是另画的。place：首图地点编号，只有首图是实景的母版才写，不能选这套母版不能拍的地点，否则留空。sell：首图主打的卖点，从下面"首图卖点"里选一个，要是 points 里讲到的、并且在这个地点演得出来的（看地点后面列的）；都不沾留空。why：一句话理由（不超过 40 个字），如“三防卖点多、深色款，选暗黑科技；素材写了物业保安，在小区门口拍”。`;
 const IMAGE_SHAPE = '{ "id": "M1", "kind": "", "role": "", "colorsSeen": [], "color": "", "front": false, "facing": "", "detail": "", "parts": [], "text": false, "logo": false, "person": "", "face": false, "open": false, "inner": "", "innerColor": "", "same": "" }';
 const WHOLE_SHAPE = `"colors": [{ "name": "", "hex": "", "from": ["M1"] }],
@@ -344,6 +344,85 @@ export function applyLiners(checks: LinerCheck[], images: SortedImage[], checked
     const inner = r.role === '其他' || (r.role === '主体' && !r.open) ? '' : r.inner;
     return { ...i, role: r.role === '内胆' ? '内胆' : r.role === '主体' ? '主体' : i.role, inner, innerColor: inner ? r.innerColor : '', ...(r.role === '主体' && r.shellColor ? { color: i.color || r.shellColor } : {}) };
   });
+}
+
+/**
+ * 「核对 SKU」 (11-03). The SKU versions are read with everything else, from small pictures, and only the
+ * pairs photographed were kept: 8828's colour images and posters print 「三合一（羽绒内胆、软壳内胆）」
+ * on every colour, yet 6 of its 12 shell-over-liner pairs came back, 暗夜紫 with none, and one grey
+ * soft-shell liner as two (米色 / 浅灰色). After the reading, a product worn over a liner is checked once
+ * more on only the pages whose words speak of the liners and a photo of each liner: what is sold, which
+ * liner colour each shell wears, one name for one liner. The user is not asked; the program keeps only
+ * what the pages shown and the photos bear out (wear.ts settleWear).
+ */
+export const SKU_CHECK_TEXT_SIDE = 1024, SKU_CHECK_PHOTO_SIDE = 512, SKU_CHECK_TEXT_MAX = 12, SKU_CHECK_PHOTO_MAX = 16;
+const LINER_SAID = /内胆|三合一|3合1|三合1|可拆/;
+/** The pages to read (colour images first, then those the liner points come from) and one photo of each liner and of each shell over one. */
+export function skuCheckImages(images: SortedImage[], points: { text: string; note?: string; from: string[] }[]): { text: string[]; photos: string[] } {
+  const usable = images.filter(i => !i.same && i.kind !== '无关');
+  const cites = new Map<string, number>();
+  for (const p of points) if (LINER_SAID.test(`${p.text}${p.note ?? ''}`)) for (const id of p.from) cites.set(id, (cites.get(id) ?? 0) + 1);
+  const text = usable.filter(i => SAYING_KINDS.has(i.kind) && (i.kind === '颜色款图' || cites.has(i.id)))
+    .sort((a, b) => Number(b.kind === '颜色款图') - Number(a.kind === '颜色款图') || (cites.get(b.id) ?? 0) - (cites.get(a.id) ?? 0))
+    .slice(0, SKU_CHECK_TEXT_MAX).map(i => i.id);
+  const real = (i: SortedImage) => ({ 静物: 3, '3D渲染': 2, 模特实拍: 1 } as Record<string, number>)[i.kind] ?? 0;
+  const one = new Map<string, SortedImage>();
+  for (const i of usable.filter(x => x.inner && real(x)).sort((a, b) => real(b) - real(a))) {
+    const key = i.role === '内胆' ? `alone|${i.inner}|${i.innerColor || i.color}` : `worn|${i.inner}|${i.color}`;
+    if (!one.has(key)) one.set(key, i);
+  }
+  // Each liner alone first, then each shell over one.
+  const photos = [...one].sort(([a], [b]) => Number(b.startsWith('alone')) - Number(a.startsWith('alone'))).map(([, i]) => i.id).slice(0, SKU_CHECK_PHOTO_MAX);
+  return { text, photos };
+}
+const SKU_CHECK_SYSTEM = `${ROLE}你会收到同一款三合一（外套 + 可拆内胆）衣服的两类素材：带字的颜色图、宣传图、详情页，和内胆的照片（单拍的内胆、外套里穿着内胆的）。每张都标了编号，还有之前整理好的分类，以及第一遍读出的 SKU 穿法。
+任务：核对这款到底卖哪些 SKU，改正第一遍漏掉、读错的。只输出 JSON。
+
+- versions：一种穿法一条。kind 是 单外壳（只穿外套）/ 外壳加内胆（外套里面穿着内胆）/ 单内胆（只穿内胆）；inner 写内胆的名字，照抄分类里「」中的名字，不加颜色，单外壳留空；colors：单外壳和外壳加内胆写外套的颜色（只能从颜色清单里选），单内胆写内胆自己的颜色；from 写依据的图编号。
+- 依据：照片拍到的算；素材上印着的字写明的也算。例如每个颜色的颜色图或宣传图上都写着“三合一（羽绒内胆、软壳内胆）”，这几个颜色就都有外套加羽绒内胆、外套加软壳内胆两种，from 写那几张有字的图。字没写、照片也没拍到的组合不写，不要自己拼。单内胆只写照片里单独拍到的内胆。
+- liners：外壳加内胆时，每个外套颜色里面配的是这件内胆的哪个颜色，写 { "外套颜色": "内胆颜色" }。内胆颜色只能用分类里这件内胆出现过的颜色名；照片拍到这个外套里穿的是哪件就照它；没拍到的，看单拍的内胆照片：内胆是跟外套同色配的（每个外套颜色都有一件同色内胆），就配同色那件；只有一个颜色的，就配那一个。看不出配哪件就不写这个外套颜色。
+- rename：同一件内胆在不同图里被叫成了不同颜色名（例如同一件浅灰软壳内胆，有的图写米色、有的写浅灰色），写 { "内胆名": { "旧颜色名": "统一用的颜色名" } }，统一用的名字是其中出现次数多的那个。真是两件不同颜色的内胆不要合。没有就写 {}。
+
+输出：
+{ "versions": [{ "kind": "", "inner": "", "colors": [""], "from": ["M1"], "liners": {} }], "rename": {} }`;
+export function skuCheckRequest(input: { views: PlanView[]; model: string; product: string; images: SortedImage[]; colors: string[]; versions: Wear['versions'] }) {
+  const version = (v: Wear['versions'][number]) => `${v.kind}${v.inner ? `「${v.inner}」` : ''}：${v.colors.join('、') || '—'}（依据 ${v.from.slice(0, 8).join('、') || '—'}）`;
+  return { model: input.model, reasoning_effort: 'low', max_completion_tokens: 6000, response_format: { type: 'json_object' },
+    messages: [{ role: 'system', content: SKU_CHECK_SYSTEM }, { role: 'user', content: [
+      { type: 'text' as const, text: `颜色清单：${input.colors.join('、')}。\n这些图之前整理好的分类：\n${input.images.map(imageLine).join('\n')}\n\n第一遍读出的 SKU 穿法：\n${input.versions.map(version).join('\n') || '（没有）'}` },
+      ...userContent(`商品：${input.product}。下面每张都是一张独立素材。`, input.views)] }] };
+}
+const skuCheckSchema = z.object({
+  versions: z.array(z.object({ kind: z.string().max(8).catch(''), inner: z.string().max(12).catch(''), colors: z.array(z.string().max(12)).max(16).catch([]).default([]),
+    from: z.array(z.string()).max(60).catch([]).default([]), liners: z.record(z.string().max(12), z.string().max(12)).catch({}).default({}) })).max(12).catch([]).default([]),
+  rename: z.record(z.string().max(12), z.record(z.string().max(12), z.string().max(12)).catch({})).catch({}).default({}),
+});
+export type SkuCheck = z.infer<typeof skuCheckSchema>;
+export function parseSkuCheck(content: string): SkuCheck {
+  const parsed = skuCheckSchema.safeParse(modelJson(content, 'SKU 核对结果不是完整的 JSON'));
+  if (!parsed.success) throw new Error('SKU 核对结果缺少内容');
+  return parsed.data;
+}
+/**
+ * The check taken in: one liner colour name each (a name only renamed to another this liner has), then
+ * the first reading's versions and the check's settled together, the pages shown (`said`) counting as
+ * proof of a pair they print. Never fewer pairs than the first reading had.
+ */
+export function applySkuCheck(o: Organized, check: SkuCheck, said: string[]): Organized {
+  if (o.wear?.type !== '内胆') return o;
+  const tints = (inner: string) => new Set(o.images.filter(i => i.inner === inner).map(i => i.innerColor || (i.role === '内胆' ? i.color : '')).filter(Boolean));
+  const rename = new Map(Object.entries(check.rename).map(([raw, names]) => {
+    const inner = innerName(raw), have = tints(inner);
+    return [inner, new Map(Object.entries(names).filter(([from, to]) => from !== to && have.has(from) && have.has(to)))] as const;
+  }));
+  const tint = (i: SortedImage) => rename.get(i.inner ?? '')?.get(i.innerColor || '');
+  const images = o.images.map(i => { const t = tint(i); return t ? { ...i, innerColor: t } : i; });
+  const versions = check.versions.map(v => ({ ...v, inner: innerName(v.inner), colors: v.kind === '单内胆' ? v.colors.map(c => rename.get(innerName(v.inner))?.get(c) ?? c) : v.colors,
+    liners: Object.fromEntries(Object.entries(v.liners).map(([shell, t]) => [shell, rename.get(innerName(v.inner))?.get(t) ?? t])) }));
+  const wear = settleWear({ type: '内胆', why: o.wear.why, versions: [...o.wear.versions, ...versions] }, images, o.colors.map(c => c.name), new Set(said));
+  const pairs = (w: Wear | null) => (w?.versions ?? []).filter(v => v.kind === '外壳加内胆').reduce((n, v) => n + v.colors.length, 0);
+  if (!wear || wear.type !== '内胆' || pairs(wear) < pairs(o.wear)) return o;
+  return { ...o, images, wear };
 }
 
 /** The images worth reading for the whole product: not unrelated, not a copy of another. */

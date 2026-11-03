@@ -15,7 +15,7 @@ import { draftSchema, type SubmittedDraft } from '../listing/draft-schema';
 import { skuPhotos } from '../listing/sku-card';
 import { skuPair, withCover, type CoverPeople } from '../listing/templates';
 import { claimLayout, executeLayout, renewLayoutLease, resolveLayout } from './listing-layouts';
-import { chooseMaterials, coloursRequest, applyLiners, LINER_CHECK_BATCH, LINER_CHECK_SIDE, linerCandidates, linerFolderRest, linerRequest, mergePoints, parseColours, parseLinerBatch, parsePoints, type LinerCheck, parseRead, parseSorted, parseWhole, pointsRequest, READ_GROUP_VIEWS, READ_SPLIT_VIEWS, readRequest, type ReadPoints, recolored, settleCopies, sortRequest, uniqueColours, wholeRequest, worthReading, type Organized, type SortedImage } from './listing-organize';
+import { chooseMaterials, coloursRequest, applyLiners, applySkuCheck, parseSkuCheck, SKU_CHECK_PHOTO_SIDE, SKU_CHECK_TEXT_SIDE, skuCheckImages, skuCheckRequest, LINER_CHECK_BATCH, LINER_CHECK_SIDE, linerCandidates, linerFolderRest, linerRequest, mergePoints, parseColours, parseLinerBatch, parsePoints, type LinerCheck, parseRead, parseSorted, parseWhole, pointsRequest, READ_GROUP_VIEWS, READ_SPLIT_VIEWS, readRequest, type ReadPoints, recolored, settleCopies, sortRequest, uniqueColours, wholeRequest, worthReading, type Organized, type SortedImage } from './listing-organize';
 import { buildPlan, writeRequest } from './listing-write';
 import { COLOUR_SIDE, colourBatches, planViews, single, type PlanSource, type PlanView } from './listing-plan-views';
 import { assertListingProviderConfigured, callPlanModel, LISTING_PLAN_MODEL, listingPlanProvider, listingWorkerConcurrency, type PlanCall } from './listing-provider';
@@ -228,6 +228,16 @@ export async function executePlan(job: JobRow, provider: Provider = (request, ho
       const read = mergePoints(parts);
       try { organized = await ask(wholeRequest({ views: wholeViews, model, product: project.name, images, colors: palette, points: read.points }), content => parseWhole(content, images, read)); } catch (error) {
         throw Object.assign(error as Error, { done: total - 1, total });
+      }
+    }
+    // 「核对 SKU」 (11-03): a jacket over a liner, checked once more on the pages that speak of its liners and a photo of each liner.
+    if (organized.wear?.type === '内胆') {
+      const pick = skuCheckImages(organized.images, organized.points);
+      if (pick.text.length) {
+        const views = await Promise.all([...pick.text.map(id => single(bySource.get(id)!, SKU_CHECK_TEXT_SIDE)), ...pick.photos.map(id => single(bySource.get(id)!, SKU_CHECK_PHOTO_SIDE))]);
+        const shown = new Set([...pick.text, ...pick.photos]), before = organized;
+        try { organized = applySkuCheck(before, await ask(skuCheckRequest({ views, model, product: project.name, images: before.images.filter(i => shown.has(i.id)), colors: before.colors.map(c => c.name), versions: before.wear!.versions }), parseSkuCheck), pick.text); }
+        catch (error) { throw Object.assign(error as Error, { done: kept.size, total: kept.size + 1 }); }
       }
     }
     const certain = attempts.find(a => a.status === 'succeeded');

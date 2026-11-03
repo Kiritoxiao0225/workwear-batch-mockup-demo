@@ -42,6 +42,7 @@ export const draftSchema = z.object({
   colors: z.array(z.object({ name: z.string().trim().min(1, '颜色名不能空').max(12, '颜色名最多 12 个字'), hex: z.string().max(16).default(''), pick: z.string({ error: '每个颜色都要有一张衣服图' }).min(1) })).min(1, '至少要有一个颜色').max(12),
   main: z.string().min(1),
   parts: z.array(z.object({ part: z.string().trim().min(1, '部位名不能空').max(12, '部位名最多 12 个字'), pick: z.string().nullable().default(null) })).max(16).default([]),
+  noParts: z.array(z.string().max(12)).max(32).optional(),
   slots: z.array(slotSchema).min(2).max(7),
   long: z.object({ title: words(LIMITS.title) }),
   layout: z.string().min(1), counts: countsSchema,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyLiners, chooseMaterials, linerCandidates, linerFolderRest, linerRequest, mergePoints, parseLinerBatch, mergeSameColors, parseOrganized, parsePoints, parseRead, parseSorted, parseWhole, pointsRequest, readRequest, recolored, settleCopies, unlistedColors, wholeRequest, worthReading, type SortedImage } from './listing-organize';
+import { applyLiners, applySkuCheck, parseSkuCheck, skuCheckImages, chooseMaterials, linerCandidates, linerFolderRest, linerRequest, mergePoints, parseLinerBatch, mergeSameColors, parseOrganized, parsePoints, parseRead, parseSorted, parseWhole, pointsRequest, readRequest, recolored, settleCopies, unlistedColors, wholeRequest, worthReading, type SortedImage } from './listing-organize';
 import { usableAsIs } from '../listing/draft';
 
 const img = (id: string, over: Partial<SortedImage>): SortedImage => ({ id, kind: '模特实拍', color: '', front: false, detail: '', text: false, logo: false, same: '', person: '', face: false, ...over });
@@ -270,5 +270,39 @@ describe('the liner check looks in every folder and keeps the material\'s name',
   it('each batch is told the names given before', () => {
     const text = JSON.stringify(linerRequest({ views: [], model: 'm', product: '8828', named: ['软壳', '羽绒'] }));
     expect(text).toContain('已经出现的内胆：软壳、羽绒');
+  });
+});
+
+// 8828 (11-03): one grey soft-shell liner read as 米色 on the photos and 浅灰色 on the renders, and the pairs printed on its swatches missed.
+describe('核对 SKU', () => {
+  const img = (i: Partial<SortedImage> & { id: string }): SortedImage => ({ kind: '静物', color: '', front: false, detail: '', parts: [], text: false, logo: false, same: '', person: '', face: false, ...i } as SortedImage);
+  const images = [
+    img({ id: 'C1', kind: '颜色款图', color: '冰川蓝', role: '主体', text: true }),
+    img({ id: 'C2', kind: '颜色款图', color: '未来灰', role: '主体', text: true }),
+    img({ id: 'W1', kind: '模特实拍', color: '未来灰', role: '主体', inner: '软壳', innerColor: '浅灰色' }),
+    img({ id: 'L1', color: '未来灰', role: '内胆', inner: '软壳', innerColor: '米色' }),
+    img({ id: 'L2', kind: '3D渲染', color: '未来灰', role: '内胆', inner: '软壳', innerColor: '浅灰色' }),
+    img({ id: 'L3', color: '冰川蓝', role: '内胆', inner: '软壳', innerColor: '浅蓝色' }),
+  ];
+  const organized = { images, colors: [{ name: '冰川蓝', hex: '', from: [] }, { name: '未来灰', hex: '', from: [] }], points: [{ text: '三合一（软壳内胆）', note: '', from: ['C2'] }],
+    wear: { type: '内胆' as const, why: '', versions: [{ kind: '外壳加内胆' as const, inner: '软壳', colors: ['未来灰'], from: ['W1'] }, { kind: '单内胆' as const, inner: '软壳', colors: ['米色', '浅灰色', '浅蓝色'], from: ['L1', 'L2', 'L3'] }] } } as never;
+  const check = parseSkuCheck(JSON.stringify({ versions: [{ kind: '外壳加内胆', inner: '软壳', colors: ['冰川蓝', '未来灰'], from: ['C1', 'C2', 'W1'], liners: { 冰川蓝: '浅蓝色', 未来灰: '米色' } }], rename: { 软壳: { 米色: '浅灰色', 浅蓝色: '没有的色' } } }));
+  it('sends the colour images and the pages of the liner points, and a photo of each liner', () => {
+    const pick = skuCheckImages(images, organized['points' as never]);
+    expect([...pick.text].sort()).toEqual(['C1', 'C2']);
+    expect([...pick.photos].sort()).toEqual(['L1', 'L2', 'L3', 'W1']);
+  });
+  it('one liner one colour name, and the printed pairs taken in', () => {
+    const after = applySkuCheck(organized, check, ['C1', 'C2']);
+    expect(after.images.find(i => i.id === 'L1')!.innerColor).toBe('浅灰色');
+    expect(after.images.find(i => i.id === 'L3')!.innerColor).toBe('浅蓝色');
+    expect(after.wear!.versions.map(v => [v.kind, v.colors, v.liners])).toEqual([
+      ['外壳加内胆', ['冰川蓝', '未来灰'], { 冰川蓝: '浅蓝色', 未来灰: '浅灰色' }],
+      ['单内胆', ['浅灰色', '浅蓝色'], undefined],
+    ]);
+  });
+  it('a check that says nothing keeps the first reading\'s pairs', () => {
+    const none = parseSkuCheck(JSON.stringify({ versions: [], rename: {} }));
+    expect(applySkuCheck(organized, none, ['C1', 'C2']).wear!.versions.find(v => v.kind === '外壳加内胆')!.colors).toEqual(['未来灰']);
   });
 });

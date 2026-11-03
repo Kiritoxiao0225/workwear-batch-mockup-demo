@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { categoryById } from './category';
 import { fabricColor } from './scene';
 import { DEMO_MATERIAL } from './demo/material';
-import { checkDraft, replan, markMust, putOn, takeOff, fillModel, fillParts, missingParts, defaultDraft, draftImages, fitProof, notesOf, placesFor, planSlots, reviewPoints, staleMentions, tickPoint, usageOf, usedSlots, type Draft, type Point, closerTitle, closerSub, syncCloser, partPhoto, type Slot } from './draft';
+import { checkDraft, replan, markMust, putOn, takeOff, fillModel, fillParts, missingParts, defaultDraft, draftImages, fitProof, notesOf, placesFor, planSlots, reviewPoints, staleMentions, tickPoint, usageOf, usedSlots, type Draft, type Point, closerTitle, closerSub, syncCloser, partPhoto, partOf, type Slot } from './draft';
 import { LEGACY_LAYOUTS as BUILT_IN_LAYOUTS } from './legacy-layouts';
 import { BUILT_IN_LAYOUTS as MASTERS, FLAT_EXAMPLE, capacity, cellZones, fitTemplate, mostCells, type Layout } from './templates';
 
@@ -251,7 +251,32 @@ describe('finding a photo of a part', () => {
   });
 });
 
+describe('structure images the plan finds by itself (11-03)', () => {
+  it('a ticked point about a part brings the material\'s photo of it, unless the user removed that part', () => {
+    const d = draft(), carded = new Set(d.slots.flatMap(s => s.cells.map(c => c.point)));
+    const p = d.points.find(x => x.on && x.kind === '衣服' && x.part && !carded.has(x.id))!;
+    const part = partOf(p), without = { ...d, parts: d.parts.filter(x => x.part !== part) };
+    expect(fillParts(without, [{ id: 'M99', detail: part }]).parts).toContainEqual({ part, pick: 'M99' });
+    expect(fillParts({ ...without, noParts: [part] }, [{ id: 'M99', detail: part }]).parts.some(x => x.part === part)).toBe(false);
+  });
+});
+
 describe('what the server accepts', () => {
+  it('a cover whose 定位 is only the style number takes the AI\'s cover heading (11-03: 「8828#三合一」)', () => {
+    const points = reviewPoints({ points: [{ type: '定位', text: '8828#三合一', note: '', concept: null, why: '', from: ['M1'] }, ...DEMO_MATERIAL.points.filter(p => p.type !== '定位')], checks: [] }, categoryById('generic'));
+    const { slots, long } = planSlots(points, categoryById('generic'), BUILT_IN_LAYOUTS[0], ['黑色'], { 首图: ['三合一应对温差'] });
+    expect(slots[0].title).toBe('三合一应对温差');
+    expect(long.title).toBe('三合一应对温差');
+    expect(planSlots(points, categoryById('generic'), BUILT_IN_LAYOUTS[0], ['黑色'], {}).slots[0].title).toBe('8828#三合一');
+  });
+  it('the page and the server count a fact tag the same way (11-03: 8828 stopped on 「面料成分｜100%聚酯纤维」)', async () => {
+    const { draftSchema } = await import('./draft-schema');
+    const { overLimit } = await import('./draft');
+    const slot = (tags: string[]) => draftSchema.shape.slots.element.safeParse({ task: '功能', lead: null, title: '防泼水', sub: '', tags, cells: [], act: null, colors: [] }).success;
+    for (const tags of [['面料成分｜100%聚酯纤维'], ['面料科技｜德国SUPER-TEX防水膜'], ['十三个字的普通标签写太长了'], ['50%羽绒']])
+      expect(overLimit({ title: '防泼水', sub: '', tags }) === '').toBe(slot(tags));
+    expect(overLimit({ title: '防泼水', sub: '', tags: ['面料成分｜100%聚酯纤维'] })).toBe('');
+  });
   it('takes as many colours on the closer as the page lets the user pick', async () => {
     const { draftSchema } = await import('./draft-schema');
     const { CLOSER_MAX } = await import('./draft');

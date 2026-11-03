@@ -121,3 +121,27 @@ describe('the liner on the main images (10-25)', () => {
     expect(groupWear([{ shell: '咖啡' }, { shell: '黑色', liner: '' }])).not.toContain('内胆拉链');
   });
 });
+
+// 8828 (11-03): every colour's swatch prints 「三合一（羽绒内胆、软壳内胆）」; only 未来灰 is photographed over its soft-shell liner.
+describe('settleWear: a pair the material prints counts as seen (11-03)', () => {
+  const shots = [
+    { id: 'C1', kind: '颜色款图', role: '主体', color: '冰川蓝', inner: '' },
+    { id: 'C2', kind: '颜色款图', role: '主体', color: '暗夜紫', inner: '' },
+    { id: 'W1', kind: '模特实拍', role: '主体', color: '未来灰', inner: '软壳', innerColor: '浅灰色' },
+    { id: 'L1', kind: '静物', role: '内胆', color: '暗夜紫', inner: '软壳', innerColor: '紫色' },
+    { id: 'L2', kind: '静物', role: '内胆', color: '冰川蓝', inner: '软壳', innerColor: '浅蓝色' },
+  ];
+  const palette = ['冰川蓝', '未来灰', '暗夜紫'];
+  const raw = { type: '内胆', versions: [{ kind: '外壳加内胆', inner: '软壳', colors: ['冰川蓝', '未来灰', '暗夜紫'], from: ['W1', 'C1', 'C2'], liners: { 冰川蓝: '浅蓝色', 暗夜紫: '紫色', 未来灰: '编的色' } }] };
+  it('takes the shells the pages shown print, with the liner colour each wears', () => {
+    const w = settleWear(raw, shots, palette, new Set(['C1', 'C2']))!;
+    expect(w.versions).toEqual([{ kind: '外壳加内胆', inner: '软壳', colors: ['冰川蓝', '未来灰', '暗夜紫'], from: ['W1', 'C1', 'C2'], liners: { 冰川蓝: '浅蓝色', 暗夜紫: '紫色' } }]);
+  });
+  it('without the pages read as saying it, only the photographed pair', () => {
+    expect(settleWear(raw, shots, palette)!.versions.map(v => v.colors)).toEqual([['未来灰']]);
+  });
+  it('words never make a liner that is photographed nowhere', () => {
+    const w = settleWear({ type: '内胆', versions: [{ kind: '外壳加内胆', inner: '羽绒', colors: ['冰川蓝'], from: ['C1'] }, raw.versions[0]] }, shots, palette, new Set(['C1', 'C2']))!;
+    expect(w.versions.map(versionName)).toEqual(['外壳 + 软壳内胆']);
+  });
+});

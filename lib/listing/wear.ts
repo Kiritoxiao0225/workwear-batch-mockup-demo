@@ -30,13 +30,18 @@ export const innerSaid = (inner: string, words: string[]) => !!inner && words.so
 export const VERSION_KINDS = ['单外壳', '外壳加内胆', '单内胆'] as const;
 export type VersionKind = (typeof VERSION_KINDS)[number];
 /** One SKU version the material shows: its colours (the shell's, or the liner's own for 单内胆) and the images showing it. */
-export type SkuVersion = { kind: VersionKind; inner: Inner; colors: string[]; from: string[]; said?: boolean };
+export type SkuVersion = { kind: VersionKind; inner: Inner; colors: string[]; from: string[]; said?: boolean; liners?: Record<string, string> };
 export type Wear = { type: WearType; why: string; versions: SkuVersion[] };
 
 /** What the program needs of a sorted image to check a version. */
 type Seen = { id: string; kind?: string; role?: string; inner?: string; innerColor?: string; color: string; colorsSeen?: string[] };
 /** Real photos of the garment: a version needs one (10-21: one detail page read a down liner as 棉). */
 const PHOTO_KINDS = new Set(['模特实拍', '静物', '3D渲染', '颜色款图']);
+/**
+ * Pages whose printed words can say what is sold (11-03, 8828: every colour's swatch and poster
+ * says 「三合一（羽绒内胆、软壳内胆）」, but only 6 of the 12 shell-over-liner pairs were photographed).
+ */
+export const SAYING_KINDS = new Set(['颜色款图', '详情页', '卖点图', '海报']);
 
 /** The liner's name on images and in prompts: the plan's own name for it (renamed by the user) or the material's. */
 export const linerName = (v: { inner: string; name?: string }) => v.name || v.inner;
@@ -70,7 +75,7 @@ function shows(v: Pick<SkuVersion, 'kind' | 'inner'>, i: Seen) {
  * image shows is dropped. A 有内胆 reading with no liner version left is a 3-in-1 whose liner is
  * never shown, so it is worn as 薄款.
  */
-export function settleWear(raw: { type?: string; why?: string; versions?: { kind?: string; inner?: string; colors?: string[]; from?: string[] }[] } | null | undefined, sorted: Seen[], colors: string[]): Wear | null {
+export function settleWear(raw: { type?: string; why?: string; versions?: { kind?: string; inner?: string; colors?: string[]; from?: string[]; liners?: Record<string, string> }[] } | null | undefined, sorted: Seen[], colors: string[], said: Set<string> = new Set()): Wear | null {
   if (!raw || !(WEARS as readonly string[]).includes(raw.type ?? '')) return null;
   const images = oneLinerEach(sorted);
   const byId = new Map(images.map(i => [i.id, i]));
@@ -83,19 +88,29 @@ export function settleWear(raw: { type?: string; why?: string; versions?: { kind
     // The liner is the one the images it cites show, by their name, not the reading's own spelling of it
     // (10-28: 8828's every version came back as 黑色软壳, 浅灰色羽绒 …, no image had those names, and it was worn as 薄款).
     const cited = [...new Set(r.from ?? [])].flatMap(id => byId.get(id) ?? []);
-    const inners = kind === '单外壳' ? [''] : [...new Set(cited.map(i => i.inner).filter((n): n is string => !!n))];
+    // A page whose printed words the SKU check read as saying this pair is sold (`said`, 11-03): 素材里印着的字也算看到.
+    const words = kind === '外壳加内胆' ? cited.filter(i => said.has(i.id) && i.kind && SAYING_KINDS.has(i.kind)) : [];
+    const named = innerName(r.inner);
+    const inners = kind === '单外壳' ? [''] : [...new Set([...cited.map(i => i.inner).filter((n): n is string => !!n), ...(words.length && named ? [named] : [])])];
     for (const inner of inners) {
       const from = cited.filter(i => shows({ kind, inner }, i)).map(i => i.id);
-      const all = images.filter(i => shows({ kind, inner }, i));
-      if (!from.length || !all.some(i => !i.kind || PHOTO_KINDS.has(i.kind))) continue;
+      // The liner itself must be photographed somewhere, worn or alone: the words only say which shells it goes with.
+      const all = images.filter(i => shows({ kind, inner }, i)), photographed = images.some(i => i.inner === inner && (!i.kind || PHOTO_KINDS.has(i.kind)));
+      if (!(from.length || (words.length && photographed)) || !(all.some(i => !i.kind || PHOTO_KINDS.has(i.kind)) || (words.length && photographed))) continue;
       // Its colours from every image sorted as showing it, not only the few the reading names (10-21: 1888's 单外壳 named 2 of its 4 colours).
       // With a liner, only the shell that wears it counts: a poster of several shells paired every one of them with the liner.
       const seen = all.flatMap(i => kind === '单内胆' ? [i.innerColor || i.color] : kind === '外壳加内胆' ? [i.color] : [i.color, ...(i.colorsSeen ?? [])]).filter(Boolean);
+      // The shells the words pair with it, only those of the colour list.
+      const told = words.length ? (r.colors ?? []).filter(c => colors.includes(c)) : [];
       // A liner's own colour is not a shell colour, unless a shell is seen in it on its own (10-21: 1888's beige fleece, worn alone in the group photos).
-      const shown = kind === '单内胆' ? [...new Set(seen)] : colors.filter(c => seen.includes(c) && (!linerOnly.has(c)));
+      const shown = kind === '单内胆' ? [...new Set(seen)] : colors.filter(c => (seen.includes(c) && !linerOnly.has(c)) || told.includes(c));
+      // Which liner colour each shell wears, as the check read it: only a colour this liner is photographed in.
+      const tints = new Set(images.filter(i => i.inner === inner).map(i => i.innerColor || (i.role === '内胆' ? i.color : '')).filter(Boolean));
+      const liners = kind === '外壳加内胆' ? Object.fromEntries(Object.entries(r.liners ?? {}).filter(([shell, tint]) => shown.includes(shell) && tints.has(tint))) : {};
+      const proof = [...from, ...words.map(i => i.id)];
       const same = versions.find(v => v.kind === kind && v.inner === inner);
-      if (same) { same.from = [...new Set([...same.from, ...from])]; same.colors = [...new Set([...same.colors, ...shown])]; }
-      else versions.push({ kind, inner, colors: shown, from });
+      if (same) { same.from = [...new Set([...same.from, ...proof])]; const union = new Set([...same.colors, ...shown]); same.colors = kind === '单内胆' ? [...union] : colors.filter(c => union.has(c)); if (Object.keys(liners).length) same.liners = { ...same.liners, ...liners }; }
+      else versions.push({ kind, inner, colors: shown, from: proof, ...(Object.keys(liners).length ? { liners } : {}) });
     }
   }
   const lined = versions.some(v => v.kind !== '单外壳');
