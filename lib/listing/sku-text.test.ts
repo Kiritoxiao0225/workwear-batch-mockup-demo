@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyEdit, editFor, editOf, rowIcon, skuTextProblems, type CardWords } from './sku-text';
+import { applyEdit, editFor, editOf, linerNameOf, rowIcon, skuTextProblems, wholeEdit, type CardWords } from './sku-text';
 
 const own: CardWords = {
   kicker: 'PREMIUM QUALITY', title: ['品质做工', '舒适百搭'], linerName: '羽绒内胆',
@@ -35,8 +35,29 @@ describe('改 SKU 图文字 (11-01)', () => {
   it("an image's own words come before the whole product's", () => {
     const all = editOf(own), mine = { ...all, title: ['只改这张', ''] as [string, string] };
     expect(editFor({ all, one: { M1: mine } }, 'M1')).toBe(mine);
-    expect(editFor({ all, one: { M1: mine } }, 'M2')).toBe(all);
+    expect(editFor({ all, one: { M1: mine } }, 'M2')).toEqual(wholeEdit(all));
     expect(editFor(undefined, 'M1')).toBeUndefined();
     expect(rowIcon('外层面料', '双经双纬T800')).toBe('fabric');
+  });
+
+  it("a whole-product edit keeps each liner's own name unless written (11-04: 8828's 25 images all lost theirs)", () => {
+    const down: CardWords = { ...own, linerName: '羽绒内胆', linerKey: '羽绒' }, soft: CardWords = { ...own, linerName: '软壳内胆', linerKey: '软壳' };
+    const shell: CardWords = { ...own, linerName: undefined };
+    // An edit saved before 11-04 from an image with no liner: its '' no longer wipes the names.
+    const old = editFor({ all: { ...editOf(shell), title: ['冬季新款', ''] } }, 'K')!;
+    expect(applyEdit(down, old, 'title').linerName).toBe('羽绒内胆');
+    expect(applyEdit(soft, old, 'title').linerName).toBe('软壳内胆');
+    expect(applyEdit(shell, old, 'title')).not.toHaveProperty('linerName');
+    // Written for one liner: only its pictures change; turned off: none printed.
+    const named = editFor({ all: { ...editOf(shell), liners: { 羽绒: { name: '鸭绒内胆' }, 软壳: { name: '', off: true } } } }, 'K')!;
+    expect(applyEdit(down, named, 'title').linerName).toBe('鸭绒内胆');
+    expect(applyEdit(soft, named, 'title').linerName).toBe('');
+    // One image's own edit still names its own liner as typed, '' none.
+    expect(applyEdit(down, editFor({ one: { K: { ...editOf(down), liner: '' } } }, 'K')!, 'title').linerName).toBe('');
+    expect(linerNameOf({ 羽绒: { name: '  ' } }, '羽绒', '羽绒内胆')).toBe('羽绒内胆');
+  });
+  it("checks each liner name's length", () => {
+    expect(skuTextProblems({ ...editOf(own), liners: { 羽绒: { name: '一二三四五六七八九' } } })).toEqual([{ where: '羽绒内胆小图的名字', max: 8 }]);
+    expect(skuTextProblems({ ...editOf(own), liners: { 羽绒: { name: '一二三四五六七八九', off: true } } })).toEqual([]);
   });
 });

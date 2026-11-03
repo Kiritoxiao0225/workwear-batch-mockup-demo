@@ -8,9 +8,9 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, post } from "@/lib/listing/client-api";
-import { SKU_TEXT_ICONS, SKU_TEXT_MAX, SKU_TEXT_ROWS, skuTextProblems, type SkuEdits, type SkuTextEdit, type SkuTextRow } from "@/lib/listing/sku-text";
+import { linerNameOf, SKU_TEXT_ICONS, SKU_TEXT_MAX, SKU_TEXT_ROWS, skuTextProblems, type SkuEdits, type SkuLinerName, type SkuTextEdit, type SkuTextRow } from "@/lib/listing/sku-text";
 
-type Item = { key: string; name: string; image: string; own: SkuTextEdit; liner: boolean };
+type Item = { key: string; name: string; image: string; own: SkuTextEdit; liner: boolean; linerKey?: string };
 type State = { items: Item[]; edits: SkuEdits };
 export type SkuTextTarget = { mode: "all" } | { mode: "one"; key: string };
 
@@ -19,6 +19,12 @@ const blankRow = (): SkuTextRow => ({ label: "", value: "", sub: "" });
 function padded(e: SkuTextEdit): SkuTextEdit {
   return { ...e, rows: Array.from({ length: SKU_TEXT_ROWS }, (_, i) => e.rows[i] ?? blankRow()), feature: { ...e.feature, icons: Array.from({ length: SKU_TEXT_ICONS }, (_, i) => e.feature.icons[i] ?? "") } };
 }
+/** The product's liners, each once, with the name its pictures print by default (11-04: one name box for all wiped them). */
+const linersOf = (items: Item[]) => {
+  const out: { key: string; name: string }[] = [];
+  for (const i of items) if (i.liner && i.linerKey !== undefined && !out.some(l => l.key === i.linerKey)) out.push({ key: i.linerKey, name: i.own.liner });
+  return out;
+};
 /** One image's words as plain text: its colour row written out, nothing following. */
 const plain = (e: SkuTextEdit, own: SkuTextEdit): SkuTextEdit => {
   const color = own.rows.find(r => r.color);
@@ -39,9 +45,17 @@ export function SkuTextDialog({ projectId, name, target, onSaved, onError, onClo
 
   /** The words the form starts from in a mode: the saved edit, else what the image prints now. */
   const start = (s: State, m: "all" | "one", k: string): SkuTextEdit => {
-    const item = s.items.find(i => i.key === k) ?? s.items[0];
-    if (m === "all") return padded(s.edits.all ?? s.items[0].own);
-    return padded(plain(s.edits.one?.[item.key] ?? s.edits.all ?? item.own, item.own));
+    const item = s.items.find(i => i.key === k) ?? s.items[0], all = s.edits.all;
+    if (m === "all") {
+      // Each liner starts from what its pictures print: its own name unless the whole product's edit wrote one.
+      const liners = Object.fromEntries(linersOf(s.items).map(l => { const w = all?.liners?.[l.key];
+        return [l.key, w?.off ? { name: l.name, off: true } : { name: w?.name.trim() || l.name }]; }));
+      return padded({ ...(all ?? s.items[0].own), liner: "", liners });
+    }
+    const own = s.edits.one?.[item.key];
+    if (own) return padded(plain({ ...own, liners: undefined }, item.own));
+    // From the whole product's words: this image's liner as it prints now.
+    return padded(plain(all ? { ...all, liner: linerNameOf(all.liners ?? {}, item.linerKey, item.own.liner), liners: undefined } : item.own, item.own));
   };
   useEffect(() => {
     let live = true;
@@ -78,6 +92,8 @@ export function SkuTextDialog({ projectId, name, target, onSaved, onError, onClo
   const ones = Object.keys(state.edits.one ?? {}).filter(k => state.items.some(i => i.key === k));
   const hasLiner = mode === "all" ? state.items.some(i => i.liner) : item.liner;
   const set = (patch: Partial<SkuTextEdit>) => setForm(f => f && { ...f, ...patch });
+  const liners = linersOf(state.items);
+  const setLiner = (key: string, patch: Partial<SkuLinerName>) => set({ liners: { ...form.liners, [key]: { ...(form.liners?.[key] ?? { name: "" }), ...patch } } });
   const setRow = (i: number, patch: Partial<SkuTextRow>) => set({ rows: form.rows.map((r, k) => k === i ? { ...r, ...patch } : r) });
   const switchTo = (m: "all" | "one", k = key) => { setMode(m); setKey(k); setForm(start(state, m, k)); setOverwrite(false); };
   const field = (where: string, value: string, max: number, onChange: (v: string) => void, placeholder = "", wide = false) => (
@@ -87,7 +103,10 @@ export function SkuTextDialog({ projectId, name, target, onSaved, onError, onClo
   const save = async (edit: SkuTextEdit | null) => {
     setSaving(true);
     try {
-      const sent = edit && mode === "one" ? { ...edit, rows: edit.rows.map(r => ({ label: r.label, value: r.value, sub: r.sub })) } : edit;
+      // Whole product: only the liner names written or turned off are kept, so the others keep following their liner.
+      const kept = (l: { key: string; name: string }) => { const w = edit?.liners?.[l.key]; return w && (w.off || (w.name.trim() && w.name.trim() !== l.name)) ? [[l.key, w.off ? { name: "", off: true } : { name: w.name.trim() }]] : []; };
+      const sent = !edit ? edit : mode === "one" ? { ...edit, liners: undefined, rows: edit.rows.map(r => ({ label: r.label, value: r.value, sub: r.sub })) }
+        : { ...edit, liner: "", liners: Object.fromEntries(liners.flatMap(kept)) };
       const r = await post<{ images: number }>(`projects/${projectId}/sku-text`, { scope: mode === "all" ? "all" : key, edit: sent, ...(mode === "all" && overwrite ? { overwrite: true } : {}) });
       onSaved(r.images ? `SKU 图开始重拼 ${r.images} 张，免费，旧的留在历史里` : "存好了；SKU 图还没出好，出好时按这些字拼");
       onClose();
@@ -119,7 +138,12 @@ export function SkuTextDialog({ projectId, name, target, onSaved, onError, onClo
             <h4>标题区</h4>
             <div className="line"><span>英文小字</span>{field("英文小字", form.kicker, SKU_TEXT_MAX.kicker, v => set({ kicker: v }), "空着就不放", true)}</div>
             <div className="line"><span>标题</span>{field("标题第 1 行", form.title[0], SKU_TEXT_MAX.title, v => set({ title: [v, form.title[1]] }), "第 1 行")}{field("标题第 2 行", form.title[1], SKU_TEXT_MAX.title, v => set({ title: [form.title[0], v] }), "第 2 行")}</div>
-            {hasLiner && <><h4>内胆小图</h4><div className="line"><span>名字</span>{field("内胆小图的名字", form.liner, SKU_TEXT_MAX.liner, v => set({ liner: v }), "空着就不写名字")}</div></>}
+            {hasLiner && mode === "one" && <><h4>内胆小图</h4><div className="line"><span>名字</span>{field("内胆小图的名字", form.liner, SKU_TEXT_MAX.liner, v => set({ liner: v }), "空着就不写名字")}</div></>}
+            {hasLiner && mode === "all" && liners.length > 0 && <><h4>内胆小图的名字 <small>每件内胆各写各的，只改小图上的字，规格名不变</small></h4>
+              {liners.map(l => { const w = form.liners?.[l.key] ?? { name: l.name };
+                return (<div key={l.key} className="line"><span>{l.name}</span>
+                  {w.off ? <span className="follow">这件内胆的小图不写名字</span> : field(`${l.key}内胆小图的名字`, w.name, SKU_TEXT_MAX.liner, v => setLiner(l.key, { name: v }), l.name)}
+                  <label className="lp-small"><input type="checkbox" checked={!!w.off} onChange={e => setLiner(l.key, { off: e.target.checked || undefined, ...(e.target.checked ? {} : { name: w.name || l.name }) })} /> 不写名字</label></div>); })}</>}
             <h4>左边三行 <small>大字空着，这一行就不放</small></h4>
             {form.rows.map((r, i) => (
               <div key={i} className="row3">

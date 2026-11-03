@@ -689,7 +689,7 @@ button:hover > .edit-tag, button:focus-visible > .edit-tag { opacity: 1; }
 .lp-skutext-body input.lp-in.bad { border-color: #e5484d; background: rgba(229, 72, 77, 0.06); }
 .lp-skutext-body .row3 { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 6px 0; border-top: 1px dashed var(--line); }
 .lp-skutext-body .row3 > b { width: 4.5em; font-size: 12.5px; font-weight: 600; }
-.lp-skutext-body .row3 .follow { font-size: 12.5px; color: var(--muted); padding: 0 6px; }
+.lp-skutext-body .row3 .follow, .lp-skutext-body .line .follow { font-size: 12.5px; color: var(--muted); padding: 0 6px; }
 @media (max-width: 760px) { .lp-skutext-body { grid-template-columns: 1fr; } .lp-skutext-body .pv { position: static; } }
 .lp-skutext-body { flex: 1; }
 

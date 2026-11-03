@@ -33,7 +33,7 @@ import { TASK_LABEL, type Task } from '../listing/category';
 import { castFromPhotos, GENDERS, leadCard, partOf, partPick, usedSlots, wantsCast, type Gender, type SkuPeople } from '../listing/draft';
 import { colorRow, modelPhotoFor, skuCardRows, skuCardText, skuPhotos, skuSetOf, skuWho } from '../listing/sku-card';
 import { renderSkuCard, type SkuCard } from './listing-sku-card';
-import { applyEdit, editFor, editOf, SKU_TEXT_ICONS, SKU_TEXT_ROWS, skuTextProblems, type CardWords, type SkuEdits, type SkuTextEdit } from '../listing/sku-text';
+import { applyEdit, editFor, editOf, wholeEdit, SKU_TEXT_ICONS, SKU_TEXT_ROWS, skuTextProblems, type CardWords, type SkuEdits, type SkuTextEdit } from '../listing/sku-text';
 import { enOf, sampleBytes, specFor, specPrompt, type Fill } from './listing-specs';
 import { removeFlatArtworkBackground } from './artwork-image-processing';
 import { coverScene, fabricColor, masterInfo, PLACES, REAL_PLACE, SELLS, type PlaceId, type Sell } from '../listing/scene';
@@ -367,13 +367,15 @@ export async function skuTextState(tenant: string, projectId: string) {
   const { stored, layout, outputs, output, items } = await skuTextProject(tenant, projectId);
   const list = await Promise.all(items.map(async it => {
     const left = await skuLeft({ tenant, projectId, stored, layout, key: it.key, shopSet: slotShop(stored, `sku:${it.key}`), output, has: s => outputs.has(s), bytes: false });
-    return { key: it.key, name: it.label, image: outputs.get(`sku:${it.key}`)!.id, own: editOf(left.own), liner: left.own.linerName !== undefined };
+    return { key: it.key, name: it.label, image: outputs.get(`sku:${it.key}`)!.id, own: editOf(left.own), liner: left.own.linerName !== undefined,
+      ...(left.own.linerKey !== undefined ? { linerKey: left.own.linerKey } : {}) };
   }));
   return { items: list, edits: stored.draft.skuEdits ?? {} };
 }
 
 const skuTextSchema = z.object({
   badge: z.string().max(40), kicker: z.string().max(60), title: z.tuple([z.string().max(30), z.string().max(30)]), liner: z.string().max(30),
+  liners: z.record(z.string().max(40), z.object({ name: z.string().max(30), off: z.boolean().optional() })).optional(),
   rows: z.array(z.object({ label: z.string().max(40), value: z.string().max(40), sub: z.string().max(60), color: z.boolean().optional() })).max(SKU_TEXT_ROWS),
   feature: z.object({ title: z.string().max(40), sub: z.string().max(80), icons: z.array(z.string().max(30)).max(SKU_TEXT_ICONS) }),
 });
@@ -405,7 +407,9 @@ export async function previewSkuText(tenant: string, projectId: string, input: u
  */
 export async function saveSkuText(tenant: Tenant, user: string, projectId: string, input: unknown) {
   const b = z.object({ scope: z.string().min(1).max(40), edit: z.unknown().nullable(), overwrite: z.boolean().optional() }).parse(input);
-  const edit = b.edit === null ? null : skuTextOf(b.edit);
+  // A whole-product edit names each liner apart (`liners`, 11-04); one image's names its own (`liner`).
+  const sent = b.edit === null ? null : skuTextOf(b.edit);
+  const edit = !sent ? null : b.scope === 'all' ? wholeEdit(sent) : { ...sent, liners: undefined };
   const { items } = await skuTextProject(tenant.id, projectId);
   if (b.scope !== 'all' && !items.some(it => it.key === b.scope)) throw new CatalogHttpError(404, '这张 SKU 图不存在或还没出好');
   const prices = await currentPrices();
@@ -1109,7 +1113,7 @@ export async function skuLeft(o: { tenant: string; projectId: string; stored: St
   const corner = words && (badgeSet.place === 'corner' || badgeSet.place === 'right') ? { text: words, place: badgeSet.place } : null;
   const own: CardWords = {
     kicker: text.kicker, title: text.title, feature: text.feature, rows: skuCardRows(card, fieldSet, lined ? { ...row, sub: versionName(v) } : row),
-    pill: tag ? { text: tag, place: 'title' } : corner, ...(thumbFile ? { linerName: `${linerName(v!)}内胆` } : {}), colorRow: lined ? { ...row, sub: versionName(v) } : row,
+    pill: tag ? { text: tag, place: 'title' } : corner, ...(thumbFile ? { linerName: `${linerName(v!)}内胆`, linerKey: v!.inner } : {}), colorRow: lined ? { ...row, sub: versionName(v) } : row,
   };
   const pillPlace = badgeSet.place === 'corner' || badgeSet.place === 'right' ? badgeSet.place : lined || boxed ? 'right' : 'title';
   if (!o.bytes) return { own, pillPlace, name: it.name };

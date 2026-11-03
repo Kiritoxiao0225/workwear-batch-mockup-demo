@@ -13,12 +13,18 @@ export type SkuTextEdit = {
   /** The dark pill (男女同款…) where the image has it: under the title, or in a corner. '' none. */
   badge: string;
   kicker: string; title: [string, string];
-  /** The name across the liner's picture; only on images that have one. */
+  /** The name across the liner's picture; only on images that have one. One image's edit only (a whole-product edit names each liner in `liners`). */
   liner: string;
+  /**
+   * A whole-product edit's liner names (11-04), by liner (`CardWords.linerKey`): each liner keeps its own
+   * name unless written here; `off` prints none. Its presence marks the edit as the whole product's.
+   */
+  liners?: Record<string, SkuLinerName>;
   rows: SkuTextRow[];
   /** The card at the bottom; an empty title: no card. */
   feature: { title: string; sub: string; icons: string[] };
 };
+export type SkuLinerName = { name: string; off?: boolean };
 /** `all`: the whole product's words; `one`: an image's own (by its item key), before the whole product's. */
 export type SkuEdits = { all?: SkuTextEdit; one?: Record<string, SkuTextEdit> };
 export const SKU_TEXT_ROWS = 3, SKU_TEXT_ICONS = 3;
@@ -33,6 +39,7 @@ export function skuTextProblems(e: SkuTextEdit): { where: string; max: number }[
   check(e.badge, SKU_TEXT_MAX.badge, '角标'); check(e.kicker, SKU_TEXT_MAX.kicker, '英文小字');
   e.title.forEach((t, i) => check(t, SKU_TEXT_MAX.title, `标题第 ${i + 1} 行`));
   check(e.liner, SKU_TEXT_MAX.liner, '内胆小图的名字');
+  for (const [k, l] of Object.entries(e.liners ?? {})) if (!l.off) check(l.name, SKU_TEXT_MAX.liner, `${k}内胆小图的名字`);
   e.rows.forEach((r, i) => {
     check(r.label, SKU_TEXT_MAX.label, `第 ${i + 1} 行的小字`); if (!r.color) check(r.value, SKU_TEXT_MAX.value, `第 ${i + 1} 行的大字`);
     if (!r.color) check(r.sub, SKU_TEXT_MAX.sub, `第 ${i + 1} 行的说明`);
@@ -54,8 +61,16 @@ export type CardWords = {
   /** The pill and where it is: under the title (`title`), or a corner; null none. */
   pill: { text: string; place: 'title' | 'corner' | 'right' } | null;
   linerName?: string;
+  /** Which liner the picture is (its version's `inner`), so a whole-product edit names each liner apart (11-04). */
+  linerKey?: string;
   /** The image's colour row, for a row marked to follow the colour on a scheme that prints none. */
   colorRow?: SkuRow;
+};
+
+/** The name a liner prints with on a whole-product edit: its own unless written there (11-04). */
+export const linerNameOf = (liners: Record<string, SkuLinerName>, key: string | undefined, own: string) => {
+  const l = key === undefined ? undefined : liners[key];
+  return !l ? own : l.off ? '' : l.name.trim() || own;
 };
 
 /** The form's words from an image's own (the colour row marked when `colorRow` is that row). */
@@ -86,9 +101,16 @@ export function applyEdit(own: CardWords, e: SkuTextEdit, pillPlace: 'title' | '
     kicker: e.kicker.trim() || undefined, title, rows,
     feature: e.feature.title.trim() ? { title: e.feature.title.trim(), sub: e.feature.sub.trim(), icons } : null,
     pill: badge ? { text: badge, place } : null,
-    ...(own.linerName !== undefined ? { linerName: e.liner.trim() } : {}),
+    ...(own.linerName !== undefined ? { linerName: e.liners ? linerNameOf(e.liners, own.linerKey, own.linerName) : e.liner.trim() } : {}),
+    ...(own.linerKey !== undefined ? { linerKey: own.linerKey } : {}),
   };
 }
 
-/** The edit an image prints with: its own, else the whole product's; none when neither was made. */
-export const editFor = (edits: SkuEdits | undefined, key: string) => edits?.one?.[key] ?? edits?.all;
+/**
+ * The edit an image prints with: its own, else the whole product's; none when neither was made. The whole
+ * product's always carries `liners`, so each liner keeps its own name (11-04: a whole-product edit saved
+ * before then holds the first image's '' and had wiped every liner's name; it is read as not written).
+ */
+export const editFor = (edits: SkuEdits | undefined, key: string): SkuTextEdit | undefined =>
+  edits?.one?.[key] ?? (edits?.all ? wholeEdit(edits.all) : undefined);
+export const wholeEdit = (e: SkuTextEdit): SkuTextEdit => ({ ...e, liner: '', liners: e.liners ?? {} });
