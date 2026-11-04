@@ -153,7 +153,7 @@ export function wearLine(type: WearType | undefined, liner?: number, color?: str
   // The liner's colour said outright (10-22: drawn from a couple photo, 翠绿 took the light grey liner of the woman beside).
   if (type === '内胆' && liner && alone) return `外套拉链拉开、敞着穿，${OPEN_PULL}，里面穿着这款配套的${color ?? ''}${alone.name}内胆`
     + `（怎么穿、露出多少照参考图${liner}里外套下面那一件${color ? `；参考图里别人身上的别的颜色内胆不算` : ''}；`
-    + `这件内胆本身照参考图${alone.ref}画：它是这件内胆单独拍的白底图，${color ? `${color}，` : '颜色、'}面料、表面光泽、绗缝格子的方向和间距、每一格鼓起的厚薄、领子都和它一样${alone.look ? `（${alone.look}）` : ''}，`
+    + `这件内胆的面料照参考图${alone.ref}画：它是这件内胆的面料特写，${color ? `${color}，` : '颜色、'}面料、表面光泽、绗缝格子的方向和间距、每一格鼓起的厚薄都和它一样${alone.look ? `（${alone.look}）` : ''}，`
     + `外套敞开处露出的那一长条内胆也要看得清这些，不要画成光滑平整的一整片布；上面衣服描述里说的「平整、不做绗缝、不鼓包」只管外套本身，不管里面这件内胆），内胆拉链拉到领口；${LINER_LENGTH}；一眼看得出是外壳加内胆两层，整体厚实保暖`;
   if (type === '内胆') return liner
     ? `外套拉链拉开、敞着穿，${OPEN_PULL}，里面穿着这款配套的${color ? `${color}` : ''}内胆（参考图${liner}里外套下面那一件：${color ? `${color}，` : '颜色、'}材质、表面纹理、厚薄、长度和领子都照它${color ? `；参考图里别人身上的别的颜色内胆不算` : ''}），内胆拉链拉到领口；${LINER_LENGTH}；一眼看得出是外壳加内胆两层，整体厚实保暖`
@@ -188,7 +188,7 @@ export function groupWear(list: { shell: string; liner?: string }[], covered = f
 }
 
 /** The reference line for the liner photo: only the liner is taken from it. */
-export const linerAloneLine = (n: number) => `参考图${n}是这件内胆单独拍的白底图，只看内胆本身的颜色、面料、绗缝和厚薄。`;
+export const linerAloneLine = (n: number) => `参考图${n}是这件内胆的面料特写，只看内胆的颜色、面料、绗缝和厚薄。`;
 export const linerRefLine = (n: number) => `参考图${n}是这款的内胆照片，只看外套里面那一件内胆的样子；照片里的人、外套、帽子、背景都不要带过来。`;
 
 /** A photo to draw the cast's liner from: the shell over the liner, one person, in the main colour if there is one, facing the camera. */
@@ -207,6 +207,15 @@ export const linerWhitePrompt = (inner: string, color: string, cropped = false, 
   `照参考图${cropped ? '（从素材照片上裁下来的这件内胆）' : ''}这件${inner}内胆，`
   + (recolor ? `颜色换成${color}，款式、领子、拉链、口袋和面料质感都不变` : `颜色（${color || '原色'}）、款式、领子、拉链、口袋和面料质感都不变`)
   + `${cropped ? '，绗缝格子、鼓起的厚薄、表面光泽都照它' : ''}；做成电商白底图：纯白背景，隐形模特效果，正面朝前，拉链拉上，画面里只有这件内胆，不要人、不要衣架、不要文字和水印。`;
+/**
+ * A liner's fabric close-up for its SKU box and the SKU images over it (11-04, the user's pick 「B」): front-on,
+ * the quilting level and even, no zipper or seam, filling the frame; drawn from its photo (`cropped`: cut out of one).
+ */
+export const linerSwatchPrompt = (inner: string, color: string, cropped = false, recolor = false) =>
+  `照参考图${cropped ? '（从素材照片上裁下来的这件内胆）' : ''}这件${inner}内胆，画它面料的正面特写：`
+  + (recolor ? `颜色换成${color}，面料质感、绗缝格子都不变；` : `颜色（${color || '原色'}）、面料质感、绗缝格子都照参考图；`)
+  + '镜头正对衣服、完全不歪；有绗缝的，格子方向、间距、每格鼓起的厚薄照参考图，一条条笔直平行、间距均匀；表面光泽照参考图；光线均匀柔和；'
+  + '只拍身体一侧，画面里没有拉链、接缝、领子、袖子、下摆和背景，面料铺满整个画面，不要人、不要文字和水印。';
 export const LINER_ALONE_WEAR = '只穿这件内胆，外面不穿外套：内胆拉链拉到胸口，里面是白色圆领 T 恤';
 /** The first reference of a liner worn alone: its photo in the material, the liner only. */
 export const linerSubject = (inner: string, color: string) => `参考图1是这件${inner}内胆「${color}」的照片，内胆的颜色、材质、领子和拉链以它为准；照片里的人、背景和别的衣服都不要带过来。`;

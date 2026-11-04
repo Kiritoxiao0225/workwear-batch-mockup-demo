@@ -308,12 +308,14 @@ export async function renderSkuCard(c: SkuCard): Promise<Buffer> {
     ctx.fillText(c.kicker, L + 2, y + 6); ctx.letterSpacing = '0px'; y += 22;
   }
   ctx.fillStyle = INK;
+  let titleWidth = 0;
   for (const t of c.title.slice(0, 2)) {
-    ctx.letterSpacing = '4px'; fitText(ctx, t, FONT.serif, 64, W); ctx.fillText(t, L, y + 56); ctx.letterSpacing = '0px'; y += tight ? 74 : 82;
+    ctx.letterSpacing = '4px'; fitText(ctx, t, FONT.serif, 64, W); titleWidth = Math.max(titleWidth, ctx.measureText(t).width); ctx.fillText(t, L, y + 56); ctx.letterSpacing = '0px'; y += tight ? 74 : 82;
   }
   if (c.liner) {
     // Under the title: the liner itself (its photo's middle, where the garment is) with its name across the bottom.
-    const box = { w: 190, h: tight ? 128 : 150 }, photo = c.liner.photo;
+    // As wide as the title (11-04: the user found 190 px too small; its fabric close-up fills it).
+    const box = { w: Math.round(Math.min(W, Math.max(190, titleWidth - 4))), h: tight ? 128 : 150 }, photo = c.liner.photo;
     ctx.save(); roundRect(ctx, L, y + 4, box.w, box.h, 14); ctx.clip();
     ctx.fillStyle = photo ? '#ffffff' : '#dcdcdc'; ctx.fillRect(L, y + 4, box.w, box.h);
     if (photo) {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { linerBoxRequest, linerMatchRequest, parseInsideBox, parseLinerBox, parseLinerLook, parseLinerMatch } from './listing-recognize';
+import { linerBoxRequest, linerMatchRequest, linerViewRequest, parseInsideBox, parseLinerBox, parseLinerLook, parseLinerMatch, parseLinerView } from './listing-recognize';
+import { linerSwatchPrompt } from '../listing/wear';
 
 describe('the front panel inside an 一体 jacket (11-01)', () => {
   it('reads the box as fractions, kept inside the photo', () => {
@@ -42,3 +43,20 @@ describe('the liner on a SKU model over it, read off and checked against its pho
   });
 });
 
+describe("a liner's fabric close-up for its SKU box (11-04, the user's pick B)", () => {
+  it('a photo is used only from the front, zipped, whole and not worn (8828: laid open, its back, worn)', () => {
+    expect(parseLinerView('{"front":true,"zipped":true,"whole":true,"worn":false}')).toBe(true);
+    expect(parseLinerView('{"front":false,"zipped":false,"whole":true,"worn":false,"what":"敞开平铺露出里面"}')).toBe(false);
+    expect(parseLinerView('{"front":false,"zipped":false,"whole":true,"worn":false,"what":"背面"}')).toBe(false);
+    expect(parseLinerView('{"front":true,"zipped":true,"whole":true,"worn":true}')).toBe(false);
+    expect(parseLinerView('oops')).toBe(false);
+    expect(linerViewRequest({ image: Buffer.from('a'), inner: '羽绒', color: '黑色', model: 'm' }).messages[0].content).toContain('不是拉开摊平露出里面');
+  });
+  it('the close-up: front-on, level quilting, no zipper or seam, filling the frame; another colour recoloured', () => {
+    const p = linerSwatchPrompt('羽绒', '黑色');
+    expect(p).toContain('画它面料的正面特写');
+    expect(p).toContain('一条条笔直平行、间距均匀');
+    expect(p).toContain('画面里没有拉链、接缝、领子、袖子、下摆和背景，面料铺满整个画面');
+    expect(linerSwatchPrompt('软壳', '红色', true, true)).toContain('颜色换成红色');
+  });
+});

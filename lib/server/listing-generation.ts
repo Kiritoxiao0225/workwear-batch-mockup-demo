@@ -19,7 +19,7 @@
 import { addExtraImage } from './listing-jobs';
 import { innerName } from '../listing/wear';
 import { itemReference, linerAlone, linerByColor, linerColorOf, linerFor, linerThumbs, mainLiner, skuItems } from '../listing/sku-versions';
-import { LINER_ALONE_WEAR, linerName, linerSubject, linerWhitePrompt, versionName } from '../listing/wear';
+import { LINER_ALONE_WEAR, linerName, linerSubject, linerSwatchPrompt, versionName } from '../listing/wear';
 import { coveredZip, groupWear, openLine, wearLine, zippedWear } from '../listing/wear';
 import { heatPoint, insideFor } from '../listing/inside';
 import { randomUUID } from 'node:crypto';
@@ -49,7 +49,7 @@ import { maskOf, pad, pasteBack } from './listing-edit';
 import { resolveLayout } from './listing-layouts';
 import { castOnePrompt, castPrompt, drawPrompt, editPrompt, longPrompt, mainPrompt, productPrompt, redrawPrompt, relayoutPrompt, servicePrompt, serviceWordsPrompt, skuModelPrompt, skuPrompt, type Content, type Ratio } from './listing-prompts';
 import { callPlanModel, generateListingImage, LISTING_PLAN_MODEL, listingImageModel, listingImageProvider, type ImageCall, type PlanCall } from './listing-provider';
-import { frameRequest, insideBoxRequest, linerBoxRequest, linerLookRequest, linerMatchRequest, parseFrame, parseInsideBox, parseLinerBox, parseLinerLook, parseLinerMatch, parseRecognized, recognizeRequest, type Expected, type Frame } from './listing-recognize';
+import { frameRequest, insideBoxRequest, linerBoxRequest, linerLookRequest, linerMatchRequest, linerViewRequest, parseFrame, parseInsideBox, parseLinerBox, parseLinerLook, parseLinerMatch, parseLinerView, parseRecognized, recognizeRequest, type Expected, type Frame } from './listing-recognize';
 import { liveShop, shopBrand, shopServiceImage, shopSettings, shopSkuBadge, shopSkuFields } from './listing-shop';
 import { cornerAssets, pasteShopLogo } from './listing-corner';
 import { latestOutputs, latestRedraws, MAIN_SLOT, slotShop, storeOutput, type StoredPlan } from './listing-store';
@@ -835,7 +835,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
       ratio = 'square';
       prompt = drawPrompt(input.prompt, references.length);
     } else if (input.kind === 'liner') {
-      // A liner's thumbnail onto white (11-04): a photo of it alone already on white as it is, else found on its photos and drawn.
+      // A liner's fabric close-up (11-04, the user's pick): drawn from its best photo, for its SKU box and the SKU images over it.
       const photos = stored?.liners?.photos[input.id] ?? [];
       const loaded: { photo: (typeof photos)[number]; bytes: Buffer }[] = [];
       for (const photo of photos) {
@@ -843,19 +843,22 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
         const file = asset ? (await db().query('SELECT file_id FROM listing_assets WHERE id=$1', [asset])).rows[0]?.file_id as string | undefined : undefined;
         if (file) loaded.push({ photo, bytes: await sharp(await fileOf(file), { limitInputPixels: 60_000_000 }).rotate().resize(1536, 1536, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer() });
       }
-      // Any of them already on white first (8828's 红色 soft liner: its 3D image on white came after two shop-rack photos).
-      for (const { photo, bytes } of loaded) if (photo.same && photo.still && await onWhite(bytes)) { await succeed(await whiteSquare(bytes)); return; }
+      // A photo of it alone on white, from the front and zipped, first: 8828's black down liner had one laid
+      // open showing its inside ranked before its front one, so the recognizer looks at each.
       let ref: { bytes: Buffer; cropped: boolean; recolor: boolean } | null = null;
       for (const { photo, bytes } of loaded) {
+        if (photo.same && photo.still && await onWhite(bytes) && await linerFront(bytes, input, recognize)) { ref = { bytes: await whiteSquare(bytes), cropped: false, recolor: false }; break; }
+      }
+      for (const { photo, bytes } of ref ? [] : loaded) {
         const cut = await linerCrop(bytes, input, recognize);
         if (cut) { ref = { bytes: cut, cropped: true, recolor: !photo.same }; break; }
-        // On none of them: the best one whole, as the thumbnail showed it before.
+        // On none of them: the best one whole.
         ref ??= { bytes, cropped: false, recolor: !photo.same };
       }
       if (!ref) throw Object.assign(new CatalogHttpError(404, '找不到这件内胆的素材图（原始素材可能已在最后一次出图 30 天后清理）'), { notCharged: true });
       references = [ref.bytes];
       ratio = 'square';
-      prompt = linerWhitePrompt(input.name, input.color, ref.cropped, ref.recolor);
+      prompt = linerSwatchPrompt(input.name, input.color, ref.cropped, ref.recolor);
     } else if (input.kind === 'redraw') {
       references = [await versionAt1K(job.project_id, input.base)];
       for (const id of input.references ?? (input.reference ? [input.reference] : [])) {
@@ -1184,7 +1187,7 @@ export async function skuLeft(o: { tenant: string; projectId: string; stored: St
     // The shop's own LOGO while it shows one (店铺设置); the sample LOGO is only for the crafts image.
     logo: await (await shopBrand(o.tenant, o.shopSet))?.bytes().catch(() => null) ?? null,
     fabric: product ? await fabricCrop(product) : await sharp(photo!).resize(800, 800, { fit: 'cover', position: 'centre' }).png().toBuffer(),
-    ...(thumbOut ? { liner: { photo: await o.output(thumbOut), name: own.linerName, whole: true } }
+    ...(thumbOut ? { liner: { photo: await o.output(thumbOut), name: own.linerName, close: true } }
       : thumbFile ? { liner: { photo: await fileOf(thumbFile), name: own.linerName, whole: sorted.find((i: { id: string; kind: string }) => i.id === thumbLabel)?.kind === '静物' } }
       : boxed ? { liner: { photo: insideFile ? await fileOf(insideFile) : null, close: sorted.find((i: { id: string; kind: string }) => i.id === insideLabel)?.kind !== '模特实拍' } } : {}),
     photo: photo ? { bytes: photo, cutout: false, source: !!sourceFile } : { bytes: await removeFlatArtworkBackground(product!, { r: 255, g: 255, b: 255 }), cutout: true, source: false },
@@ -1249,10 +1252,22 @@ export async function onWhite(bytes: Buffer): Promise<boolean> {
   }
   return white / all >= 0.9;
 }
-/** A photo on white, trimmed and centred on a white square: no model call. */
+/**
+ * A photo on white, trimmed and centred on a white square: no model call. 1% comes off every side first:
+ * some product photos have a thin grey frame line at the edge (8828's M190), which the trim kept.
+ */
 async function whiteSquare(bytes: Buffer): Promise<Buffer> {
-  const trimmed = await sharp(bytes).flatten({ background: '#ffffff' }).trim({ threshold: 12 }).png().toBuffer().catch(() => bytes);
+  const { width = 0, height = 0 } = await sharp(bytes).metadata(), edge = Math.round(Math.min(width, height) * 0.01);
+  const shaved = edge && width > 4 * edge && height > 4 * edge ? await sharp(bytes).extract({ left: edge, top: edge, width: width - 2 * edge, height: height - 2 * edge }).toBuffer() : bytes;
+  const trimmed = await sharp(shaved).flatten({ background: '#ffffff' }).trim({ threshold: 12 }).png().toBuffer().catch(() => shaved);
   return sharp(trimmed).resize(900, 900, { fit: 'contain', background: '#ffffff' }).extend({ top: 62, bottom: 62, left: 62, right: 62, background: '#ffffff' }).jpeg({ quality: 92 }).toBuffer();
+}
+/** Is a liner's photo from the front, zipped and whole (11-04); false when the call fails. */
+async function linerFront(bytes: Buffer, liner: { name: string; color: string }, recognize: Recognize): Promise<boolean> {
+  try {
+    const image = await sharp(bytes).resize(1024, 1024, { fit: 'inside' }).jpeg({ quality: 85 }).toBuffer();
+    return parseLinerView((await recognize(linerViewRequest({ image, inner: liner.name, color: liner.color, model: LISTING_PLAN_MODEL() }))).content);
+  } catch (error) { console.error('[listing] liner view', error instanceof Error ? error.message : error); return false; }
 }
 /** The liner cut out of a photo (a little room around it), or null: not on it, or the call failed (11-04). */
 async function linerCrop(bytes: Buffer, liner: { inner: string; name: string; color: string }, recognize: Recognize): Promise<Buffer | null> {
