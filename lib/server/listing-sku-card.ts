@@ -32,9 +32,10 @@ export type SkuCard = SkuText & {
    * A version over a liner or the liner alone (10-22): the material's photo of the liner, a small picture
    * under the title with its name on it (大俊's SKU sheet); the feature card stays at the bottom.
    * An 一体 jacket's inside (10-29) in the same box with no name: a close-up (`close`) fills it; no photo
-   * leaves the box empty, plain grey, to be filled in by hand.
+   * leaves the box empty, plain grey, to be filled in by hand. `top` (11-04, the user's pick): a liner on
+   * white, its top (collar, shoulders, zip) filling the box, the liner whole left it too small.
    */
-  liner?: { photo: Buffer | null; name?: string; whole?: boolean; close?: boolean } | null;
+  liner?: { photo: Buffer | null; name?: string; whole?: boolean; close?: boolean; top?: boolean } | null;
   /**
    * 「改 SKU 图文字」's preview (11-01): this card as made; its right side (the photo, a badge over it) is
    * kept as it is and only the left column is drawn again, so a preview needs no model call.
@@ -59,6 +60,13 @@ function fitText(ctx: SKRSContext2D, text: string, family: string, size: number,
   ctx.font = `${s}px "${family}"`;
   while (s > 12 && ctx.measureText(text).width > max) { s -= 1; ctx.font = `${s}px "${family}"`; }
   return s;
+}
+
+/** A liner on white cut to its top, centred: 92% of its width across, from its collar down as far as the box's shape takes. */
+async function linerTop(photo: Buffer, w: number, h: number): Promise<Buffer> {
+  const trimmed = await sharp(photo).rotate().flatten({ background: '#ffffff' }).trim({ threshold: 8 }).png().toBuffer();
+  const { width = 1, height = 1 } = await sharp(trimmed).metadata(), cw = Math.max(1, Math.round(width * 0.92)), ch = Math.max(1, Math.min(height, Math.round(cw * h / w)));
+  return sharp(trimmed).extract({ left: Math.round((width - cw) / 2), top: 0, width: cw, height: ch }).resize(w, h, { fit: 'cover', position: 'top' }).png().toBuffer();
 }
 
 /**
@@ -322,7 +330,8 @@ export async function renderSkuCard(c: SkuCard): Promise<Buffer> {
       const meta = await sharp(photo).metadata(), w = meta.width ?? 1, h = meta.height ?? 1;
       // A white image is the liner whole; a photo of someone in it, its middle from the neck down (10-22:
       // starting at 18% showed the chin and nostrils; at 27% the collar is whole and the face is out).
-      const crop = c.liner.whole ? await sharp(photo).rotate().flatten({ background: '#ffffff' }).trim({ threshold: 8 }).resize(box.w * 2 - 40, box.h * 2 - 100, { fit: 'contain', background: '#ffffff' })
+      const crop = c.liner.top ? await linerTop(photo, box.w * 2, box.h * 2)
+        : c.liner.whole ? await sharp(photo).rotate().flatten({ background: '#ffffff' }).trim({ threshold: 8 }).resize(box.w * 2 - 40, box.h * 2 - 100, { fit: 'contain', background: '#ffffff' })
         .extend({ top: 10, bottom: 90, left: 20, right: 20, background: '#ffffff' }).png().toBuffer()
         : c.liner.close ? await sharp(photo).rotate().resize(box.w * 2, box.h * 2, { fit: 'cover' }).png().toBuffer()
         : await sharp(photo).rotate().extract({ left: Math.round(w * 0.15), top: Math.round(h * 0.27), width: Math.round(w * 0.7), height: Math.round(h * 0.5) })

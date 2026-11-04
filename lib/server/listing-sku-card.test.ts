@@ -62,6 +62,21 @@ describe('一体款的里面小框 (10-29)', () => {
   });
 });
 
+describe('内胆小框：内胆上半身铺满、和标题一样宽 (11-04)', () => {
+  // A liner on white: a red garment 600 wide in a white square. Its top fills the box, which reaches past the old 190 px to the title's width.
+  it('crops the liner on white to its top and widens the box to the title', async () => {
+    const liner = await sharp({ create: { width: 1024, height: 1024, channels: 3, background: '#ffffff' } })
+      .composite([{ input: await solid(600, 800, '#c03018'), left: 212, top: 112 }]).png().toBuffer();
+    const made = await renderSkuCard({ title: ['高端定制'], rows: [colorRow('黑色')], fabric: await solid(300, 300, '#eeeeee'),
+      photo: { bytes: await solid(900, 1200, '#d8d8d8'), cutout: false }, feature: null, liner: { photo: liner, name: '软壳内胆', top: true } });
+    const px = async (left: number, top: number) => [...(await sharp(made).extract({ left, top, width: 2, height: 2 }).raw().toBuffer({ resolveWithObject: true })).data.slice(0, 3)];
+    for (const x of [80, 150, 290]) {
+      const [r, g, b] = await px(x, 230);
+      expect(r > 150 && g < 90 && b < 70).toBe(true);
+    }
+  });
+});
+
 describe('the unit marks the fonts lack (10-19)', () => {
   // The cards' fonts have no ₂ ⁺ ² ㎡: the server (no fallback fonts) printed nothing for them, so they are drawn as small figures.
   it('splits the marks off as small figures below or above the line', () => {

@@ -19,7 +19,7 @@
 import { addExtraImage } from './listing-jobs';
 import { innerName } from '../listing/wear';
 import { itemReference, linerAlone, linerByColor, linerColorOf, linerFor, linerThumbs, mainLiner, skuItems } from '../listing/sku-versions';
-import { LINER_ALONE_WEAR, linerName, linerSubject, linerSwatchPrompt, versionName } from '../listing/wear';
+import { LINER_ALONE_WEAR, linerName, linerSubject, linerWhitePrompt, versionName } from '../listing/wear';
 import { coveredZip, groupWear, openLine, wearLine, zippedWear } from '../listing/wear';
 import { heatPoint, insideFor } from '../listing/inside';
 import { randomUUID } from 'node:crypto';
@@ -835,7 +835,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
       ratio = 'square';
       prompt = drawPrompt(input.prompt, references.length);
     } else if (input.kind === 'liner') {
-      // A liner's fabric close-up (11-04, the user's pick): drawn from its best photo, for its SKU box and the SKU images over it.
+      // A liner on white (11-04), for its SKU box (its top: collar, shoulders, zip) and the SKU images over it.
       const photos = stored?.liners?.photos[input.id] ?? [];
       const loaded: { photo: (typeof photos)[number]; bytes: Buffer }[] = [];
       for (const photo of photos) {
@@ -845,11 +845,12 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
       }
       // A photo of it alone on white, from the front and zipped, first: 8828's black down liner had one laid
       // open showing its inside ranked before its front one, so the recognizer looks at each.
+      for (const { photo, bytes } of loaded) {
+        if (photo.same && photo.still && await onWhite(bytes) && await linerFront(bytes, input, recognize)) { await succeed(await whiteSquare(bytes)); return; }
+      }
+      // Else drawn on white from front, zipped: from the liner cut out of its photo.
       let ref: { bytes: Buffer; cropped: boolean; recolor: boolean } | null = null;
       for (const { photo, bytes } of loaded) {
-        if (photo.same && photo.still && await onWhite(bytes) && await linerFront(bytes, input, recognize)) { ref = { bytes: await whiteSquare(bytes), cropped: false, recolor: false }; break; }
-      }
-      for (const { photo, bytes } of ref ? [] : loaded) {
         const cut = await linerCrop(bytes, input, recognize);
         if (cut) { ref = { bytes: cut, cropped: true, recolor: !photo.same }; break; }
         // On none of them: the best one whole.
@@ -858,7 +859,7 @@ export async function executeImage(job: ImageJob, generate: Generate = (input, h
       if (!ref) throw Object.assign(new CatalogHttpError(404, '找不到这件内胆的素材图（原始素材可能已在最后一次出图 30 天后清理）'), { notCharged: true });
       references = [ref.bytes];
       ratio = 'square';
-      prompt = linerSwatchPrompt(input.name, input.color, ref.cropped, ref.recolor);
+      prompt = linerWhitePrompt(input.name, input.color, ref.cropped, ref.recolor);
     } else if (input.kind === 'redraw') {
       references = [await versionAt1K(job.project_id, input.base)];
       for (const id of input.references ?? (input.reference ? [input.reference] : [])) {
@@ -1187,7 +1188,7 @@ export async function skuLeft(o: { tenant: string; projectId: string; stored: St
     // The shop's own LOGO while it shows one (店铺设置); the sample LOGO is only for the crafts image.
     logo: await (await shopBrand(o.tenant, o.shopSet))?.bytes().catch(() => null) ?? null,
     fabric: product ? await fabricCrop(product) : await sharp(photo!).resize(800, 800, { fit: 'cover', position: 'centre' }).png().toBuffer(),
-    ...(thumbOut ? { liner: { photo: await o.output(thumbOut), name: own.linerName, close: true } }
+    ...(thumbOut ? { liner: { photo: await o.output(thumbOut), name: own.linerName, top: true } }
       : thumbFile ? { liner: { photo: await fileOf(thumbFile), name: own.linerName, whole: sorted.find((i: { id: string; kind: string }) => i.id === thumbLabel)?.kind === '静物' } }
       : boxed ? { liner: { photo: insideFile ? await fileOf(insideFile) : null, close: sorted.find((i: { id: string; kind: string }) => i.id === insideLabel)?.kind !== '模特实拍' } } : {}),
     photo: photo ? { bytes: photo, cutout: false, source: !!sourceFile } : { bytes: await removeFlatArtworkBackground(product!, { r: 255, g: 255, b: 255 }), cutout: true, source: false },
